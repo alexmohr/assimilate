@@ -61,9 +61,10 @@ test('editing a webhook channel keeps its saved header value when left blank', a
 
   await page.goto('/notifications')
   await page.waitForLoadState('networkidle')
-  const card = page.locator('.channel-card').filter({ hasText: 'Ops Webhook' })
-  await expect(card).toBeVisible({ timeout: 10_000 })
-  await card.getByRole('button', { name: 'Edit', exact: true }).click()
+  // A channel row opens its editor when clicked.
+  const row = page.locator('.channel-row').filter({ hasText: 'Ops Webhook' })
+  await expect(row).toBeVisible({ timeout: 10_000 })
+  await row.locator('.list-row-name').click()
 
   const dialog = page.locator('.modal-dialog')
   await expect(dialog.getByTestId('webhook-header-name')).toHaveValue('Authorization')

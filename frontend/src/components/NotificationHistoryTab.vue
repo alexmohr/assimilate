@@ -4,7 +4,7 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 -->
 
 <script setup lang="ts">
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import { ChevronDown, Send } from '@lucide/vue'
 import EmptyState from './EmptyState.vue'
 import { formatDate } from '../utils/format'
@@ -25,7 +25,24 @@ const props = defineProps<{
   channels: NotificationChannelResponse[]
   /** Shared with the channel list, so both spell an event type the same way. */
   eventTypeLabel: (event: EventType) => string
+  /** Narrows the log to one channel; null (or absent) shows every channel. */
+  channelId?: number | null
 }>()
+
+const emit = defineEmits<{ 'update:channelId': [id: number | null] }>()
+
+const shown = computed((): NotificationDeliveryResponse[] => {
+  const id = props.channelId ?? null
+  return id === null ? props.deliveries : props.deliveries.filter((d) => d.channel_id === id)
+})
+
+/** The picker's option values are strings; "" is every channel. */
+const filterValue = computed({
+  get: (): string => (props.channelId == null ? '' : String(props.channelId)),
+  set: (value: string): void => {
+    emit('update:channelId', value === '' ? null : Number(value))
+  },
+})
 
 const expandedId = ref<number | null>(null)
 
@@ -56,7 +73,34 @@ function formatPayload(payload: NotificationEvent): string {
     description="Notifications sent to your channels will be listed here."
   />
   <div
-    v-else
+    v-if="deliveries.length > 0 && (channels.length > 1 || channelId != null)"
+    class="toolbar"
+  >
+    <select
+      v-model="filterValue"
+      class="input select-input select-input--md"
+      aria-label="Filter by channel"
+    >
+      <option value="">All channels</option>
+      <option
+        v-for="c in channels"
+        :key="c.id"
+        :value="String(c.id)"
+      >
+        {{ c.name }}
+      </option>
+    </select>
+  </div>
+  <EmptyState
+    v-if="deliveries.length > 0 && shown.length === 0"
+    :icon="Send"
+    title="Nothing sent through this channel yet"
+    description="Its deliveries will be listed here once it sends one."
+    action="Show all channels"
+    @action="emit('update:channelId', null)"
+  />
+  <div
+    v-else-if="shown.length > 0"
     class="table-wrap table-wrap--framed"
   >
     <table class="data-table data-table-expandable">
@@ -72,7 +116,7 @@ function formatPayload(payload: NotificationEvent): string {
       </thead>
       <tbody>
         <template
-          v-for="d in deliveries"
+          v-for="d in shown"
           :key="d.id"
         >
           <tr

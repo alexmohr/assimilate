@@ -42,6 +42,36 @@ Assimilate can notify you when backups succeed, fail, or produce warnings. Three
 
 Navigate to **Notifications** in the sidebar to manage channels. Click the **New** button to add a channel.
 
+### The channel list
+
+The **Channels** tab lists every channel as one row in a single panel. The tab label shows how many channels there are. Each row has these columns:
+
+| Column            | Shows                                                                                                                                |
+| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| **Channel**       | The channel's name, its type, and where it delivers: the first recipient of an email channel, or only the host name of a webhook URL |
+| **Events**        | How many event types the channel is subscribed to, e.g. `9 of 14 events`                                                             |
+| **Scope**         | `All`, or what the channel is narrowed to, e.g. `2 repos, 1 host` — see [Channel Scope](#channel-scope)                              |
+| **Last delivery** | The newest delivery in the loaded history: `Sent 1d ago`, `Failed 2h ago` with a short error in red, or `Nothing sent yet`           |
+| **State**         | **On**, or **Paused** for a channel that sends nothing until it is resumed                                                           |
+
+A row never shows a webhook's path, query string, credentials or header values, since any of them can carry a token.
+
+Click a row to open its **Edit channel** dialog. Every other action is in the row's **⋯** menu:
+
+- **Edit** — the same dialog as clicking the row.
+- **Edit content** — the channel's title and message templates, see [Custom Content](#custom-content).
+- **Edit events** — the event types that trigger the channel.
+- **Edit scope** — the repositories, hosts and schedules the channel is limited to.
+- **Send test** — a sample notification, see [Testing](#testing).
+- **Pause** / **Resume** — stop or restart deliveries without deleting the channel.
+- **Delete** — remove the channel and its rules.
+
+When a channel has failed deliveries in the recent history, a red notice above the list names it, for example **Ops Webhook failed 2 of its last 7 deliveries**, with its last error. Click **View history** to open the **History** tab narrowed to that channel. A failing channel is also listed first.
+
+Under the channels, **Recent deliveries** lists the five newest deliveries across all channels: the event, the channel, the outcome or error, and how long ago it was sent. Click **All history** to open the **History** tab.
+
+On a phone each row stacks into short lines: the name and type, then the events and scope, then the last delivery.
+
 ### Email (SMTP)
 
 Configure your SMTP server details:
@@ -167,10 +197,10 @@ else opens the affected host or repository.
 
 ## Custom Content
 
-Every channel has its own **Title** and **Message** template, shown on its card under
-**Edit content** -- expanding it never affects any other channel, and there's no separate
-toggle to switch on: the fields are always there, pre-filled with Assimilate's default
-content, ready to edit. Email and webhook channels start with the multi-line summary
+Every channel has its own **Title** and **Message** template. Open it with **Edit content**
+in the channel row's **⋯** menu -- editing it never affects any other channel, and there's
+no separate toggle to switch on: the fields are always there, pre-filled with Assimilate's
+default content, ready to edit. Email and webhook channels start with the multi-line summary
 described above; Web Push channels start with a much shorter one-line default (repository
 and error message) instead, since a browser push toast has no room for a multi-line body.
 
@@ -235,9 +265,9 @@ else in this page still applies) -- Web Push is unaffected either way.
 
 ## Channel Scope
 
-By default, a channel fires for **all** events system-wide. You can restrict a channel to specific repositories, hosts, or schedules using the **Scope** section on each channel card.
+By default, a channel fires for **all** events system-wide. You can restrict a channel to specific repositories, hosts, or schedules. The **Scope** column of the channel list shows the current restriction.
 
-- Click the **Scope** toggle on a channel card to expand scope options.
+- Choose **Edit scope** in the channel row's **⋯** menu to open the scope options.
 - Select one or more **Repositories**, **Agents**, or **Schedules** to narrow the channel's scope.
 - Only events matching the selected scope will be delivered through that channel.
 - Leaving a scope category empty means "all" — no filtering for that dimension.
@@ -315,19 +345,21 @@ No special volume mounts or environment variables are needed. VAPID keys are sto
 
 ## Testing
 
-Each channel has a **Test** button that sends a sample notification to verify your configuration is correct. Check the **History** tab to see delivery status and error messages for recent notifications.
+Choose **Send test** in a channel row's **⋯** menu to send a sample notification and verify the configuration. A message at the bottom of the screen says whether the test was sent, or why it failed. Check the **History** tab to see delivery status and error messages for recent notifications.
 
 ## Delivery History
 
-The **History** tab shows the last 50 notification deliveries with:
+The **History** tab shows the 20 most recent notification deliveries with:
 
 - Channel name and event type
 - Delivery status (sent / failed)
 - Error message (if failed)
 - Timestamp
 
+With more than one channel, pick a channel above the table to show only its deliveries. **View history** on a failure notice opens the tab with that channel already picked.
+
 Click a row to expand it and see the full error message and the raw event payload that was sent to the channel — useful when an error message is too long to read in the table, or when you need to see exactly which fields (hostname, repo, archive name, etc.) were included in the notification. On narrow screens the table switches to a stacked card layout instead of scrolling horizontally, so long error messages and payloads wrap in place.
 
 ![Notification history with an expanded delivery row](assets/screenshots/notifications-history-expanded.png)
 
-Failed deliveries are logged but not retried automatically. Fix the channel configuration and use the Test button to verify.
+Failed deliveries are logged but not retried automatically. Fix the channel configuration and use **Send test** to verify.

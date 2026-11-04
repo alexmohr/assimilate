@@ -27,7 +27,7 @@ import {
 import { listRepos } from '../api/repos'
 import { listAgents } from '../api/agents'
 import { listSchedules } from '../api/schedules'
-import { Plus, Trash2, Bell, Send, Mail, Globe, BellRing } from '@lucide/vue'
+import { Plus, Bell, Send } from '@lucide/vue'
 import BaseSpinner from '../components/BaseSpinner.vue'
 import EmptyState from '../components/EmptyState.vue'
 import ToggleSwitch from '../components/ToggleSwitch.vue'
@@ -36,6 +36,8 @@ import NotificationEventToggles from '../components/NotificationEventToggles.vue
 import ScopeSelector, { type ScopeOption } from '../components/ScopeSelector.vue'
 import NotificationContentEditor from '../components/NotificationContentEditor.vue'
 import NotificationHistoryTab from '../components/NotificationHistoryTab.vue'
+import NotificationChannelList from '../components/NotificationChannelList.vue'
+import { useToast } from '../composables/useToast'
 import { configInputFor } from '../utils/channelConfig'
 import {
   duplicateHeaderNames,
@@ -73,13 +75,17 @@ interface EditChannelForm {
   enabled: boolean
 }
 
-const tabs: TabOption<TabId>[] = [
-  { id: 'channels', label: 'Channels', icon: Bell },
-  { id: 'history', label: 'History', icon: Send },
-]
-
 const activeTab = ref<TabId>('channels')
+/** The channel the History tab is narrowed to, or null for every channel. */
+const historyChannelId = ref<number | null>(null)
 const channels = ref<NotificationChannelResponse[]>([])
+
+const tabs = computed((): TabOption<TabId>[] => [
+  { id: 'channels', label: 'Channels', icon: Bell, count: channels.value.length },
+  { id: 'history', label: 'History', icon: Send },
+])
+
+const toast = useToast()
 const rules = ref<NotificationRuleResponse[]>([])
 const deliveries = ref<NotificationDeliveryResponse[]>([])
 const { loading, error, run } = useAsyncAction()
@@ -147,7 +153,9 @@ const scopeSearch = ref('')
 const ruleTogglingKey = ref<string | null>(null)
 
 const testingChannelId = ref<number | null>(null)
-const testResult = ref<{ id: number; success: boolean; message: string } | null>(null)
+
+// Content edit modal state
+const contentModalChannelId = ref<number | null>(null)
 
 const currentPushSubscription = ref<PushSubscription | null>(null)
 const vapidConfigured = ref(false)
@@ -200,6 +208,11 @@ const activeEventsChannel = computed((): NotificationChannelResponse | undefined
   return channels.value.find((c) => c.id === eventsModalChannelId.value)
 })
 
+const activeContentChannel = computed((): NotificationChannelResponse | undefined => {
+  if (contentModalChannelId.value == null) return undefined
+  return channels.value.find((c) => c.id === contentModalChannelId.value)
+})
+
 const activeScopeChannel = computed((): NotificationChannelResponse | undefined => {
   if (scopeModalChannelId.value == null) return undefined
   return channels.value.find((c) => c.id === scopeModalChannelId.value)
@@ -237,16 +250,10 @@ function channelTypeLabel(ct: ChannelType): string {
   return 'Web push'
 }
 
-function channelTypeIcon(ct: ChannelType): typeof Mail {
-  if (ct === 'email') return Mail
-  if (ct === 'webhook') return Globe
-  return BellRing
-}
-
 function channelEventsLabel(channelId: number): string {
   const count = rules.value.filter((r) => r.channel_id === channelId).length
-  if (count === 0) return 'None'
-  return `${count} of ${EVENT_TYPES.length} enabled`
+  if (count === 0) return 'No events'
+  return `${count} of ${EVENT_TYPES.length} events`
 }
 
 function channelScopeLabel(channel: NotificationChannelResponse): string {
@@ -564,21 +571,30 @@ function onContentUpdated(channel: NotificationChannelResponse): void {
   }
 }
 
-async function handleTestChannel(id: number): Promise<void> {
-  testingChannelId.value = id
-  testResult.value = null
+/** Sends a test through the channel and says how it went in a toast. */
+async function handleTestChannel(channel: NotificationChannelResponse): Promise<void> {
+  testingChannelId.value = channel.id
   try {
-    const channel = channels.value.find((c) => c.id === id)
-    if (channel?.channel_type === 'web_push') {
+    if (channel.channel_type === 'web_push') {
       await ensurePushSubscription()
     }
-    await testChannel(id)
-    testResult.value = { id, success: true, message: 'Test sent' }
+    await testChannel(channel.id)
+    toast.success(`Test sent to ${channel.name}`)
   } catch (e: unknown) {
-    testResult.value = { id, success: false, message: extractError(e) }
+    toast.error(`Test to ${channel.name} failed: ${extractError(e)}`)
   } finally {
     testingChannelId.value = null
   }
+}
+
+function openContentModal(channel: NotificationChannelResponse): void {
+  contentModalChannelId.value = channel.id
+}
+
+/** Opens the History tab, narrowed to one channel or to none. */
+function showHistory(channelId: number | null): void {
+  historyChannelId.value = channelId
+  activeTab.value = 'history'
 }
 
 function isEventEnabled(channelId: number, et: EventType): boolean {
@@ -612,13 +628,13 @@ async function toggleRule(channelId: number, et: EventType): Promise<void> {
   }
 }
 
-function openEventsModal(channelId: number): void {
-  eventsModalChannelId.value = channelId
+function openEventsModal(channel: NotificationChannelResponse): void {
+  eventsModalChannelId.value = channel.id
   showEventsModal.value = true
 }
 
-function openScopeModal(channelId: number): void {
-  scopeModalChannelId.value = channelId
+function openScopeModal(channel: NotificationChannelResponse): void {
+  scopeModalChannelId.value = channel.id
   scopeSearch.value = ''
   showScopeModal.value = true
 }
@@ -750,90 +766,24 @@ onMounted(() => {
         action="New channel"
         @action="openAddChannel"
       />
-      <div
+      <NotificationChannelList
         v-else
-        class="channels-list"
-      >
-        <div
-          v-for="channel in channels"
-          :key="channel.id"
-          class="channel-card"
-        >
-          <div class="channel-header">
-            <div class="channel-info">
-              <component
-                :is="channelTypeIcon(channel.channel_type)"
-                :size="16"
-                class="channel-icon"
-              />
-              <span class="channel-name">{{ channel.name }}</span>
-              <span class="badge badge--neutral">{{ channelTypeLabel(channel.channel_type) }}</span>
-            </div>
-            <div class="channel-actions">
-              <button
-                class="btn btn-sm btn-ghost"
-                :disabled="testingChannelId === channel.id"
-                @click="handleTestChannel(channel.id)"
-              >
-                {{ testingChannelId === channel.id ? 'Testing...' : 'Test' }}
-              </button>
-              <ToggleSwitch
-                :model-value="channel.enabled"
-                @update:model-value="toggleChannel(channel)"
-              >
-                {{ channel.enabled ? 'On' : 'Off' }}
-              </ToggleSwitch>
-              <button
-                class="btn btn-sm btn-ghost"
-                @click="openEditChannel(channel)"
-              >
-                Edit
-              </button>
-              <button
-                class="btn btn-sm btn-ghost btn-danger-text"
-                @click="openDeleteChannel(channel)"
-              >
-                <Trash2 :size="14" />
-              </button>
-            </div>
-          </div>
-          <div
-            v-if="testResult && testResult.id === channel.id"
-            class="test-result"
-            :class="testResult.success ? 'test-success' : 'test-failure'"
-          >
-            {{ testResult.message }}
-          </div>
-          <div class="channel-meta">
-            <div class="meta-row">
-              <span class="meta-label">Events:</span>
-              <span class="meta-value">{{ channelEventsLabel(channel.id) }}</span>
-              <button
-                class="meta-edit-btn"
-                title="Edit events"
-                @click="openEventsModal(channel.id)"
-              >
-                ✎
-              </button>
-            </div>
-            <div class="meta-row">
-              <span class="meta-label">Scope:</span>
-              <span class="meta-value">{{ channelScopeLabel(channel) }}</span>
-              <button
-                class="meta-edit-btn"
-                title="Edit scope"
-                @click="openScopeModal(channel.id)"
-              >
-                ✎
-              </button>
-            </div>
-          </div>
-          <NotificationContentEditor
-            :channel="channel"
-            @updated="onContentUpdated"
-          />
-        </div>
-      </div>
+        :channels="channels"
+        :deliveries="deliveries"
+        :events-label="channelEventsLabel"
+        :scope-label="channelScopeLabel"
+        :event-type-label="eventTypeLabel"
+        :channel-type-label="channelTypeLabel"
+        :testing-channel-id="testingChannelId"
+        @edit="openEditChannel"
+        @edit-content="openContentModal"
+        @edit-events="openEventsModal"
+        @edit-scope="openScopeModal"
+        @test="handleTestChannel"
+        @toggle="toggleChannel"
+        @delete="openDeleteChannel"
+        @history="showHistory"
+      />
     </div>
 
     <!-- History Tab -->
@@ -842,6 +792,7 @@ onMounted(() => {
       class="tab-content fade-in"
     >
       <NotificationHistoryTab
+        v-model:channel-id="historyChannelId"
         :deliveries="deliveries"
         :channels="channels"
         :event-type-label="eventTypeLabel"
@@ -1117,6 +1068,38 @@ onMounted(() => {
       </template>
     </BaseModal>
 
+    <!-- Content Edit Modal -->
+    <BaseModal
+      v-if="activeContentChannel"
+      :open="contentModalChannelId !== null"
+      size="lg"
+      @close="contentModalChannelId = null"
+    >
+      <template #header="{ titleId }">
+        <h2
+          :id="titleId"
+          class="modal-title"
+        >
+          Content — {{ activeContentChannel.name }}
+        </h2>
+      </template>
+      <NotificationContentEditor
+        :key="activeContentChannel.id"
+        :channel="activeContentChannel"
+        standalone
+        @updated="onContentUpdated"
+      />
+
+      <template #footer>
+        <button
+          class="btn btn-ghost"
+          @click="contentModalChannelId = null"
+        >
+          Done
+        </button>
+      </template>
+    </BaseModal>
+
     <!-- Scope Edit Modal -->
     <BaseModal
       v-if="activeScopeChannel"
@@ -1158,95 +1141,6 @@ onMounted(() => {
 <style scoped>
 .notifications-view {
   max-width: 1100px;
-}
-
-.channels-list {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-6);
-}
-
-.channel-card {
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: var(--space-6) var(--space-7);
-  background: var(--bg-card);
-}
-
-.channel-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-6);
-}
-
-.channel-info {
-  display: flex;
-  align-items: center;
-  gap: var(--space-4);
-}
-
-.channel-icon {
-  color: var(--text-muted);
-}
-
-.channel-name {
-  font-weight: 600;
-  font-size: var(--fs-md);
-}
-
-.channel-actions {
-  display: flex;
-  align-items: center;
-  gap: var(--space-4);
-}
-
-.test-result {
-  margin-top: var(--space-4);
-  padding: var(--space-3) var(--space-5);
-  border-radius: var(--radius-sm);
-  font-size: var(--fs-sm);
-}
-
-.channel-meta {
-  margin-top: var(--space-5);
-  padding-top: var(--space-5);
-  border-top: 1px solid var(--border);
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-3);
-}
-
-.meta-row {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  font-size: var(--fs-sm);
-}
-
-.meta-label {
-  color: var(--text-muted);
-  font-weight: 500;
-}
-
-.meta-value {
-  color: var(--text-secondary);
-}
-
-.meta-edit-btn {
-  background: none;
-  border: none;
-  padding: var(--space-1) var(--space-2);
-  cursor: pointer;
-  font-size: var(--fs-sm);
-  color: var(--text-muted);
-  border-radius: var(--radius-sm);
-  line-height: 1;
-}
-
-.meta-edit-btn:hover {
-  background: var(--bg-elevated);
-  color: var(--accent);
 }
 
 /* Wizard */

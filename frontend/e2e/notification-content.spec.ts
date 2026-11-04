@@ -76,31 +76,34 @@ test('edits and saves a channel-specific notification content template', async (
   await page.goto('/notifications')
   await page.waitForLoadState('networkidle')
 
-  const channelCard = page.locator('.channel-card').filter({ hasText: 'Ops Email' })
-  await expect(channelCard).toBeVisible({ timeout: 10_000 })
+  const row = page.locator('.channel-row').filter({ hasText: 'Ops Email' })
+  await expect(row).toBeVisible({ timeout: 10_000 })
 
-  // The default template is pre-filled from the moment the panel opens - no "customize"
-  // toggle to find first.
-  await channelCard.getByRole('button', { name: 'Edit content' }).click()
-  const titleField = channelCard.getByLabel('Title')
+  // The content editor opens from the row's overflow menu, in a dialog of its own, and the
+  // default template is pre-filled from the moment it opens - no "customize" toggle to find.
+  await row.getByRole('button', { name: 'More actions for Ops Email' }).click()
+  await row.getByRole('menuitem', { name: 'Edit content' }).click()
+  const dialog = page.locator('.modal-dialog')
+  await expect(dialog).toBeVisible()
+  const titleField = dialog.getByLabel('Title')
   await expect(titleField).toHaveValue('{{event}}: {{host}}')
 
   // The live preview shows the deduplicated size on a successful backup by default.
-  await expect(channelCard).toContainText('Dedup size shown by default')
-  await expect(channelCard).toContainText('MiB')
+  await expect(dialog).toContainText('Dedup size shown by default')
+  await expect(dialog).toContainText('MiB')
 
   // Clicking a variable chip inserts it at the cursor in the last-focused field.
   await titleField.click()
   await titleField.press('End')
-  await channelCard.getByRole('button', { name: '{{archive}}', exact: true }).click()
+  await dialog.getByRole('button', { name: '{{archive}}', exact: true }).click()
   await expect(titleField).toHaveValue('{{event}}: {{host}}{{archive}}')
 
   // Editing and saving only affects this channel's own template.
   await titleField.fill('Backup report for {{host}}')
-  const saveButton = channelCard.getByRole('button', { name: 'Save content' })
+  const saveButton = dialog.getByRole('button', { name: 'Save content' })
   await expect(saveButton).toBeEnabled()
   await saveButton.click()
 
-  await expect(channelCard.getByRole('button', { name: /Saving/ })).toHaveCount(0)
+  await expect(dialog.getByRole('button', { name: /Saving/ })).toHaveCount(0)
   await expect(saveButton).toBeDisabled()
 })

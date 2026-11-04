@@ -39,7 +39,10 @@ test('a channel can follow file-changed warnings and abandoned catch-ups on thei
 
   await page.goto('/notifications')
   await page.waitForLoadState('networkidle')
-  await page.getByTitle('Edit events').first().click()
+  // Events are edited from the channel row's overflow menu.
+  const row = page.locator('.channel-row').first()
+  await row.getByRole('button', { name: /^More actions for / }).click()
+  await row.getByRole('menuitem', { name: 'Edit events' }).click()
 
   const modal = page.locator('.events-list')
   await expect(modal).toBeVisible({ timeout: 10_000 })

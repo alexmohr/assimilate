@@ -84,9 +84,29 @@ async function interceptAgentPage(
 }
 
 async function agentCard(page: Page): ReturnType<Page['locator']> {
-  const card = page.locator('.card-name').filter({ hasText: 'fixture-agent' })
+  const card = page.locator('.list-row-name').filter({ hasText: 'fixture-agent' })
   await expect(card).toBeVisible({ timeout: 10_000 })
   return card
+}
+
+/**
+ * Deploy and Upgrade live in the row's overflow menu. Opens it and returns the
+ * item; a row with nothing to offer has no menu at all, which
+ * `expectNoDeployAction` checks instead.
+ */
+async function deployAction(
+  page: Page,
+  name: 'Deploy' | 'Upgrade',
+): Promise<ReturnType<Page['locator']>> {
+  await page.getByRole('button', { name: 'More actions for fixture-agent' }).click()
+  const item = page.getByRole('menuitem', { name })
+  await expect(item).toBeVisible({ timeout: 5_000 })
+  return item
+}
+
+async function expectNoDeployAction(page: Page): Promise<void> {
+  await expect(page.getByRole('button', { name: 'More actions for fixture-agent' })).toHaveCount(0)
+  await expect(page.getByRole('menuitem', { name: /Deploy|Upgrade/ })).toHaveCount(0)
 }
 
 test('no upgrade button when no agent binary is available on server', async ({ page }) => {
@@ -94,7 +114,7 @@ test('no upgrade button when no agent binary is available on server', async ({ p
   await interceptAgentPage(page, BASE_AGENT, makeVersion(null, null))
   await page.goto('/agents')
   await agentCard(page)
-  await expect(page.getByRole('button', { name: 'Upgrade' })).not.toBeVisible()
+  await expectNoDeployAction(page)
 })
 
 test('no upgrade button when agent version matches available binary', async ({ page }) => {
@@ -106,7 +126,7 @@ test('no upgrade button when agent version matches available binary', async ({ p
   )
   await page.goto('/agents')
   await agentCard(page)
-  await expect(page.getByRole('button', { name: 'Upgrade' })).not.toBeVisible()
+  await expectNoDeployAction(page)
 })
 
 test('upgrade button shown when a newer binary is available', async ({ page }) => {
@@ -118,7 +138,7 @@ test('upgrade button shown when a newer binary is available', async ({ page }) =
   )
   await page.goto('/agents')
   await agentCard(page)
-  await expect(page.getByRole('button', { name: 'Upgrade' })).toBeVisible({ timeout: 5_000 })
+  await deployAction(page, 'Upgrade')
 })
 
 test('no upgrade button when agent commit count matches server', async ({ page }) => {
@@ -130,7 +150,7 @@ test('no upgrade button when agent commit count matches server', async ({ page }
   )
   await page.goto('/agents')
   await agentCard(page)
-  await expect(page.getByRole('button', { name: 'Upgrade' })).not.toBeVisible()
+  await expectNoDeployAction(page)
 })
 
 test('upgrade button shown when agent commit count is behind server', async ({ page }) => {
@@ -142,7 +162,7 @@ test('upgrade button shown when agent commit count is behind server', async ({ p
   )
   await page.goto('/agents')
   await agentCard(page)
-  await expect(page.getByRole('button', { name: 'Upgrade' })).toBeVisible({ timeout: 5_000 })
+  await deployAction(page, 'Upgrade')
 })
 
 test('deploy button shown for agent with no version', async ({ page }) => {
@@ -154,7 +174,7 @@ test('deploy button shown for agent with no version', async ({ page }) => {
   )
   await page.goto('/agents')
   await agentCard(page)
-  await expect(page.getByRole('button', { name: 'Deploy' })).toBeVisible({ timeout: 5_000 })
+  await deployAction(page, 'Deploy')
 })
 
 test('no deploy/upgrade button for a role without can_upgrade_agent', async ({ page }) => {
@@ -166,8 +186,7 @@ test('no deploy/upgrade button for a role without can_upgrade_agent', async ({ p
   )
   await page.goto('/agents')
   await agentCard(page)
-  await expect(page.getByRole('button', { name: 'Upgrade' })).not.toBeVisible()
-  await expect(page.getByRole('button', { name: 'Deploy' })).not.toBeVisible()
+  await expectNoDeployAction(page)
 })
 
 test('deploy dialog prefills the last-used SSH user and auto-loads the remote unit', async ({
@@ -193,7 +212,7 @@ test('deploy dialog prefills the last-used SSH user and auto-loads the remote un
   await page.goto('/agents')
   await agentCard(page)
 
-  await page.getByRole('button', { name: 'Upgrade' }).click()
+  await (await deployAction(page, 'Upgrade')).click()
   await expect(page.getByRole('heading', { name: /Upgrade Agent/ })).toBeVisible()
 
   // The version transition is the point of the dialog, so it leads the body.
@@ -237,7 +256,7 @@ test('deploy dialog defaults to a unit that loads the token from its file', asyn
   await page.goto('/agents')
   await agentCard(page)
 
-  await page.getByRole('button', { name: 'Deploy' }).click()
+  await (await deployAction(page, 'Deploy')).click()
 
   // A first deploy opens the unit editor, since there is no unit to keep.
   const unit = page.locator('textarea.service-textarea')

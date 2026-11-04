@@ -33,10 +33,12 @@ import { extractError } from '../utils/error'
 import { logger } from '../utils/logger'
 import { normalizeBackupStatus } from '../utils/backupStatus'
 import { domainParams } from '../utils/agent'
-import { Plus, SlidersHorizontal, Server } from '@lucide/vue'
+import { ChevronRight, Plus, SlidersHorizontal, Server } from '@lucide/vue'
 import AgentChannelKey from '../components/AgentChannelKey.vue'
+import BaseSegmented, { type SegmentedOption } from '../components/BaseSegmented.vue'
 import BaseSpinner from '../components/BaseSpinner.vue'
 import EmptyState from '../components/EmptyState.vue'
+import OverflowMenu from '../components/OverflowMenu.vue'
 import SortControls from '../components/SortControls.vue'
 import ToggleSwitch from '../components/ToggleSwitch.vue'
 import MergeAgentDialog from '../components/MergeAgentDialog.vue'
@@ -66,12 +68,54 @@ const SORT_OPTIONS: readonly { field: SortField; label: string }[] = [
   { field: 'last_seen', label: 'Last seen' },
   { field: 'version', label: 'Version' },
 ]
-type FilterStatus = 'all' | 'online' | 'offline'
+/**
+ * The counted pills above the list. `attention` is every agent with an issue
+ * chip (failed, overdue, nothing scheduled); `online` and `offline` are the
+ * connection alone, so a dashboard link such as `?status=offline` still lists
+ * every unreachable host, whatever its backups say.
+ */
+type FilterStatus = 'all' | 'attention' | 'online' | 'offline'
 type CoverageFilter = 'all' | 'protected' | 'unassigned' | 'never-succeeded' | 'disabled-only'
+/** What the list is grouped by: how each agent is doing, or what it runs. */
+type GroupMode = 'status' | 'version'
 
 function isFilterStatus(value: string): value is FilterStatus {
-  return value === 'all' || value === 'online' || value === 'offline'
+  return value === 'all' || value === 'attention' || value === 'online' || value === 'offline'
 }
+
+function isGroupMode(value: string): value is GroupMode {
+  return value === 'status' || value === 'version'
+}
+
+const GROUP_OPTIONS: readonly SegmentedOption<GroupMode>[] = [
+  { value: 'status', label: 'Status' },
+  { value: 'version', label: 'Version' },
+]
+
+/** The colour of a row's or a pill's status dot; `muted` is the plain grey dot. */
+type DotTone = 'danger' | 'info' | 'warning' | 'success' | 'muted'
+
+const DOT_CLASS: Record<DotTone, string | null> = {
+  danger: 'status-dot--danger',
+  info: 'status-dot--info',
+  warning: 'status-dot--warning',
+  success: 'status-dot--success',
+  muted: null,
+}
+
+const STATUS_PILLS: readonly { value: FilterStatus; label: string; dot: DotTone | null }[] = [
+  { value: 'all', label: 'All', dot: null },
+  { value: 'attention', label: 'Needs attention', dot: 'warning' },
+  { value: 'online', label: 'Online', dot: 'success' },
+  { value: 'offline', label: 'Offline', dot: 'muted' },
+]
+
+/**
+ * How many offline agents the Offline group shows before "Show N more". An
+ * offline host with nothing due is the least interesting row on the page, and
+ * a fleet with a lot of them would otherwise push everything else down.
+ */
+const OFFLINE_PREVIEW = 5
 
 function isCoverageFilter(value: string): value is CoverageFilter {
   return (
@@ -147,14 +191,29 @@ const showMobileFilters = ref(false)
 const allAgentTags = ref<TagRow[]>([])
 const agentTagsMap = ref<Record<number, { name: string; color: string }[]>>({})
 
-const filteredAgents = computed(() => {
-  let list = [...agents.value]
+const groupMode = usePersistedRef<GroupMode>('assimilate-agents-group', 'status', isGroupMode)
+const showAllOffline = ref(false)
 
-  if (filterStatus.value === 'online') {
-    list = list.filter((m) => m.is_connected)
-  } else if (filterStatus.value === 'offline') {
-    list = list.filter((m) => !m.is_connected)
+function matchesStatus(agent: AgentRow, status: FilterStatus): boolean {
+  switch (status) {
+    case 'all':
+      return true
+    case 'attention':
+      return needsAttention(agent)
+    case 'online':
+      return isOnline(agent)
+    case 'offline':
+      return !isOnline(agent)
   }
+}
+
+/**
+ * Every filter but the status one. The pills count this list, so each one
+ * says how many agents it would leave given the search, coverage and tags
+ * already chosen.
+ */
+const unstatusedAgents = computed(() => {
+  let list = [...agents.value]
 
   if (filterCoverage.value !== 'all') {
     const hostIds = coverageHostIds.value[filterCoverage.value]
@@ -180,6 +239,19 @@ const filteredAgents = computed(() => {
       (agentTagsMap.value[m.id] ?? []).some((t) => selectedNames.has(t.name)),
     )
   }
+
+  return list
+})
+
+const statusPills = computed(() =>
+  STATUS_PILLS.map((pill) => ({
+    ...pill,
+    count: unstatusedAgents.value.filter((agent) => matchesStatus(agent, pill.value)).length,
+  })),
+)
+
+const filteredAgents = computed(() => {
+  const list = unstatusedAgents.value.filter((agent) => matchesStatus(agent, filterStatus.value))
 
   list.sort((a, b) => {
     let cmp = 0
@@ -287,13 +359,26 @@ function lastBackupAt(agent: AgentRow): string | null {
 interface FleetVersionCount {
   version: string
   count: number
-  current: boolean
-  outdated: boolean
+  /** `badge--success` for the version the server ships, `--warning` behind it. */
+  badgeClass: string
+  /** Says what the colour means, for a pointer and for assistive technology. */
+  title: string
 }
 
+/**
+ * The tiles above the list. Counted over every listed agent rather than the
+ * filtered list: they summarise the fleet, and a filter narrowing the rows
+ * below should not change what the fleet is.
+ */
 const fleetSummary = computed(() => {
-  const total = agents.value.length
-  const online = agents.value.filter((a) => a.is_connected).length
+  const all = agents.value
+  const total = all.length
+  const online = all.filter(isOnline).length
+  const backingUp = all.filter((a) => hostActiveBackups(a).length > 0).length
+  const attention = all.filter(needsAttention).length
+  const failing = all.filter((a) => issueKinds(a).includes('failed')).length
+  const overdue = all.filter((a) => issueKinds(a).includes('overdue')).length
+  const unprotected = all.filter((a) => issueKinds(a).includes('unprotected')).length
   const totalSchedules = fleetScheduleCount.value
 
   // Keyed on the raw `agent_version`, `null` included, so "never reported one"
@@ -301,75 +386,48 @@ const fleetSummary = computed(() => {
   // reports the string "unknown" - and so the comparisons below never test a
   // wide string against a literal.
   const versionCounts = new Map<string | null, number>()
-  for (const a of agents.value) {
+  for (const a of all) {
     versionCounts.set(a.agent_version, (versionCounts.get(a.agent_version) ?? 0) + 1)
   }
   const available = availableAgentVersion.value
   const versions: FleetVersionCount[] = [...versionCounts.entries()]
-    .map(([version, count]) => ({
-      version: version ?? 'unknown',
-      count,
-      current: version !== null && version === available,
-      outdated: version !== null && available !== null && version !== available,
-    }))
+    .map(([version, count]) => {
+      const current = version !== null && version === available
+      // Behind the binary the server has. Silent when the server has none:
+      // then there is nothing to be behind of.
+      const outdated = version !== null && available !== null && version !== available
+      return {
+        version: version ?? 'unknown',
+        count,
+        badgeClass: current ? 'badge--success' : outdated ? 'badge--warning' : 'badge--neutral',
+        title: current
+          ? 'The version this server ships'
+          : outdated
+            ? 'Behind the version this server ships'
+            : version === null
+              ? 'Never reported a version'
+              : 'No server binary to compare against',
+      }
+    })
     .sort((a, b) => b.count - a.count)
 
-  return { total, online, totalSchedules, versions }
-})
+  const attentionParts = [`${failing} failing`, `${overdue} overdue`]
+  if (unprotected > 0) attentionParts.push(`${unprotected} unprotected`)
 
-/**
- * The state a host contributes to the fleet track, worst first: a host that
- * is unreachable cannot be assessed, one with no schedule is not being backed
- * up at all, and only then do the outcomes of its runs decide.
- */
-type FleetState = 'offline' | 'unprotected' | 'failing' | 'overdue' | 'clean'
-
-const FLEET_STATES: readonly { key: FleetState; label: string }[] = [
-  { key: 'clean', label: 'clean' },
-  { key: 'overdue', label: 'overdue' },
-  { key: 'failing', label: 'failing' },
-  { key: 'unprotected', label: 'unprotected' },
-  { key: 'offline', label: 'offline' },
-]
-
-function fleetStateOf(agent: AgentRow): FleetState {
-  if (!agent.is_connected) return 'offline'
-  if (isUnprotected(agent)) return 'unprotected'
-  const health = agentHealthStatus(agent)
-  if (!health) return 'clean'
-  if (health.failed > 0) return 'failing'
-  if (health.overdue > 0) return 'overdue'
-  // Scheduled, reachable, nothing failing - but nothing has ever landed, so
-  // there is no restore point yet either.
-  if (!health.mostRecentBackupAt) return 'unprotected'
-  return 'clean'
-}
-
-interface FleetHealthSegment {
-  key: FleetState
-  label: string
-  count: number
-}
-
-/**
- * The whole fleet split by state. Counted over every listed agent rather than
- * the filtered list: the band summarises the fleet, and a filter narrowing the
- * grid below it should not change what the fleet is.
- */
-const fleetHealth = computed<FleetHealthSegment[]>(() => {
-  const counts = new Map<FleetState, number>()
-  for (const agent of agents.value) {
-    const state = fleetStateOf(agent)
-    counts.set(state, (counts.get(state) ?? 0) + 1)
+  return {
+    total,
+    online,
+    backingUp,
+    attention,
+    attentionSub: attentionParts.join(' · '),
+    totalSchedules,
+    versions,
   }
-  return FLEET_STATES.map(({ key, label }) => ({ key, label, count: counts.get(key) ?? 0 })).filter(
-    (segment) => segment.count > 0,
-  )
 })
 
-const fleetHealthLabel = computed(() =>
-  fleetHealth.value.map((segment) => `${segment.count} ${segment.label}`).join(', '),
-)
+function plural(count: number, noun: string): string {
+  return `${count} ${noun}${count === 1 ? '' : 's'}`
+}
 
 /** A host offline for longer than this reads as gone, not as briefly away. */
 const STALE_LAST_SEEN_MS = 24 * 60 * 60 * 1000
@@ -397,23 +455,30 @@ function lastSeenClass(agent: AgentRow): string | null {
   return Date.now() - ts > STALE_LAST_SEEN_MS ? 'stat-value--danger' : 'stat-value--warning'
 }
 
-interface AgentVersionGroup {
+/** One panel of rows: a status (Needs attention, Online, Offline) or a version. */
+interface AgentListGroup {
   key: string
-  /** The version itself, or "Unknown" for an agent that never reported one. */
+  /** The status, the version itself, or "Unknown" for one never reported. */
   title: string
-  /** What the group is relative to the binary the server has, when it knows. */
-  label: string | null
-  badgeClass: string
+  /** Version titles are machine values and read in the mono face. */
+  mono: boolean
+  /** The status dot before a status group's title; none on a version group. */
+  dot: DotTone | null
+  /** What a version group is relative to the binary the server has, when it knows. */
+  badge: { label: string; className: string } | null
+  /** A short note at the header's far end. */
+  aside: string | null
   agents: AgentRow[]
+  /** Whether the group shows only its first `OFFLINE_PREVIEW` rows until asked. */
+  collapsible: boolean
 }
 
 /**
- * The grid, bucketed by the agent version each host reports - the shape
- * SchedulesView uses for its time buckets. The version is the group, so it is
- * no longer a per-card stat: a fleet running two builds reads as two headings
- * rather than as eight values to compare by eye.
+ * The list bucketed by the agent version each host reports - the shape
+ * SchedulesView uses for its time buckets. A fleet running two builds reads as
+ * two headings rather than as eight values to compare by eye.
  */
-const agentGroups = computed<AgentVersionGroup[]>(() => {
+const versionGroups = computed<AgentListGroup[]>(() => {
   const byVersion = new Map<string | null, AgentRow[]>()
   for (const agent of filteredAgents.value) {
     const list = byVersion.get(agent.agent_version) ?? []
@@ -433,32 +498,114 @@ const agentGroups = computed<AgentVersionGroup[]>(() => {
     return b.localeCompare(a, undefined, { numeric: true })
   })
 
-  const groups: AgentVersionGroup[] = known.map((version) => {
+  const groups: AgentListGroup[] = known.map((version) => {
     const isCurrent = version === available
     return {
-      key: version,
+      key: `version:${version}`,
       title: version,
+      mono: true,
+      dot: null,
       // Without a server binary to compare against, "behind" is not a claim
       // the UI can make - so it says nothing rather than guessing.
-      label: available === null ? null : isCurrent ? 'Current' : 'Behind',
-      badgeClass: isCurrent ? 'badge--success' : 'badge--warning',
+      badge:
+        available === null
+          ? null
+          : isCurrent
+            ? { label: 'Current', className: 'badge--success' }
+            : { label: 'Behind', className: 'badge--warning' },
+      aside: null,
       agents: byVersion.get(version) ?? [],
+      collapsible: false,
     }
   })
 
   const unknown = byVersion.get(null)
   if (unknown) {
     groups.push({
-      key: 'unknown',
+      key: 'version:unknown',
       title: 'Unknown',
-      label: 'Never reported',
-      badgeClass: 'badge--neutral',
+      mono: false,
+      dot: null,
+      badge: { label: 'Never reported', className: 'badge--neutral' },
+      aside: null,
       agents: unknown,
+      collapsible: false,
     })
   }
 
   return groups
 })
+
+/**
+ * The list bucketed by how each agent is doing: what needs looking at first,
+ * then the healthy hosts that are up, then the ones that are down with nothing
+ * due. Within a group the toolbar's sort holds, except that a failing host
+ * leads the attention group - a failure is worse than a late or missing
+ * schedule, whatever its name.
+ */
+const statusGroups = computed<AgentListGroup[]>(() => {
+  const attention: AgentRow[] = []
+  const online: AgentRow[] = []
+  const offline: AgentRow[] = []
+  for (const agent of filteredAgents.value) {
+    if (needsAttention(agent)) attention.push(agent)
+    else if (isOnline(agent)) online.push(agent)
+    else offline.push(agent)
+  }
+  // Array.prototype.sort is stable, so the toolbar's order survives within
+  // each rank.
+  attention.sort((a, b) => attentionRank(a) - attentionRank(b))
+
+  const backingUp = online.filter((agent) => hostActiveBackups(agent).length > 0).length
+  const groups: AgentListGroup[] = [
+    {
+      key: 'status:attention',
+      title: 'Needs attention',
+      mono: false,
+      dot: 'warning',
+      badge: null,
+      aside: null,
+      agents: attention,
+      collapsible: false,
+    },
+    {
+      key: 'status:online',
+      title: 'Online',
+      mono: false,
+      dot: 'success',
+      badge: null,
+      aside: backingUp > 0 ? `${backingUp} backing up now` : null,
+      agents: online,
+      collapsible: false,
+    },
+    {
+      key: 'status:offline',
+      title: 'Offline',
+      mono: false,
+      dot: 'muted',
+      badge: null,
+      aside: 'Nothing due',
+      agents: offline,
+      collapsible: true,
+    },
+  ]
+  return groups.filter((group) => group.agents.length > 0)
+})
+
+const agentGroups = computed<AgentListGroup[]>(() =>
+  groupMode.value === 'version' ? versionGroups.value : statusGroups.value,
+)
+
+/** The rows a group shows: all of them, or the first few until expanded. */
+function visibleAgents(group: AgentListGroup): AgentRow[] {
+  if (!group.collapsible || showAllOffline.value) return group.agents
+  return group.agents.slice(0, OFFLINE_PREVIEW)
+}
+
+/** The rows a collapsed group is holding back. */
+function hiddenCount(group: AgentListGroup): number {
+  return group.collapsible ? Math.max(0, group.agents.length - OFFLINE_PREVIEW) : 0
+}
 
 /** Where each issue chip lands on the agent's detail page. */
 const ISSUE_QUERY: Record<'failed' | 'overdue' | 'unprotected', Record<string, string>> = {
@@ -500,6 +647,48 @@ function agentIssues(agent: AgentRow): EntityIssue[] {
     })
   }
   return issues
+}
+
+type IssueKind = 'failed' | 'overdue' | 'unprotected'
+
+/**
+ * The issues an agent's chips report, by kind - the same three checks
+ * `agentIssues` makes, without the chip wiring, for the grouping, the pills
+ * and the tiles to count on.
+ */
+function issueKinds(agent: AgentRow): IssueKind[] {
+  const kinds: IssueKind[] = []
+  if (isUnprotected(agent)) kinds.push('unprotected')
+  const h = agentHealthStatus(agent)
+  if (h && h.failed > 0) kinds.push('failed')
+  if (h && h.overdue > 0) kinds.push('overdue')
+  return kinds
+}
+
+/** Whether the agent carries an issue chip, which is what "needs attention" means. */
+function needsAttention(agent: AgentRow): boolean {
+  return issueKinds(agent).length > 0
+}
+
+/** Failing first, then nothing scheduled, then only late. */
+function attentionRank(agent: AgentRow): number {
+  const kinds = issueKinds(agent)
+  if (kinds.includes('failed')) return 0
+  if (kinds.includes('unprotected')) return 1
+  return 2
+}
+
+/**
+ * The row's dot, worst first: a failure, then a backup in flight (which says
+ * more right now than an older lateness), then any other issue, then whether
+ * the agent is reachable at all.
+ */
+function rowTone(agent: AgentRow): DotTone {
+  const kinds = issueKinds(agent)
+  if (kinds.includes('failed')) return 'danger'
+  if (hostActiveBackups(agent).length > 0) return 'info'
+  if (kinds.length > 0) return 'warning'
+  return isOnline(agent) ? 'success' : 'muted'
 }
 
 function navigateToAgentIssue(agent: AgentRow, kind: 'failed' | 'overdue' | 'unprotected'): void {
@@ -697,8 +886,8 @@ function closeAddDialog(): void {
   newToken.value = null
 }
 
-function navigateToAgent(agent: AgentRow): void {
-  router.push({ path: `/agents/${agent.hostname}`, query: domainParams(agent.domain) })
+function agentLink(agent: AgentRow): { path: string; query: Record<string, string> } {
+  return { path: `/agents/${agent.hostname}`, query: domainParams(agent.domain) }
 }
 
 async function adoptAgent(agent: AgentRow): Promise<void> {
@@ -816,6 +1005,74 @@ function deployButtonLabel(agent: AgentRow): string | null {
   return agent.agent_version === availableAgentVersion.value ? null : 'Upgrade'
 }
 
+type RowActionKey = 'unhide' | 'merge' | 'adopt' | 'deploy'
+
+interface RowAction {
+  key: RowActionKey
+  label: string
+  run: () => void
+}
+
+/**
+ * What a row's overflow menu offers. A row is a link to the agent, so these
+ * are only the things that cannot wait for its detail page: taking an
+ * imported placeholder on, bringing a hidden one back, and putting the agent
+ * binary on a host that lacks or lags it.
+ */
+function rowActions(agent: AgentRow): RowAction[] {
+  if (agent.is_hidden) {
+    return [{ key: 'unhide', label: 'Unhide', run: () => void unhideAgent(agent) }]
+  }
+  const actions: RowAction[] = []
+  if (isImported(agent)) {
+    actions.push(
+      { key: 'merge', label: 'Merge into...', run: () => openMergeDialog(agent) },
+      { key: 'adopt', label: 'Adopt', run: () => void adoptAgent(agent) },
+    )
+  }
+  const deployLabel = deployButtonLabel(agent)
+  if (deployLabel && !isImported(agent) && authStore.canDeployAgent) {
+    actions.push({ key: 'deploy', label: deployLabel, run: () => openDeployDialog(agent) })
+  }
+  return actions
+}
+
+const rowActionsById = computed(() => {
+  const map = new Map<number, RowAction[]>()
+  for (const agent of filteredAgents.value) map.set(agent.id, rowActions(agent))
+  return map
+})
+
+function actionsFor(agent: AgentRow): RowAction[] {
+  return rowActionsById.value.get(agent.id) ?? []
+}
+
+/** A group whose rows open menus has to let them spill past its edge. */
+function groupHasMenus(group: AgentListGroup): boolean {
+  return visibleAgents(group).some((agent) => actionsFor(agent).length > 0)
+}
+
+/**
+ * Keeps a click on a control inside a row - an issue chip, the overflow menu -
+ * from also following the row's link. Runs in the capture phase, before the
+ * control's own handler stops the event, and only cancels the link's default:
+ * the control still does what it was clicked for.
+ */
+function guardRowControls(event: MouseEvent): void {
+  if (event.target instanceof Element && event.target.closest('button')) {
+    event.preventDefault()
+  }
+}
+
+/** The second line under a row's name on a phone, where the columns are gone. */
+function narrowSummary(agent: AgentRow): string {
+  const parts: string[] = []
+  if (agent.display_name) parts.push(agent.display_name)
+  parts.push(plural(scheduleCount(agent), 'schedule'))
+  if (agent.agent_version) parts.push(agent.agent_version)
+  return parts.join(' · ')
+}
+
 watch(wsStatus, (newStatus, oldStatus) => {
   if (newStatus === 'connected' && oldStatus !== 'connected') {
     loadAgents().catch(logger.error)
@@ -846,7 +1103,7 @@ useQueryOverride(() => route.query.coverage, isCoverageFilter, filterCoverage)
     </div>
 
     <div>
-      <div class="toolbar">
+      <div class="toolbar agents-toolbar">
         <input
           v-model="filterText"
           class="input search-input"
@@ -856,25 +1113,40 @@ useQueryOverride(() => route.query.coverage, isCoverageFilter, filterCoverage)
           v-if="isMobile"
           class="filter-toggle"
           :class="{
-            active: filterStatus !== 'all' || filterCoverage !== 'all' || filterTagIds.length > 0,
+            active: filterCoverage !== 'all' || filterTagIds.length > 0,
           }"
+          aria-label="Filters"
           @click="showMobileFilters = !showMobileFilters"
         >
           <SlidersHorizontal :size="14" />
           <span
-            v-if="filterStatus !== 'all' || filterCoverage !== 'all' || filterTagIds.length > 0"
+            v-if="filterCoverage !== 'all' || filterTagIds.length > 0"
             class="filter-badge"
           ></span>
         </button>
-        <template v-if="!isMobile || showMobileFilters">
-          <select
-            v-model="filterStatus"
-            class="input select-input select-input--sm"
+        <div
+          class="filter-pills agents-pills"
+          role="group"
+          aria-label="Status"
+        >
+          <button
+            v-for="pill in statusPills"
+            :key="pill.value"
+            type="button"
+            class="filter-pill"
+            :class="{ active: filterStatus === pill.value }"
+            :aria-pressed="filterStatus === pill.value"
+            @click="filterStatus = pill.value"
           >
-            <option value="all">All</option>
-            <option value="online">Online</option>
-            <option value="offline">Offline</option>
-          </select>
+            <span
+              v-if="pill.dot"
+              class="status-dot"
+              :class="DOT_CLASS[pill.dot]"
+            ></span>
+            {{ pill.label }} · {{ pill.count }}
+          </button>
+        </div>
+        <template v-if="!isMobile || showMobileFilters">
           <select
             v-model="filterCoverage"
             class="input select-input select-input--sm"
@@ -886,13 +1158,6 @@ useQueryOverride(() => route.query.coverage, isCoverageFilter, filterCoverage)
             <option value="never-succeeded">Never succeeded</option>
             <option value="disabled-only">Disabled schedules only</option>
           </select>
-          <div
-            v-if="isAdmin"
-            class="hidden-toggle"
-          >
-            <ToggleSwitch v-model="showHidden" />
-            <span class="hidden-toggle-label">Show hidden</span>
-          </div>
           <div
             v-if="allAgentTags.length > 0"
             class="tag-filter-wrapper"
@@ -927,6 +1192,21 @@ useQueryOverride(() => route.query.coverage, isCoverageFilter, filterCoverage)
               </label>
             </div>
           </div>
+          <div
+            v-if="isAdmin"
+            class="hidden-toggle"
+          >
+            <ToggleSwitch v-model="showHidden" />
+            <span class="hidden-toggle-label">Show hidden</span>
+          </div>
+          <div class="agents-group-control">
+            <span class="sort-label">Group:</span>
+            <BaseSegmented
+              v-model="groupMode"
+              :options="GROUP_OPTIONS"
+              label="Group agents by"
+            />
+          </div>
           <SortControls
             :field="sortField"
             :direction="sortDir"
@@ -938,56 +1218,45 @@ useQueryOverride(() => route.query.coverage, isCoverageFilter, filterCoverage)
 
       <div
         v-if="!loading && agents.length > 0"
-        class="fleet-summary"
+        class="fleet-strip"
       >
-        <div class="fleet-summary-row">
-          <span class="fleet-summary-title">Fleet</span>
-          <span class="fleet-summary-counts">
-            {{ fleetSummary.total }} agent{{ fleetSummary.total === 1 ? '' : 's' }} ·
-            {{ fleetSummary.online }} online · {{ fleetSummary.totalSchedules }} schedule{{
-              fleetSummary.totalSchedules === 1 ? '' : 's'
-            }}
-          </span>
+        <div class="fleet-cell">
+          <span class="stat-label">Agents</span>
+          <span class="stat-value stat-value--lg">{{ fleetSummary.total }}</span>
+          <span class="stat-sub">{{ plural(fleetSummary.totalSchedules, 'schedule') }}</span>
         </div>
-        <div
-          class="fleet-track"
-          role="img"
-          :aria-label="`Fleet health: ${fleetHealthLabel}`"
-        >
+        <div class="fleet-cell">
+          <span class="stat-label">Online</span>
+          <span class="stat-value stat-value--lg stat-value--success">{{
+            fleetSummary.online
+          }}</span>
           <span
-            v-for="segment in fleetHealth"
-            :key="segment.key"
-            class="fleet-seg"
-            :class="`fleet-tone--${segment.key}`"
-            :style="{ flexGrow: segment.count }"
-            :title="`${segment.count} ${segment.label}`"
-          ></span>
-        </div>
-        <div class="fleet-key">
-          <span
-            v-for="segment in fleetHealth"
-            :key="segment.key"
-            class="fleet-key-item"
+            v-if="fleetSummary.backingUp > 0"
+            class="stat-sub"
+            >{{ fleetSummary.backingUp }} backing up now</span
           >
+        </div>
+        <div class="fleet-cell">
+          <span class="stat-label">Needs attention</span>
+          <span
+            class="stat-value stat-value--lg"
+            :class="{ 'stat-value--warning': fleetSummary.attention > 0 }"
+            >{{ fleetSummary.attention }}</span
+          >
+          <span class="stat-sub">{{ fleetSummary.attentionSub }}</span>
+        </div>
+        <div class="fleet-cell">
+          <span class="stat-label">Versions</span>
+          <div class="fleet-versions">
             <span
-              class="fleet-key-dot"
-              :class="`fleet-tone--${segment.key}`"
-            ></span>
-            {{ segment.count }} {{ segment.label }}
-          </span>
-        </div>
-        <div class="fleet-version-row">
-          <span
-            v-for="v in fleetSummary.versions"
-            :key="v.version"
-            class="fleet-version-chip"
-            :class="{
-              'fleet-version-chip-current': v.current,
-              'fleet-version-chip-outdated': v.outdated,
-            }"
-          >
-            {{ v.version }}{{ v.current ? ' (current)' : '' }}: {{ v.count }}
-          </span>
+              v-for="v in fleetSummary.versions"
+              :key="v.version"
+              class="badge mono"
+              :class="v.badgeClass"
+              :title="v.title"
+              >{{ v.version }} · {{ v.count }}</span
+            >
+          </div>
         </div>
       </div>
 
@@ -1009,172 +1278,190 @@ useQueryOverride(() => route.query.coverage, isCoverageFilter, filterCoverage)
         action="New agent"
         @action="showAddDialog = true"
       />
-      <div
+      <EmptyState
         v-else-if="filteredAgents.length === 0"
-        class="state-msg"
-      >
-        No agents match the current filter.
-      </div>
+        :icon="Server"
+        title="No agents match"
+        description="No agents match the current filter."
+      />
 
-      <template v-else>
+      <div
+        v-else
+        class="list-stack agents-list"
+      >
         <section
           v-for="group in agentGroups"
           :key="group.key"
           class="list-group"
+          :class="{ 'list-group--menus': groupHasMenus(group) }"
         >
           <div class="list-group-header">
-            <h2 class="list-group-title mono">{{ group.title }}</h2>
             <span
-              v-if="group.label"
+              v-if="group.dot"
+              class="status-dot"
+              :class="DOT_CLASS[group.dot]"
+            ></span>
+            <h2
+              class="list-group-title"
+              :class="{ mono: group.mono }"
+            >
+              {{ group.title }}
+            </h2>
+            <span
+              v-if="group.badge"
               class="badge"
-              :class="group.badgeClass"
-              >{{ group.label }}</span
+              :class="group.badge.className"
+              >{{ group.badge.label }}</span
             >
-            <span class="list-group-count"
-              >{{ group.agents.length }} agent{{ group.agents.length === 1 ? '' : 's' }}</span
+            <span class="list-group-count">{{ plural(group.agents.length, 'agent') }}</span>
+            <span
+              v-if="group.aside"
+              class="list-group-aside muted"
+              >{{ group.aside }}</span
             >
-            <span class="list-group-rule"></span>
           </div>
-          <div class="card-grid card-grid--compact">
-            <div
-              v-for="agent in group.agents"
-              :key="agent.id"
-              class="entity-card entity-card--compact"
-              :class="{
-                'entity-card--hidden': agent.is_hidden,
-                'entity-card--notable': !isOnline(agent),
-              }"
-              @click="navigateToAgent(agent)"
-            >
-              <div class="cc-head">
-                <div class="card-info">
-                  <span class="card-name"
-                    >{{ agent.hostname
-                    }}<span
-                      v-if="agent.domain"
-                      class="muted"
-                    >
-                      ({{ agent.domain }})</span
-                    ></span
-                  >
-                  <span
-                    v-if="agent.display_name"
-                    class="card-display"
-                    >{{ agent.display_name }}</span
-                  >
-                </div>
-                <div class="cc-head-end">
-                  <span
-                    v-if="isOnline(agent)"
-                    class="badge badge--success"
-                  >
-                    <span class="badge-dot"></span>
-                    Online
-                  </span>
-                  <span
-                    v-if="agent.is_hidden"
-                    class="badge badge--neutral"
-                  >
-                    Hidden
-                  </span>
-                  <span
-                    v-if="isImported(agent)"
-                    class="badge badge--accent"
-                  >
-                    Imported
-                  </span>
-                </div>
-              </div>
-              <div class="card-meta">
-                <EntityStatusBadges
-                  :notable="!isOnline(agent)"
-                  notable-label="Offline"
-                  :running="hostActiveBackups(agent).length > 0"
-                  :running-label="hostRunningLabel(agent)"
-                  :issues="agentIssues(agent)"
-                />
-                <div
-                  v-if="agentTags(agent).length > 0"
-                  class="card-tags"
-                >
-                  <span
-                    v-for="tag in agentTags(agent)"
-                    :key="tag.name"
-                    class="tag-pill"
-                    :style="{
-                      background: tag.color + '22',
-                      color: tag.color,
-                      borderColor: tag.color + '44',
-                    }"
-                  >
-                    {{ tag.name }}
-                  </span>
-                </div>
-                <div
-                  class="cc-foot-end card-actions"
-                  @click.stop
-                >
-                  <template v-if="agent.is_hidden">
-                    <button
-                      class="btn btn-sm btn-ghost"
-                      @click="unhideAgent(agent)"
-                    >
-                      Unhide
-                    </button>
-                  </template>
-                  <template v-else>
-                    <button
-                      v-if="isImported(agent)"
-                      class="btn btn-sm btn-ghost"
-                      @click="openMergeDialog(agent)"
-                    >
-                      Merge into...
-                    </button>
-                    <button
-                      v-if="isImported(agent)"
-                      class="btn btn-sm btn-ghost"
-                      @click="adoptAgent(agent)"
-                    >
-                      Adopt
-                    </button>
-                    <button
-                      v-if="
-                        deployButtonLabel(agent) && !isImported(agent) && authStore.canDeployAgent
-                      "
-                      class="btn btn-sm btn-ghost"
-                      @click="openDeployDialog(agent)"
-                    >
-                      {{ deployButtonLabel(agent) }}
-                    </button>
-                  </template>
-                </div>
-              </div>
-              <div class="card-stats">
-                <div class="stat">
-                  <span class="stat-value">{{ scheduleCount(agent) }}</span>
-                  <span class="stat-label">Schedules</span>
-                </div>
-                <div class="stat">
-                  <span
-                    class="stat-value"
-                    :class="lastBackupClass(agent)"
-                    >{{ formatLastSeen(lastBackupAt(agent)) }}</span
-                  >
-                  <span class="stat-label">Last backup</span>
-                </div>
-                <div class="stat">
-                  <span
-                    class="stat-value"
-                    :class="lastSeenClass(agent)"
-                    >{{ formatLastSeen(agent.last_seen_at) }}</span
-                  >
-                  <span class="stat-label">Last seen</span>
-                </div>
-              </div>
-            </div>
+          <div
+            class="list-cols"
+            aria-hidden="true"
+          >
+            <span>Agent</span>
+            <span>Status</span>
+            <span>Schedules</span>
+            <span>Last backup</span>
+            <span>Last seen</span>
+            <span>Version</span>
+            <span></span>
           </div>
+          <RouterLink
+            v-for="agent in visibleAgents(group)"
+            :key="agent.id"
+            :to="agentLink(agent)"
+            class="list-row"
+            :class="{ 'agents-row--dim': agent.is_hidden || !isOnline(agent) }"
+            :data-hostname="agent.hostname"
+            @click.capture="guardRowControls"
+          >
+            <span class="list-row-main">
+              <span
+                class="status-dot"
+                :class="DOT_CLASS[rowTone(agent)]"
+              ></span>
+              <span class="list-row-text">
+                <span class="list-row-name"
+                  >{{ agent.hostname
+                  }}<span
+                    v-if="agent.domain"
+                    class="muted"
+                  >
+                    ({{ agent.domain }})</span
+                  ></span
+                >
+                <span
+                  v-if="agent.display_name"
+                  class="list-row-sub list-wide-only"
+                  >{{ agent.display_name }}</span
+                >
+                <span class="list-row-sub list-narrow-only">{{ narrowSummary(agent) }}</span>
+              </span>
+              <span
+                class="list-narrow-only agents-row-when list-row-value"
+                :class="lastBackupClass(agent)"
+                >{{ formatLastSeen(lastBackupAt(agent)) }}</span
+              >
+            </span>
+            <span class="list-row-chips">
+              <EntityStatusBadges
+                :notable="!isOnline(agent)"
+                notable-label="Offline"
+                :running="hostActiveBackups(agent).length > 0"
+                :running-label="hostRunningLabel(agent)"
+                :issues="agentIssues(agent)"
+              />
+              <span
+                v-if="agent.is_hidden"
+                class="badge badge--neutral"
+                >Hidden</span
+              >
+              <span
+                v-if="isImported(agent)"
+                class="badge badge--accent"
+                >Imported</span
+              >
+              <span
+                v-for="tag in agentTags(agent)"
+                :key="tag.name"
+                class="tag-pill"
+                :style="{
+                  background: tag.color + '22',
+                  color: tag.color,
+                  borderColor: tag.color + '44',
+                }"
+              >
+                {{ tag.name }}
+              </span>
+            </span>
+            <span
+              class="list-row-value list-wide-only"
+              data-col="schedules"
+              >{{ scheduleCount(agent) }}</span
+            >
+            <span
+              class="list-row-value list-wide-only"
+              :class="lastBackupClass(agent)"
+              data-col="last-backup"
+              >{{ formatLastSeen(lastBackupAt(agent)) }}</span
+            >
+            <span
+              class="list-row-value list-wide-only"
+              :class="lastSeenClass(agent)"
+              data-col="last-seen"
+              >{{ formatLastSeen(agent.last_seen_at) }}</span
+            >
+            <span
+              class="list-row-value list-wide-only mono"
+              data-col="version"
+              >{{ agent.agent_version ?? '-' }}</span
+            >
+            <span
+              v-if="actionsFor(agent).length > 0"
+              class="agents-row-actions"
+            >
+              <OverflowMenu
+                v-slot="{ run }"
+                :label="`More actions for ${agent.hostname}`"
+              >
+                <button
+                  v-for="action in actionsFor(agent)"
+                  :key="action.key"
+                  class="overflow-menu-item"
+                  role="menuitem"
+                  type="button"
+                  @click="run(action.run)"
+                >
+                  {{ action.label }}
+                </button>
+              </OverflowMenu>
+            </span>
+            <ChevronRight
+              v-else
+              :size="16"
+              class="list-row-chevron"
+            />
+          </RouterLink>
+          <button
+            v-if="hiddenCount(group) > 0"
+            type="button"
+            class="list-more"
+            @click="showAllOffline = !showAllOffline"
+          >
+            {{
+              showAllOffline
+                ? 'Show fewer'
+                : `Show ${hiddenCount(group)} more offline agent${hiddenCount(group) === 1 ? '' : 's'}`
+            }}
+          </button>
         </section>
-      </template>
+      </div>
     </div>
 
     <!-- Add Agent Dialog. One dialog, two states: collect the hostname,
@@ -1346,21 +1633,17 @@ useQueryOverride(() => route.query.coverage, isCoverageFilter, filterCoverage)
   min-width: 0;
 }
 
-.card-display {
-  font-size: var(--fs-sm);
-  color: var(--text-muted);
-}
-
-/* Tag pills */
-.card-tags {
-  display: flex;
+/* The status pills, the coverage select, the toggles and the sort share one
+   strip, which wraps rather than pushing the page sideways. */
+.agents-toolbar {
   flex-wrap: wrap;
-  gap: var(--space-2);
 }
 
-/* Tag filter dropdown */
-
-/* Overlay & Dialog */
+.agents-group-control {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
 
 .hidden-toggle {
   display: flex;
@@ -1372,132 +1655,91 @@ useQueryOverride(() => route.query.coverage, isCoverageFilter, filterCoverage)
   user-select: none;
 }
 
-.hidden-toggle input[type='checkbox'] {
-  width: 14px;
-  height: 14px;
-  margin: 0;
-  cursor: pointer;
-}
-
 .hidden-toggle-label {
   white-space: nowrap;
 }
 
-.fleet-summary {
-  background: var(--bg-card);
+/* The fleet in four figures, as one ruled strip rather than four cards. */
+.fleet-strip {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  padding: var(--space-5) var(--space-6) var(--space-6);
+  background: var(--bg-card);
   margin-bottom: var(--space-7);
+}
+
+.fleet-cell {
   display: flex;
   flex-direction: column;
-  gap: var(--space-4);
+  gap: var(--space-2);
+  padding: var(--space-5) var(--space-6);
+  min-width: 0;
 }
 
-.fleet-summary-row {
+.fleet-cell + .fleet-cell {
+  border-left: 1px solid var(--border);
+}
+
+.fleet-versions {
   display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: var(--space-4);
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-top: var(--space-1);
 }
 
-.fleet-summary-title {
-  font-size: var(--fs-sm);
-  font-weight: 600;
-  color: var(--text-primary);
+/* Agent | Status | Schedules | Last backup | Last seen | Version | menu */
+.agents-list .list-group {
+  --list-cols: minmax(0, 2.2fr) minmax(0, 2.2fr) 5rem 6rem 6rem 5.5rem 2rem;
 }
 
-.fleet-summary-counts {
-  font-family: var(--mono);
+.agents-row--dim .list-row-text,
+.agents-row--dim .list-row-value {
+  opacity: 0.7;
+}
+
+.agents-row-actions {
+  justify-self: end;
+}
+
+.agents-row-when {
+  margin-left: auto;
   font-size: var(--fs-xs);
-  color: var(--text-secondary);
-  font-variant-numeric: tabular-nums;
 }
 
-.fleet-version-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-3);
-}
+@media (max-width: 640px) {
+  .fleet-strip {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 
-.fleet-version-chip {
-  display: inline-flex;
-  align-items: center;
-  font-family: var(--mono);
-  font-size: var(--fs-2xs);
-  padding: var(--space-1) var(--space-4);
-  border-radius: var(--radius-pill);
-  background: var(--bg-hover);
-  color: var(--text-secondary);
-}
+  .fleet-cell + .fleet-cell {
+    border-left: 0;
+  }
 
-.fleet-version-chip-current {
-  color: var(--success);
-}
+  .fleet-cell:nth-child(even) {
+    border-left: 1px solid var(--border);
+  }
 
-/* Behind the binary the server has. Silent when the server has none: then
-   there is nothing to be behind of. */
-.fleet-version-chip-outdated {
-  color: var(--warning);
-}
+  .fleet-cell:nth-child(n + 3) {
+    border-top: 1px solid var(--border);
+  }
 
-/* The fleet split by state, as one bar. Sized by count, so the band says at a
-   glance whether trouble is one host or most of them. */
-.fleet-track {
-  display: flex;
-  gap: 2px;
-  height: 8px;
-  margin-top: var(--space-2);
-}
+  /* The pills take a line of their own and scroll sideways within it. */
+  .agents-pills {
+    flex: 1 1 100%;
+    min-width: 0;
+  }
 
-.fleet-seg {
-  border-radius: var(--radius-pill);
-  background: var(--border);
-}
+  /* The last-backup figure sits at the end of the name's line, clear of the
+     chevron or menu pinned to the row's top-right corner. */
+  .agents-row-when {
+    padding-right: var(--space-8);
+  }
 
-.fleet-key {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-3) var(--space-6);
-  font-size: var(--fs-2xs);
-  color: var(--text-muted);
-  font-variant-numeric: tabular-nums;
-}
-
-.fleet-key-item {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-}
-
-.fleet-key-dot {
-  width: 0.45rem;
-  height: 0.45rem;
-  border-radius: 50%;
-  background: var(--border);
-}
-
-/* One tone per state, shared by the bar and its key. Unprotected takes the
-   danger tone rather than a neutral one: a host nothing backs up is a gap,
-   not a quiet machine. Offline is the only grey - an unreachable agent is
-   not a verdict on its backups. */
-.fleet-tone--clean {
-  background: var(--success);
-}
-
-.fleet-tone--overdue {
-  background: var(--warning);
-}
-
-.fleet-tone--failing {
-  background: var(--danger);
-}
-
-.fleet-tone--unprotected {
-  background: var(--danger);
-}
-
-.fleet-tone--offline {
-  background: var(--text-muted);
+  .agents-row-actions {
+    position: absolute;
+    top: var(--space-3);
+    right: var(--space-3);
+  }
 }
 </style>

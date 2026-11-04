@@ -7,7 +7,7 @@ See [Getting Started](getting-started.md) for initial setup instructions.
 ## Adding an Agent
 
 1. Navigate to **Agents** in the sidebar.
-2. Click **New agent**.
+2. Click **New**.
 3. Enter the machine's hostname.
 4. Optionally set a domain — only needed if another host already uses this hostname (see [Duplicate Hostnames](#duplicate-hostnames) below).
 5. Optionally set a display name.
@@ -24,45 +24,80 @@ The agent refuses to start without a server key. See [Encrypted connection](#enc
 
 ![Agents](assets/screenshots/hosts.png)
 
-The Agents list page provides:
+The Agents list page shows every agent as a row in a grouped list. The toolbar above it provides:
 
-- **Text filter** — search by hostname or tag
-- **Status filter** — show All, Online only, or Offline only
+- **Text filter** — search by hostname, display name, domain, or tag
+- **Status pills** — **All**, **Needs attention**, **Online**, and **Offline**, each with a count of the agents it leaves given the other filters. **Online** and **Offline** go by the connection alone; **Needs attention** keeps the agents that carry a **Failed**, **Overdue**, or **No schedules** chip. The choice is remembered for the next visit.
 - **Coverage filter** — show protected, unassigned, never-succeeded, or disabled-only agents; dashboard coverage links set this filter automatically
-- **Show hidden toggle** — reveal hidden imported agents (admin-only)
 - **Tag filter** — filter by one or more tags
-- **Sort buttons** — sort by Name, Status, Last seen, or Version
+- **Show hidden toggle** — reveal hidden imported agents (admin-only)
+- **Group control** — group the rows by **Status** (the default) or **Version**; the choice is remembered
+- **Sort buttons** — sort by Name, Status, Last seen, or Version within each group
 
-A fleet summary band above the list rolls up the whole fleet: total agent count, how many are online, total schedule count, a health bar, and a breakdown of agent versions in use, with the version matching the server's available binary marked current.
+On a phone, the status pills stay in view and the other controls sit behind the filter button.
 
-The health bar splits every listed agent into one state each, sized by how many agents are in it and named in the key below it:
+A strip of four figures above the list rolls up the whole fleet:
 
-| Segment | Meaning |
+| Figure | Shows |
 |---|---|
-| Clean | Online, scheduled, nothing failing or overdue, and at least one backup has completed |
-| Overdue | At least one of the agent's schedules is past due |
-| Failing | The most recent run on at least one schedule failed |
-| Unprotected | No schedule targets this agent, or none has ever completed a backup |
-| Offline | The agent is not connected, so its backups cannot be assessed |
+| Agents | Total agent count, with the number of schedules under it |
+| Online | Connected agents, with how many are backing up right now |
+| Needs attention | Agents with an issue chip, split into failing, overdue, and (when any) unprotected |
+| Versions | One badge per agent version in use with its count: green for the version matching the server's binary, amber for one behind it, grey when there is nothing to compare against |
 
-The band counts the whole fleet, not the filtered list — narrowing the grid below it does not change what the fleet is.
+The strip counts the whole fleet, not the filtered list — narrowing the rows below it does not change what the fleet is.
 
 The **Dependencies** page, listed below **Agents** in the sidebar, lists the [dependency hosts](dependency-hosts.md): machines a backup needs besides its agent and repository, such as the server whose share a pre-backup command mounts.
 
+### Grouping by status
+
+By default the list has up to three groups, each in its own panel with a header naming it and counting its agents. A group with no agents is left out.
+
+| Group | Contains |
+|---|---|
+| Needs attention | Agents with a **Failed**, **Overdue**, or **No schedules** chip, online or not. Failing agents come first. |
+| Online | Connected agents with nothing to look at |
+| Offline | Disconnected agents with nothing due |
+
+The **Offline** group shows its first five agents. Click **Show N more offline agents** under it to list the rest, and **Show fewer** to fold them again.
+
 ### Grouping by version
 
-The grid groups agents by the version each one reports, newest first, with agents that have never reported a version last under **Unknown**. When the server has an agent binary available, each group header says how it stands against it — **Current** or **Behind**; without one, the UI makes no claim beyond naming the versions.
+Choose **Version** in the group control to group agents by the version each one reports, newest first, with agents that have never reported a version last under **Unknown**. When the server has an agent binary available, each group header says how it stands against it — **Current** or **Behind**; without one, the UI makes no claim beyond naming the versions.
 
-Because the group header carries the version, the cards no longer repeat it. Each agent card shows the hostname, display name, schedule count, last backup time, and last seen time. A connected agent carries an **Online** badge; an offline one tints the card and adds an **Offline** pill.
+### Agent rows
 
-Two of those figures take a colour of their own:
+Column heads appear once per group. Each row shows:
+
+| Column | Shows |
+|---|---|
+| Agent | A status dot, the hostname (with its domain when set), and the display name under it |
+| Status | The status chips described below, plus the agent's tags |
+| Schedules | How many schedules target the agent |
+| Last backup | The most recent completed backup |
+| Last seen | When the agent was last connected |
+| Version | The agent version it reports |
+
+The status dot is red for an agent with a failed backup, blue while a backup is running, amber for any other issue, green for a healthy online agent, and grey for an offline one. Offline and hidden agents are dimmed.
+
+Click a row to open the agent's detail page. On a phone, each row stacks into three lines: the hostname with its last backup time, then the display name, schedule count, and version, then the status chips.
+
+Two of the figures take a colour of their own:
 
 - **Last backup** reads green when the agent's schedules are on track, amber when one is overdue or its last run failed, and red when the agent has never completed a backup.
 - **Last seen** reads amber for an agent that has just gone offline and red once it has been gone for more than a day.
 
-A **Failed** or **Overdue** chip appears when a backup on that agent needs attention — click it to jump straight to the filtered backup history or schedule that needs a look. A **No schedules** chip marks an agent nothing is scheduled to back up at all; it opens that agent's Schedules tab. The chip is only shown once the server has actually answered with schedule counts — a failed request leaves the card silent rather than accusing every agent of having none. Imported agents show **Merge into...** and **Adopt** buttons for managing unmatched archive agents.
+A **Failed** or **Overdue** chip appears when a backup on that agent needs attention — click it to jump straight to the filtered backup history or schedule that needs a look. A **No schedules** chip marks an agent nothing is scheduled to back up at all; it opens that agent's Schedules tab. The chip is only shown once the server has actually answered with schedule counts — a failed request leaves the row silent rather than accusing every agent of having none. An **Offline** pill marks a disconnected agent, and **Hidden** and **Imported** badges mark those agents.
 
-**Last backup** is the most recent backup that actually completed on that agent, across all of its schedules — a failed run is not one, however recently it reported. When an agent's latest run failed, the card shows the successful (or warning) run before it, so a single failure never makes a backed-up agent read as unprotected. An agent that has never completed a backup reads **Never**. Whether an agent has fallen *behind* is a separate question, answered by the **Overdue** chip, which counts the agent's schedules the server considers overdue; the card does not estimate it a second time from the cron cadence.
+A row that has something to do from the list ends in a **...** menu instead of an arrow. Opening it does not open the agent:
+
+| Agent | Menu items |
+|---|---|
+| Imported | **Merge into...** and **Adopt** |
+| Hidden | **Unhide** |
+| Without an agent binary, or behind the server's | **Deploy** or **Upgrade**, for roles allowed to deploy agents |
+
+**Last backup** is the most recent backup that actually completed on that agent, across all of its schedules — a failed run is not one, however recently it reported. When an agent's latest run failed, the row shows the successful (or warning) run before it, so a single failure never makes a backed-up agent read as unprotected. An agent that has never completed a backup reads **Never**. Whether an agent has fallen *behind* is a separate question, answered by the **Overdue** chip, which counts the agent's schedules the server considers overdue; the row does not estimate it a second time from the cron cadence.
 
 ## Duplicate Hostnames
 
@@ -290,7 +325,7 @@ If restart is not supported, the menu item is replaced by the reason (e.g., "not
 
 ## Agent Status
 
-Each agent card and detail page shows a live connection indicator:
+Each agent row and detail page shows a live connection indicator:
 
 | Status | Meaning |
 |--------|---------|
@@ -309,9 +344,9 @@ A schedule can also back off and auto-disable for a local/data problem unrelated
 
 A schedule the scheduler disabled itself is never just labeled "Disabled" — its status pill on the schedules list and its detail page reads "Auto-disabled · agent unreachable" or "Auto-disabled · error", so it's distinguishable at a glance from a schedule you (or [quota enforcement](quotas.md)) turned off. Both the auto-disable and the later reconnect re-enable are also recorded on the [Activity page](activity.md)'s System Events tab.
 
-Before a schedule reaches its threshold, each miss shows as a `N/threshold missed` warning chip on its schedule card, so a struggling agent is visible well before the schedule actually goes down. See [Schedule Configuration](configuration.md#schedule-configuration) for the `missed_backup_threshold` field.
+Before a schedule reaches its threshold, each miss shows as `N/threshold missed` in the schedule's health chip on the Schedules list, so a struggling agent is visible well before the schedule actually goes down. See [Schedule Configuration](configuration.md#schedule-configuration) for the `missed_backup_threshold` field.
 
-While a backup is running for an agent, its card on the Agents list shows a **Running** pill naming the target repository. This reflects persisted running-operation state, so it appears immediately on page load rather than only after a live event.
+While a backup is running for an agent, its row on the Agents list shows a **Running** pill naming the target repository and a blue status dot. This reflects persisted running-operation state, so it appears immediately on page load rather than only after a live event.
 
 ## Agent Detail View
 
@@ -432,7 +467,7 @@ When a repository is imported, placeholder agents are created for archive hostna
 
 To merge a placeholder into a real agent:
 
-1. On the **Agents** list, click the **Merge** button on the imported agent row.
+1. On the **Agents** list, open the **...** menu at the end of the imported agent's row and choose **Merge into...**.
 2. Select the target agent from the dropdown. If more than one candidate shares a hostname, each is labeled with its domain (or "no domain") so you can tell them apart.
 3. Optionally check **Save as hostname alias** to automatically create a glob pattern (pre-filled with the placeholder's hostname followed by `*`).
 4. Click **Merge**.
@@ -486,8 +521,8 @@ Hidden agents are excluded from:
 
 1. Navigate to **Agents** in the sidebar.
 2. Enable the **Show hidden** toggle (admin-only).
-3. Hidden agents appear with reduced opacity and a "Hidden" badge.
-4. Click **Unhide** on a hidden agent to restore it to normal visibility.
+3. Hidden agents appear dimmed with a **Hidden** badge.
+4. Open the **...** menu at the end of a hidden agent's row and choose **Unhide** to restore it to normal visibility.
 
 !!! note
     Hiding is non-destructive — all archive data remains intact on disk. The agent will not reappear on the next repository scan because the database record is preserved with the hidden flag.

@@ -3058,6 +3058,39 @@ esac
         rx
     }
 
+    /// With nothing due, `tick()` returns at once and starts nothing.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn tick_with_nothing_due_starts_nothing(pool: sqlx::PgPool) {
+        let key = tick_test_key();
+        let registry = AgentRegistry::new();
+        let tunnel = dummy_tunnel(pool.clone());
+        let bus = CompletionBus::new();
+
+        tick(&TickDeps {
+            pool: &pool,
+            registry: &registry,
+            encryption_key: &key,
+            tunnel_manager: &tunnel,
+            completion_bus: &bus,
+            repo_lock: &RepoLock::default(),
+            repo_op_tracker: &RepoOpTracker::default(),
+            ui_broadcast: &UiBroadcast::new(),
+            background_task_tracker: &crate::background_tasks::BackgroundTaskTracker::default(),
+            power_sessions: &crate::power::PowerSessionTracker::default(),
+            notification_service: &crate::test_support::test_notification_service(pool.clone()),
+            task_registry: &shared::task_registry::TaskRegistry::default(),
+        })
+        .await
+        .unwrap();
+
+        let reports: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM backup_reports")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(reports, 0);
+    }
+
     /// `tick()` must send `ConfigUpdate` *before* the run trigger so the agent
     /// always executes with the current config.
     #[ignore = "requires DATABASE_URL"]

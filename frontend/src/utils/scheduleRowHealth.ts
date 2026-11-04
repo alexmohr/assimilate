@@ -82,23 +82,31 @@ export function scheduleRowHealth(input: ScheduleRowHealthInput): ScheduleRowHea
     titles.push(`Writes to the same repository as ${agent} at the same time`)
   }
   if (parts.length > 0) {
+    // A pending catch-up explains an overdue or missed run, so it stays on
+    // the chip beside the problem rather than being hidden by it.
+    if (input.catchUpPendingCount > 0) {
+      parts.push('Catch-up pending')
+      titles.push(catchUpPendingTitle(input.catchUpPendingCount))
+    }
     return { label: parts.join(' · '), tone, title: titles.join('\n'), problem: true }
   }
 
-  if (input.offlineAgents.length > 0) {
-    return {
-      label: 'Agent offline',
-      tone: 'warning',
-      title: input.offlineAgents.join('\n'),
-      problem: true,
-    }
-  }
+  // Checked before "Agent offline": a catch-up is pending precisely because
+  // the agent or host is away, and it is the more specific of the two.
   if (input.catchUpPendingCount > 0) {
     return {
       label: 'Catch-up pending',
       tone: 'info',
       title: catchUpPendingTitle(input.catchUpPendingCount),
       problem: false,
+    }
+  }
+  if (input.offlineAgents.length > 0) {
+    return {
+      label: 'Agent offline',
+      tone: 'warning',
+      title: input.offlineAgents.join('\n'),
+      problem: true,
     }
   }
   if (input.entries.every((h) => scheduleRunStatus(h) === null)) {

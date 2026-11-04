@@ -70,13 +70,19 @@ test.describe('Settings journey', () => {
     await page.waitForLoadState('networkidle')
 
     await expect(page.getByRole('heading', { name: 'Notifications' })).toBeVisible()
-    await expect(page.getByText('Ops Webhook')).toBeVisible()
-    await expect(page.getByText('Admin Email')).toBeVisible()
-    await expect(page.getByText('Webhook', { exact: true })).toBeVisible()
-    await expect(page.getByText('Email', { exact: true })).toBeVisible()
-
-    const toggles = page.getByRole('switch')
-    await expect(toggles.first()).toBeChecked()
+    // Each channel is a row naming its type and whether it is switched on;
+    // the on/off switch itself lives in the row's menu (Pause/Resume).
+    const webhook = page.locator('.list-row').filter({
+      has: page.locator('.list-row-name', { hasText: 'Ops Webhook' }),
+    })
+    const email = page.locator('.list-row').filter({
+      has: page.locator('.list-row-name', { hasText: 'Admin Email' }),
+    })
+    await expect(webhook).toBeVisible()
+    await expect(email).toBeVisible()
+    await expect(webhook.locator('.list-row-sub')).toContainText('Webhook')
+    await expect(email.locator('.list-row-sub')).toContainText('Email')
+    await expect(webhook.locator('.badge', { hasText: 'On' })).toBeVisible()
   })
 
   test('tunnels page shows configured tunnel connection details', async ({ page }) => {
@@ -84,7 +90,7 @@ test.describe('Settings journey', () => {
     await page.goto('/tunnels')
     await page.waitForLoadState('networkidle')
 
-    await expect(page.getByRole('heading', { name: 'Tunnels' })).toBeVisible()
+    await expect(page.getByRole('heading', { level: 1, name: 'Tunnels' })).toBeVisible()
     // Scoped to the tunnel's own row: the filter pills above it also say
     // "Connected", so an unscoped getByText matches both. The row itself
     // gets a generous timeout - it only renders once /api/tunnels and

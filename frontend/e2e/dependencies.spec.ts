@@ -13,7 +13,7 @@ test.describe('Dependencies page', () => {
     await page.goto('/')
     await page.getByRole('link', { name: 'Dependencies', exact: true }).click()
     await expect(page).toHaveURL(/\/dependencies$/)
-    await expect(page.getByRole('heading', { name: 'Dependencies' })).toBeVisible()
+    await expect(page.getByRole('heading', { level: 1, name: 'Dependencies' })).toBeVisible()
 
     const id = await seededIdByName(page, '/api/dependency-hosts', 'nas-media')
     const rows = page.locator('[data-testid="dependency-row"]')
@@ -64,6 +64,6 @@ test.describe('Dependencies page', () => {
     await loginAsAdmin(page)
     await page.goto('/agents?tab=dependencies')
     await expect(page).toHaveURL(/\/dependencies$/)
-    await expect(page.getByRole('heading', { name: 'Dependencies' })).toBeVisible()
+    await expect(page.getByRole('heading', { level: 1, name: 'Dependencies' })).toBeVisible()
   })
 })

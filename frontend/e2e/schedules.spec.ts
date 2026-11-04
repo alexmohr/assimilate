@@ -378,7 +378,7 @@ test.describe('Schedules management', () => {
     await page.waitForLoadState('networkidle')
 
     const chip = healthChip(scheduleRow(page, 1))
-    await expect(chip).toHaveText('Failed')
+    await expect(chip).toContainText('Failed')
     await expect(chip).toHaveClass(/badge--danger/)
     await expect(chip).toHaveAttribute('title', /Simulated failure/)
   })
@@ -394,7 +394,7 @@ test.describe('Schedules management', () => {
     await page.waitForLoadState('networkidle')
 
     const chip = healthChip(scheduleRow(page, 1))
-    await expect(chip).toHaveText('Warning')
+    await expect(chip).toContainText('Warning')
     await expect(chip).toHaveAttribute('title', /Simulated warning/)
   })
 

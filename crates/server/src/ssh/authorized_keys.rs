@@ -570,4 +570,14 @@ mod tests {
         );
         assert_eq!(restriction_of(&line, &backup), Restriction::AppendOnly);
     }
+
+    #[test]
+    fn escaped_quotes_and_commas_inside_the_command_do_not_split_the_options() {
+        let backup = key("assimilate-server");
+        let line = format!(
+            "command=\"borg serve --append-only --restrict-to-repository \\\"/a,b\\\"\",restrict {}",
+            key_line(&backup)
+        );
+        assert_eq!(restriction_of(&line, &backup), Restriction::AppendOnly);
+    }
 }

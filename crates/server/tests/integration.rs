@@ -15715,8 +15715,8 @@ esac
         let _borg = FakeRepo::new(&[]).await;
         let (_app, state) = build_test_app_with_state(pool.clone());
         let channel_id: i64 = sqlx::query_scalar(
-            "INSERT INTO notification_channels (name, channel_type, config) \
-             VALUES ('hook', 'webhook', $1) RETURNING id",
+            "INSERT INTO notification_channels (name, channel_type, config) VALUES ('hook', \
+             'webhook', $1) RETURNING id",
         )
         .bind(json!({ "url": "https://hooks.example.com/notify" }))
         .fetch_one(&pool)
@@ -15738,8 +15738,8 @@ esac
         let mut payload = None;
         for _ in 0..300 {
             payload = sqlx::query_scalar::<_, Value>(
-                "SELECT payload FROM notification_deliveries \
-                 WHERE channel_id = $1 AND event_type = 'check_failed'",
+                "SELECT payload FROM notification_deliveries WHERE channel_id = $1 AND event_type \
+                 = 'check_failed'",
             )
             .bind(channel_id)
             .fetch_optional(&pool)

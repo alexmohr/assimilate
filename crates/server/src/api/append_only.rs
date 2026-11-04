@@ -1705,11 +1705,23 @@ mod tests {
         host.scoped(set(&state, moved.id, true)).await;
         // The repository has moved to a login that is not append-only, and a
         // deletion was queued in the instant before.
-        sqlx::query("UPDATE repos SET ssh_user = 'somebody-else' WHERE id = $1")
-            .bind(moved.id)
-            .execute(&state.pool)
-            .await
-            .unwrap();
+        db::update_repo(
+            &state.pool,
+            &db::UpdateRepoParams {
+                repo_id: moved.id,
+                name: &moved.name,
+                repo_path: &moved.repo_path,
+                ssh_user: "somebody-else",
+                ssh_host: "127.0.0.1",
+                ssh_port: moved.ssh_port,
+                compression: "lz4",
+                encryption: "repokey",
+                enabled: true,
+                sync_schedule: None,
+            },
+        )
+        .await
+        .unwrap();
         db::append_only::queue_deletion(&state.pool, moved.id, "a-1", "admin")
             .await
             .unwrap();
@@ -1723,12 +1735,10 @@ mod tests {
         .await
         .unwrap();
 
-        assert!(
-            db::append_only::list_pending_deletions(&state.pool, moved.id)
-                .await
-                .unwrap()
-                .is_empty()
-        );
+        let left = db::append_only::list_pending_deletions(&state.pool, moved.id)
+            .await
+            .unwrap();
+        assert_eq!(left.len(), 0, "nothing is left waiting");
     }
 
     #[ignore = "requires DATABASE_URL"]

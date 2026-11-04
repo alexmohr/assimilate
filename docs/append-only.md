@@ -89,6 +89,8 @@ A run does these steps in order:
 4. **Prune** with the retention of every enabled backup schedule that writes to the repository, the way the agent would have after each backup: each schedule prunes only the archives it wrote for each agent, and archives named before schedule ids existed are pruned with the most any of that agent's schedules keeps.
 5. **Compact**, and record how much space it freed.
 
+A run that does not end **OK** (**Stopped**, **Check failed** or **Failed**) sends the **Check failed** notification event to the channels that subscribe to it, with the outcome and its detail as the message, so a failing check or vanished archives do not wait to be found in the run history.
+
 ### When archives vanish
 
 borg makes deletions that were requested over an append-only connection permanent the first time something writes with full access. A run therefore compares the archives before it writes. If archives are gone that Assimilate did not delete, the run **stops** and writes nothing: the repository can then still be rolled back with borg's transaction log on the host (see the [borg documentation](https://borgbackup.readthedocs.io/en/stable/usage/notes.html#append-only-mode-forbid-compaction)).

@@ -516,7 +516,11 @@ pub async fn list_recent_runs(
 /// # Errors
 ///
 /// Returns [`ApiError::Database`] if the query fails.
-pub async fn mark_vanished(pool: &PgPool, repo_id: i64, names: &[String]) -> Result<(), ApiError> {
+pub async fn mark_vanished(
+    pool: impl sqlx::PgExecutor<'_>,
+    repo_id: i64,
+    names: &[String],
+) -> Result<(), ApiError> {
     if names.is_empty() {
         return Ok(());
     }
@@ -539,7 +543,7 @@ pub async fn mark_vanished(pool: &PgPool, repo_id: i64, names: &[String]) -> Res
 ///
 /// Returns [`ApiError::Database`] if the query fails.
 pub async fn clear_vanished_present(
-    pool: &PgPool,
+    pool: impl sqlx::PgExecutor<'_>,
     repo_id: i64,
     present: &[String],
 ) -> Result<u64, ApiError> {
@@ -568,8 +572,10 @@ pub async fn reconcile_vanished(
     gone: &[String],
     present: &[String],
 ) -> Result<(), ApiError> {
-    mark_vanished(pool, repo_id, gone).await?;
-    clear_vanished_present(pool, repo_id, present).await?;
+    let mut tx = pool.begin().await.map_err(ApiError::Database)?;
+    mark_vanished(&mut *tx, repo_id, gone).await?;
+    clear_vanished_present(&mut *tx, repo_id, present).await?;
+    tx.commit().await.map_err(ApiError::Database)?;
     Ok(())
 }
 

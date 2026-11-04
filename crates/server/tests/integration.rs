@@ -15706,6 +15706,63 @@ esac
 
     #[tokio::test]
     #[ignore = "requires DATABASE_URL"]
+    async fn a_maintenance_run_that_did_not_end_ok_sends_an_alert() {
+        let _borg_lock = borg_binary_lock().await;
+        let _keys = KeyDir::new().await;
+        let pool = setup_pool().await;
+        clean_tables(&pool).await;
+        let repo_id = append_only_repo(&pool, "ao-alert", &["a-1"]).await;
+        let _borg = FakeRepo::new(&[]).await;
+        let (_app, state) = build_test_app_with_state(pool.clone());
+        let channel_id: i64 = sqlx::query_scalar(
+            "INSERT INTO notification_channels (name, channel_type, config) \
+             VALUES ('hook', 'webhook', $1) RETURNING id",
+        )
+        .bind(json!({ "url": "https://hooks.example.com/notify" }))
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO notification_rules (channel_id, event_type) VALUES ($1, 'check_failed')",
+        )
+        .bind(channel_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        // The run ends `failed`: borg lists nothing for a repository with records.
+        run_maintenance(&state, repo_id).await;
+
+        // Delivery is attempted in the background; whether the webhook answers
+        // does not matter, the attempt is recorded either way.
+        let mut payload = None;
+        for _ in 0..300 {
+            payload = sqlx::query_scalar::<_, Value>(
+                "SELECT payload FROM notification_deliveries \
+                 WHERE channel_id = $1 AND event_type = 'check_failed'",
+            )
+            .bind(channel_id)
+            .fetch_optional(&pool)
+            .await
+            .unwrap();
+            if payload.is_some() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+        let payload = payload.expect("the alert was sent to the channel");
+        assert_eq!(at(&payload, "/repo_name"), "ao-alert");
+        assert!(
+            at(&payload, "/error_message")
+                .as_str()
+                .unwrap()
+                .starts_with("maintenance failed:"),
+            "{payload}"
+        );
+    }
+
+    #[tokio::test]
+    #[ignore = "requires DATABASE_URL"]
     async fn a_rolled_back_repository_is_no_longer_vanished() {
         let _borg_lock = borg_binary_lock().await;
         let _keys = KeyDir::new().await;

@@ -28,6 +28,7 @@ use crate::{
     borg::Borg,
     db::{self, append_only::RetentionRow},
     error::ApiError,
+    notifications::{self, EventType, NotificationEvent},
 };
 
 /// How long borg waits for the repository lock before giving up.
@@ -297,12 +298,58 @@ pub async fn run(state: &AppState, repo_id: i64, actor: &str) {
     tracing::info!(repo_id, outcome = %finished.outcome, "repository maintenance finished");
 
     record(state, repo_id, run_id, started_at, &finished).await;
+    alert_unless_ok(state, repo_id, &finished).await;
 
     state.repo_op_tracker.clear(repo_id).await;
     broadcast_op(state, repo_id).await;
     state
         .ui_broadcast
         .send(shared::protocol::ServerToUi::DataChanged);
+}
+
+/// Sends the repository's notification channels the same alert a failed
+/// integrity check gets, for any maintenance run that did not end `ok`: this
+/// feature exists to surface tampering and corruption, which nobody would
+/// otherwise see short of opening the run history.
+async fn alert_unless_ok(state: &AppState, repo_id: i64, finished: &Finished) {
+    if finished.outcome == MaintenanceOutcome::Ok {
+        return;
+    }
+    let (repo_name, hostname) = db::get_repo_by_id(&state.pool, repo_id)
+        .await
+        .map(|repo| (repo.name, repo.ssh_host))
+        .unwrap_or_default();
+    let event = NotificationEvent {
+        event_type: EventType::CheckFailed,
+        hostname,
+        repo_name,
+        status: shared::types::ReportStatus::Failed.to_string(),
+        error_message: Some(format!(
+            "maintenance {}: {}",
+            finished.outcome,
+            finished.detail.as_deref().unwrap_or("no detail")
+        )),
+        timestamp: Utc::now(),
+        repo_id: Some(repo_id),
+        agent_id: None,
+        schedule_id: None,
+        schedule_name: None,
+        archive_name: None,
+        run_id: None,
+        duration_secs: None,
+        original_size: None,
+        compressed_size: None,
+        deduplicated_size: None,
+        files_processed: None,
+        warnings: Vec::new(),
+        next_run_at: None,
+        activity_url: None,
+    };
+    if let Err(e) =
+        notifications::dispatch(&state.notification_service, event, &state.task_registry).await
+    {
+        tracing::error!(repo_id, error = %e, "failed to dispatch the maintenance alert");
+    }
 }
 
 async fn broadcast_op(state: &AppState, repo_id: i64) {

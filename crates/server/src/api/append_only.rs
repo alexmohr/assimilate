@@ -1561,6 +1561,35 @@ mod tests {
 
     #[ignore = "requires DATABASE_URL"]
     #[sqlx::test(migrations = "./migrations")]
+    async fn editing_a_repository_in_place_leaves_its_login_alone(pool: sqlx::PgPool) {
+        let host = Fixture::start(HostOptions::default()).await;
+        let repo = add_repo(&pool, "plain", "/srv/borg/plain", i32::from(host.port)).await;
+        let state = state(pool);
+        host.scoped(set(&state, repo.id, true)).await;
+        let before = host.authorized_keys();
+        let mut request = move_to(&repo, LOGIN_USER, "/srv/borg/plain");
+        request.name = Some("renamed".to_owned());
+
+        let Json(updated) = host
+            .scoped(Box::pin(crate::api::repos::update_repo(
+                State(state.clone()),
+                admin(),
+                Path(repo.id),
+                ApiJson(request),
+            )))
+            .await
+            .unwrap();
+
+        assert_eq!(updated.name, "renamed");
+        assert_eq!(
+            host.authorized_keys(),
+            before,
+            "nothing on the host changed"
+        );
+    }
+
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
     async fn moving_a_repository_off_an_append_only_login_drops_it_from_the_restriction(
         pool: sqlx::PgPool,
     ) {

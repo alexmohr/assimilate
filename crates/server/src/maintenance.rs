@@ -20,6 +20,7 @@ use shared::{
     append_only::MaintenanceOutcome,
     archive_names::{legacy_glob, schedule_glob},
     protocol::RepoOpKind,
+    prune::keep_args,
 };
 
 use crate::{
@@ -111,14 +112,16 @@ pub fn legacy_retention<'a>(
 /// the agent skips it too.
 #[must_use]
 pub fn prune_args(retention: &RetentionRow, glob: &str, borg_repo: &str) -> Option<Vec<String>> {
-    let keeps = [
-        ("--keep-hourly", retention.keep_hourly),
-        ("--keep-daily", retention.keep_daily),
-        ("--keep-weekly", retention.keep_weekly),
-        ("--keep-monthly", retention.keep_monthly),
-        ("--keep-yearly", retention.keep_yearly),
-    ];
-    if keeps.iter().all(|(_, count)| *count <= 0) {
+    // A negative count keeps nothing, like zero.
+    let count = |keep: i32| u32::try_from(keep).unwrap_or(0);
+    let keeps = keep_args(
+        count(retention.keep_hourly),
+        count(retention.keep_daily),
+        count(retention.keep_weekly),
+        count(retention.keep_monthly),
+        count(retention.keep_yearly),
+    );
+    if keeps.is_empty() {
         return None;
     }
     let mut args = vec![
@@ -128,12 +131,7 @@ pub fn prune_args(retention: &RetentionRow, glob: &str, borg_repo: &str) -> Opti
         "-a".to_owned(),
         glob.to_owned(),
     ];
-    args.extend(
-        keeps
-            .iter()
-            .filter(|(_, count)| *count > 0)
-            .flat_map(|(flag, count)| [(*flag).to_owned(), count.to_string()]),
-    );
+    args.extend(keeps);
     args.push(borg_repo.to_owned());
     Some(args)
 }

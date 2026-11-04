@@ -57,6 +57,8 @@ pub mod machines;
 pub mod notifications;
 /// Message types exchanged over the agent/server WebSocket connection.
 pub mod protocol;
+/// The retention arguments of `borg prune`.
+pub mod prune;
 /// API response DTOs returned by the server's REST endpoints.
 pub mod responses;
 /// Where on a host a restore writes its files.

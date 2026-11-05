@@ -74,6 +74,30 @@ impl AgentRegistry {
         self.connections.write().await.remove(&agent_id);
     }
 
+    /// Removes `agent_id`'s entry only if it still belongs to the connection
+    /// that owns `sender`. Returns whether it did.
+    ///
+    /// A connection that lingers after its host rebooted (the TCP session was
+    /// never closed) is torn down long after the agent has reconnected. Its
+    /// cleanup must not evict the live replacement, which [`unregister`]
+    /// would do because it keys on the agent ID alone.
+    ///
+    /// [`unregister`]: Self::unregister
+    pub async fn unregister_if_current(
+        &self,
+        agent_id: i64,
+        sender: &mpsc::Sender<ServerToAgent>,
+    ) -> bool {
+        let mut connections = self.connections.write().await;
+        let is_current = connections
+            .get(&agent_id)
+            .is_some_and(|conn| conn.sender.same_channel(sender));
+        if is_current {
+            connections.remove(&agent_id);
+        }
+        is_current
+    }
+
     /// # Errors
     ///
     /// Returns an error if the underlying operation fails.
@@ -198,6 +222,35 @@ mod tests {
         // Only the message for the current process was delivered.
         assert!(matches!(rx.try_recv(), Ok(ServerToAgent::Ping)));
         assert!(rx.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn a_stale_connection_does_not_unregister_its_replacement() {
+        let registry = AgentRegistry::new();
+        let (stale_tx, _stale_rx) = mpsc::channel(1);
+        let (live_tx, _live_rx) = mpsc::channel(1);
+        registry
+            .register(1, stale_tx.clone(), true, None, None)
+            .await;
+        registry
+            .register(1, live_tx.clone(), true, None, None)
+            .await;
+
+        let stale_removed = registry.unregister_if_current(1, &stale_tx).await;
+
+        assert!(!stale_removed);
+        assert!(registry.is_connected(1).await);
+        let live_removed = registry.unregister_if_current(1, &live_tx).await;
+        assert!(live_removed);
+        assert!(!registry.is_connected(1).await);
+    }
+
+    #[tokio::test]
+    async fn unregistering_an_agent_that_is_gone_removes_nothing() {
+        let registry = AgentRegistry::new();
+        let (tx, _rx) = mpsc::channel(1);
+
+        assert!(!registry.unregister_if_current(1, &tx).await);
     }
 
     #[tokio::test]

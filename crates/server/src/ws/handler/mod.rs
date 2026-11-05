@@ -4841,6 +4841,69 @@ exit 0
         assert!(!state.registry.is_connected(agent.id).await);
     }
 
+    /// Waits until the next `AgentConnected` reaches the UI broadcast.
+    async fn wait_for_agent_connected(
+        ui: &mut tokio::sync::broadcast::Receiver<ServerToUi>,
+    ) -> Result<(), tokio::time::error::Elapsed> {
+        timeout(Duration::from_secs(10), async {
+            while !drain_ui(ui)
+                .iter()
+                .any(|e| matches!(e, ServerToUi::AgentConnected { .. }))
+            {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+    }
+
+    /// A connection that outlives its host's reboot is closed long after the
+    /// agent reconnected; closing it must leave the live session registered
+    /// and the UI told nothing about a disconnect.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_stale_session_closing_leaves_the_replacement_registered(pool: PgPool) {
+        let agent = socket_agent(&pool, "rebooted-host").await;
+        let state = build_test_state(pool);
+        let mut ui = state.ui_broadcast.subscribe();
+        let (close_stale, stale_closed) = tokio::sync::oneshot::channel::<()>();
+        let stale_frames = Box::pin(
+            frames(vec![hello_frame("rebooted-host", SOCKET_TOKEN)]).chain(
+                futures_util::stream::once(stale_closed)
+                    .filter_map(|_| std::future::ready(None::<Result<Message, std::io::Error>>)),
+            ),
+        );
+        let (stale_sink, _stale_sent) = recording_sink();
+        let stale = tokio::spawn(serve_agent(stale_sink, stale_frames, state.clone()));
+        // The live session must register after the stale one, or the stale
+        // one would be the current connection when it closes.
+        wait_for_agent_connected(&mut ui)
+            .await
+            .expect("the stale session connects");
+        let (live_sink, _live_sent) = recording_sink();
+        let live = tokio::spawn(serve_agent(
+            live_sink,
+            frames_then_open(vec![hello_frame("rebooted-host", SOCKET_TOKEN)]),
+            state.clone(),
+        ));
+        wait_for_agent_connected(&mut ui)
+            .await
+            .expect("the live session connects");
+
+        close_stale.send(()).expect("the stale session is waiting");
+        timeout(Duration::from_secs(10), stale)
+            .await
+            .expect("the stale session ends")
+            .expect("the stale session does not panic");
+
+        assert!(state.registry.is_connected(agent.id).await);
+        assert!(drain_ui(&mut ui).is_empty());
+        state.shutdown_token.cancel();
+        timeout(Duration::from_secs(10), live)
+            .await
+            .expect("the live session ends")
+            .expect("the live session does not panic");
+    }
+
     /// A session whose agent can no longer be written to ends at the first
     /// message the server has for it.
     #[ignore = "requires DATABASE_URL"]

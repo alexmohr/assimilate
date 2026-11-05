@@ -803,4 +803,65 @@ describe('RepoCreateDialog', () => {
     expect(document.body.querySelectorAll('.modal-dialog')).toHaveLength(1)
     expect(wrapper.emitted('close')).toBeUndefined()
   })
+  describe('append-only login note', () => {
+    const APPEND_ONLY = [
+      {
+        id: 1,
+        name: 'laptops',
+        ssh_user: 'borg',
+        ssh_host: 'backup.example.com',
+        ssh_port: 22,
+        append_only: { maintenance_stopped: false, pending_deletion_count: 0 },
+      },
+      {
+        id: 2,
+        name: 'photos',
+        ssh_user: 'borg',
+        ssh_host: 'backup.example.com',
+        ssh_port: 22,
+        append_only: { maintenance_stopped: false, pending_deletion_count: 0 },
+      },
+      {
+        id: 3,
+        name: 'other-user',
+        ssh_user: 'root',
+        ssh_host: 'backup.example.com',
+        ssh_port: 22,
+        append_only: { maintenance_stopped: false, pending_deletion_count: 0 },
+      },
+      {
+        id: 4,
+        name: 'plain',
+        ssh_user: 'borg',
+        ssh_host: 'plain.example.com',
+        ssh_port: 22,
+        append_only: null,
+      },
+    ] as unknown as RepoWithStats[]
+
+    it('names the siblings once the typed login is an append-only one', async () => {
+      mount({ mode: 'create', repos: APPEND_ONLY })
+      expect(document.body.querySelector('.callout')).toBeNull()
+
+      await setField('SSH host', 'backup.example.com')
+
+      const note = document.body.querySelector('.callout')?.textContent ?? ''
+      expect(note).toContain('restricts the server key on backup.example.com after initializing')
+      expect(note).toContain('laptops, photos')
+      expect(note).toContain('already use this login so they are append-only too')
+      expect(note).not.toContain('other-user')
+    })
+
+    it('stays quiet for a login that is not append-only', async () => {
+      mount({ mode: 'create', repos: APPEND_ONLY })
+      await setField('SSH host', 'plain.example.com')
+      expect(document.body.querySelector('.callout')).toBeNull()
+    })
+
+    it('offers no append-only switch in the dialog', async () => {
+      mount({ mode: 'create', repos: APPEND_ONLY })
+      await setField('SSH host', 'backup.example.com')
+      expect(document.body.querySelector('[role="switch"]')).toBeNull()
+    })
+  })
 })

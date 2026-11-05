@@ -8,6 +8,7 @@ import { computed } from 'vue'
 import { ChevronRight } from '@lucide/vue'
 import { formatBytes, relativeTime } from '../utils/format'
 import { badgeClass, type BadgeTone } from '../utils/badge'
+import RepoAppendOnlyBadges from './RepoAppendOnlyBadges.vue'
 import { repoQuotaUse, repoRowStatus, type RepoRowStatus } from '../utils/repoStatus'
 import type { RepoWithStats } from '../types/repo'
 
@@ -68,6 +69,7 @@ const DOT_CLASS: Record<BadgeTone, string | null> = {
   info: 'status-dot--info',
   accent: 'status-dot--accent',
   neutral: null,
+  violet: null,
 }
 
 const BAR_CLASS: Record<BadgeTone, string | null> = {
@@ -77,6 +79,7 @@ const BAR_CLASS: Record<BadgeTone, string | null> = {
   info: null,
   accent: null,
   neutral: 'progress-bar--muted',
+  violet: null,
 }
 
 /** The bar takes the quota's tone, not the row's: an unmatched archive says nothing about space. */
@@ -110,6 +113,14 @@ const barTone = computed<BadgeTone>(() => {
       <span class="list-narrow-only repo-row-when">{{ lastBackup }}</span>
     </span>
     <span class="list-row-chips list-wide-only">
+      <RepoAppendOnlyBadges :append-only="repo.append_only" />
+      <span
+        v-if="(repo.append_only?.pending_deletion_count ?? 0) > 0"
+        class="badge badge--violet"
+        title="Archives queued for deletion at the next maintenance run"
+      >
+        {{ repo.append_only?.pending_deletion_count }} pending deletion
+      </span>
       <span
         class="badge"
         :class="[badgeClass(status.tone), { 'badge--pulse': status.kind === 'importing' }]"

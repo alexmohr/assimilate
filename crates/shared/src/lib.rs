@@ -7,9 +7,14 @@
 /// The encrypted agent channel: a Noise handshake against the server's
 /// static key, then authenticated, encrypted frames in both directions.
 pub mod agent_channel;
+/// Append-only repositories: the key setup, the maintenance schedule and the
+/// deletions waiting for it.
+pub mod append_only;
 /// Where an archive's deduplicated size sits: the data per folder and file
 /// that no other archive in its repository holds.
 pub mod archive_growth;
+/// Archive naming and the patterns that match it.
+pub mod archive_names;
 /// The actions recorded in the audit log, each with its own details.
 pub mod audit;
 /// Shared borg process handling: the `Borg` wrappers' common spawn/wait/log
@@ -52,6 +57,8 @@ pub mod machines;
 pub mod notifications;
 /// Message types exchanged over the agent/server WebSocket connection.
 pub mod protocol;
+/// The retention arguments of `borg prune`.
+pub mod prune;
 /// API response DTOs returned by the server's REST endpoints.
 pub mod responses;
 /// Where on a host a restore writes its files.

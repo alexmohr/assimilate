@@ -36,6 +36,19 @@ impl Retention {
     }
 }
 
+/// Who prunes and compacts a repository after a backup.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Pruning {
+    /// The agent prunes after the backup, and compacts when `compact` is set.
+    Agent {
+        /// Whether to compact after pruning.
+        compact: bool,
+    },
+    /// The server does both, during maintenance: the repository is
+    /// append-only, so the agent's key cannot delete from it.
+    Server,
+}
+
 #[derive(Clone)]
 pub struct BackupTarget {
     pub target_name: String,
@@ -59,7 +72,8 @@ pub struct BackupTarget {
     /// (`<host>-<timestamp>`). Their schedule is unknown, so this is the
     /// union over the repo's schedules - never less than any of them keeps.
     pub legacy_retention: Retention,
-    pub compact_enabled: bool,
+    /// Who prunes and compacts the repository after a backup.
+    pub pruning: Pruning,
     /// How to stage this host's virtual machines before the backup, when the
     /// schedule opts in and the host has staging enabled.
     pub vm_snapshot: Option<shared::vm::VmSnapshotConfig>,
@@ -110,7 +124,7 @@ impl Default for BackupTarget {
             keep_monthly: 0,
             keep_yearly: 0,
             legacy_retention: Retention::default(),
-            compact_enabled: false,
+            pruning: Pruning::Agent { compact: false },
             vm_snapshot: None,
             database_backup: None,
             fs_snapshot: shared::snapshot::FsSnapshotMode::Off,
@@ -146,24 +160,19 @@ impl BackupTarget {
     /// prune can match its own archives only. Without a schedule they keep the
     /// legacy `<host>-<timestamp>` shape.
     pub fn archive_name(&self, timestamp: impl std::fmt::Display) -> String {
-        let hostname = &self.hostname;
-        self.schedule_id.map_or_else(
-            || format!("{hostname}-{timestamp}"),
-            |id| format!("{hostname}-s{id}-{timestamp}"),
-        )
+        shared::archive_names::archive_name(&self.hostname, self.schedule_id, timestamp)
     }
 
     /// Matches this schedule's archives; `None` without a schedule.
     pub fn schedule_archive_glob(&self) -> Option<String> {
-        let hostname = &self.hostname;
-        self.schedule_id.map(|id| format!("*{hostname}-s{id}-*"))
+        self.schedule_id
+            .map(|id| shared::archive_names::schedule_glob(&self.hostname, id))
     }
 
     /// Matches archives named before schedule ids were added to the name.
     /// Spelling out the date keeps it from matching the newer names.
     pub fn legacy_archive_glob(&self) -> String {
-        let hostname = &self.hostname;
-        format!("*{hostname}-[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T*")
+        shared::archive_names::legacy_glob(&self.hostname)
     }
 
     /// Construct a maintenance target (check/verify) from an existing backup target,

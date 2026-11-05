@@ -75,6 +75,8 @@
   --warning-subtle: rgba(217, 119, 6, 0.08);
   --info: #0ea5e9;
   --info-subtle: rgba(14, 165, 233, 0.08);
+  --violet: #7c3aed;
+  --violet-subtle: rgba(124, 58, 237, 0.08);
   --bg-code: #f1f5f9;
 
   /* Syntax colours for read-only shell scripts (hook commands). Their own
@@ -166,6 +168,8 @@
   --warning-subtle: rgba(251, 191, 36, 0.12);
   --info: #38bdf8;
   --info-subtle: rgba(56, 189, 248, 0.12);
+  --violet: #a78bfa;
+  --violet-subtle: rgba(167, 139, 250, 0.12);
   --bg-code: #202023;
   --syntax-comment: #9494a0;
   --syntax-keyword: #a78bfa;
@@ -416,6 +420,13 @@
   .badge--neutral {
     background: var(--bg-hover);
     color: var(--text-muted);
+  }
+
+  /* Append-only: a property of how a repository is protected, not a state, so
+     it gets a tone of its own rather than borrowing accent or info. */
+  .badge--violet {
+    background: var(--violet-subtle);
+    color: var(--violet);
   }
 
   /* Schedule type tones, layered on top of `.badge--neutral` - shared by
@@ -3637,6 +3648,41 @@
     border-radius: var(--radius-sm);
     margin-bottom: var(--space-6);
     font-size: var(--fs-base);
+  }
+
+  /* A sentence-length note inside a pane: an icon, then prose, optionally
+     ending in an action. Info explains; warning needs attention. */
+  .callout {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--space-5);
+    padding: var(--space-5) var(--space-6);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--bg-card);
+    font-size: var(--fs-sm);
+    line-height: 1.5;
+    color: var(--text-secondary);
+  }
+
+  .callout > svg {
+    flex: none;
+    margin-top: var(--space-1);
+  }
+
+  .callout > p {
+    margin: 0;
+  }
+
+  .callout--info {
+    background: var(--info-subtle);
+    border-color: var(--info);
+  }
+
+  .callout--warning {
+    background: var(--warning-subtle);
+    border-color: var(--warning);
+    color: var(--text-primary);
   }
 
   /* Secondary text: a hint, an "unset" placeholder, an inactive value. One

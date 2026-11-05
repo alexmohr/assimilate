@@ -1,0 +1,65 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT repo_host_id, ssh_user, installed_at, checked_at, backup_key_ok, maintenance_key_ok, restriction_in_place, check_error\n         FROM append_only_logins WHERE repo_host_id = $1 AND ssh_user = $2",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "repo_host_id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "ssh_user",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "installed_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 3,
+        "name": "checked_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 4,
+        "name": "backup_key_ok",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 5,
+        "name": "maintenance_key_ok",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 6,
+        "name": "restriction_in_place",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 7,
+        "name": "check_error",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      true,
+      true,
+      true,
+      true,
+      true
+    ]
+  },
+  "hash": "9b971f1e249a9897c83b4155b10641976ed76c6e3c7ff3f8f7eba04cf2572d05"
+}

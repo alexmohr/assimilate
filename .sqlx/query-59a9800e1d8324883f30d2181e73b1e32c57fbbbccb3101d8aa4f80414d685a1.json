@@ -1,0 +1,20 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT r.id AS \"id!\"\n           FROM repos r\n           JOIN append_only_logins l\n             ON l.repo_host_id = r.repo_host_id AND l.ssh_user = r.ssh_user",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id!",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "59a9800e1d8324883f30d2181e73b1e32c57fbbbccb3101d8aa4f80414d685a1"
+}

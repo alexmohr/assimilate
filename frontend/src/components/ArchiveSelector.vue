@@ -44,6 +44,10 @@ const props = withDefaults(
     canDelete?: boolean
     /** Archives whose borg delete is already queued, by `archiveKey`. */
     deletingKeys?: readonly string[]
+    /** Archives waiting for their append-only repository's maintenance, by `archiveKey`. */
+    queuedKeys?: readonly string[]
+    /** A Keep is in flight, so the buttons wait. */
+    keeping?: boolean
     /** Replaces the toolbar and rows, for a caller that filters the list to one archive. */
     hideControls?: boolean
     emptyTitle?: string
@@ -54,13 +58,15 @@ const props = withDefaults(
     error: null,
     canDelete: false,
     deletingKeys: () => [],
+    queuedKeys: () => [],
+    keeping: false,
     hideControls: false,
     emptyTitle: 'No archives',
     emptyDescription: 'Archives appear here once a backup has run against this repository.',
   },
 )
 
-const emit = defineEmits<{ delete: [archive: RepoArchive] }>()
+const emit = defineEmits<{ delete: [archive: RepoArchive]; keep: [archive: RepoArchive] }>()
 
 const selected = defineModel<RepoArchive | null>('selected', { required: true })
 
@@ -109,6 +115,12 @@ const deleting = computed(() => new Set(props.deletingKeys))
 
 function isDeleting(archive: RepoArchive): boolean {
   return deleting.value.has(archiveKey(archive))
+}
+
+const queued = computed(() => new Set(props.queuedKeys))
+
+function isQueued(archive: RepoArchive): boolean {
+  return queued.value.has(archiveKey(archive))
 }
 
 function groupSize(archives: RepoArchive[]): string {
@@ -255,8 +267,11 @@ defineExpose({ reset, unmatchedCount, unmatchedHostnames })
             :repo-name="multiRepo ? archive.repo_name : null"
             :can-delete="canDelete"
             :deleting="isDeleting(archive)"
+            :queued="isQueued(archive)"
+            :keeping="keeping"
             @select="select(archive)"
             @delete="emit('delete', archive)"
+            @keep="emit('keep', archive)"
           />
         </section>
       </div>
@@ -320,8 +335,11 @@ defineExpose({ reset, unmatchedCount, unmatchedHostnames })
               :repo-name="multiRepo ? archive.repo_name : null"
               :can-delete="canDelete"
               :deleting="isDeleting(archive)"
+              :queued="isQueued(archive)"
+              :keeping="keeping"
               @select="select(archive)"
               @delete="emit('delete', archive)"
+              @keep="emit('keep', archive)"
             />
           </div>
         </div>
@@ -340,8 +358,11 @@ defineExpose({ reset, unmatchedCount, unmatchedHostnames })
           :repo-name="multiRepo ? archive.repo_name : null"
           :can-delete="canDelete"
           :deleting="isDeleting(archive)"
+          :queued="isQueued(archive)"
+          :keeping="keeping"
           @select="select(archive)"
           @delete="emit('delete', archive)"
+          @keep="emit('keep', archive)"
         />
       </div>
     </template>

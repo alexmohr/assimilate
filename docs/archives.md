@@ -205,6 +205,8 @@ A queued operation waits for as long as the one ahead of it takes, with no timeo
 
 Deleting an archive only unlinks it from the repository's manifest — the segment data it referenced is not reclaimed until the repository is compacted. Assimilate automatically runs `borg compact` after each successful archive deletion to reclaim that space, shown as a **Compacting repository** indicator. If the compact itself fails, the deletion still stands — the failure is logged as an `archive_compact_failed` system event and the freed space is reclaimed on the next opportunity (for example, a scheduled backup's own compact step).
 
+In an [append-only repository](append-only.md) the agents' key cannot delete, so **Delete** queues the deletion instead. The archive stays in the list, marked **removed at next maintenance**, until the repository's next maintenance run deletes it with the maintenance key and compacts. **Keep** takes it off the queue.
+
 To pull in new archives and index their contents, use **Sync now** (admin only), which re-reads the repository from borg and indexes any archives that are not already indexed.
 
 !!! warning "Restores overwrite files"

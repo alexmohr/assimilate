@@ -320,6 +320,7 @@ onMounted(async () => {
           :repo-id="repoId"
           :repo-name="repo.name"
           :is-admin="isAdmin"
+          :append-only="Boolean(repo.append_only)"
           :filter-name="archiveFilterName"
           :refresh-repo="refreshRepo"
           @clear-filter="clearArchiveFilter"

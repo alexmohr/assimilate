@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM repo_pending_deletions WHERE repo_id = $1 AND archive_name = $2",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "55e36b9fdd792ca16b1910eed258690c47118f79adee48e368add1adfb4f9632"
+}

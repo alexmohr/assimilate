@@ -8,7 +8,7 @@ vi.mock('../composables/useTimezone', () => ({
 }))
 
 import { renderWithPlugins } from '../test-utils'
-import { repoFixture } from '../test-utils/repoFixtures'
+import { appendOnly, repoFixture } from '../test-utils/repoFixtures'
 import RepoListRow from './RepoListRow.vue'
 import type { RepoWithStats } from '../types/repo'
 
@@ -45,6 +45,19 @@ describe('RepoListRow', () => {
     expect(badges[0]!.text()).toBe('Healthy')
     expect(badges[0]!.classes()).toContain('badge--success')
     expect(wrapper.find('.status-dot').classes()).toContain('status-dot--success')
+  })
+
+  it('shows the append-only badge, the stopped badge and queued deletions', () => {
+    const plain = mount()
+    expect(plain.find('.badge--violet').exists()).toBe(false)
+
+    const wrapper = mount({
+      append_only: appendOnly({ maintenance_stopped: true, pending_deletion_count: 3 }),
+    })
+    const badges = wrapper.findAll('.badge').map((b) => b.text())
+    expect(badges).toContain('Append-only')
+    expect(badges).toContain('Maintenance stopped')
+    expect(badges).toContain('3 pending deletion')
   })
 
   it('leads a row with unmatched archives to its Archives tab', () => {

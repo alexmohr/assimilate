@@ -41,7 +41,7 @@ pub(crate) fn test_target() -> BackupTarget {
         keep_monthly: 6,
         keep_yearly: 0,
         legacy_retention: Retention::default(),
-        compact_enabled: true,
+        pruning: Pruning::Agent { compact: true },
         vm_snapshot: None,
         database_backup: None,
         fs_snapshot: shared::snapshot::FsSnapshotMode::Off,
@@ -785,6 +785,64 @@ async fn test_all_zero_retention_skips_prune() {
         !log.contains("prune"),
         "prune should not be called when all retention values are zero, but log contains: {log}"
     );
+}
+
+/// An append-only repository's key cannot delete, so the agent leaves both
+/// prune and compact to the server's maintenance run - even with retention set
+/// and compaction on.
+#[cfg(unix)]
+#[tokio::test]
+async fn test_append_only_repository_is_neither_pruned_nor_compacted() {
+    let log_file = tempfile::NamedTempFile::new().unwrap();
+    let engine = BackupEngine::with_config(
+        mock_borg_path(),
+        vec![(
+            "MOCK_BORG_LOG".to_owned(),
+            log_file.path().to_string_lossy().into_owned(),
+        )],
+    );
+    let mut target = test_target();
+    target.keep_daily = 7;
+    target.pruning = Pruning::Server;
+
+    let result = engine.run_backup(&target, None, None).await.unwrap();
+    assert_eq!(result.status, BackupStatus::Success);
+
+    let log = std::fs::read_to_string(log_file.path()).unwrap();
+    assert!(
+        log.contains("create"),
+        "the backup itself still runs: {log}"
+    );
+    assert!(
+        !log.contains("prune"),
+        "prune ran on an append-only repository: {log}"
+    );
+    assert!(
+        !log.contains("compact"),
+        "compact ran on an append-only repository: {log}"
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn test_regular_repository_is_pruned_and_compacted() {
+    let log_file = tempfile::NamedTempFile::new().unwrap();
+    let engine = BackupEngine::with_config(
+        mock_borg_path(),
+        vec![(
+            "MOCK_BORG_LOG".to_owned(),
+            log_file.path().to_string_lossy().into_owned(),
+        )],
+    );
+    let mut target = test_target();
+    target.keep_daily = 7;
+    target.pruning = Pruning::Agent { compact: true };
+
+    engine.run_backup(&target, None, None).await.unwrap();
+
+    let log = std::fs::read_to_string(log_file.path()).unwrap();
+    assert!(log.contains("prune"), "{log}");
+    assert!(log.contains("compact"), "{log}");
 }
 
 #[cfg(unix)]

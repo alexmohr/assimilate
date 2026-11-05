@@ -17,6 +17,8 @@ const props = defineProps<{
   repoId: number
   repoName: string
   isAdmin: boolean
+  /** Whether deleting only queues the archive for the repository's maintenance. */
+  appendOnly?: boolean
   /** Set from the ?archive= route query; shows only that archive. */
   filterName: string | null
   /** Re-fetches the repository row after a delete changes its stats. */
@@ -170,6 +172,7 @@ defineExpose({
     :loading="archivesLoading"
     :error="archivesError"
     :is-admin="isAdmin"
+    :append-only-repo-ids="appendOnly ? [repoId] : []"
     :hide-controls="hasArchiveFilter"
     :reload="loadArchives"
     :refresh-after-delete="refreshRepo"

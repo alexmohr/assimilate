@@ -148,6 +148,18 @@ describe('ArchiveSelector', () => {
     expect(wrapper.findAll('.archive-row')[0].classes()).toContain('archive-row--deleting')
   })
 
+  it.each(['By host', 'Flat', 'By day'])(
+    'forwards keeping a queued archive in the %s view',
+    async (mode) => {
+      const wrapper = selector({ canDelete: true, queuedKeys: [`${DB.repo_id}/${DB.name}`] })
+      await pickGroupMode(wrapper, mode)
+
+      await wrapper.find(`[aria-label="Keep archive ${DB.name}"]`).trigger('click')
+
+      expect(wrapper.emitted('keep')?.[0]).toEqual([DB])
+    },
+  )
+
   it('shows placeholder rows while loading, and nothing else', () => {
     const wrapper = selector({ loading: true })
     expect(wrapper.find('.archive-loading').exists()).toBe(true)

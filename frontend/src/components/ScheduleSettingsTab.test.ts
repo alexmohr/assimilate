@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
+import type * as ReposApi from '../api/repos'
 import { describe, expect, it, vi } from 'vitest'
 import { nextTick } from 'vue'
 import { flushPromises } from '@vue/test-utils'
@@ -25,6 +26,13 @@ import type { Repo } from '../types/repo'
 vi.mock('../api/schedules', async (importOriginal) => ({
   ...(await importOriginal<typeof SchedulesApi>()),
   previewCron: vi.fn().mockResolvedValue({ status: 'valid', next_runs: [] }),
+}))
+
+// The retention section asks which targets are append-only; answer it here
+// with ordinary repositories so no request goes out.
+vi.mock('../api/repos', async (importOriginal) => ({
+  ...(await importOriginal<typeof ReposApi>()),
+  listRepoStats: vi.fn().mockResolvedValue([]),
 }))
 
 vi.mock('../api/machines', () => ({

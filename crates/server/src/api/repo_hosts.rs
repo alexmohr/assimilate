@@ -204,9 +204,11 @@ pub async fn update_repo_host(
     helpers::validate_max_len(ssh_host, "ssh_host", helpers::MaxLen::Hostname)?;
     validate_port(req.ssh_port)?;
 
+    db::repo_hosts::get_repo_host(&state.pool, repo_host_id).await?;
     let host =
         db::repo_hosts::update_repo_host_address(&state.pool, repo_host_id, ssh_host, req.ssh_port)
             .await?;
+    move_append_only_logins(&state).await?;
     info!(
         repo_host_id,
         ssh_host = %host.ssh_host,
@@ -215,6 +217,15 @@ pub async fn update_repo_host(
     );
     push_config_for_host(&state, repo_host_id).await?;
     Ok(Json(load_host_response(&state, host).await?))
+}
+
+/// The server remembers which logins are append-only by host name, so after a
+/// rename it is brought in line with the database again.
+async fn move_append_only_logins(state: &AppState) -> Result<(), ApiError> {
+    crate::ssh::replace_append_only_logins(
+        db::append_only::list_logins_with_hosts(&state.pool).await?,
+    );
+    Ok(())
 }
 
 #[utoipa::path(
@@ -243,6 +254,11 @@ pub async fn delete_repo_host(
     Path(repo_host_id): Path<i64>,
 ) -> Result<StatusCode, ApiError> {
     db::repo_hosts::delete_repo_host(&state.pool, repo_host_id).await?;
+    // Its append-only login went with it; the logins the server remembers must
+    // not outlive the rows they came from.
+    crate::ssh::replace_append_only_logins(
+        db::append_only::list_logins_with_hosts(&state.pool).await?,
+    );
     state
         .ui_broadcast
         .send(shared::protocol::ServerToUi::DataChanged);

@@ -80,14 +80,7 @@ impl Handler for Connection {
         std::future::ready(Ok(Auth::Accept))
     }
 
-    fn channel_open_session(
-        &mut self,
-        channel: Channel<Msg>,
-        _session: &mut Session,
-    ) -> impl Future<Output = Result<bool, Self::Error>> + Send {
-        self.sessions.insert(channel.id(), channel);
-        std::future::ready(Ok(true))
-    }
+    keep_offered_channels!();
 
     async fn subsystem_request(
         &mut self,
@@ -192,19 +185,7 @@ fn ok(id: u32) -> Status {
 }
 
 impl russh_sftp::server::Handler for Files {
-    type Error = StatusCode;
-
-    fn unimplemented(&self) -> Self::Error {
-        StatusCode::OpUnsupported
-    }
-
-    fn init(
-        &mut self,
-        _version: u32,
-        _extensions: HashMap<String, String>,
-    ) -> impl Future<Output = Result<Version, Self::Error>> + Send {
-        std::future::ready(Ok(Version::new()))
-    }
+    sftp_handler_basics!();
 
     fn open(
         &mut self,
@@ -408,4 +389,74 @@ async fn a_refused_install_fails_the_deploy_with_the_hosts_reason() {
             recorded.commands
         );
     }
+}
+
+/// A port nothing listens on.
+async fn closed_port() -> u16 {
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    listener.local_addr().expect("address").port()
+}
+
+/// Asks the server to deploy its key to `port` with `key_dir` as its key
+/// directory.
+async fn deploy_key_to_closed_port(
+    key_dir: &std::path::Path,
+    port: u16,
+) -> super::DeployKeyResponse {
+    crate::ssh::TEST_KEY_DIR
+        .scope(
+            key_dir.to_owned(),
+            super::deploy_key(&super::DeployKeyRequest {
+                ssh_host: "127.0.0.1".to_owned(),
+                ssh_user: "borg".to_owned(),
+                ssh_port: Some(port),
+                password: "pw".to_owned(),
+                use_sftp: true,
+            }),
+        )
+        .await
+}
+
+#[tokio::test]
+async fn deploying_a_key_to_a_host_that_does_not_answer_reports_why() {
+    let keys = tempfile::tempdir().expect("tempdir");
+    tokio::fs::write(
+        keys.path().join("id_ed25519.pub"),
+        "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOtherKeyOtherKeyOtherKeyOtherKeyOtherKeyOtherKey0 \
+         s\n",
+    )
+    .await
+    .expect("write public key");
+    let port = closed_port().await;
+
+    let response = deploy_key_to_closed_port(keys.path(), port).await;
+
+    assert!(!response.success);
+    assert!(!response.already_deployed);
+    assert!(response.error.is_some());
+}
+
+#[tokio::test]
+async fn deploying_without_a_server_key_says_so() {
+    let keys = tempfile::tempdir().expect("tempdir");
+    let port = closed_port().await;
+
+    let response = deploy_key_to_closed_port(keys.path(), port).await;
+
+    assert!(!response.success);
+    assert!(response.error.is_some_and(|e| e.contains("id_ed25519.pub")));
+}
+
+#[tokio::test]
+async fn reading_a_remote_file_with_a_password_fails_cleanly_when_the_host_is_down() {
+    let port = closed_port().await;
+    let result = super::read_remote_file(&super::ReadFileParams {
+        host: "127.0.0.1",
+        user: "borg",
+        port,
+        password: Some("pw"),
+        path: "/etc/hostname",
+    })
+    .await;
+    assert!(result.is_err());
 }

@@ -1281,6 +1281,12 @@ pub struct RepoWithStatsRow {
     /// Whether a quota row exists for this repo, and if so, whether it's enabled.
     /// `NULL` means no quota is configured at all.
     pub quota_enabled: Option<bool>,
+    /// Whether the repository's login is append-only.
+    pub append_only: bool,
+    /// Whether maintenance is stopped, waiting for an admin.
+    pub maintenance_stopped: bool,
+    /// Archive deletions waiting for the next maintenance run.
+    pub pending_deletion_count: i64,
     /// Whether to send a Wake-on-LAN packet before a backup if the
     /// repository host isn't already reachable over SSH.
     pub wake_enabled: bool,
@@ -1320,15 +1326,19 @@ pub async fn list_repos_with_stats(pool: &PgPool) -> Result<Vec<RepoWithStatsRow
          COALESCE(agg.unmatched_count, 0) AS \"unmatched_count!\", q.warn_bytes AS \
          \"quota_warn_bytes?\", q.critical_bytes AS \"quota_critical_bytes?\", q.warn_action AS \
          \"quota_warn_action?: QuotaAction\", q.critical_action AS \"quota_critical_action?: \
-         QuotaAction\", q.enabled AS \"quota_enabled?\" FROM repos r JOIN repo_hosts h ON h.id = \
-         r.repo_host_id JOIN machines hm ON hm.id = h.machine_id LEFT JOIN repo_stats rs ON \
+         QuotaAction\", q.enabled AS \"quota_enabled?\", EXISTS (SELECT 1 FROM append_only_logins \
+         aol WHERE aol.repo_host_id = r.repo_host_id AND aol.ssh_user = r.ssh_user) AS \
+         \"append_only!\", COALESCE(rm.stopped_at IS NOT NULL, false) AS \
+         \"maintenance_stopped!\", (SELECT COUNT(*) FROM repo_pending_deletions pd WHERE \
+         pd.repo_id = r.id) AS \"pending_deletion_count!\" FROM repos r JOIN repo_hosts h ON h.id \
+         = r.repo_host_id JOIN machines hm ON hm.id = h.machine_id LEFT JOIN repo_stats rs ON \
          rs.repo_id = r.id LEFT JOIN repo_import_state ris ON ris.repo_id = r.id LEFT JOIN \
          repo_last_op rlo ON rlo.repo_id = r.id LEFT JOIN repo_quotas q ON q.repo_id = r.id LEFT \
-         JOIN LATERAL (SELECT MAX(CASE WHEN br.finished_at > '1970-01-01T00:00:00Z' THEN \
-         br.finished_at END) AS last_backup_at, COUNT(DISTINCT br.agent_id) AS agent_count, \
-         COUNT(DISTINCT br.agent_id) FILTER (WHERE br.matched = false) AS unmatched_count FROM \
-         backup_reports br WHERE br.repo_id = r.id AND br.status = 'success') agg ON true ORDER \
-         BY r.name",
+         JOIN repo_maintenance rm ON rm.repo_id = r.id LEFT JOIN LATERAL (SELECT MAX(CASE WHEN \
+         br.finished_at > '1970-01-01T00:00:00Z' THEN br.finished_at END) AS last_backup_at, \
+         COUNT(DISTINCT br.agent_id) AS agent_count, COUNT(DISTINCT br.agent_id) FILTER (WHERE \
+         br.matched = false) AS unmatched_count FROM backup_reports br WHERE br.repo_id = r.id \
+         AND br.status = 'success') agg ON true ORDER BY r.name",
     )
     .fetch_all(pool)
     .await
@@ -1364,15 +1374,19 @@ pub async fn get_repo_with_stats(
          COALESCE(agg.unmatched_count, 0) AS \"unmatched_count!\", q.warn_bytes AS \
          \"quota_warn_bytes?\", q.critical_bytes AS \"quota_critical_bytes?\", q.warn_action AS \
          \"quota_warn_action?: QuotaAction\", q.critical_action AS \"quota_critical_action?: \
-         QuotaAction\", q.enabled AS \"quota_enabled?\" FROM repos r JOIN repo_hosts h ON h.id = \
-         r.repo_host_id JOIN machines hm ON hm.id = h.machine_id LEFT JOIN repo_stats rs ON \
+         QuotaAction\", q.enabled AS \"quota_enabled?\", EXISTS (SELECT 1 FROM append_only_logins \
+         aol WHERE aol.repo_host_id = r.repo_host_id AND aol.ssh_user = r.ssh_user) AS \
+         \"append_only!\", COALESCE(rm.stopped_at IS NOT NULL, false) AS \
+         \"maintenance_stopped!\", (SELECT COUNT(*) FROM repo_pending_deletions pd WHERE \
+         pd.repo_id = r.id) AS \"pending_deletion_count!\" FROM repos r JOIN repo_hosts h ON h.id \
+         = r.repo_host_id JOIN machines hm ON hm.id = h.machine_id LEFT JOIN repo_stats rs ON \
          rs.repo_id = r.id LEFT JOIN repo_import_state ris ON ris.repo_id = r.id LEFT JOIN \
          repo_last_op rlo ON rlo.repo_id = r.id LEFT JOIN repo_quotas q ON q.repo_id = r.id LEFT \
-         JOIN LATERAL (SELECT MAX(CASE WHEN br.finished_at > '1970-01-01T00:00:00Z' THEN \
-         br.finished_at END) AS last_backup_at, COUNT(DISTINCT br.agent_id) AS agent_count, \
-         COUNT(DISTINCT br.agent_id) FILTER (WHERE br.matched = false) AS unmatched_count FROM \
-         backup_reports br WHERE br.repo_id = r.id AND br.status = 'success') agg ON true WHERE \
-         r.id = $1",
+         JOIN repo_maintenance rm ON rm.repo_id = r.id LEFT JOIN LATERAL (SELECT MAX(CASE WHEN \
+         br.finished_at > '1970-01-01T00:00:00Z' THEN br.finished_at END) AS last_backup_at, \
+         COUNT(DISTINCT br.agent_id) AS agent_count, COUNT(DISTINCT br.agent_id) FILTER (WHERE \
+         br.matched = false) AS unmatched_count FROM backup_reports br WHERE br.repo_id = r.id \
+         AND br.status = 'success') agg ON true WHERE r.id = $1",
         repo_id,
     )
     .fetch_one(pool)

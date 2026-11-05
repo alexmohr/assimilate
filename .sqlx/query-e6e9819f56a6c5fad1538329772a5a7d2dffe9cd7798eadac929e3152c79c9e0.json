@@ -1,0 +1,52 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT repo_id, cron_expression, check_before_prune, next_run_at, last_run_at, stopped_at\n         FROM repo_maintenance WHERE repo_id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "repo_id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "cron_expression",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "check_before_prune",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 3,
+        "name": "next_run_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 4,
+        "name": "last_run_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 5,
+        "name": "stopped_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      true,
+      true,
+      true
+    ]
+  },
+  "hash": "e6e9819f56a6c5fad1538329772a5a7d2dffe9cd7798eadac929e3152c79c9e0"
+}

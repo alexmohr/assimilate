@@ -13,7 +13,7 @@ import type {
  * The tones the shared `.badge` component supports. Defined in
  * `src/style.css`; there is exactly one badge.
  */
-export type BadgeTone = 'success' | 'warning' | 'danger' | 'info' | 'accent' | 'neutral'
+export type BadgeTone = 'success' | 'warning' | 'danger' | 'info' | 'accent' | 'neutral' | 'violet'
 
 export function badgeClass(tone: BadgeTone): string {
   return `badge--${tone}`

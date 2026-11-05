@@ -125,7 +125,7 @@ test('imported agents have the Imported badge', async ({ page }) => {
   await expect(page.locator('.badge', { hasText: 'Imported' }).first()).toBeVisible()
 })
 
-test('imported agents offer Merge into... and Adopt in their row menu', async ({ page }) => {
+test('imported agents offer Merge into... and Adopt on their own page', async ({ page }) => {
   await loginAsAdmin(page)
   await openAgentsList(page)
   const imported = page
@@ -133,12 +133,13 @@ test('imported agents offer Merge into... and Adopt in their row menu', async ({
     .filter({ has: page.locator('.badge', { hasText: 'Imported' }) })
     .first()
   await expect(imported).toBeVisible()
-  // The actions sit in the row's overflow menu, which opens without leaving
-  // the list.
-  await imported.getByRole('button', { name: /^More actions for / }).click()
-  await expect(page).toHaveURL(/\/agents$/)
-  await expect(page.getByRole('menuitem', { name: /merge into/i })).toBeVisible()
-  await expect(page.getByRole('menuitem', { name: /adopt/i })).toBeVisible()
+  // The row is a link to the agent's page, whose header leads with both.
+  await expect(imported.getByRole('button')).toHaveCount(0)
+  await imported.click()
+  await expect(page).toHaveURL(/\/agents\/[^/]+/)
+  const actions = page.locator('.detail-actions')
+  await expect(actions.getByRole('button', { name: /merge into/i })).toBeVisible()
+  await expect(actions.getByRole('button', { name: /^adopt$/i })).toBeVisible()
 })
 
 test('Cancel Import button appears when repo is in importing state', async ({ page }) => {

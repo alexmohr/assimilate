@@ -363,6 +363,30 @@ describe('AgentHeader', () => {
 
       expect(wrapper.emitted(event)).toHaveLength(1)
     })
+
+    // The agents list used to unhide a host from its row menu; that menu is
+    // gone, so a hidden host comes back from here.
+    it('offers Unhide agent instead of Hide agent once the host is hidden', async () => {
+      const wrapper = mount({ ...IMPORTED, is_hidden: true })
+      await openMenu(wrapper)
+      expect(menuLabels(wrapper)).toEqual([
+        'Activity log',
+        'Unhide agent',
+        'Delete archives and remove',
+      ])
+
+      await wrapper
+        .findAll('.overflow-menu-item')
+        .find((i) => i.text().trim() === 'Unhide agent')!
+        .trigger('click')
+      expect(wrapper.emitted('unhideAgent')).toHaveLength(1)
+    })
+
+    it('offers no Unhide agent to a non-admin', async () => {
+      const wrapper = mount({ ...IMPORTED, is_hidden: true }, { isAdmin: false })
+      await openMenu(wrapper)
+      expect(menuLabels(wrapper)).not.toContain('Unhide agent')
+    })
   })
 
   // A freshly created agent has connected but reported nothing about itself,

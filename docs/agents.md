@@ -89,13 +89,7 @@ Two of the figures take a colour of their own:
 
 A **Failed** or **Overdue** chip appears when a backup on that agent needs attention — click it to jump straight to the filtered backup history or schedule that needs a look. A **No schedules** chip marks an agent nothing is scheduled to back up at all; it opens that agent's Schedules tab. The chip is only shown once the server has actually answered with schedule counts — a failed request leaves the row silent rather than accusing every agent of having none. An **Offline** pill marks a disconnected agent, and **Hidden** and **Imported** badges mark those agents.
 
-A row that has something to do from the list ends in a **...** menu instead of an arrow. Opening it does not open the agent:
-
-| Agent | Menu items |
-|---|---|
-| Imported | **Merge into...** and **Adopt** |
-| Hidden | **Unhide** |
-| Without an agent binary, or behind the server's | **Deploy** or **Upgrade**, for roles allowed to deploy agents |
+Every row ends in an arrow and opens the agent's page. Actions such as **Deploy agent**, **Upgrade agent**, **Adopt**, **Merge into...** and **Unhide agent** are in that page's [header](#header-actions), not on the list.
 
 **Last backup** is the most recent backup that actually completed on that agent, across all of its schedules — a failed run is not one, however recently it reported. When an agent's latest run failed, the row shows the successful (or warning) run before it, so a single failure never makes a backed-up agent read as unprotected. An agent that has never completed a backup reads **Never**. Whether an agent has fallen *behind* is a separate question, answered by the **Overdue** chip, which counts the agent's schedules the server considers overdue; the row does not estimate it a second time from the cron cadence.
 
@@ -362,7 +356,7 @@ Actions are graded by how often and how safely they are used:
 |-----------|---------|
 | Primary button | **Deploy agent** / **Upgrade agent**, when a newer build is available. On an imported host, **Adopt** and **Merge into...** instead |
 | Secondary button | **Activity log** |
-| Overflow menu (**...**) | **Edit identity**, **Deploy SSH key**, **Regenerate token**, **Restart agent**, and for admins **Delete agent** — or **Hide agent** and **Delete archives and remove** on an imported host |
+| Overflow menu (**...**) | **Edit identity**, **Deploy SSH key**, **Regenerate token**, **Restart agent**, and for admins **Delete agent** — or **Hide agent** and **Delete archives and remove** on an imported host. A hidden host offers admins **Unhide agent** in place of **Hide agent** |
 
 Edit identity and Deploy SSH key open dialogs rather than expanding inline, so the page below them does not move.
 
@@ -467,7 +461,7 @@ When a repository is imported, placeholder agents are created for archive hostna
 
 To merge a placeholder into a real agent:
 
-1. On the **Agents** list, open the **...** menu at the end of the imported agent's row and choose **Merge into...**.
+1. On the **Agents** list, open the imported agent and click **Merge into...** in its header.
 2. Select the target agent from the dropdown. If more than one candidate shares a hostname, each is labeled with its domain (or "no domain") so you can tell them apart.
 3. Optionally check **Save as hostname alias** to automatically create a glob pattern (pre-filled with the placeholder's hostname followed by `*`).
 4. Click **Merge**.
@@ -522,7 +516,7 @@ Hidden agents are excluded from:
 1. Navigate to **Agents** in the sidebar.
 2. Enable the **Show hidden** toggle (admin-only).
 3. Hidden agents appear dimmed with a **Hidden** badge.
-4. Open the **...** menu at the end of a hidden agent's row and choose **Unhide** to restore it to normal visibility.
+4. Open the hidden agent and choose **Unhide agent** from the header's **...** menu (admins only) to restore it to normal visibility. The page stays open; the agent shows up in every view again.
 
 !!! note
     Hiding is non-destructive — all archive data remains intact on disk. The agent will not reappear on the next repository scan because the database record is preserved with the hidden flag.

@@ -204,17 +204,17 @@ test.describe('Hosts management', () => {
     // unassigned-01 is a placeholder with no backing container, so it never connects
     // and never reports an agent_version - unlike web-server-01, which runs a real
     // agent binary that reports its own version once connected (showing "Upgrade" or
-    // nothing instead of "Deploy"). The action lives in the row's overflow
-    // menu, which opens without following the row's link.
+    // nothing instead of "Deploy"). The action is the accented button in the
+    // agent page's header; the list's rows only link there.
     await showEveryAgent(page)
-    const menuToggle = agentRow(page, 'unassigned-01').getByRole('button', {
-      name: 'More actions for unassigned-01',
-    })
-    await expect(menuToggle).toBeVisible({ timeout: 15_000 })
-    await menuToggle.click()
-    await expect(page).toHaveURL(/\/agents$/)
-    const deployBtn = page.getByRole('menuitem', { name: /Deploy|Upgrade/ })
-    await expect(deployBtn).toBeVisible()
+    const row = agentRow(page, 'unassigned-01')
+    await expect(row).toBeVisible({ timeout: 15_000 })
+    await row.click()
+    await expect(page).toHaveURL(/\/agents\/unassigned-01/)
+    const deployBtn = page
+      .locator('.detail-actions')
+      .getByRole('button', { name: /^(Deploy|Upgrade) agent$/ })
+    await expect(deployBtn).toBeVisible({ timeout: 15_000 })
     await deployBtn.click()
 
     await expect(page.getByRole('heading', { name: /Deploy|Upgrade/ }).first()).toBeVisible()

@@ -1836,6 +1836,30 @@ describe('AgentDetailView - tab structure and settings', () => {
       expect(apiClient.put).toHaveBeenCalledWith('/agents/test-host/hide', {}, { params: {} })
     })
 
+    it('unhides a hidden host in place, without leaving the page', async () => {
+      vi.mocked(apiClient.put).mockResolvedValue({} as never)
+      const wrapper = await render({ is_imported: true, is_hidden: true })
+      await chooseFromMenu(wrapper, 'Unhide agent')
+
+      expect(apiClient.put).toHaveBeenCalledWith('/agents/test-host/unhide', {}, { params: {} })
+      await wrapper.find('.overflow-toggle').trigger('click')
+      await flushPromises()
+      const labels = wrapper.findAll('.overflow-menu-item').map((i) => i.text().trim())
+      expect(labels).toContain('Hide agent')
+      expect(labels).not.toContain('Unhide agent')
+    })
+
+    it('keeps a host hidden when unhiding it fails', async () => {
+      vi.mocked(apiClient.put).mockRejectedValue(new Error('forbidden'))
+      const wrapper = await render({ is_imported: true, is_hidden: true })
+      await chooseFromMenu(wrapper, 'Unhide agent')
+
+      await wrapper.find('.overflow-toggle').trigger('click')
+      await flushPromises()
+      const labels = wrapper.findAll('.overflow-menu-item').map((i) => i.text().trim())
+      expect(labels).toContain('Unhide agent')
+    })
+
     it('confirms before deleting an imported host archives', async () => {
       const wrapper = await render({ is_imported: true })
       await chooseFromMenu(wrapper, 'Delete archives and remove')

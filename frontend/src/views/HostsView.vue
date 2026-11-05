@@ -6,14 +6,7 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 <script setup lang="ts">
 import { ref, reactive, computed, onMounted, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
-import {
-  listAgents,
-  listAgentTags,
-  createAgent,
-  updateAgent,
-  regenerateAgentToken,
-  unhideAgent as unhideAgentRequest,
-} from '../api/agents'
+import { listAgents, listAgentTags, createAgent } from '../api/agents'
 import { listTags } from '../api/tags'
 import { getDashboardOverview, getScheduleCounts } from '../api/stats'
 import { getScheduleHealth, listSchedules } from '../api/schedules'
@@ -38,11 +31,8 @@ import AgentChannelKey from '../components/AgentChannelKey.vue'
 import BaseSegmented, { type SegmentedOption } from '../components/BaseSegmented.vue'
 import BaseSpinner from '../components/BaseSpinner.vue'
 import EmptyState from '../components/EmptyState.vue'
-import OverflowMenu from '../components/OverflowMenu.vue'
 import SortControls from '../components/SortControls.vue'
 import ToggleSwitch from '../components/ToggleSwitch.vue'
-import MergeAgentDialog from '../components/MergeAgentDialog.vue'
-import AgentDeployDialog from '../components/AgentDeployDialog.vue'
 import EntityStatusBadges, { type EntityIssue } from '../components/EntityStatusBadges.vue'
 import type { DashboardOverview } from '../types/dashboard'
 import type { AgentRow } from '../types/agent'
@@ -281,22 +271,6 @@ const addLoading = ref(false)
 const addError = ref<string | null>(null)
 const newToken = ref<string | null>(null)
 const { copied: tokenCopied, copy: copyToClipboard } = useClipboard()
-
-// Adopt imported agent
-const showAdoptDialog = ref(false)
-const adoptToken = ref<string | null>(null)
-const adoptHostname = ref('')
-
-const showDeployDialog = ref(false)
-const deployTarget = ref<AgentRow | null>(null)
-
-// Merge imported agent
-const showMergeDialog = ref(false)
-const mergeSource = ref<AgentRow | null>(null)
-
-useEscapeKey(showMergeDialog, () => {
-  showMergeDialog.value = false
-})
 
 useEscapeKey(showAddDialog, closeAddDialog)
 
@@ -890,64 +864,11 @@ function agentLink(agent: AgentRow): { path: string; query: Record<string, strin
   return { path: `/agents/${agent.hostname}`, query: domainParams(agent.domain) }
 }
 
-async function adoptAgent(agent: AgentRow): Promise<void> {
-  try {
-    const cleanDisplayName = agent.display_name?.replace(/\s*\(imported\)$/, '').trim() || null
-    await updateAgent(
-      agent.hostname,
-      { display_name: cleanDisplayName, domain: agent.domain },
-      agent.domain,
-    )
-    const res = await regenerateAgentToken(agent.hostname, agent.domain)
-    const idx = agents.value.findIndex((m) => m.id === agent.id)
-    if (idx !== -1) {
-      agents.value[idx] = {
-        ...agents.value[idx],
-        ...res.agent,
-        id: Number(res.agent.id),
-        is_imported: false,
-        display_name: cleanDisplayName,
-      }
-    }
-    adoptHostname.value = agent.hostname
-    adoptToken.value = res.token
-    tokenCopied.value = false
-    showAdoptDialog.value = true
-  } catch (e: unknown) {
-    logger.error('Failed to adopt agent', e)
-  }
-}
-
-function openDeployDialog(agent: AgentRow): void {
-  deployTarget.value = agent
-  showDeployDialog.value = true
-}
-
-function openMergeDialog(agent: AgentRow): void {
-  mergeSource.value = agent
-  showMergeDialog.value = true
-}
-
-async function unhideAgent(agent: AgentRow): Promise<void> {
-  try {
-    await unhideAgentRequest(agent.hostname, agent.domain)
-    await loadAgents()
-  } catch (e: unknown) {
-    logger.error('Failed to unhide agent', e)
-  }
-}
-
-function onMerged(): void {
-  showMergeDialog.value = false
-  loadAgents().catch(logger.error)
-}
-
 onMounted(() => {
   loadAgents().catch(logger.error)
   getSystemVersion()
     .then((res) => {
       availableAgentVersion.value = res.agent_version
-      serverCommitCount.value = res.server_commit_count
     })
     .catch(logger.error)
 })
@@ -960,7 +881,6 @@ onMessage('DataChanged', () => loadAgents().catch(logger.error))
 const activeBackupsByHost = ref<Record<string, string[]>>({})
 
 const availableAgentVersion = ref<string | null>(null)
-const serverCommitCount = ref<number | null>(null)
 onMessage('BackupStarted', (payload) => {
   const list = activeBackupsByHost.value[payload.hostname] ?? []
   if (!list.includes(payload.target_name)) {
@@ -995,66 +915,9 @@ function hostRunningLabel(agent: AgentRow): string {
   return targets.length > 0 ? `Backing up: ${targets.join(', ')}` : 'Running'
 }
 
-function deployButtonLabel(agent: AgentRow): string | null {
-  if (!agent.agent_version) return 'Deploy'
-  const commitCount = agent.agent_commit_count ?? null
-  if (serverCommitCount.value !== null && commitCount !== null) {
-    return commitCount >= serverCommitCount.value ? null : 'Upgrade'
-  }
-  if (!availableAgentVersion.value) return null
-  return agent.agent_version === availableAgentVersion.value ? null : 'Upgrade'
-}
-
-type RowActionKey = 'unhide' | 'merge' | 'adopt' | 'deploy'
-
-interface RowAction {
-  key: RowActionKey
-  label: string
-  run: () => void
-}
-
 /**
- * What a row's overflow menu offers. A row is a link to the agent, so these
- * are only the things that cannot wait for its detail page: taking an
- * imported placeholder on, bringing a hidden one back, and putting the agent
- * binary on a host that lacks or lags it.
- */
-function rowActions(agent: AgentRow): RowAction[] {
-  if (agent.is_hidden) {
-    return [{ key: 'unhide', label: 'Unhide', run: () => void unhideAgent(agent) }]
-  }
-  const actions: RowAction[] = []
-  if (isImported(agent)) {
-    actions.push(
-      { key: 'merge', label: 'Merge into...', run: () => openMergeDialog(agent) },
-      { key: 'adopt', label: 'Adopt', run: () => void adoptAgent(agent) },
-    )
-  }
-  const deployLabel = deployButtonLabel(agent)
-  if (deployLabel && !isImported(agent) && authStore.canDeployAgent) {
-    actions.push({ key: 'deploy', label: deployLabel, run: () => openDeployDialog(agent) })
-  }
-  return actions
-}
-
-const rowActionsById = computed(() => {
-  const map = new Map<number, RowAction[]>()
-  for (const agent of filteredAgents.value) map.set(agent.id, rowActions(agent))
-  return map
-})
-
-function actionsFor(agent: AgentRow): RowAction[] {
-  return rowActionsById.value.get(agent.id) ?? []
-}
-
-/** A group whose rows open menus has to let them spill past its edge. */
-function groupHasMenus(group: AgentListGroup): boolean {
-  return visibleAgents(group).some((agent) => actionsFor(agent).length > 0)
-}
-
-/**
- * Keeps a click on a control inside a row - an issue chip, the overflow menu -
- * from also following the row's link. Runs in the capture phase, before the
+ * Keeps a click on a control inside a row - an issue chip - from also
+ * following the row's link. Runs in the capture phase, before the
  * control's own handler stops the event, and only cancels the link's default:
  * the control still does what it was clicked for.
  */
@@ -1293,7 +1156,6 @@ useQueryOverride(() => route.query.coverage, isCoverageFilter, filterCoverage)
           v-for="group in agentGroups"
           :key="group.key"
           class="list-group"
-          :class="{ 'list-group--menus': groupHasMenus(group) }"
         >
           <div class="list-group-header">
             <span
@@ -1422,28 +1284,7 @@ useQueryOverride(() => route.query.coverage, isCoverageFilter, filterCoverage)
               data-col="version"
               >{{ agent.agent_version ?? '-' }}</span
             >
-            <span
-              v-if="actionsFor(agent).length > 0"
-              class="agents-row-actions"
-            >
-              <OverflowMenu
-                v-slot="{ run }"
-                :label="`More actions for ${agent.hostname}`"
-              >
-                <button
-                  v-for="action in actionsFor(agent)"
-                  :key="action.key"
-                  class="overflow-menu-item"
-                  role="menuitem"
-                  type="button"
-                  @click="run(action.run)"
-                >
-                  {{ action.label }}
-                </button>
-              </OverflowMenu>
-            </span>
             <ChevronRight
-              v-else
               :size="16"
               class="list-row-chevron"
             />
@@ -1555,74 +1396,6 @@ useQueryOverride(() => route.query.coverage, isCoverageFilter, filterCoverage)
         </button>
       </template>
     </BaseModal>
-
-    <!-- Adopt Agent Dialog -->
-    <BaseModal
-      :open="showAdoptDialog"
-      size="sm"
-      @close="showAdoptDialog = false"
-    >
-      <template #header="{ titleId }">
-        <h2
-          :id="titleId"
-          class="modal-title"
-        >
-          Agent Adopted &mdash; {{ adoptHostname }}
-        </h2>
-      </template>
-      <div class="token-notice">
-        <p class="token-warning">Copy this agent token now. It will not be shown again.</p>
-        <div class="token-box">
-          <code class="token-text">{{ adoptToken }}</code>
-          <button
-            class="btn btn-sm btn-ghost"
-            @click="copyToClipboard(adoptToken ?? '')"
-          >
-            {{ tokenCopied ? 'Copied!' : 'Copy' }}
-          </button>
-        </div>
-        <AgentChannelKey />
-      </div>
-
-      <template #footer>
-        <button
-          class="btn btn-primary"
-          @click="showAdoptDialog = false"
-        >
-          Done
-        </button>
-      </template>
-    </BaseModal>
-
-    <!-- Deploy Agent Dialog -->
-    <AgentDeployDialog
-      v-if="showDeployDialog && deployTarget"
-      :hostname="deployTarget.hostname"
-      :domain="deployTarget.domain"
-      :agent-version="deployTarget.agent_version ?? null"
-      :available-version="availableAgentVersion"
-      :last-ssh-user="deployTarget.last_ssh_user"
-      @close="showDeployDialog = false"
-      @deployed="
-        (version) => {
-          if (version && deployTarget) {
-            const agent = agents.find((a) => a.id === deployTarget!.id)
-            if (agent) agent.agent_version = version
-          }
-          showDeployDialog = false
-          loadAgents()
-        }
-      "
-    />
-
-    <!-- Merge Agent Dialog -->
-    <MergeAgentDialog
-      v-if="showMergeDialog && mergeSource"
-      :source="mergeSource"
-      :all-agents="agents"
-      @merged="onMerged"
-      @cancel="showMergeDialog = false"
-    />
   </div>
 </template>
 
@@ -1698,10 +1471,6 @@ useQueryOverride(() => route.query.coverage, isCoverageFilter, filterCoverage)
   opacity: 0.7;
 }
 
-.agents-row-actions {
-  justify-self: end;
-}
-
 .agents-row-when {
   margin-left: auto;
   font-size: var(--fs-xs);
@@ -1731,15 +1500,9 @@ useQueryOverride(() => route.query.coverage, isCoverageFilter, filterCoverage)
   }
 
   /* The last-backup figure sits at the end of the name's line, clear of the
-     chevron or menu pinned to the row's top-right corner. */
+     chevron pinned to the row's top-right corner. */
   .agents-row-when {
     padding-right: var(--space-8);
-  }
-
-  .agents-row-actions {
-    position: absolute;
-    top: var(--space-3);
-    right: var(--space-3);
   }
 }
 </style>

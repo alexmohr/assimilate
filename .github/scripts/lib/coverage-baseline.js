@@ -15,11 +15,16 @@
 // an aggregate drop.
 //
 // ci.yml records that first parent next to the PR's lcov report
-// (`coverage-base.sha`). When it is missing (an artifact older than that
-// step) or `main` has no finished run with coverage for it yet, this falls
-// back to the latest successful `main` run - the comparison this gate always
-// made - and says so, so a result against an approximate baseline is never
-// mistaken for an exact one.
+// (`coverage-base.sha`). That commit is often one CI never runs on: the
+// screenshot capture job follows every merge with a `[skip ci]` recapture
+// commit, so `main`'s tip is usually one. Its coverage is its parent's - CI
+// was skipped, nothing was measured - so the search walks down through
+// `[skip ci]` commits to the nearest one CI ran on.
+//
+// When the base is missing (an artifact older than that step) or no such run
+// has finished with coverage yet, this falls back to the latest successful
+// `main` run - the comparison this gate always made - and says so, so a
+// result against an approximate baseline is never mistaken for an exact one.
 
 const fs = require("fs");
 
@@ -27,8 +32,17 @@ const COVERAGE_ARTIFACT = "coverage-final";
 
 const BaselineKind = Object.freeze({
   EXACT: "exact",
+  SKIP_CI_ANCESTOR: "skip-ci-ancestor",
   LATEST_MAIN: "latest-main",
 });
+
+// How far down a run of `[skip ci]` commits the search goes. One recapture
+// per merge means one in practice; the cap only keeps a pathological history
+// from costing a request per commit.
+const MAX_SKIP_CI_HOPS = 10;
+
+// The tokens GitHub Actions honours in a push's head commit message.
+const SKIP_CI_PATTERN = /\[(skip ci|ci skip|no ci|skip actions|actions skip)\]/i;
 
 const SHA_PATTERN = /^[0-9a-f]{40}$/;
 
@@ -76,6 +90,18 @@ async function exactBaseRun(github, owner, repo, defaultBranch, baseSha) {
   return null;
 }
 
+// The parent of a `[skip ci]` commit, or null for any other commit: only a
+// commit CI was told to skip is one whose measurement lives on its parent.
+async function skipCiParent(github, owner, repo, sha) {
+  const { data } = await github.rest.repos.getCommit({ owner, repo, ref: sha });
+  if (!SKIP_CI_PATTERN.test(data.commit.message)) return null;
+  return data.parents.length > 0 ? data.parents[0].sha : null;
+}
+
+// Filters on the conclusion here rather than with the API's `status` filter:
+// that filter leaves out a recent run that is completed and green (seen with
+// `main`'s newest run, which a list without it returns first), and then the
+// fallback lands on a run a day or more old.
 async function latestSuccessfulMainRun(github, owner, repo, defaultBranch) {
   const { data } = await github.rest.actions.listWorkflowRuns({
     owner,
@@ -83,22 +109,38 @@ async function latestSuccessfulMainRun(github, owner, repo, defaultBranch) {
     workflow_id: "ci.yml",
     branch: defaultBranch,
     event: "push",
-    status: "success",
   });
-  return newestFirst(data.workflow_runs)[0] || null;
+  const green = data.workflow_runs.filter(
+    (run) => run.status === "completed" && run.conclusion === "success",
+  );
+  return newestFirst(green)[0] || null;
 }
 
 // Returns `{ run, kind, note }`; `run` is null only when `main` has no
 // successful run at all.
 async function selectBaselineRun({ github, owner, repo, defaultBranch, baseSha }) {
   if (baseSha) {
-    const run = await exactBaseRun(github, owner, repo, defaultBranch, baseSha);
-    if (run) {
-      return {
-        run,
-        kind: BaselineKind.EXACT,
-        note: `Compared against \`${defaultBranch}\` at ${baseSha.slice(0, 7)}, the commit this PR's CI merged onto.`,
-      };
+    let sha = baseSha;
+    for (let hops = 0; sha && hops <= MAX_SKIP_CI_HOPS; hops += 1) {
+      const run = await exactBaseRun(github, owner, repo, defaultBranch, sha);
+      if (run && hops === 0) {
+        return {
+          run,
+          kind: BaselineKind.EXACT,
+          note: `Compared against \`${defaultBranch}\` at ${baseSha.slice(0, 7)}, the commit this PR's CI merged onto.`,
+        };
+      }
+      if (run) {
+        return {
+          run,
+          kind: BaselineKind.SKIP_CI_ANCESTOR,
+          note:
+            `Compared against \`${defaultBranch}\` at ${sha.slice(0, 7)}: this PR's CI merged onto ` +
+            `${baseSha.slice(0, 7)}, which CI skipped, so its coverage is that of the nearest ` +
+            `commit below it that CI ran on (${hops} \`[skip ci]\` commit${hops === 1 ? "" : "s"} down).`,
+        };
+      }
+      sha = await skipCiParent(github, owner, repo, sha);
     }
   }
 
@@ -116,4 +158,4 @@ async function selectBaselineRun({ github, owner, repo, defaultBranch, baseSha }
   };
 }
 
-module.exports = { BaselineKind, COVERAGE_ARTIFACT, readBaseSha, selectBaselineRun };
+module.exports = { BaselineKind, COVERAGE_ARTIFACT, MAX_SKIP_CI_HOPS, readBaseSha, selectBaselineRun };

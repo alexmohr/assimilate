@@ -961,6 +961,8 @@ mod tests {
     /// A login of its own, so the process-wide record of append-only logins
     /// these tests change does not reach the stand-in host's own tests.
     const LOGIN_USER: &str = "api-tests";
+    const ROLE_USER: &str = "api-tests-role";
+    const ROLE_USER_UNREACHABLE: &str = "api-tests-role-unreachable";
 
     fn admin() -> RequireAdmin {
         RequireAdmin(AuthUser {
@@ -971,12 +973,25 @@ mod tests {
     }
 
     async fn add_repo(pool: &sqlx::PgPool, name: &str, path: &str, port: i32) -> db::RepoRow {
+        add_repo_as(pool, LOGIN_USER, name, path, port).await
+    }
+
+    /// Like [`add_repo`], for a login of its own: the process-wide record of
+    /// which logins are append-only is shared by tests running in parallel, so
+    /// a test that reads it back must not share its login with the others.
+    async fn add_repo_as(
+        pool: &sqlx::PgPool,
+        user: &str,
+        name: &str,
+        path: &str,
+        port: i32,
+    ) -> db::RepoRow {
         db::insert_repo(
             pool,
             &db::InsertRepoParams {
                 name,
                 repo_path: path,
-                ssh_user: LOGIN_USER,
+                ssh_user: user,
                 ssh_host: "127.0.0.1",
                 ssh_port: port,
                 passphrase_encrypted: b"encrypted_data",
@@ -1516,7 +1531,14 @@ mod tests {
     #[sqlx::test(migrations = "./migrations")]
     async fn deleting_the_last_repository_of_a_login_turns_append_only_off(pool: sqlx::PgPool) {
         let host = Fixture::start(HostOptions::default()).await;
-        let only = add_repo(&pool, "only", "/srv/borg/only", i32::from(host.port)).await;
+        let only = add_repo_as(
+            &pool,
+            ROLE_USER,
+            "only",
+            "/srv/borg/only",
+            i32::from(host.port),
+        )
+        .await;
         let state = state(pool);
         host.scoped(set(&state, only.id, true)).await;
         assert!(host.authorized_keys().contains("--append-only"));
@@ -1533,14 +1555,14 @@ mod tests {
         assert!(!keys.contains("--append-only"), "{keys}");
         assert!(!keys.contains("/srv/borg/only"), "{keys}");
         assert_eq!(
-            crate::ssh::key_role_for("127.0.0.1", LOGIN_USER),
+            crate::ssh::key_role_for("127.0.0.1", ROLE_USER),
             crate::ssh::KeyRole::Backup
         );
         let logins = db::append_only::list_logins_with_hosts(&state.pool)
             .await
             .unwrap();
         assert!(
-            !logins.contains(&("127.0.0.1".to_owned(), LOGIN_USER.to_owned())),
+            !logins.contains(&("127.0.0.1".to_owned(), ROLE_USER.to_owned())),
             "{logins:?}"
         );
     }
@@ -1551,7 +1573,14 @@ mod tests {
         pool: sqlx::PgPool,
     ) {
         let host = Fixture::start(HostOptions::default()).await;
-        let only = add_repo(&pool, "only", "/srv/borg/only", i32::from(host.port)).await;
+        let only = add_repo_as(
+            &pool,
+            ROLE_USER_UNREACHABLE,
+            "only",
+            "/srv/borg/only",
+            i32::from(host.port),
+        )
+        .await;
         let state = state(pool);
         host.scoped(set(&state, only.id, true)).await;
         // From here on nothing answers on the host's port.
@@ -1573,7 +1602,7 @@ mod tests {
         assert_eq!(status, StatusCode::NO_CONTENT);
         assert!(host.authorized_keys().contains("--append-only"));
         assert_eq!(
-            crate::ssh::key_role_for("127.0.0.1", LOGIN_USER),
+            crate::ssh::key_role_for("127.0.0.1", ROLE_USER_UNREACHABLE),
             crate::ssh::KeyRole::Maintenance
         );
     }

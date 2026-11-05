@@ -291,16 +291,40 @@ fn command_option(options: &str) -> Option<String> {
     })
 }
 
+/// The words `borg serve --append-only` is made of.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ServeWord {
+    Borg,
+    Serve,
+    AppendOnly,
+}
+
+impl std::str::FromStr for ServeWord {
+    type Err = ();
+
+    fn from_str(word: &str) -> Result<Self, ()> {
+        match word {
+            "borg" => Ok(Self::Borg),
+            "serve" => Ok(Self::Serve),
+            "--append-only" => Ok(Self::AppendOnly),
+            _ => Err(()),
+        }
+    }
+}
+
 /// Whether `command` is `borg serve --append-only ...` and nothing that could
 /// chain another command after it: outside single quotes it holds no shell
 /// control characters.
 fn is_append_only_command(command: &str) -> bool {
-    let mut words = command.split_whitespace();
-    if !words
-        .by_ref()
+    let leading = command
+        .split_whitespace()
         .take(3)
-        .eq(["borg", "serve", "--append-only"])
-    {
+        .map(|word| word.parse::<ServeWord>().ok());
+    if !leading.eq([
+        Some(ServeWord::Borg),
+        Some(ServeWord::Serve),
+        Some(ServeWord::AppendOnly),
+    ]) {
         return false;
     }
     // As a shell reads it: a backslash outside single quotes makes the next

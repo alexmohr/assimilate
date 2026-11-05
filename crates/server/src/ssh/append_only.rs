@@ -212,6 +212,16 @@ fn needs_password_if_refused(error: SetupError) -> SetupError {
     }
 }
 
+/// Why a key could not be used after the file was written: `rejected` when the
+/// host refused it, the failure itself when the host could not be reached to
+/// say. The file is put back either way, since access cannot be confirmed.
+fn rejected_if_refused(error: SetupError, rejected: SetupError) -> SetupError {
+    match error {
+        SetupError::Ssh(SshError::Auth(_)) => rejected,
+        other => other,
+    }
+}
+
 /// The session and SFTP channel for editing the file: the maintenance key's
 /// when the host already accepts it, otherwise `access`.
 async fn editor(
@@ -299,9 +309,9 @@ pub async fn enable(
             .await;
             return Err(e);
         }
-        if connect_role(KeyRole::Maintenance, login).await.is_err() {
+        if let Err(e) = connect_role(KeyRole::Maintenance, login).await {
             put_back(&entry_sftp, &original, "the maintenance key was rejected").await;
-            return Err(SetupError::MaintenanceKeyRejected);
+            return Err(rejected_if_refused(e, SetupError::MaintenanceKeyRejected));
         }
     }
     drop(entry_sftp);
@@ -321,9 +331,9 @@ pub async fn enable(
         return Err(e);
     }
 
-    if connect_role(KeyRole::Backup, login).await.is_err() {
+    if let Err(e) = connect_role(KeyRole::Backup, login).await {
         put_back(&sftp, &current, "the backup key was rejected").await;
-        return Err(SetupError::BackupKeyRejected);
+        return Err(rejected_if_refused(e, SetupError::BackupKeyRejected));
     }
     info!(
         host = login.host,
@@ -361,9 +371,9 @@ pub async fn disable(login: Login<'_>, access: Access<'_>) -> Result<(), SetupEr
     // The session that did the editing is still open, so a plain key the
     // host turns out to refuse can be put back as it was: leaving it would
     // drop the restriction while the database still says it is in place.
-    if connect_role(KeyRole::Backup, login).await.is_err() {
+    if let Err(e) = connect_role(KeyRole::Backup, login).await {
         put_back(&sftp, &current, "the plain key was rejected").await;
-        return Err(SetupError::BackupKeyRejected);
+        return Err(rejected_if_refused(e, SetupError::BackupKeyRejected));
     }
     drop(sftp);
     drop(session);
@@ -420,6 +430,21 @@ mod tests {
     use ssh_key::{Algorithm, PrivateKey, rand_core::OsRng};
 
     use super::*;
+
+    #[test]
+    fn a_host_that_could_not_be_reached_is_not_reported_as_refusing_a_key() {
+        assert!(matches!(
+            rejected_if_refused(
+                SetupError::Ssh(SshError::Auth("no".to_owned())),
+                SetupError::BackupKeyRejected
+            ),
+            SetupError::BackupKeyRejected
+        ));
+        assert!(matches!(
+            rejected_if_refused(SetupError::Timeout, SetupError::BackupKeyRejected),
+            SetupError::Timeout
+        ));
+    }
 
     #[test]
     fn only_a_refused_key_turns_into_a_request_for_the_password() {

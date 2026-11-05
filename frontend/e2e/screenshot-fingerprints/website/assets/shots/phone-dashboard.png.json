@@ -1,5 +1,5 @@
 {
   "test": "phone views",
   "pages": ["frontend/src/views/DashboardView.vue"],
-  "fingerprint": "a8929460bdc50c4f43c6e0557cd12361d74308014f39e78a27aeba272a9e0439"
+  "fingerprint": "5a04d72ca35f3a685d347ff05ad85e6de6896eadd950513495ff7a251eef9f19"
 }

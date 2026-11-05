@@ -108,6 +108,28 @@ describe('RepoAppendOnlyPane', () => {
     expect(wrapper.text()).toContain('Connection check')
   })
 
+  it('does not let a reload that started before a toggle undo it', async () => {
+    const on = appendOnlyStatusFixture()
+    vi.mocked(setAppendOnly).mockResolvedValue(on)
+    const wrapper = await mount(OFF)
+
+    // A reload begins while the toggle is in flight and answers last, with
+    // the state from before the toggle.
+    let answerReload: (status: AppendOnlyStatusResponse) => void = () => {}
+    vi.mocked(getAppendOnlyStatus).mockReturnValueOnce(
+      new Promise<AppendOnlyStatusResponse>((resolve) => {
+        answerReload = resolve
+      }),
+    )
+    pushWs('DataChanged', {})
+    await toggle(wrapper).trigger('click')
+    await flushPromises()
+    answerReload(OFF)
+    await flushPromises()
+
+    expect(toggle(wrapper).attributes('aria-checked')).toBe('true')
+  })
+
   it('turns append-only off', async () => {
     vi.mocked(setAppendOnly).mockResolvedValue(OFF)
     const wrapper = await mount(appendOnlyStatusFixture())

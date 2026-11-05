@@ -777,6 +777,23 @@ async fn lock_unless_busy(
     })
 }
 
+/// Takes the repository lock for an append-only repository, whose maintenance
+/// holds it for a whole run; nothing is taken for any other repository.
+///
+/// # Errors
+///
+/// Returns [`ApiError::Conflict`] when maintenance holds the repository.
+pub(super) async fn lock_if_append_only(
+    state: &AppState,
+    repo_id: i64,
+) -> Result<Option<tokio::sync::OwnedMutexGuard<()>>, ApiError> {
+    if db::append_only::is_repo_append_only(&state.pool, repo_id).await? {
+        lock_unless_busy(state, repo_id).await.map(Some)
+    } else {
+        Ok(None)
+    }
+}
+
 /// Whether `ssh_user` on `ssh_host` is an append-only login.
 async fn is_append_only_login(
     state: &AppState,
@@ -1986,6 +2003,33 @@ mod tests {
         .await;
         assert!(matches!(refused, Err(ApiError::Conflict(_))), "{refused:?}");
         drop(run);
+    }
+
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn an_append_only_repository_cannot_be_deleted_or_destroyed_while_maintenance_holds_it(
+        pool: sqlx::PgPool,
+    ) {
+        let host = Fixture::start(HostOptions::default()).await;
+        let busy = add_repo(&pool, "busy", "/srv/borg/busy", i32::from(host.port)).await;
+        let state = state(pool);
+        host.scoped(set(&state, busy.id, true)).await;
+
+        let run = state.repo_lock.acquire(busy.id).await;
+        let deleted =
+            crate::api::repos::delete_repo(State(state.clone()), admin(), Path(busy.id)).await;
+        assert!(matches!(deleted, Err(ApiError::Conflict(_))), "{deleted:?}");
+        let destroyed =
+            crate::api::repos::destroy_repo(State(state.clone()), admin(), Path(busy.id)).await;
+        assert!(
+            matches!(destroyed, Err(ApiError::Conflict(_))),
+            "{destroyed:?}"
+        );
+        drop(run);
+
+        // Nothing was removed, on the host or in the database.
+        assert!(host.authorized_keys().contains("/srv/borg/busy"));
+        assert!(db::get_repo_by_id(&state.pool, busy.id).await.is_ok());
     }
 
     #[ignore = "requires DATABASE_URL"]

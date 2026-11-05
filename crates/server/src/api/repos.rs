@@ -808,6 +808,8 @@ pub async fn delete_repo(
     Path(repo_id): Path<i64>,
 ) -> Result<StatusCode, ApiError> {
     let conn = db::get_repo_connection(&state.pool, repo_id).await?;
+    // A maintenance run in progress would be left writing to rows that are gone.
+    let _maintenance = super::append_only::lock_if_append_only(&state, repo_id).await?;
     db::delete_repo(&state.pool, repo_id).await?;
     crate::ssh::remove_pinned_known_hosts(repo_id).await;
     super::append_only::forget_repository_path(&state, &conn.ssh_host, &conn.ssh_user).await;
@@ -845,6 +847,8 @@ pub async fn destroy_repo(
 ) -> Result<StatusCode, ApiError> {
     let conn = db::get_repo_connection(&state.pool, repo_id).await?;
     let repo = db::get_repo_with_stats(&state.pool, repo_id).await?;
+    // Removing the directory under a running maintenance run would corrupt it.
+    let _maintenance = super::append_only::lock_if_append_only(&state, repo_id).await?;
 
     let command = format!("rm -rf '{}'", repo.repo_path.replace('\'', "'\\''"));
     info!(

@@ -59,11 +59,18 @@ const maintenanceRunning = computed<boolean>(() => props.currentOp?.kind === 'ma
 
 const needsPassword = computed<boolean>(() => status.value?.setup_failure?.needs_password === true)
 
+// A reload that was started before an action finished may resolve after it
+// and would put the state from before the action back, so an action's result
+// invalidates every reload still in flight.
+let generation = 0
+
 async function load(silent: boolean): Promise<void> {
+  const mine = ++generation
   if (!silent) loading.value = true
   loadError.value = null
   try {
-    status.value = await getAppendOnlyStatus(props.repo.id)
+    const loaded = await getAppendOnlyStatus(props.repo.id)
+    if (mine === generation) status.value = loaded
   } catch (e: unknown) {
     if (!silent) loadError.value = extractError(e)
     else logger.error(e)
@@ -82,6 +89,7 @@ async function perform(action: SetupAction, password: string | null): Promise<vo
         ? await reapplyAppendOnly(props.repo.id, { password })
         : await setAppendOnly(props.repo.id, { enabled: action === 'enable', password })
     status.value = next
+    generation++
     if (next.setup_failure === null) {
       toastSuccess(
         action === 'reapply'
@@ -109,7 +117,9 @@ async function runCheck(): Promise<void> {
   checking.value = true
   actionError.value = null
   try {
-    status.value = await checkAppendOnly(props.repo.id)
+    const checked = await checkAppendOnly(props.repo.id)
+    status.value = checked
+    generation++
   } catch (e: unknown) {
     actionError.value = extractError(e)
   } finally {

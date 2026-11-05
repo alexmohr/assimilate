@@ -15071,6 +15071,14 @@ esac
         server::maintenance::run(state, repo_id, "test").await;
     }
 
+    async fn last_op(pool: &PgPool, repo_id: i64) -> Option<(String, String)> {
+        sqlx::query_as("SELECT kind, by_text FROM repo_last_op WHERE repo_id = $1")
+            .bind(repo_id)
+            .fetch_optional(pool)
+            .await
+            .unwrap()
+    }
+
     async fn latest_run(pool: &PgPool, repo_id: i64) -> (String, i64, i64, Option<String>) {
         sqlx::query_as(
             "SELECT outcome, archives_removed, bytes_freed, detail FROM repo_maintenance_runs \
@@ -15131,6 +15139,11 @@ esac
         assert_eq!(outcome, "stopped");
         assert_eq!((removed, freed), (0, 0));
         assert!(detail.unwrap().contains("a-2"));
+        assert_eq!(
+            last_op(&pool, repo_id).await,
+            Some(("maintenance".to_owned(), "test".to_owned())),
+            "a run is the repository's last operation, whatever its outcome"
+        );
 
         let stopped: Option<chrono::DateTime<chrono::Utc>> =
             sqlx::query_scalar("SELECT stopped_at FROM repo_maintenance WHERE repo_id = $1")

@@ -296,6 +296,17 @@ pub async fn run(state: &AppState, repo_id: i64, actor: &str) {
     tracing::info!(repo_id, outcome = %finished.outcome, "repository maintenance finished");
 
     record(state, repo_id, run_id, started_at, &finished).await;
+    if let Err(e) = db::update_repo_last_op(
+        &state.pool,
+        repo_id,
+        RepoOpKind::Maintenance,
+        Utc::now(),
+        actor,
+    )
+    .await
+    {
+        tracing::warn!(repo_id, error = %e, "failed to persist last_op for maintenance");
+    }
     alert_unless_ok(state, repo_id, &finished).await;
 
     state.repo_op_tracker.clear(repo_id).await;

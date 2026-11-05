@@ -6,7 +6,12 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 <script setup lang="ts">
 import { ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { deleteAgent, hideAgent as hideAgentRequest, deleteAgentArchives } from '../api/agents'
+import {
+  deleteAgent,
+  hideAgent as hideAgentRequest,
+  unhideAgent as unhideAgentRequest,
+  deleteAgentArchives,
+} from '../api/agents'
 import { extractError } from '../utils/error'
 import { useToast } from '../composables/useToast'
 import BaseModal from './BaseModal.vue'
@@ -58,6 +63,24 @@ async function hideAgent(): Promise<void> {
   }
 }
 
+// Unhide: the agent stays on this page, so the caller learns whether it worked
+// and updates what it shows.
+const unhideLoading = ref(false)
+
+async function unhideAgent(): Promise<boolean> {
+  if (unhideLoading.value) return false
+  unhideLoading.value = true
+  try {
+    await unhideAgentRequest(props.agent.hostname, props.agent.domain)
+    return true
+  } catch (e: unknown) {
+    toastError(extractError(e, 'Failed to unhide agent'))
+    return false
+  } finally {
+    unhideLoading.value = false
+  }
+}
+
 // Delete archives & remove imported agent
 const showDeleteArchivesDialog = ref(false)
 const deleteArchivesLoading = ref(false)
@@ -83,7 +106,7 @@ function requestDeleteArchives(): void {
 }
 
 // Hiding is reversible, so it runs straight away rather than behind a dialog.
-defineExpose({ requestDelete, hide: hideAgent, requestDeleteArchives })
+defineExpose({ requestDelete, hide: hideAgent, unhide: unhideAgent, requestDeleteArchives })
 </script>
 
 <template>

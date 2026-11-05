@@ -60,6 +60,7 @@ const emit = defineEmits<{
   cleanFailedReports: []
   deleteAgent: []
   hideAgent: []
+  unhideAgent: []
   deleteArchives: []
 }>()
 
@@ -262,8 +263,18 @@ const restartNote = computed(() =>
           their own; they are admin-only, so absent rather than disabled.
         -->
         <template v-if="isAdmin">
+          <button
+            v-if="agent.is_hidden"
+            class="overflow-menu-item"
+            role="menuitem"
+            type="button"
+            @click="run(() => emit('unhideAgent'))"
+          >
+            Unhide agent
+          </button>
           <template v-if="isImported">
             <button
+              v-if="!agent.is_hidden"
               class="overflow-menu-item"
               role="menuitem"
               type="button"

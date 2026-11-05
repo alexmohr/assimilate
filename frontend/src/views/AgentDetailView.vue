@@ -323,6 +323,12 @@ async function saveIdentity(): Promise<void> {
 // Delete / hide / delete archives, raised from the header's overflow menu.
 const removalDialogs = ref<InstanceType<typeof AgentRemovalDialogs> | null>(null)
 
+/** Unhiding keeps the reader here, so the page drops its hidden state in place. */
+async function unhideAgent(): Promise<void> {
+  const unhidden = (await removalDialogs.value?.unhide()) ?? false
+  if (unhidden && agent.value) agent.value = { ...agent.value, is_hidden: false }
+}
+
 // Hostname alias confirmation
 const settingsTab = ref<InstanceType<typeof AgentSettingsTab> | null>(null)
 const showAliasConfirm = ref(false)
@@ -964,6 +970,7 @@ watch(wsStatus, (newStatus, oldStatus) => {
         @clean-failed-reports="showCleanFailedDialog = true"
         @delete-agent="removalDialogs?.requestDelete()"
         @hide-agent="removalDialogs?.hide()"
+        @unhide-agent="unhideAgent"
         @delete-archives="removalDialogs?.requestDeleteArchives()"
       />
 

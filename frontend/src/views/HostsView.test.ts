@@ -16,9 +16,6 @@ import { useSystemModeStore } from '../stores/systemMode'
 import type { CurrentUserResponse } from '../stores/auth'
 import type { DeploymentMode } from '../types/generated'
 import HostsView from './HostsView.vue'
-import AgentDeployDialog from '../components/AgentDeployDialog.vue'
-import MergeAgentDialog from '../components/MergeAgentDialog.vue'
-import { dismissModal } from '../test-utils'
 
 vi.mock('../api/client', () => mockApiClientRw())
 
@@ -133,26 +130,6 @@ function group(wrapper: ReturnType<typeof mount>, title: string): ReturnType<typ
     .find((g) => g.find('.list-group-title').text() === title)
   if (!match) throw new Error(`no group titled "${title}"`)
   return match
-}
-
-/**
- * The labels in a row's overflow menu, opening it first. A row with no
- * actions has no menu at all, only its chevron, and lists nothing.
- */
-async function menuItems(wrapper: ReturnType<typeof mount>): Promise<string[]> {
-  const toggle = wrapper.find('.overflow-toggle')
-  if (!toggle.exists()) return []
-  if (!wrapper.find('[role="menu"]').exists()) await toggle.trigger('click')
-  return wrapper.findAll('[role="menuitem"]').map((b) => b.text())
-}
-
-/** Opens the first row's overflow menu and picks the item labelled `label`. */
-async function chooseMenuItem(wrapper: ReturnType<typeof mount>, label: string): Promise<void> {
-  await menuItems(wrapper)
-  const item = wrapper.findAll('[role="menuitem"]').find((b) => b.text() === label)
-  if (!item) throw new Error(`no menu item labelled "${label}"`)
-  await item.trigger('click')
-  await flushPromises()
 }
 
 async function mountWithAgent(
@@ -1615,107 +1592,14 @@ describe('HostsView issue rows', () => {
     expect(router.currentRoute.value.path).toBe('/agents/flaky-host')
     expect(router.currentRoute.value.query).toMatchObject({ domain: 'lab.example.com' })
   })
-
-  it('unhides an agent, scoped to its domain', async () => {
-    vi.mocked(apiClient.put).mockResolvedValue({ data: {} } as never)
-    const { wrapper } = await mountAgentsList([
-      { ...issueAgent, is_hidden: true, domain: 'lab.example.com' },
-    ])
-
-    await chooseMenuItem(wrapper, 'Unhide')
-
-    expect(apiClient.put).toHaveBeenCalledWith(
-      '/agents/flaky-host/unhide',
-      {},
-      { params: { domain: 'lab.example.com' } },
-    )
-  })
 })
 
-describe('HostsView deploy button label', () => {
+describe('HostsView add-agent dialog', () => {
   beforeEach(() => {
     vi.clearAllMocks()
   })
 
-  it('offers Deploy for agent with no version', async () => {
-    const wrapper = await mountWithAgent(
-      { agent_version: null, agent_commit_count: null },
-      { agent_version: null, server_commit_count: null },
-    )
-    expect(await menuItems(wrapper)).toEqual(['Deploy'])
-  })
-
-  it('offers no deploy when no binary is available and no commit counts', async () => {
-    const wrapper = await mountWithAgent(
-      { agent_version: '0.1.0', agent_commit_count: null },
-      { agent_version: null, server_commit_count: null },
-    )
-    // Nothing to offer, so the row ends in its chevron rather than a menu.
-    expect(await menuItems(wrapper)).toEqual([])
-    expect(wrapper.find('.list-row-chevron').exists()).toBe(true)
-  })
-
-  it('offers no deploy when agent version matches available binary', async () => {
-    const wrapper = await mountWithAgent(
-      { agent_version: '0.1.0', agent_commit_count: null },
-      { agent_version: '0.1.0', server_commit_count: null },
-    )
-    // Nothing to offer, so the row ends in its chevron rather than a menu.
-    expect(await menuItems(wrapper)).toEqual([])
-    expect(wrapper.find('.list-row-chevron').exists()).toBe(true)
-  })
-
-  it('offers Upgrade when a newer binary is available', async () => {
-    const wrapper = await mountWithAgent(
-      { agent_version: '0.1.0', agent_commit_count: null },
-      { agent_version: '0.2.0', server_commit_count: null },
-    )
-    expect(await menuItems(wrapper)).toEqual(['Upgrade'])
-  })
-
-  it('hides Deploy/Upgrade without can_upgrade_agent permission', async () => {
-    const wrapper = await mountWithAgent(
-      { agent_version: '0.1.0', agent_commit_count: null },
-      { agent_version: '0.2.0', server_commit_count: null },
-      { can_upgrade_agent: false },
-    )
-    // Nothing to offer, so the row ends in its chevron rather than a menu.
-    expect(await menuItems(wrapper)).toEqual([])
-    expect(wrapper.find('.list-row-chevron').exists()).toBe(true)
-  })
-
-  // The desktop app's agent is bundled with it and updated with the app.
-  it('hides Deploy/Upgrade in desktop mode', async () => {
-    const wrapper = await mountWithAgent(
-      { agent_version: '0.1.0', agent_commit_count: null },
-      { agent_version: '0.2.0', server_commit_count: null },
-      {},
-      'desktop',
-    )
-    // Nothing to offer, so the row ends in its chevron rather than a menu.
-    expect(await menuItems(wrapper)).toEqual([])
-    expect(wrapper.find('.list-row-chevron').exists()).toBe(true)
-  })
-
-  it('offers no deploy when agent commit count matches server', async () => {
-    const wrapper = await mountWithAgent(
-      { agent_version: '0.1.0', agent_commit_count: 150 },
-      { agent_version: '0.1.0', server_commit_count: 150 },
-    )
-    // Nothing to offer, so the row ends in its chevron rather than a menu.
-    expect(await menuItems(wrapper)).toEqual([])
-    expect(wrapper.find('.list-row-chevron').exists()).toBe(true)
-  })
-
-  it('offers Upgrade when agent commit count is behind server', async () => {
-    const wrapper = await mountWithAgent(
-      { agent_version: '0.1.0', agent_commit_count: 100 },
-      { agent_version: '0.1.0', server_commit_count: 200 },
-    )
-    expect(await menuItems(wrapper)).toEqual(['Upgrade'])
-  })
-
-  describe('add and adopt dialogs', () => {
+  describe('add dialog', () => {
     /** The dialog teleports, so its controls are queried off the document. */
     function dialogButton(label: string): HTMLButtonElement {
       const match = [...document.querySelectorAll<HTMLButtonElement>('button')].find(
@@ -1856,120 +1740,6 @@ describe('HostsView deploy button label', () => {
       expect(document.querySelector('.token-text')).toBeNull()
       expect(document.querySelector('.form-error')).not.toBeNull()
     })
-
-    async function adopt(wrapper: Awaited<ReturnType<typeof mountWithAgent>>): Promise<void> {
-      await chooseMenuItem(wrapper, 'Adopt')
-    }
-
-    // Adopting drops the "(imported)" suffix borg's import added and mints a
-    // token, which is shown once - so the token has to reach the dialog and
-    // the row has to stop being imported.
-    it('adopts an imported agent and reveals its new token once', async () => {
-      vi.mocked(apiClient.put).mockResolvedValue({ data: {} } as never)
-      vi.mocked(apiClient.post).mockResolvedValue({
-        data: { agent: { id: 99, hostname: 'test-agent' }, token: 'tok_adopted' },
-      } as never)
-
-      const wrapper = await mountWithAgent(
-        { is_imported: true, display_name: 'Test (imported)' },
-        {},
-      )
-      await adopt(wrapper)
-
-      expect(apiClient.put).toHaveBeenCalledWith(
-        '/agents/test-agent',
-        { display_name: 'Test', domain: undefined },
-        { params: {} },
-      )
-      expect(apiClient.post).toHaveBeenCalledWith(
-        '/agents/test-agent/regenerate-token',
-        {},
-        { params: {} },
-      )
-      expect(document.querySelector('.token-text')?.textContent).toBe('tok_adopted')
-      expect(document.body.textContent).toContain('Agent Adopted')
-      // The row is no longer imported, so Adopt is gone from it.
-      expect(await menuItems(wrapper)).not.toContain('Adopt')
-
-      dialogButton('Copy').click()
-      await flushPromises()
-      expect(dialogButton('Copied!')).toBeDefined()
-
-      dialogButton('Done').click()
-      await flushPromises()
-      expect(document.querySelector('.token-text')).toBeNull()
-    })
-
-    it('keeps the agent imported when adopting fails', async () => {
-      vi.mocked(apiClient.put).mockRejectedValue(new Error('agent offline'))
-
-      const wrapper = await mountWithAgent({ is_imported: true }, {})
-      await adopt(wrapper)
-
-      expect(document.querySelector('.token-text')).toBeNull()
-      expect(await menuItems(wrapper)).toEqual(['Merge into...', 'Adopt'])
-    })
-
-    it('closes the adopt dialog when it is dismissed', async () => {
-      vi.mocked(apiClient.put).mockResolvedValue({ data: {} } as never)
-      vi.mocked(apiClient.post).mockResolvedValue({
-        data: { agent: { id: 99, hostname: 'test-agent' }, token: 'tok_adopted' },
-      } as never)
-
-      const wrapper = await mountWithAgent({ is_imported: true }, {})
-      await adopt(wrapper)
-      expect(document.querySelector('.token-text')).not.toBeNull()
-
-      await dismissModal(wrapper as VueWrapper<ComponentPublicInstance>)
-
-      expect(document.querySelector('.token-text')).toBeNull()
-    })
-
-    it('opens the merge dialog for an imported agent and closes it on cancel', async () => {
-      const wrapper = await mountWithAgent({ is_imported: true }, {})
-
-      await chooseMenuItem(wrapper, 'Merge into...')
-
-      const dialog = wrapper.findComponent(MergeAgentDialog)
-      expect(dialog.exists()).toBe(true)
-
-      dialog.vm.$emit('cancel')
-      await flushPromises()
-
-      expect(wrapper.findComponent(MergeAgentDialog).exists()).toBe(false)
-    })
-
-    it('opens the deploy dialog for an upgradable agent', async () => {
-      const wrapper = await mountWithAgent(
-        { agent_version: '0.1.0' },
-        { agent_version: '0.2.0', server_commit_count: null },
-      )
-
-      await chooseMenuItem(wrapper, 'Upgrade')
-
-      const dialog = wrapper.findComponent(AgentDeployDialog)
-      expect(dialog.exists()).toBe(true)
-      expect(dialog.props('hostname')).toBe('test-agent')
-      expect(dialog.props('agentVersion')).toBe('0.1.0')
-      expect(dialog.props('availableVersion')).toBe('0.2.0')
-
-      dialog.vm.$emit('close')
-      await flushPromises()
-
-      expect(wrapper.findComponent(AgentDeployDialog).exists()).toBe(false)
-    })
-  })
-
-  it('unhides a hidden agent', async () => {
-    vi.mocked(apiClient.put).mockResolvedValue({ data: {} } as never)
-
-    const wrapper = await mountWithAgent({ is_hidden: true }, {})
-
-    // A hidden agent offers only Unhide, whatever else it could do.
-    expect(await menuItems(wrapper)).toEqual(['Unhide'])
-    await chooseMenuItem(wrapper, 'Unhide')
-
-    expect(apiClient.put).toHaveBeenCalledWith('/agents/test-agent/unhide', {}, { params: {} })
   })
 })
 
@@ -2199,34 +1969,22 @@ describe('HostsView list rows', () => {
     expect(wrapper.get('.agents-row-when').text()).toBe('Never')
   })
 
-  it('opens the overflow menu without following the row link', async () => {
-    const { wrapper, router } = await mountRows([
+  // Rows used to end in a "..." menu when there was something to do from the
+  // list (adopt, merge, deploy, unhide). Those live on the agent's page now,
+  // so every row is just a link to it.
+  it('ends every row in a chevron, with no row menu', async () => {
+    const { wrapper } = await mountRows([
       { ...agents[0], hostname: 'imported-host', is_imported: true },
+      { ...agents[0], id: 2, hostname: 'hidden-host', is_hidden: true },
+      { ...agents[0], id: 3, hostname: 'bare-host', agent_version: null },
     ])
-    const push = vi.spyOn(router, 'push')
 
-    // A row with an action ends in its menu, not in a chevron.
-    expect(wrapper.find('.list-row-chevron').exists()).toBe(false)
-    const toggle = wrapper.get('.list-row .overflow-toggle')
-    expect(toggle.attributes('aria-label')).toBe('More actions for imported-host')
-
-    await toggle.trigger('click')
-    await flushPromises()
-
-    expect(wrapper.find('[role="menu"]').exists()).toBe(true)
-    expect(push).not.toHaveBeenCalled()
-    expect(router.currentRoute.value.path).toBe('/agents')
-
-    await wrapper
-      .findAll('[role="menuitem"]')
-      .find((b) => b.text() === 'Merge into...')!
-      .trigger('click')
-    await flushPromises()
-
-    expect(push).not.toHaveBeenCalled()
-    expect(wrapper.findComponent(MergeAgentDialog).exists()).toBe(true)
-    // Choosing an item closes the menu.
-    expect(wrapper.find('[role="menu"]').exists()).toBe(false)
+    const rows = wrapper.findAll('.list-row')
+    expect(rows.length).toBeGreaterThan(0)
+    for (const row of rows) {
+      expect(row.find('.list-row-chevron').exists()).toBe(true)
+      expect(row.find('.overflow-toggle').exists()).toBe(false)
+    }
   })
 
   it('lets an issue chip inside a row go to its own target, not the row link', async () => {

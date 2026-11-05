@@ -39,11 +39,11 @@ test.describe('Append-only repositories', () => {
     await page.goto('/repos')
     await page.waitForLoadState('networkidle')
 
-    const card = page.locator('.entity-card').filter({ hasText: 'vault-offsite' })
-    await expect(card).toContainText('Append-only')
+    const row = page.locator('.repo-row').filter({ hasText: 'vault-offsite' })
+    await expect(row).toContainText('Append-only')
 
     // A repository on a login that is not append-only carries no badge.
-    const plain = page.locator('.entity-card').filter({ hasText: 'server-daily' })
+    const plain = page.locator('.repo-row').filter({ hasText: 'server-daily' })
     await expect(plain).not.toContainText('Append-only')
   })
 

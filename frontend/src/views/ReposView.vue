@@ -604,6 +604,15 @@ onMounted(loadRepos)
         <span class="status-dot"></span>
         No quota &middot; {{ noQuotaCount }}
       </button>
+    </div>
+
+    <!-- Not a quota filter, so its own group beside the quota pills. -->
+    <div
+      v-if="!isMobile || showMobileFilters"
+      class="repo-type-filters repo-filters"
+      role="group"
+      aria-label="Repository type filter"
+    >
       <button
         class="filter-pill"
         :class="{ active: quotaFilter === 'append_only' }"
@@ -753,6 +762,13 @@ onMounted(loadRepos)
 .repo-filters {
   margin-top: var(--space-4);
   margin-bottom: var(--space-8);
+}
+
+/* Sits directly under the quota pills: pulls up over their bottom margin. */
+.repo-type-filters {
+  display: flex;
+  gap: var(--space-3);
+  margin-top: calc(-1 * var(--space-5));
 }
 
 .repos-list .list-group {

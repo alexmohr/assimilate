@@ -98,7 +98,7 @@ Each next run is taken to last as long as the median of the schedule's recent ru
 
 Two schedules on the same agent never overlap: an agent runs its jobs one after another. Two runs that share a storage host but write to different repositories don't block each other either, and are not flagged. The check covers every enabled schedule, whatever the filters show.
 
-Overdue is evaluated per host: a schedule can show Overdue even while its own next/last run times look on track, if one of its target hosts hasn't completed a backup within its cron interval plus a 30-minute grace period. Hover the health chip of an overdue schedule to see which target host(s) are behind and when each last reported a backup; if a host's agent is currently disconnected, the tooltip also notes that ("Agent offline (last seen ...)") so you can tell at a glance whether the host is overdue because it's offline or because something else went wrong.
+Overdue is evaluated per host: a schedule can show Overdue even while its own next/last run times look on track, if one of its target hosts hasn't completed a backup within its cron interval plus a 30-minute grace period. Hover the health chip of an overdue schedule to see which target host(s) are behind and when each last reported a backup; if a host's agent is currently disconnected, the tooltip also notes that ("Agent offline (last seen ...)") so you can tell at a glance whether the host is overdue because it's offline or because something else went wrong. A host whose backup is queued or running right now is never shown as overdue, however long it has been since the last completed backup; the run in progress is the fix, so it only counts as overdue again if that run ends without a success.
 
 ### Filter syntax
 

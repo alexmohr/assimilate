@@ -862,6 +862,15 @@ pub enum ReportStatus {
 }
 
 impl ReportStatus {
+    /// Whether the run is queued or running, so it has not settled yet.
+    #[must_use]
+    pub const fn is_in_flight(self) -> bool {
+        match self {
+            Self::Pending | Self::Started => true,
+            Self::Cancelled | Self::Skipped | Self::Success | Self::Warning | Self::Failed => false,
+        }
+    }
+
     /// The outcome of a finished run, or `None` while the run is still pending
     /// or in progress, or when it was cancelled before it produced one.
     #[must_use]
@@ -2060,6 +2069,13 @@ mod tests {
         assert_eq!(ReportStatus::Warning.outcome(), Some(BackupStatus::Warning));
         assert_eq!(ReportStatus::Failed.outcome(), Some(BackupStatus::Failed));
         assert_eq!(ReportStatus::Pending.outcome(), None);
+        assert!(ReportStatus::Pending.is_in_flight());
+        assert!(ReportStatus::Started.is_in_flight());
+        assert!(!ReportStatus::Cancelled.is_in_flight());
+        assert!(!ReportStatus::Skipped.is_in_flight());
+        assert!(!ReportStatus::Success.is_in_flight());
+        assert!(!ReportStatus::Warning.is_in_flight());
+        assert!(!ReportStatus::Failed.is_in_flight());
         assert_eq!(ReportStatus::Started.outcome(), None);
         assert_eq!(ReportStatus::Cancelled.outcome(), None);
         assert_eq!(ReportStatus::Skipped.outcome(), None);

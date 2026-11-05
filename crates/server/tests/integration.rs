@@ -6649,6 +6649,78 @@ async fn test_health_summary_exposes_missed_backup_counters(pool: sqlx::PgPool) 
     assert_eq!(entry.get("missed_backup_threshold").unwrap(), 5);
 }
 
+/// A target whose backup is running right now is not overdue: the run that
+/// would clear the overdue state is already under way, so flagging it only
+/// nags about work in progress.
+#[sqlx::test(migrations = "./migrations")]
+async fn test_health_summary_target_is_not_overdue_while_backup_runs(pool: sqlx::PgPool) {
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+
+    let agent_id: i64 = sqlx::query_scalar(
+        "INSERT INTO agents (hostname, agent_token_hash) VALUES ('health-running-host', 'hash') \
+         RETURNING id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let repo_id = insert_test_repo(&pool, "health-running-repo").await;
+    let schedule_id = insert_test_schedule(&pool, agent_id, repo_id).await;
+    sqlx::query("UPDATE schedules SET cron_expression = '0 * * * *' WHERE id = $1")
+        .bind(schedule_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO backup_reports (agent_id, repo_id, schedule_id, started_at, finished_at, \
+         status, matched) VALUES ($1, $2, $3, NOW() - INTERVAL '3 days', NOW() - INTERVAL '3 \
+         days', 'success', true)",
+    )
+    .bind(agent_id)
+    .bind(repo_id)
+    .bind(schedule_id)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let is_overdue = |body: serde_json::Value| {
+        body.as_array()
+            .unwrap()
+            .iter()
+            .find(|e| e.get("schedule_id").unwrap() == schedule_id)
+            .expect("health summary must include the schedule")
+            .get("is_overdue")
+            .unwrap()
+            .as_bool()
+            .unwrap()
+    };
+
+    let resp = oneshot(&mut app, json_request("GET", "/api/stats/health", None)).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert!(
+        is_overdue(body_json(resp).await),
+        "control: a target with a stale success and nothing running is overdue"
+    );
+
+    sqlx::query(
+        "INSERT INTO backup_reports (agent_id, repo_id, schedule_id, started_at, finished_at, \
+         status, matched) VALUES ($1, $2, $3, NOW(), NOW(), 'started', true)",
+    )
+    .bind(agent_id)
+    .bind(repo_id)
+    .bind(schedule_id)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let resp = oneshot(&mut app, json_request("GET", "/api/stats/health", None)).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert!(
+        !is_overdue(body_json(resp).await),
+        "a target with a backup in progress must not read as overdue"
+    );
+}
+
 /// `GET /api/stats/health?schedule_id=` must answer for that schedule alone.
 /// The schedule detail page renders one schedule's hosts, and the unfiltered
 /// summary walks every schedule target in the installation to build a response

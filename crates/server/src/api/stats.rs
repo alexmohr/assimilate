@@ -1258,7 +1258,8 @@ pub async fn health(
     let response = rows
         .into_iter()
         .map(|row| {
-            let overdue = is_overdue(row.last_backup_at, row.cron_expression.as_deref(), tz);
+            let overdue = !row.last_status.is_some_and(ReportStatus::is_in_flight)
+                && is_overdue(row.last_backup_at, row.cron_expression.as_deref(), tz);
             HealthResponse {
                 repo_id: row.repo_id,
                 schedule_id: row.schedule_id,

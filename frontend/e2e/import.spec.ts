@@ -133,8 +133,9 @@ test('imported agents offer Merge into... and Adopt on their own page', async ({
     .filter({ has: page.locator('.badge', { hasText: 'Imported' }) })
     .first()
   await expect(imported).toBeVisible()
-  // The row is a link to the agent's page, whose header leads with both.
-  await expect(imported.getByRole('button')).toHaveCount(0)
+  // The row is a link to the agent's page, whose header leads with both. It
+  // may still carry an issue chip, but no longer a "..." menu.
+  await expect(imported.locator('.overflow-toggle')).toHaveCount(0)
   await imported.click()
   await expect(page).toHaveURL(/\/agents\/[^/]+/)
   const actions = page.locator('.detail-actions')
@@ -355,8 +356,10 @@ test('import-progress bar appears when archive count is known', async ({ page })
   await expect(resyncBtn).toBeVisible({ timeout: 60_000 })
   await resyncBtn.click()
 
-  // Progress bar only renders when import_total > 0; server-daily has archives so it must appear
-  const progressBar = page.locator('.progress-bar')
+  // Progress bar only renders when import_total > 0; server-daily has archives so it must appear.
+  // Scoped to the header's import bar: the repositories list's quota bars use the same
+  // class and can still be mounted while the route change to the repository settles.
+  const progressBar = page.locator('.repo-import .progress-bar')
   await expect(progressBar).toBeVisible({ timeout: 60_000 })
 
   // Bar must disappear after sync completes

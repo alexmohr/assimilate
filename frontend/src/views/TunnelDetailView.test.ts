@@ -183,6 +183,38 @@ describe('TunnelDetailView', () => {
     expect(wrapper.text()).toContain('root@10.0.0.12:22')
   })
 
+  // Leaving one tunnel for another before the first has loaded must not let
+  // the first's late answer replace the page now showing the second.
+  it('keeps the newer tunnel when the older load settles last', async () => {
+    let resolveFirst: (t: TunnelWithStatus) => void = () => undefined
+    vi.mocked(listAgents).mockResolvedValue([
+      { id: 1, hostname: 'web-server-01' },
+      { id: 2, hostname: 'db-server-01' },
+    ] as never)
+    vi.mocked(getTunnel).mockImplementationOnce(
+      () => new Promise<TunnelWithStatus>((resolve) => (resolveFirst = resolve)),
+    )
+    const wrapper = renderWithPlugins(TunnelDetailView, { props: { id: '101' } })
+    await flushPromises()
+
+    vi.mocked(getTunnel).mockResolvedValueOnce({
+      ...baseTunnel,
+      id: 102,
+      agent_id: 2,
+      ssh_host: '10.0.0.12',
+    })
+    await wrapper.setProps({ id: '102' })
+    await flushPromises()
+    expect(wrapper.get('.detail-name').text()).toBe('db-server-01')
+
+    resolveFirst(baseTunnel)
+    await flushPromises()
+
+    expect(wrapper.get('.detail-name').text()).toBe('db-server-01')
+    expect(wrapper.text()).toContain('root@10.0.0.12:22')
+    expect(wrapper.text()).not.toContain('10.0.0.11')
+  })
+
   it('shows the error a failed tunnel reports, with what to check', async () => {
     const wrapper = await render({
       ssh_user: 'borg',

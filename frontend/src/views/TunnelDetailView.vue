@@ -15,7 +15,7 @@ import {
   updateTunnel,
 } from '../api/tunnels'
 import { listAgents } from '../api/agents'
-import { useAsyncAction } from '../composables/useAsyncAction'
+import { useAsyncAction, type IsCurrent } from '../composables/useAsyncAction'
 import { useWebSocket } from '../composables/useWebSocket'
 import { badgeClass, tunnelStatusLabel, tunnelStatusTone } from '../utils/badge'
 import { extractError } from '../utils/error'
@@ -41,7 +41,7 @@ const tunnelId = computed(() => Number(props.id))
 const tunnel = ref<TunnelWithStatus | null>(null)
 const agentHostname = ref<string | null>(null)
 const agentDisplayName = ref<string | null>(null)
-const { loading, error, run } = useAsyncAction()
+const { loading, error, runLatest } = useAsyncAction()
 
 /** The agent's hostname, or its id while the agents list is still unknown. */
 const agentLabel = computed(() => agentHostname.value ?? String(tunnel.value?.agent_id ?? ''))
@@ -152,9 +152,10 @@ async function confirmDelete(): Promise<void> {
   }
 }
 
-async function loadAgentName(agentId: number): Promise<void> {
+async function loadAgentName(agentId: number, isCurrent: IsCurrent): Promise<void> {
   try {
     const agent = (await listAgents()).find((a) => a.id === agentId)
+    if (!isCurrent()) return
     agentHostname.value = agent?.hostname ?? null
     const name = agent?.display_name ?? null
     agentDisplayName.value = name && name !== agent?.hostname ? name : null
@@ -163,12 +164,19 @@ async function loadAgentName(agentId: number): Promise<void> {
   }
 }
 
+/**
+ * A route change to another tunnel starts a new load while the previous one
+ * may still be in flight; only the latest may write to the page, so a slow
+ * answer for the tunnel just left never replaces the one now shown.
+ */
 async function load(): Promise<void> {
-  await run(async () => {
-    tunnel.value = await getTunnel(tunnelId.value)
+  await runLatest(async (isCurrent) => {
+    const loaded = await getTunnel(tunnelId.value)
+    if (!isCurrent()) return
+    tunnel.value = loaded
     resetForm()
+    await loadAgentName(loaded.agent_id, isCurrent)
   })
-  if (tunnel.value) await loadAgentName(tunnel.value.agent_id)
 }
 
 const { onMessage } = useWebSocket()
@@ -180,6 +188,8 @@ watch(
   () => props.id,
   async () => {
     tunnel.value = null
+    agentHostname.value = null
+    agentDisplayName.value = null
     await load()
   },
 )

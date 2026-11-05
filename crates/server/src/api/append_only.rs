@@ -92,6 +92,14 @@ impl Context {
     }
 }
 
+/// The way into the host: the one-time password when one was given, else the
+/// server's key. An empty password counts as none.
+fn access_for(password: Option<&str>) -> Access<'_> {
+    password
+        .filter(|p| !p.is_empty())
+        .map_or(Access::ServerKey, Access::Password)
+}
+
 fn setup_failure(error: &SetupError) -> AppendOnlySetupFailure {
     AppendOnlySetupFailure {
         needs_password: matches!(error, SetupError::NeedsPassword),
@@ -117,8 +125,20 @@ async fn status(
     let backup = keys::read_backup_public_key()
         .await
         .map_err(|e| ApiError::Internal(format!("the server's SSH key is not usable: {e}")))?;
-    let backup_line = authorized_keys::restricted_line(&backup, &ctx.repo_paths())
-        .map_err(|e| ApiError::BadRequest(e.to_string()))?;
+    // A path the host cannot be told about is shown as a failure to read, not
+    // as a failed request: the admin opening the pane is who can fix the path.
+    let (backup_line, path_failure) =
+        match authorized_keys::restricted_line(&backup, &ctx.repo_paths()) {
+            Ok(line) => (line, None),
+            Err(e) => (
+                String::new(),
+                Some(AppendOnlySetupFailure {
+                    needs_password: false,
+                    message: e.to_string(),
+                }),
+            ),
+        };
+    let setup_failure = setup_failure.or(path_failure);
     let maintenance = keys::read_maintenance_key()
         .await
         .map_err(|e| ApiError::Internal(format!("the maintenance key is not usable: {e}")))?
@@ -303,11 +323,7 @@ pub async fn set_append_only(
     // so one added meanwhile is not left out of the restriction written below.
     let _login = lock_repo_login(&state, repo_id).await?;
     let ctx = Context::load(&state, repo_id).await?;
-    let access = req
-        .password
-        .as_deref()
-        .filter(|p| !p.is_empty())
-        .map_or(Access::ServerKey, Access::Password);
+    let access = access_for(req.password.as_deref());
 
     let failure = if req.enabled {
         enable(&state, &ctx, access).await?
@@ -333,8 +349,8 @@ async fn enable(
     // enabling again then picks up from the host's real state.
     ssh::set_login_append_only(&ctx.ssh_host, &ctx.ssh_user, true);
     db::append_only::upsert_login(&state.pool, ctx.repo_host_id, &ctx.ssh_user).await?;
+    let next = crate::maintenance::next_cron_run(state, DEFAULT_MAINTENANCE_CRON).await;
     for repo in &ctx.repos {
-        let next = crate::maintenance::next_cron_run(state, DEFAULT_MAINTENANCE_CRON).await;
         db::append_only::ensure_maintenance(&state.pool, repo.id, next).await?;
     }
     check_login(state, ctx).await?;
@@ -464,11 +480,7 @@ pub async fn reapply_append_only(
             "append-only is not turned on for this repository".to_owned(),
         ));
     }
-    let access = req
-        .password
-        .as_deref()
-        .filter(|p| !p.is_empty())
-        .map_or(Access::ServerKey, Access::Password);
+    let access = access_for(req.password.as_deref());
     let failure = enable(&state, &ctx, access).await?;
     changed(&state).await;
     Ok(Json(status(&state, &ctx, failure).await?))
@@ -1975,6 +1987,25 @@ mod tests {
                 .await
                 .unwrap()
         );
+    }
+
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn the_status_of_a_repository_with_an_unusable_path_reports_it(pool: sqlx::PgPool) {
+        let host = Fixture::start(HostOptions::default()).await;
+        let odd = add_repo(&pool, "odd", "/srv/borg/o\"dd", i32::from(host.port)).await;
+        let state = state(pool);
+
+        let Json(status) = host
+            .scoped(get_append_only(State(state.clone()), admin(), Path(odd.id)))
+            .await
+            .unwrap();
+
+        // Opening the pane is not an error; the path is what to fix.
+        let failure = status.setup_failure.expect("the path is reported");
+        assert!(failure.message.contains("o\\\"dd"), "{}", failure.message);
+        assert!(!failure.needs_password);
+        assert_eq!(status.backup_key.authorized_keys_line, "");
     }
 
     #[ignore = "requires DATABASE_URL"]

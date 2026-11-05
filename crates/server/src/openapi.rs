@@ -494,4 +494,45 @@ mod tests {
             );
         }
     }
+
+    /// Every `$ref` the published spec makes must name a declared component:
+    /// a handler's request or response type that is not listed under
+    /// `components(schemas(...))` leaves a dangling reference.
+    #[test]
+    fn every_schema_reference_resolves() {
+        fn collect(value: &serde_json::Value, refs: &mut std::collections::BTreeSet<String>) {
+            match value {
+                serde_json::Value::Object(map) => {
+                    for (key, inner) in map {
+                        if let ("$ref", serde_json::Value::String(target)) = (key.as_str(), inner) {
+                            refs.insert(target.clone());
+                        }
+                        collect(inner, refs);
+                    }
+                }
+                serde_json::Value::Array(items) => {
+                    for item in items {
+                        collect(item, refs);
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        let json = serde_json::to_value(ApiDoc::openapi()).unwrap();
+        let mut refs = std::collections::BTreeSet::new();
+        collect(&json, &mut refs);
+        let missing: Vec<&String> = refs
+            .iter()
+            .filter(|target| {
+                target
+                    .strip_prefix("#/components/schemas/")
+                    .is_none_or(|name| {
+                        json.pointer(&format!("/components/schemas/{name}"))
+                            .is_none()
+                    })
+            })
+            .collect();
+        assert_eq!(missing, Vec::<&String>::new(), "dangling $ref");
+    }
 }

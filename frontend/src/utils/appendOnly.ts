@@ -4,12 +4,16 @@
 import type { BadgeTone } from './badge'
 import type { MaintenanceOutcome, MaintenanceRunResponse } from '../types/generated'
 
-const MAINTENANCE_OUTCOMES: readonly MaintenanceOutcome[] = [
-  'ok',
-  'stopped',
-  'check_failed',
-  'failed',
-]
+// A record keyed by every outcome, so a variant added on the server and missing
+// here is a compile error instead of an outcome that quietly fails the narrow.
+const MAINTENANCE_OUTCOME_KEYS = {
+  ok: true,
+  stopped: true,
+  check_failed: true,
+  failed: true,
+} satisfies Record<MaintenanceOutcome, true>
+
+const MAINTENANCE_OUTCOMES: readonly string[] = Object.keys(MAINTENANCE_OUTCOME_KEYS)
 
 /** Narrows the plain string a run row carries to the outcomes the server writes. */
 export function isMaintenanceOutcome(value: string): value is MaintenanceOutcome {

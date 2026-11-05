@@ -740,10 +740,12 @@ pub async fn update_repo(
     let moved = existing.repo_path != req.repo_path
         || existing.ssh_host != req.ssh_host
         || existing.ssh_user != req.ssh_user;
-    if moved {
+    let _move_guard = if moved {
         super::append_only::check_repository_move(&state, repo_id, &req.ssh_host, &req.ssh_user)
-            .await?;
-    }
+            .await?
+    } else {
+        None
+    };
     let update = async {
         if location_changed {
             db::update_repo_and_set_relocation_pending(&state.pool, &update_params).await

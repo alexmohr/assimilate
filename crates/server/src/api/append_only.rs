@@ -799,17 +799,23 @@ async fn is_append_only_login(
 /// # Errors
 ///
 /// Returns [`ApiError::Conflict`] when deletions are queued or archives are
-/// marked vanished.
+/// marked vanished, or when maintenance holds the repository.
+///
+/// For an append-only repository the returned guard holds the repository lock;
+/// keep it until the move is stored and followed, so maintenance cannot mark
+/// an archive vanished in between and have the move discard that.
 pub(super) async fn check_repository_move(
     state: &AppState,
     repo_id: i64,
     new_host: &str,
     new_user: &str,
-) -> Result<(), ApiError> {
-    if !db::append_only::is_repo_append_only(&state.pool, repo_id).await?
-        || is_append_only_login(state, new_host, new_user).await?
-    {
-        return Ok(());
+) -> Result<Option<tokio::sync::OwnedMutexGuard<()>>, ApiError> {
+    if !db::append_only::is_repo_append_only(&state.pool, repo_id).await? {
+        return Ok(None);
+    }
+    let guard = lock_unless_busy(state, repo_id).await?;
+    if is_append_only_login(state, new_host, new_user).await? {
+        return Ok(Some(guard));
     }
     if !db::append_only::list_pending_deletions(&state.pool, repo_id)
         .await?
@@ -831,7 +837,7 @@ pub(super) async fn check_repository_move(
                 .to_owned(),
         ));
     }
-    Ok(())
+    Ok(Some(guard))
 }
 
 /// Brings append-only in line after a repository moved: the login it left
@@ -1923,6 +1929,34 @@ mod tests {
                 .await
                 .unwrap()
         );
+    }
+
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn an_append_only_repository_cannot_move_while_maintenance_holds_it(pool: sqlx::PgPool) {
+        let host = Fixture::start(HostOptions::default()).await;
+        let moved = add_repo(
+            &pool,
+            "busy-move",
+            "/srv/borg/busy-move",
+            i32::from(host.port),
+        )
+        .await;
+        let state = state(pool);
+        host.scoped(set(&state, moved.id, true)).await;
+
+        // Maintenance could mark archives vanished while the move discards
+        // marks, so the move waits for it rather than racing it.
+        let run = state.repo_lock.acquire(moved.id).await;
+        let refused = crate::api::repos::update_repo(
+            State(state.clone()),
+            admin(),
+            Path(moved.id),
+            ApiJson(move_to(&moved, "somebody-else", "/srv/borg/busy-move")),
+        )
+        .await;
+        assert!(matches!(refused, Err(ApiError::Conflict(_))), "{refused:?}");
+        drop(run);
     }
 
     #[ignore = "requires DATABASE_URL"]

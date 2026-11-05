@@ -862,7 +862,7 @@ pub(super) async fn follow_repository_move(
 
 /// Rewrites the append-only login's restriction to name the repositories
 /// Assimilate knows, plus `extra`. Does nothing for a login that is not
-/// append-only.
+/// append-only. A login left with no repository at all is turned off.
 async fn write_login_paths(
     state: &AppState,
     ssh_host: &str,
@@ -893,6 +893,21 @@ async fn write_login_paths(
         port,
         host_key: host.ssh_host_key.as_deref(),
     };
+    if paths.is_empty() {
+        // The last repository left the login, so there is nothing to restrict
+        // the key to, and no repository left to turn it off through later:
+        // take the restriction off now.
+        ssh::append_only::disable(login, Access::ServerKey)
+            .await
+            .map_err(|e| {
+                ApiError::BadGateway(format!(
+                    "{ssh_host} is append-only and no repository is left on it, but its \
+                     authorized_keys could not be put back: {e}"
+                ))
+            })?;
+        ssh::set_login_append_only(ssh_host, ssh_user, false);
+        return db::append_only::delete_login(&state.pool, host.id, ssh_user).await;
+    }
     ssh::append_only::enable(login, &paths, Access::ServerKey)
         .await
         .map_err(|e| {
@@ -1489,6 +1504,72 @@ mod tests {
         assert_eq!(status, StatusCode::NO_CONTENT);
         assert!(!host.authorized_keys().contains("/srv/borg/gone"));
         assert!(host.authorized_keys().contains("/srv/borg/kept"));
+    }
+
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn deleting_the_last_repository_of_a_login_turns_append_only_off(pool: sqlx::PgPool) {
+        let host = Fixture::start(HostOptions::default()).await;
+        let only = add_repo(&pool, "only", "/srv/borg/only", i32::from(host.port)).await;
+        let state = state(pool);
+        host.scoped(set(&state, only.id, true)).await;
+        assert!(host.authorized_keys().contains("--append-only"));
+
+        host.scoped(Box::pin(crate::api::repos::delete_repo(
+            State(state.clone()),
+            admin(),
+            Path(only.id),
+        )))
+        .await
+        .unwrap();
+
+        let keys = host.authorized_keys();
+        assert!(!keys.contains("--append-only"), "{keys}");
+        assert!(!keys.contains("/srv/borg/only"), "{keys}");
+        assert_eq!(
+            crate::ssh::key_role_for("127.0.0.1", LOGIN_USER),
+            crate::ssh::KeyRole::Backup
+        );
+        let logins = db::append_only::list_logins_with_hosts(&state.pool)
+            .await
+            .unwrap();
+        assert!(
+            !logins.contains(&("127.0.0.1".to_owned(), LOGIN_USER.to_owned())),
+            "{logins:?}"
+        );
+    }
+
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_host_that_cannot_be_reached_keeps_the_login_of_a_deleted_last_repository(
+        pool: sqlx::PgPool,
+    ) {
+        let host = Fixture::start(HostOptions::default()).await;
+        let only = add_repo(&pool, "only", "/srv/borg/only", i32::from(host.port)).await;
+        let state = state(pool);
+        host.scoped(set(&state, only.id, true)).await;
+        // From here on nothing answers on the host's port.
+        db::repo_hosts::update_repo_host_address(&state.pool, only.repo_host_id, "127.0.0.1", 1)
+            .await
+            .unwrap();
+
+        let status = host
+            .scoped(Box::pin(crate::api::repos::delete_repo(
+                State(state.clone()),
+                admin(),
+                Path(only.id),
+            )))
+            .await
+            .unwrap();
+
+        // The repository is gone either way; the login is left as it was, to
+        // be put right by the next repository added on it.
+        assert_eq!(status, StatusCode::NO_CONTENT);
+        assert!(host.authorized_keys().contains("--append-only"));
+        assert_eq!(
+            crate::ssh::key_role_for("127.0.0.1", LOGIN_USER),
+            crate::ssh::KeyRole::Maintenance
+        );
     }
 
     #[ignore = "requires DATABASE_URL"]

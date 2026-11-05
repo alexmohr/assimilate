@@ -4841,6 +4841,21 @@ exit 0
         assert!(!state.registry.is_connected(agent.id).await);
     }
 
+    /// Waits until the next `AgentConnected` reaches the UI broadcast.
+    async fn wait_for_agent_connected(
+        ui: &mut tokio::sync::broadcast::Receiver<ServerToUi>,
+    ) -> Result<(), tokio::time::error::Elapsed> {
+        timeout(Duration::from_secs(10), async {
+            while !drain_ui(ui)
+                .iter()
+                .any(|e| matches!(e, ServerToUi::AgentConnected { .. }))
+            {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+    }
+
     /// A connection that outlives its host's reboot is closed long after the
     /// agent reconnected; closing it must leave the live session registered
     /// and the UI told nothing about a disconnect.
@@ -4859,25 +4874,20 @@ exit 0
         );
         let (stale_sink, _stale_sent) = recording_sink();
         let stale = tokio::spawn(serve_agent(stale_sink, stale_frames, state.clone()));
+        // The live session must register after the stale one, or the stale
+        // one would be the current connection when it closes.
+        wait_for_agent_connected(&mut ui)
+            .await
+            .expect("the stale session connects");
         let (live_sink, _live_sent) = recording_sink();
         let live = tokio::spawn(serve_agent(
             live_sink,
             frames_then_open(vec![hello_frame("rebooted-host", SOCKET_TOKEN)]),
             state.clone(),
         ));
-        timeout(Duration::from_secs(10), async {
-            let mut connects = Vec::new();
-            while connects.len() < 2 {
-                connects.extend(
-                    drain_ui(&mut ui)
-                        .into_iter()
-                        .filter(|e| matches!(e, ServerToUi::AgentConnected { .. })),
-                );
-                tokio::task::yield_now().await;
-            }
-        })
-        .await
-        .expect("both sessions connect");
+        wait_for_agent_connected(&mut ui)
+            .await
+            .expect("the live session connects");
 
         close_stale.send(()).expect("the stale session is waiting");
         timeout(Duration::from_secs(10), stale)

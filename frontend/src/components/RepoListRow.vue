@@ -69,6 +69,7 @@ const DOT_CLASS: Record<BadgeTone, string | null> = {
   info: 'status-dot--info',
   accent: 'status-dot--accent',
   neutral: null,
+  violet: null,
 }
 
 const BAR_CLASS: Record<BadgeTone, string | null> = {
@@ -78,6 +79,7 @@ const BAR_CLASS: Record<BadgeTone, string | null> = {
   info: null,
   accent: null,
   neutral: 'progress-bar--muted',
+  violet: null,
 }
 
 /** The bar takes the quota's tone, not the row's: an unmatched archive says nothing about space. */

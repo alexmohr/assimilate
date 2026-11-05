@@ -476,6 +476,34 @@ async fn look(state: &AppState, repo: &Repo<'_>, repo_id: i64) -> Result<Looked,
     )))
 }
 
+/// Runs `borg check`, then looks again before the first write: the check can
+/// take long on a large repository, and what was deleted meanwhile must not be
+/// made permanent.
+async fn check_then_look(
+    state: &AppState,
+    repo: &Repo<'_>,
+    repo_id: i64,
+) -> Result<Looked, ApiError> {
+    let args = [
+        "check".to_owned(),
+        "--repository-only".to_owned(),
+        "--lock-wait".to_owned(),
+        LOCK_WAIT_SECS.to_owned(),
+        repo.url.clone(),
+    ];
+    let output = repo.run(&args).await?;
+    if !matches!(output.status.code(), Some(0 | 1)) {
+        return Ok(Looked::Stopped(Finished::of(
+            MaintenanceOutcome::CheckFailed,
+            format!(
+                "borg check failed, so nothing was pruned: {}",
+                String::from_utf8_lossy(&output.stderr).trim()
+            ),
+        )));
+    }
+    look(state, repo, repo_id).await
+}
+
 async fn execute(state: &AppState, repo_id: i64) -> Result<Finished, ApiError> {
     let settings = db::append_only::get_maintenance(&state.pool, repo_id)
         .await?
@@ -496,25 +524,14 @@ async fn execute(state: &AppState, repo_id: i64) -> Result<Finished, ApiError> {
     };
 
     // 2. Check the repository, so tampering is reported instead of pruned.
-    if settings.check_before_prune {
-        let args = [
-            "check".to_owned(),
-            "--repository-only".to_owned(),
-            "--lock-wait".to_owned(),
-            LOCK_WAIT_SECS.to_owned(),
-            repo.url.clone(),
-        ];
-        let output = repo.run(&args).await?;
-        if !matches!(output.status.code(), Some(0 | 1)) {
-            return Ok(Finished::of(
-                MaintenanceOutcome::CheckFailed,
-                format!(
-                    "borg check failed, so nothing was pruned: {}",
-                    String::from_utf8_lossy(&output.stderr).trim()
-                ),
-            ));
+    let listed = if settings.check_before_prune {
+        match check_then_look(state, &repo, repo_id).await? {
+            Looked::Stopped(finished) => return Ok(finished),
+            Looked::Clear(listed) => listed,
         }
-    }
+    } else {
+        listed
+    };
 
     // 3. The deletions users asked for.
     let mut problems = delete_queued(state, &repo, repo_id, &listed).await?;

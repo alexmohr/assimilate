@@ -93,7 +93,9 @@ A run that does not end **OK** (**Stopped**, **Check failed** or **Failed**) sen
 
 ### When archives vanish
 
-borg makes deletions that were requested over an append-only connection permanent the first time something writes with full access. A run therefore compares the archives before it writes. If archives are gone that Assimilate did not delete, the run **stops** and writes nothing: the repository can then still be rolled back with borg's transaction log on the host (see the [borg documentation](https://borgbackup.readthedocs.io/en/stable/usage/notes.html#append-only-mode-forbid-compaction)).
+borg makes deletions that were requested over an append-only connection permanent the first time something writes with full access. A run therefore compares the archives before its first write (again after the check, which can take long on a large repository). If archives are gone that Assimilate did not delete, the run **stops** and writes nothing: the repository can then still be rolled back with borg's transaction log on the host (see the [borg documentation](https://borgbackup.readthedocs.io/en/stable/usage/notes.html#append-only-mode-forbid-compaction)).
+
+This protects against deletions made before the run starts writing. Archives deleted over the append-only connection while the run is deleting or pruning cannot be told apart from the ones it removed itself, so they are not caught until the next run, which looks at what is left. Keep the host's transaction log until you have looked at a run's result.
 
 A stopped repository shows **Maintenance stopped** on its card and header, lists the vanished archives, and has no next run. The periodic sync keeps the records of archives that vanished from an append-only repository instead of dropping them, so a deletion is not forgotten before maintenance looks.
 

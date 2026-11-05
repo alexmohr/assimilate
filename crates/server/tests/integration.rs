@@ -14908,6 +14908,7 @@ case "$1" in
     printf ']}}\n'
     ;;
   check)
+    [ ! -f "$D/check_removes" ] || remove "$(cat "$D/check_removes")"
     if [ -f "$D/check_exit" ]; then
       echo "fake check failure" >&2
       exit "$(cat "$D/check_exit")"
@@ -14930,9 +14931,7 @@ case "$1" in
       echo "fake prune failure" >&2
       exit "$(cat "$D/prune_exit")"
     fi
-    if [ -f "$D/prune_victims" ]; then
-      while read -r v; do remove "$v"; done < "$D/prune_victims"
-    fi
+    [ ! -f "$D/prune_victims" ] || while read -r v; do remove "$v"; done < "$D/prune_victims"
     ;;
   compact)
     if [ -f "$D/compact_exit" ]; then
@@ -15098,6 +15097,37 @@ esac
         .fetch_all(pool)
         .await
         .unwrap()
+    }
+
+    #[tokio::test]
+    #[ignore = "requires DATABASE_URL"]
+    async fn maintenance_stops_when_an_archive_vanishes_during_the_check() {
+        let _borg_lock = borg_binary_lock().await;
+        let _keys = KeyDir::new().await;
+        let pool = setup_pool().await;
+        clean_tables(&pool).await;
+        let repo_id = append_only_repo(&pool, "ao-during-check", &["a-1", "a-2"]).await;
+        let borg = FakeRepo::new(&["a-1", "a-2"]).await;
+        // Somebody deletes a-2 over the append-only connection while the
+        // check is still running.
+        tokio::fs::write(borg.dir.path().join("check_removes"), "a-2")
+            .await
+            .unwrap();
+        let (_app, state) = build_test_app_with_state(pool.clone());
+
+        run_maintenance(&state, repo_id).await;
+
+        let calls = borg.calls().await;
+        assert!(FakeRepo::ran(&calls, "check"), "{calls:?}");
+        for writing in ["delete", "prune", "compact"] {
+            assert!(
+                !FakeRepo::ran(&calls, writing),
+                "{writing} must not run: {calls:?}"
+            );
+        }
+        let (outcome, _, _, detail) = latest_run(&pool, repo_id).await;
+        assert_eq!(outcome, "stopped");
+        assert!(detail.unwrap().contains("a-2"));
     }
 
     #[tokio::test]

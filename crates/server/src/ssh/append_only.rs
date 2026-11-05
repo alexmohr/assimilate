@@ -204,6 +204,14 @@ async fn keep_first_copy(sftp: &SftpSession, original: &str) {
     }
 }
 
+/// A refused key means the password is needed; any other failure is kept.
+fn needs_password_if_refused(error: SetupError) -> SetupError {
+    match error {
+        SetupError::Ssh(SshError::Auth(_)) => SetupError::NeedsPassword,
+        other => other,
+    }
+}
+
 /// The session and SFTP channel for editing the file: the maintenance key's
 /// when the host already accepts it, otherwise `access`.
 async fn editor(
@@ -225,10 +233,7 @@ async fn editor(
         // not answer is a different problem and is reported as such.
         Access::ServerKey => connect_role(KeyRole::Backup, login)
             .await
-            .map_err(|e| match e {
-                SetupError::Ssh(SshError::Auth(_)) => SetupError::NeedsPassword,
-                other => other,
-            })?,
+            .map_err(needs_password_if_refused)?,
         Access::Password(password) => {
             timed(connect_with_password(
                 login.host,
@@ -415,6 +420,22 @@ mod tests {
     use ssh_key::{Algorithm, PrivateKey, rand_core::OsRng};
 
     use super::*;
+
+    #[test]
+    fn only_a_refused_key_turns_into_a_request_for_the_password() {
+        assert!(matches!(
+            needs_password_if_refused(SetupError::Ssh(SshError::Auth("no".to_owned()))),
+            SetupError::NeedsPassword
+        ));
+        assert!(matches!(
+            needs_password_if_refused(SetupError::Timeout),
+            SetupError::Timeout
+        ));
+        assert!(matches!(
+            needs_password_if_refused(SetupError::Ssh(SshError::Connection("down".to_owned()))),
+            SetupError::Ssh(SshError::Connection(_))
+        ));
+    }
 
     fn key() -> PublicKey {
         let mut key = PrivateKey::random(&mut OsRng, Algorithm::Ed25519)

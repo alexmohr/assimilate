@@ -1763,6 +1763,18 @@ pub async fn extract_file(
 mod tests {
     use super::*;
 
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn finishing_a_deletion_survives_a_database_that_cannot_be_written(pool: sqlx::PgPool) {
+        let state =
+            crate::test_support::build_test_state(pool.clone(), b"archives-test-key-material");
+        pool.close().await;
+
+        // The deletion has happened on the host; none of the bookkeeping
+        // after it may stop the rest, or panic.
+        finalize_archive_deletion(&state, 1, "a-1", 1, "admin").await;
+    }
+
     #[test]
     fn the_maintenance_rsh_offers_only_the_maintenance_key() {
         let rsh = maintenance_rsh(

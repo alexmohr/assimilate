@@ -151,6 +151,38 @@ describe('TunnelDetailView', () => {
     expect(wrapper.get('[role="switch"]').attributes('aria-checked')).toBe('true')
   })
 
+  it('reports a failed switch and leaves the tunnel as it was', async () => {
+    vi.mocked(disableTunnel).mockRejectedValue(new Error('not allowed'))
+    const wrapper = await render()
+
+    await wrapper.get('[role="switch"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.get('.error-banner').text()).toContain('not allowed')
+    expect(wrapper.get('[role="switch"]').attributes('aria-checked')).toBe('true')
+  })
+
+  it('names the tunnel by agent id when the agents cannot be loaded', async () => {
+    vi.mocked(getTunnel).mockResolvedValue(baseTunnel)
+    vi.mocked(listAgents).mockRejectedValue(new Error('offline'))
+    const wrapper = renderWithPlugins(TunnelDetailView, { props: { id: '101' } })
+    await flushPromises()
+
+    expect(wrapper.get('.detail-name').text()).toBe('1')
+    expect(wrapper.text()).toContain('root@10.0.0.11:22')
+  })
+
+  it('loads the other tunnel when the route moves to it', async () => {
+    const wrapper = await render()
+    vi.mocked(getTunnel).mockResolvedValue({ ...baseTunnel, id: 102, ssh_host: '10.0.0.12' })
+
+    await wrapper.setProps({ id: '102' })
+    await flushPromises()
+
+    expect(getTunnel).toHaveBeenLastCalledWith(102)
+    expect(wrapper.text()).toContain('root@10.0.0.12:22')
+  })
+
   it('shows the error a failed tunnel reports, with what to check', async () => {
     const wrapper = await render({
       ssh_user: 'borg',

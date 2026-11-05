@@ -20,9 +20,14 @@ vi.mock('../api/tunnels', () => ({
   reconnectTunnel: vi.fn(),
 }))
 
+type WsHandler = (data: unknown) => void
+const wsHandlers = vi.hoisted(() => new Map<string, WsHandler>())
+
 vi.mock('../composables/useWebSocket', () => ({
-  useWebSocket: (): { onMessage: ReturnType<typeof vi.fn> } => ({
-    onMessage: vi.fn(),
+  useWebSocket: (): { onMessage: (type: string, handler: WsHandler) => void } => ({
+    onMessage: (type: string, handler: WsHandler): void => {
+      wsHandlers.set(type, handler)
+    },
   }),
 }))
 
@@ -285,6 +290,28 @@ describe('TunnelsView', () => {
       expect(row.find('.overflow-toggle').exists()).toBe(false)
       expect(row.findAll('button')).toHaveLength(0)
     }
+  })
+
+  it('follows live status changes on the matching row', async () => {
+    setupSuccessMocks()
+    const wrapper = renderWithPlugins(TunnelsView)
+    await flushPromises()
+
+    wsHandlers.get('TunnelStatusChanged')!({ agent_id: 3, status: 'connected' })
+    await flushPromises()
+
+    expect(rowOf(wrapper, 'media-store-01').get('.tunnel-status .badge').text()).toBe('Connected')
+  })
+
+  it('still lists the tunnels when the agents cannot be loaded', async () => {
+    const { logger } = await import('../utils/logger')
+    mockListTunnels.mockResolvedValue(mockTunnels)
+    mockApiClient.get.mockRejectedValue(new Error('offline'))
+    const wrapper = renderWithPlugins(TunnelsView)
+    await flushPromises()
+
+    expect(rowNames(wrapper)).toContain('web-server-01')
+    expect(logger.error).toHaveBeenCalledWith('loadAgents failed', expect.any(Error))
   })
 
   it('renders empty state when no tunnels exist', async () => {

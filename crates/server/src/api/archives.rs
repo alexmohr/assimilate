@@ -1003,23 +1003,14 @@ async fn queue_archive_deletion(
     }
     db::append_only::queue_deletion(&state.pool, repo_id, &archive_name, &auth.username).await?;
 
-    if let Err(e) = db::audit::insert_audit_entry(
+    audit_archive_deletion(
         &state.pool,
-        &db::audit::NewAuditEntry {
-            user_id: Some(auth.user_id),
-            username: &auth.username,
-            event: AuditEvent::DeleteArchive {
-                archive: archive_name.clone(),
-            },
-            target_type: Some("archive"),
-            target_id: Some(repo_id),
-            ip_address: None,
-        },
+        auth.user_id,
+        &auth.username,
+        &archive_name,
+        repo_id,
     )
-    .await
-    {
-        tracing::warn!("failed to write audit log: {e}");
-    }
+    .await;
     state
         .ui_broadcast
         .send(shared::protocol::ServerToUi::DataChanged);
@@ -1197,6 +1188,34 @@ async fn execute_borg_delete(
     }
 }
 
+/// Records that an archive was deleted (or queued for deletion) in the audit
+/// log. A failure is logged, not returned: the deletion itself has happened.
+async fn audit_archive_deletion(
+    pool: &sqlx::PgPool,
+    user_id: i64,
+    username: &str,
+    archive_name: &str,
+    repo_id: i64,
+) {
+    if let Err(e) = db::audit::insert_audit_entry(
+        pool,
+        &db::audit::NewAuditEntry {
+            user_id: Some(user_id),
+            username,
+            event: AuditEvent::DeleteArchive {
+                archive: archive_name.to_owned(),
+            },
+            target_type: Some("archive"),
+            target_id: Some(repo_id),
+            ip_address: None,
+        },
+    )
+    .await
+    {
+        tracing::warn!("failed to write audit log: {e}");
+    }
+}
+
 /// Deletes the local archive records, writes an audit log entry, and (once
 /// the deletion queue for this repo has drained) reconciles the archive list
 /// and repo stats by reusing the metadata import path. Content indexing is
@@ -1214,23 +1233,7 @@ async fn finalize_archive_deletion(
         tracing::error!(repo_id, archive = %archive_name, error = %e, "failed to delete archive record");
     }
 
-    if let Err(e) = db::audit::insert_audit_entry(
-        &state.pool,
-        &db::audit::NewAuditEntry {
-            user_id: Some(user_id),
-            username,
-            event: AuditEvent::DeleteArchive {
-                archive: archive_name.to_owned(),
-            },
-            target_type: Some("archive"),
-            target_id: Some(repo_id),
-            ip_address: None,
-        },
-    )
-    .await
-    {
-        tracing::warn!("failed to write audit log: {e}");
-    }
+    audit_archive_deletion(&state.pool, user_id, username, archive_name, repo_id).await;
 
     if state.repo_op_tracker.queued_count(repo_id).await == 0 {
         if let Err(e) = crate::api::repos::sync_existing_archives(

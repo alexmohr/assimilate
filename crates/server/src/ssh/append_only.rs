@@ -210,9 +210,15 @@ async fn editor(
     login: Login<'_>,
     access: Access<'_>,
 ) -> Result<(russh::client::Handle<SshClientHandler>, SftpSession, bool), SetupError> {
-    if let Ok(session) = connect_role(KeyRole::Maintenance, login).await {
-        let sftp = timed(open_sftp(&session)).await?;
-        return Ok((session, sftp, true));
+    match connect_role(KeyRole::Maintenance, login).await {
+        Ok(session) => {
+            let sftp = timed(open_sftp(&session)).await?;
+            return Ok((session, sftp, true));
+        }
+        // Only a refused key means it is not set up yet; a host that does not
+        // answer is reported as that, not as a missing password.
+        Err(SetupError::Ssh(SshError::Auth(_))) => {}
+        Err(other) => return Err(other),
     }
     let session = match access {
         // Only a refused key means the password is needed; a host that does

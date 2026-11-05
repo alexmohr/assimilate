@@ -74,7 +74,7 @@ When several repositories share the same SSH host — for example, multiple repo
 
 The repository detail page shows current deduplicated size alongside the configured quota thresholds and a progress bar indicating percentage used.
 
-The [Repositories](repositories.md) list page shows the same usage bar on any repository card with a quota configured, and its **At risk** / **No quota** filter chips make it quick to find repositories that need attention across the whole list. **Group by host** additionally shows each repository's own quota alongside its share of any [host quota](server-quotas.md) on the same host.
+The [Repositories](repositories.md) list page shows a usage bar and the size against the ceiling in the **Size of quota** column of any repository row with a quota configured, and a **Near quota** or **Over quota** status once usage crosses a threshold. Its **At risk** / **No quota** filter pills find the repositories that need attention across the whole list. Grouped by host, each host's header additionally shows the repositories' shares of any [host quota](server-quotas.md) on that host.
 
 The [Dashboard](dashboard.md) **Storage Breakdown** chart also reflects per-repository size, making it easy to identify repositories approaching their quota.
 

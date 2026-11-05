@@ -5,7 +5,6 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
-import { useRouter } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
 import { useMobile } from '../composables/useMobile'
 import { useListSort } from '../composables/useListSort'
@@ -16,12 +15,10 @@ import { useAsyncAction } from '../composables/useAsyncAction'
 import { Plus, Download, SlidersHorizontal, Database, Lock } from '@lucide/vue'
 import RepoCreateDialog from '../components/RepoCreateDialog.vue'
 import BaseSpinner from '../components/BaseSpinner.vue'
+import BaseSegmented, { type SegmentedOption } from '../components/BaseSegmented.vue'
 import EmptyState from '../components/EmptyState.vue'
 import SortControls from '../components/SortControls.vue'
-import type { EntityIssue } from '../components/EntityStatusBadges.vue'
-import RepoCard, { type RepoCardTag } from '../components/RepoCard.vue'
-import RepoQuotaMeter from '../components/RepoQuotaMeter.vue'
-import RepoQuotaSlice from '../components/RepoQuotaSlice.vue'
+import RepoListRow from '../components/RepoListRow.vue'
 import type { Repo, RepoWithStats } from '../types/repo'
 import type { TagRow } from '../types/tag'
 import type { RepoTagEntryResponse, ServerQuotaResponse } from '../types/generated'
@@ -46,6 +43,13 @@ const SORT_OPTIONS: readonly { field: SortField; label: string }[] = [
   { field: 'quota', label: 'Quota' },
 ]
 type QuotaFilter = 'all' | 'at_risk' | 'no_quota' | 'append_only'
+type GroupMode = 'host' | 'tag' | 'none'
+
+/** A tag as the repositories list resolves it for one repository. */
+interface RepoTag {
+  name: string
+  color: string
+}
 
 interface TagGroup {
   label: string
@@ -73,7 +77,16 @@ interface HostGroup {
   visibleCount: number
 }
 
-const router = useRouter()
+/** One bordered panel of rows: a host, a tag, or every repository at once. */
+interface ListGroup {
+  key: string
+  /** The host pool the panel stands for, when grouped by host. */
+  host: HostGroup | null
+  title: string
+  color: string | null
+  rows: { repo: RepoWithStats; dim: boolean }[]
+}
+
 const authStore = useAuthStore()
 const repos = ref<RepoWithStats[]>([])
 const { loading, error, run } = useAsyncAction()
@@ -86,8 +99,7 @@ const {
 } = useListSort<SortField>('name')
 const filterText = ref('')
 const filterTagIds = ref<number[]>([])
-const groupByTag = ref(false)
-const groupByHost = ref(true)
+const groupMode = ref<GroupMode>('host')
 const quotaFilter = ref<QuotaFilter>('all')
 const showTagDropdown = ref(false)
 const serverQuotasByHost = ref<Record<string, ServerQuotaResponse>>({})
@@ -96,7 +108,7 @@ const { isMobile } = useMobile()
 const showMobileFilters = ref(false)
 
 const allRepoTags = ref<TagRow[]>([])
-const repoTagsMap = ref<Record<number, RepoCardTag[]>>({})
+const repoTagsMap = ref<Record<number, RepoTag[]>>({})
 
 const repoDialog = ref<InstanceType<typeof RepoCreateDialog> | null>(null)
 const showRepoDialog = ref(false)
@@ -190,7 +202,7 @@ const filteredRepos = computed<RepoWithStats[]>(() => {
 })
 
 const hostGroups = computed<HostGroup[]>(() => {
-  if (!groupByHost.value) return []
+  if (groupMode.value !== 'host') return []
 
   const byHost = new Map<string, RepoWithStats[]>()
   for (const repo of repos.value) {
@@ -283,18 +295,15 @@ function hostPoolNote(group: HostGroup): string {
   return `${count} · healthy`
 }
 
-function toggleGroupByTag(): void {
-  groupByTag.value = !groupByTag.value
-  if (groupByTag.value) groupByHost.value = false
-}
-
-function toggleGroupByHost(): void {
-  groupByHost.value = !groupByHost.value
-  if (groupByHost.value) groupByTag.value = false
-}
+/** Grouping by tag is only offered once there is a tag to group by. */
+const groupOptions = computed<SegmentedOption<GroupMode>[]>(() => [
+  { value: 'host', label: 'Host' },
+  ...(allRepoTags.value.length > 0 ? [{ value: 'tag' as const, label: 'Tag' }] : []),
+  { value: 'none', label: 'None' },
+])
 
 const groupedRepos = computed<TagGroup[]>(() => {
-  if (!groupByTag.value) return []
+  if (groupMode.value !== 'tag') return []
   const groups: Map<string, TagGroup> = new Map()
   const untagged: RepoWithStats[] = []
 
@@ -330,9 +339,38 @@ function toggleTagFilter(tagId: number): void {
   }
 }
 
-function repoTags(repo: RepoWithStats): RepoCardTag[] {
-  return repoTagsMap.value[repo.id] ?? []
-}
+const listGroups = computed<ListGroup[]>(() => {
+  if (groupMode.value === 'host') {
+    return hostGroups.value.map((group) => ({
+      key: `host-${group.sshHost}`,
+      host: group,
+      title: group.sshHost,
+      color: null,
+      rows:
+        group.visibleCount > 0
+          ? group.entries.map((entry) => ({ repo: entry.repo, dim: !entry.visible }))
+          : [],
+    }))
+  }
+  if (groupMode.value === 'tag') {
+    return groupedRepos.value.map((group) => ({
+      key: `tag-${group.label}`,
+      host: null,
+      title: group.label,
+      color: group.color,
+      rows: group.repos.map((repo) => ({ repo, dim: false })),
+    }))
+  }
+  return [
+    {
+      key: 'all',
+      host: null,
+      title: 'All repositories',
+      color: null,
+      rows: filteredRepos.value.map((repo) => ({ repo, dim: false })),
+    },
+  ]
+})
 
 async function loadRepos(): Promise<void> {
   await run(async () => {
@@ -347,7 +385,7 @@ async function loadRepos(): Promise<void> {
     repos.value = reposRes
 
     allRepoTags.value = repoTagsRes
-    const tagMap: Record<number, RepoCardTag[]> = {}
+    const tagMap: Record<number, RepoTag[]> = {}
     repoTagAssoc.forEach((rt) => {
       if (!tagMap[rt.repo_id]) tagMap[rt.repo_id] = []
       tagMap[rt.repo_id].push({ name: rt.tag_name, color: rt.tag_color })
@@ -360,26 +398,6 @@ async function loadRepos(): Promise<void> {
     })
     serverQuotasByHost.value = quotaMap
   })
-}
-
-function navigateToRepo(repo: RepoWithStats): void {
-  router.push(`/repos/${repo.id}`)
-}
-
-function navigateToRepoIssue(repo: RepoWithStats): void {
-  router.push(`/repos/${repo.id}?tab=archives`)
-}
-
-function repoIssues(repo: RepoWithStats): EntityIssue[] {
-  if (repo.unmatched_count <= 0) return []
-  return [
-    {
-      key: 'unmatched',
-      label: `${repo.unmatched_count} unmatched`,
-      severity: 'warning',
-      onClick: () => navigateToRepoIssue(repo),
-    },
-  ]
 }
 
 /** Opens the create/import dialog in `mode`, clearing whatever it last held. */
@@ -499,12 +517,12 @@ onMounted(loadRepos)
       <button
         v-if="isMobile"
         class="filter-toggle"
-        :class="{ active: filterTagIds.length > 0 || groupByTag || groupByHost }"
+        :class="{ active: filterTagIds.length > 0 || groupMode !== 'none' }"
         @click="showMobileFilters = !showMobileFilters"
       >
         <SlidersHorizontal :size="14" />
         <span
-          v-if="filterTagIds.length > 0 || groupByTag || groupByHost"
+          v-if="filterTagIds.length > 0 || groupMode !== 'none'"
           class="filter-badge"
         ></span>
       </button>
@@ -543,21 +561,11 @@ onMounted(loadRepos)
             </label>
           </div>
         </div>
-        <button
-          v-if="allRepoTags.length > 0"
-          class="btn btn-sm btn-ghost"
-          :class="{ active: groupByTag }"
-          @click="toggleGroupByTag"
-        >
-          Group by tag
-        </button>
-        <button
-          class="btn btn-sm btn-ghost"
-          :class="{ active: groupByHost }"
-          @click="toggleGroupByHost"
-        >
-          Group by host
-        </button>
+        <BaseSegmented
+          v-model="groupMode"
+          :options="groupOptions"
+          label="Group by"
+        />
         <SortControls
           :field="sortField"
           :direction="sortDir"
@@ -569,33 +577,35 @@ onMounted(loadRepos)
 
     <div
       v-if="!isMobile || showMobileFilters"
-      class="quota-filter-row"
+      class="filter-pills repo-filters"
+      role="group"
+      aria-label="Quota filter"
     >
       <button
-        class="quota-fchip"
+        class="filter-pill"
         :class="{ active: quotaFilter === 'all' }"
         @click="quotaFilter = 'all'"
       >
         All &middot; {{ repos.length }}
       </button>
       <button
-        class="quota-fchip"
+        class="filter-pill"
         :class="{ active: quotaFilter === 'at_risk' }"
         @click="quotaFilter = 'at_risk'"
       >
-        <span class="quota-fchip-dot quota-fchip-dot-warn"></span>
+        <span class="status-dot status-dot--warning"></span>
         At risk &middot; {{ atRiskCount }}
       </button>
       <button
-        class="quota-fchip"
+        class="filter-pill"
         :class="{ active: quotaFilter === 'no_quota' }"
         @click="quotaFilter = 'no_quota'"
       >
-        <span class="quota-fchip-dot quota-fchip-dot-none"></span>
+        <span class="status-dot"></span>
         No quota &middot; {{ noQuotaCount }}
       </button>
       <button
-        class="append-only-fchip"
+        class="filter-pill"
         :class="{ active: quotaFilter === 'append_only' }"
         @click="quotaFilter = 'append_only'"
       >
@@ -623,146 +633,104 @@ onMounted(loadRepos)
       @action="() => openRepoDialog('create')"
     />
     <div
-      v-else-if="filteredRepos.length === 0 && !groupByHost"
+      v-else-if="filteredRepos.length === 0 && groupMode !== 'host'"
       class="state-msg"
     >
       No repositories match the current filter.
     </div>
 
     <div
-      v-else-if="groupByHost"
-      class="repo-hostgrouped"
+      v-else
+      class="list-stack repos-list"
     >
-      <div
-        v-for="group in hostGroups"
-        :key="group.sshHost"
-        class="host-group"
+      <section
+        v-for="group in listGroups"
+        :key="group.key"
+        class="list-group"
       >
-        <div
-          class="pool-header"
-          :class="{ 'pool-header-empty': group.visibleCount === 0 }"
+        <header
+          v-if="group.host"
+          class="list-group-header pool-header"
+          :class="{ 'pool-header-empty': group.host.visibleCount === 0 }"
         >
-          <div class="pool-top">
-            <span class="pool-host">
+          <span class="pool-host">
+            <h2 class="list-group-title">
               <RouterLink
                 v-if="authStore.isAdmin"
-                :to="`/repo-hosts/${group.repoHostId}`"
+                :to="`/repo-hosts/${group.host.repoHostId}`"
               >
-                {{ group.sshHost }}
+                {{ group.host.sshHost }}
               </RouterLink>
-              <template v-else>{{ group.sshHost }}</template>
-              <span
-                v-if="group.intermittent"
-                class="badge badge--warning"
-              >
-                Not always online
-              </span>
+              <template v-else>{{ group.host.sshHost }}</template>
+            </h2>
+            <span
+              v-if="group.host.intermittent"
+              class="badge badge--warning"
+            >
+              Not always online
             </span>
-            <span class="pool-total">
-              {{ formatBytes(group.totalDeduplicated) }}
-              <template v-if="group.boxMaxBytes"> / {{ formatBytes(group.boxMaxBytes) }}</template>
-            </span>
-          </div>
+          </span>
+          <span class="list-group-count pool-note">{{ hostPoolNote(group.host) }}</span>
+          <span class="list-group-aside pool-total">
+            {{ formatBytes(group.host.totalDeduplicated) }}
+            <template v-if="group.host.boxMaxBytes">
+              / {{ formatBytes(group.host.boxMaxBytes) }}
+            </template>
+          </span>
           <div
-            v-if="group.boxMaxBytes"
+            v-if="group.host.boxMaxBytes"
             class="pool-track"
             role="img"
-            :aria-label="`${formatBytes(group.totalDeduplicated)} used of ${formatBytes(group.boxMaxBytes)} across ${group.entries.length} repositories`"
+            :aria-label="`${formatBytes(group.host.totalDeduplicated)} used of ${formatBytes(group.host.boxMaxBytes)} across ${group.host.entries.length} repositories`"
           >
             <span
-              v-for="entry in group.entries"
+              v-for="entry in group.host.entries"
               :key="entry.repo.id"
               class="pool-seg"
               :class="[`pool-seg-step-${entry.colorStep % 2}`, { 'pool-seg-dim': !entry.visible }]"
               :style="{
-                left: `${hostSegGeometry(entry, group).left}%`,
-                width: `${hostSegGeometry(entry, group).width}%`,
+                left: `${hostSegGeometry(entry, group.host).left}%`,
+                width: `${hostSegGeometry(entry, group.host).width}%`,
               }"
             ></span>
             <span
-              v-if="hostWarnMarkPercent(group) !== null"
+              v-if="hostWarnMarkPercent(group.host) !== null"
               class="pool-mark"
-              :style="{ left: `${hostWarnMarkPercent(group)}%` }"
+              :style="{ left: `${hostWarnMarkPercent(group.host)}%` }"
             ></span>
           </div>
-          <span class="pool-note">{{ hostPoolNote(group) }}</span>
-        </div>
-
-        <div
-          v-if="group.visibleCount > 0"
-          class="card-grid"
+        </header>
+        <header
+          v-else
+          class="list-group-header"
         >
-          <RepoCard
-            v-for="entry in group.entries"
-            :key="entry.repo.id"
-            :repo="entry.repo"
-            :issues="repoIssues(entry.repo)"
-            :dim="!entry.visible"
-            pooled
-            @select="navigateToRepo(entry.repo)"
-          >
-            <template #quota>
-              <RepoQuotaMeter
-                v-if="!group.boxMaxBytes || repoQuotaUtilization(entry.repo) !== null"
-                :quota="entry.repo.quota"
-                :usage-bytes="entry.repo.total_deduplicated_size"
-              />
-              <RepoQuotaSlice
-                v-else
-                :usage-bytes="entry.repo.total_deduplicated_size"
-                :offset-bytes="entry.offsetBytes"
-                :box-max-bytes="group.boxMaxBytes"
-                :color-step="entry.colorStep"
-              />
-            </template>
-          </RepoCard>
-        </div>
-      </div>
-    </div>
-
-    <div
-      v-else-if="!groupByTag"
-      class="card-grid"
-    >
-      <RepoCard
-        v-for="repo in filteredRepos"
-        :key="repo.id"
-        :repo="repo"
-        :issues="repoIssues(repo)"
-        :tags="repoTags(repo)"
-        @select="navigateToRepo(repo)"
-      />
-    </div>
-
-    <div
-      v-else
-      class="repo-grouped"
-    >
-      <div
-        v-for="group in groupedRepos"
-        :key="group.label"
-        class="tag-group"
-      >
-        <div class="tag-group-header">
           <span
             v-if="group.color"
             class="tag-group-dot"
             :style="{ background: group.color }"
           ></span>
-          <h3 class="tag-group-title">{{ group.label }}</h3>
-          <span class="tag-group-count">{{ group.repos.length }}</span>
-        </div>
-        <div class="card-grid">
-          <RepoCard
-            v-for="repo in group.repos"
-            :key="`${group.label}-${repo.id}`"
-            :repo="repo"
-            :issues="repoIssues(repo)"
-            :tags="repoTags(repo)"
-            @select="navigateToRepo(repo)"
+          <h2 class="list-group-title">{{ group.title }}</h2>
+          <span class="list-group-count">{{ group.rows.length }}</span>
+        </header>
+
+        <template v-if="group.rows.length > 0">
+          <div class="list-cols">
+            <span>Repository</span>
+            <span>Status</span>
+            <span>Archives</span>
+            <span>Last backup</span>
+            <span>Size of quota</span>
+            <span></span>
+          </div>
+          <RepoListRow
+            v-for="row in group.rows"
+            :key="`${group.key}-${row.repo.id}`"
+            :repo="row.repo"
+            :dim="row.dim"
+            :pooled="group.host !== null"
           />
-        </div>
-      </div>
+        </template>
+      </section>
     </div>
 
     <RepoCreateDialog
@@ -782,22 +750,13 @@ onMounted(loadRepos)
   max-width: 1100px;
 }
 
-/* Tag filter dropdown */
-
-/* Tag pills on cards */
-
-/* Grouped view */
-.repo-grouped {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-8);
+.repo-filters {
+  margin-top: var(--space-4);
+  margin-bottom: var(--space-8);
 }
 
-.tag-group-header {
-  display: flex;
-  align-items: center;
-  gap: var(--space-4);
-  margin-bottom: var(--space-5);
+.repos-list .list-group {
+  --list-cols: minmax(0, 2.6fr) minmax(0, 1.3fr) 4.5rem 6.5rem minmax(0, 1.6fr) 1rem;
 }
 
 .tag-group-dot {
@@ -807,114 +766,22 @@ onMounted(loadRepos)
   flex-shrink: 0;
 }
 
-.tag-group-title {
-  font-size: var(--fs-md);
-  font-weight: 600;
-  color: var(--text-primary);
-}
-
-.tag-group-count {
-  font-size: var(--fs-xs);
-  color: var(--text-muted);
-  background: var(--bg-hover);
-  padding: var(--space-1) var(--space-3);
-  border-radius: var(--radius-pill);
-}
-
-/* Quota filter chips */
-.quota-filter-row {
-  display: flex;
-  gap: var(--space-3);
-  flex-wrap: wrap;
-  margin-top: var(--space-4);
-  margin-bottom: var(--space-8);
-}
-
-.quota-fchip,
-.append-only-fchip {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-3);
-  font-size: var(--fs-xs);
-  padding: var(--space-2) var(--space-5);
-  border-radius: var(--radius-pill);
-  border: 1px solid var(--border);
-  background: var(--bg-card);
-  color: var(--text-secondary);
-  cursor: pointer;
-}
-
-.quota-fchip.active,
-.append-only-fchip.active {
-  border-color: var(--accent);
-  color: var(--accent);
-  background: var(--accent-subtle);
-}
-
-.quota-fchip-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  flex-shrink: 0;
-}
-
-.quota-fchip-dot-warn {
-  background: var(--warning);
-}
-
-.quota-fchip-dot-none {
-  background: var(--text-muted);
-}
-
-/* Grouped by host */
-.repo-hostgrouped {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-8);
-}
-
-.host-group {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-5);
-  padding: var(--space-5);
-  border-radius: var(--radius);
-  background: var(--bg-hover);
-}
-
-.pool-header {
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: var(--space-5) var(--space-6);
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-4);
-}
-
+/* Host pool header: the host and its badges, the pool note, the usage at the
+   right, and the pool bar across the full width underneath. */
 .pool-header-empty {
   opacity: 0.55;
-}
-
-.pool-top {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: var(--space-4);
-  flex-wrap: wrap;
-  row-gap: var(--space-3);
 }
 
 .pool-host {
   display: inline-flex;
   align-items: center;
   gap: var(--space-4);
-  font-family: var(--mono);
-  font-size: var(--fs-sm);
-  color: var(--text-primary);
-  font-weight: 600;
   flex-wrap: wrap;
   min-width: 0;
+}
+
+.pool-host .list-group-title {
+  font-family: var(--mono);
 }
 
 .pool-total {
@@ -922,11 +789,12 @@ onMounted(loadRepos)
   font-size: var(--fs-xs);
   font-variant-numeric: tabular-nums;
   color: var(--text-secondary);
-  flex-shrink: 0;
+  white-space: nowrap;
 }
 
 .pool-track {
   position: relative;
+  flex-basis: 100%;
   height: 8px;
   border-radius: var(--radius-pill);
   background: var(--border);
@@ -960,8 +828,11 @@ onMounted(loadRepos)
   background: var(--text-secondary);
 }
 
-.pool-note {
-  font-size: var(--fs-xs);
-  color: var(--text-muted);
+@media (max-width: 640px) {
+  /* Name and usage on the first line, the bar, then the summary under it. */
+  .pool-note {
+    order: 1;
+    flex-basis: 100%;
+  }
 }
 </style>

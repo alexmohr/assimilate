@@ -6,7 +6,7 @@ import { expect, loginAsAdmin, test } from './fixtures'
 test('repo schedules tab loads without redirecting to the error page', async ({ page }) => {
   await loginAsAdmin(page)
   await page.goto('/repos')
-  await page.getByText('server-daily').click()
+  await page.getByText('server-daily', { exact: true }).click()
   await page.waitForURL(/\/repos\/\d+/)
 
   await page.getByRole('tab', { name: 'Schedules' }).click()

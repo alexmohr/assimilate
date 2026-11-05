@@ -57,7 +57,7 @@ test.describe('Power management', () => {
     await loginAsAdmin(page)
     await page.goto('/repos')
     await page.waitForLoadState('networkidle')
-    await page.locator('.entity-card').filter({ hasText: 'media-weekly' }).first().click()
+    await page.locator('a.list-row').filter({ hasText: 'media-weekly' }).first().click()
     await page.waitForLoadState('networkidle')
 
     await page.getByRole('tab', { name: 'Settings' }).click()
@@ -88,7 +88,7 @@ test.describe('Power management', () => {
     // database-hourly lives on the same host, so it reads the same setting.
     await page.goto('/repos')
     await page.waitForLoadState('networkidle')
-    await page.locator('.entity-card').filter({ hasText: 'database-hourly' }).first().click()
+    await page.locator('a.list-row').filter({ hasText: 'database-hourly' }).first().click()
     await page.waitForLoadState('networkidle')
     await page.getByRole('tab', { name: 'Settings' }).click()
     await page.locator('.settings-nav-item', { hasText: 'Power' }).click()

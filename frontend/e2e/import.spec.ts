@@ -46,9 +46,9 @@ async function navigateToRepo(page: Page, repoName: string, tab?: string): Promi
 test('repos page shows all seeded repositories', async ({ page }) => {
   await loginAsAdmin(page)
   await page.goto('/repos')
-  await expect(page.getByText('server-daily')).toBeVisible({ timeout: 10_000 })
-  await expect(page.getByText('database-hourly')).toBeVisible()
-  await expect(page.getByText('media-weekly')).toBeVisible()
+  await expect(page.getByText('server-daily', { exact: true })).toBeVisible({ timeout: 10_000 })
+  await expect(page.getByText('database-hourly', { exact: true })).toBeVisible()
+  await expect(page.getByText('media-weekly', { exact: true })).toBeVisible()
 })
 
 test('repo detail page loads without error', async ({ page }) => {
@@ -94,37 +94,51 @@ test('database-hourly shows unmatched-banner for legacy-db-prod archives', async
   await expect(page.locator('.unmatched-banner')).toBeVisible({ timeout: 15_000 })
 })
 
+/**
+ * Opens the Agents list and waits for its rows. On a cold DB the /api/agents
+ * call can take several minutes; the 270 s timeout covers both the API
+ * latency and Vue render time. The Offline group folds after five rows, so it
+ * is opened too, wherever the placeholders land.
+ */
+async function openAgentsList(page: Page): Promise<void> {
+  await page.goto('/agents')
+  await expect(page.locator('.list-row').first()).toBeVisible({ timeout: 270_000 })
+  const more = page.locator('.list-more', { hasText: /^Show \d+ more/ })
+  if ((await more.count()) > 0) await more.first().click()
+}
+
 test('agents page shows imported placeholder agents', async ({ page }) => {
   await loginAsAdmin(page)
-  await page.goto('/agents')
-  // On a cold DB the /api/agents call can take several minutes. The 270 s
-  // toBeVisible timeout covers both the API latency and Vue render time.
+  await openAgentsList(page)
   await expect(
     page
-      .locator('.card-name')
+      .locator('.list-row-name')
       .filter({ hasText: /old-webserver|legacy-db-prod/ })
       .first(),
-  ).toBeVisible({ timeout: 270_000 })
+  ).toBeVisible()
 })
 
 test('imported agents have the Imported badge', async ({ page }) => {
   await loginAsAdmin(page)
-  await page.goto('/agents')
+  await openAgentsList(page)
   // At least one Imported badge must be present (old-webserver and legacy-db-prod)
-  await expect(page.locator('.badge', { hasText: 'Imported' }).first()).toBeVisible({
-    timeout: 270_000,
-  })
+  await expect(page.locator('.badge', { hasText: 'Imported' }).first()).toBeVisible()
 })
 
-test('imported agents show Merge into... and Adopt action buttons', async ({ page }) => {
+test('imported agents offer Merge into... and Adopt in their row menu', async ({ page }) => {
   await loginAsAdmin(page)
-  await page.goto('/agents')
-  await expect(page.locator('.badge', { hasText: 'Imported' }).first()).toBeVisible({
-    timeout: 270_000,
-  })
-  // Merge and Adopt must be visible for at least one imported agent
-  await expect(page.getByRole('button', { name: /merge into/i }).first()).toBeVisible()
-  await expect(page.getByRole('button', { name: /adopt/i }).first()).toBeVisible()
+  await openAgentsList(page)
+  const imported = page
+    .locator('.list-row')
+    .filter({ has: page.locator('.badge', { hasText: 'Imported' }) })
+    .first()
+  await expect(imported).toBeVisible()
+  // The actions sit in the row's overflow menu, which opens without leaving
+  // the list.
+  await imported.getByRole('button', { name: /^More actions for / }).click()
+  await expect(page).toHaveURL(/\/agents$/)
+  await expect(page.getByRole('menuitem', { name: /merge into/i })).toBeVisible()
+  await expect(page.getByRole('menuitem', { name: /adopt/i })).toBeVisible()
 })
 
 test('Cancel Import button appears when repo is in importing state', async ({ page }) => {

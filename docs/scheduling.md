@@ -43,46 +43,62 @@ The repositories a schedule writes into can be changed later under **Settings �
 
 ![Schedules](assets/screenshots/schedules.png)
 
-The Schedules list page shows all configured backup schedules with:
+The Schedules list page shows every configured schedule as a row, in one bordered panel per group. Each panel's header names the group, counts its schedules, and, in warning text, says how many of them are overdue. The column names appear once per panel: **Schedule**, **Agent**, **Health**, **Last 10 runs** and **Next run**. Rows that need attention sort to the top of their panel.
+
+Above the list:
 
 - **Text filter** — search by schedule name, agent, storage host, or repository name, with an optional field syntax (see [Filter syntax](#filter-syntax))
+- **Filter pills** — **All**, **Overdue**, **Failing** and **Disabled**, each with its count; click one to show only those schedules
 - **Status filter** — show All, Enabled only, or Disabled only
 - **Type filter** — filter by Backup, Check, or Verify
-- **Health filter** — filter by Passed only, Failed only, or Overdue only
+- **Health filter** — filter by Passed only, Warned only, Failed only, or Overdue only
 - **Sort buttons** — sort by Agent, Next run, Last run, or Type
-- **Group control** — section the cards by Time, Agent, or Repo
+- **Group control** — group the rows by Time, Agent, or Repo
 
-By default schedules are grouped into sections by when they next run — Due now, Next 6 hours, Next 24 hours, This week, Later, Unscheduled, and Paused for disabled schedules — so schedules that need attention soon surface at the top regardless of sort order.
+On a phone, the status, type and health filters, the group control and the sort buttons sit behind the filter button beside the search box; the pills stay visible.
 
-The **Group** control beside the sort buttons switches which question the sections answer:
+By default schedules are grouped by when they next run — Due now, Next 6 hours, Next 24 hours, This week, Later, Unscheduled, and Disabled for disabled schedules — so schedules that need attention soon surface at the top regardless of sort order. The **Disabled** group starts collapsed to its header; click its title to show its rows. It opens by itself while you search or filter to disabled schedules.
 
-| Group by | Sections | Use it to see |
+The **Group** control beside the sort buttons switches which question the groups answer:
+
+| Group by | Groups | Use it to see |
 |---|---|---|
-| Time | Due now, Next 6 hours, Next 24 hours, This week, Later, Unscheduled, Paused | What runs next, and what is paused |
+| Time | Due now, Next 6 hours, Next 24 hours, This week, Later, Unscheduled, Disabled | What runs next, and what is disabled |
 | Agent | One per targeted agent, named "Display name (hostname)" | Everything that backs up a given machine |
 | Repo | One per repository the schedules write into | Everything that writes into a given repository |
 
-A schedule that targets several agents appears under each of them, so an agent's section lists everything that backs that machine up. Sorting, filtering and the 24-hour rail are unchanged by the group mode — every section is ordered by the active sort, and only schedules matching the current filters are grouped. Schedules with no agent or no repository assigned collect in a final **No agents** or **No repository** section.
+A schedule that targets several agents appears under each of them, so an agent's group lists everything that backs that machine up. Sorting, filtering and the overlap notices are unchanged by the group mode — every group is ordered by the active sort, and only schedules matching the current filters are grouped. Schedules with no agent or no repository assigned collect in a final **No agents** or **No repository** group.
 
 !!! note "Agents that share a hostname"
-    A schedule records the *hostname* it targets, and a hostname identifies a machine only together with its [domain](agents.md) — two agents in different domains can report the same one. Grouping by agent therefore puts every schedule naming that hostname in one section, whichever of those agents it actually targets. Such a section is titled with the bare hostname rather than either agent's display name, and carries an **N agents** badge saying how many machines it covers; hover it for the detail. Grouping by agent or repo drops the separate Paused section: a disabled schedule stays with its agent or repository and is identified by its **Disabled** pill instead.
+    A schedule records the *hostname* it targets, and a hostname identifies a machine only together with its [domain](agents.md) — two agents in different domains can report the same one. Grouping by agent therefore puts every schedule naming that hostname in one group, whichever of those agents it actually targets. Such a group is titled with the bare hostname rather than either agent's display name, and carries an **N agents** badge saying how many machines it covers; hover it for the detail. Grouping by agent or repo drops the separate Disabled group: a disabled schedule stays with its agent or repository and is identified by its **Disabled** health chip instead.
 
-Above the groups, a 24-hour rail plots every enabled schedule due within the next day along a timeline from now. When two or more of those runs land within 30 minutes of each other **on the same repository**, the rail marks them and names the repository and time so you can stagger them before they contend for the same repository lock. Two runs that share a storage host but write to different repositories are not a collision — they don't block each other — and are not flagged.
+### Rows
 
-Click the warning to expand the runs behind it: each cluster lists its runs with the time each is due, and clicking one opens that schedule so you can move it.
+Each row opens the schedule's detail page. The row shows:
 
-!!! note
-    The rail only ever plots enabled schedules that match the current filters, so filtering the list also narrows the collision check.
+- **Schedule** — the schedule's name, or its repository's name when it has none, over its cadence, type and the repositories it writes into ("Daily at 02:00 · Backup → server-daily"). A status dot in front of the name takes the colour of the health chip.
+- **Agent** — the agent the schedule runs on, with "+N" when it targets more; hover for the full list.
+- **Health** — one chip that sums up the schedule. Problems that apply together share the chip, for example **Overdue · 1/3 missed** or **Overdue · Failed**: **Failed** and **Warning** for the last run's outcome, **Overdue** when a target is behind, **N/threshold missed** once the schedule has missed a backup but not yet crossed its [missed backup threshold](#missed-backup-threshold), and **Overlaps <agent>** for a [repository overlap](#overlapping-runs). Without a problem, the chip reads **Running** while a run is in flight, **Disabled** (or **Auto-disabled**) for a disabled schedule, **Agent offline** when a target agent is disconnected, **Catch-up pending** while a run waits for a host to come back, **Not run yet**, or **Healthy**. Hover the chip for the detail behind it, such as the failed run's error message.
+- **Last 10 runs** — the run-history strip and its summary ("10 runs · 1 failed").
+- **Next run** — when the schedule runs next, in warning colour while it is overdue. A disabled schedule shows a dash.
 
-Each schedule card shows the repository or schedule name, agent count, execution mode (Parallel/Sequential), enabled state, schedule type, a run-history strip, cadence, and next run time, plus a **Run** button for manual triggering. The run-history strip draws up to the ten most recent runs as bars — bar height reflects duration for a completed run, and a failed run always draws at full height so it never reads as the least significant bar in the strip. A run cancelled via the **Cancel** button below draws as a muted bar distinct from a failure, and isn't counted in the strip's failed-run tally.
+The run-history strip draws up to the ten most recent runs as bars — bar height reflects duration for a completed run, and a failed run always draws at full height so it never reads as the least significant bar in the strip. A cancelled run draws as a muted bar distinct from a failure, and isn't counted in the strip's failed-run tally.
 
 A run of a multi-agent schedule is still one bar. It splits into equal-height segments, one per agent (two agents share it 50/50), each colored by that agent's own outcome — a run where one agent failed counts as failed without hiding which agent succeeded. A schedule that also writes into several repositories gets one segment per agent and repository, since each pairing is backed up separately. Hover a segment to see its agent and repository. The bar's height is the sum of its segments' backup durations, since they run one after another.
 
-A disabled schedule tints the card and adds a **Disabled** pill; a **Failed**, **Warning**, or **Overdue** chip appears when a target needs attention, and an **N/threshold missed** chip appears once the schedule has missed at least one backup but hasn't yet crossed its [missed backup threshold](#missed-backup-threshold) — click a chip to jump to the filtered activity log (Failed/Warning) or the schedule detail page (Overdue/missed). While a backup for the schedule is currently running, the card also shows a **Running** pill and the **Run** button is replaced with **Cancel**.
+The list has no controls of its own. Open a schedule to start it with **Run now**, stop a run with **Cancel backup**, or pause it with the **Enabled** switch under **Settings → General**.
 
-Next to the **Run** button, an **Enabled**/**Disabled** switch lets you pause or resume the schedule directly from the list, without opening it. Flipping it saves immediately; enabling a schedule with no repository assigned, or any of whose target repositories can't be reached over SSH, shows an error toast instead.
+On a phone, each row shrinks to three short lines: the status dot, name and next run time; the cadence and agent; and the health chip. The run-history strip is left out.
 
-Overdue is evaluated per host: a schedule can show Overdue even while its own next/last run times look on track, if one of its target hosts hasn't completed a backup within its cron interval plus a 30-minute grace period. Hover the Overdue chip to see which target host(s) are behind and when each last reported a backup; if a host's agent is currently disconnected, the tooltip also notes that ("Agent offline (last seen ...)") so you can tell at a glance whether the host is overdue because it's offline or because something else went wrong.
+### Overlapping runs
+
+Borg locks a repository while it writes, so two runs into the same repository at the same time make one of them wait, or fail once the lock times out. The list warns about this with a notice above the groups when two schedules on **different agents** write into the **same repository** and their next runs overlap — for example: *Two agents write to repo server-daily at the same time. web-server-01 runs 02:00 – ~02:40 (estimated from recent runs), db-server-01 starts 02:10. The repo lock makes one of them wait or fail.* Both rows carry an **Overlaps <agent>** chip naming the other agent. Click the notice to open the repository's schedules and move one of them.
+
+Each next run is taken to last as long as the median of the schedule's recent runs. A schedule with no finished runs is assumed to take 5 minutes, and the notice says so. Runs that touch — one starting the moment the other is expected to end — do not overlap. Only a schedule's next run is checked.
+
+Two schedules on the same agent never overlap: an agent runs its jobs one after another. Two runs that share a storage host but write to different repositories don't block each other either, and are not flagged. The check covers every enabled schedule, whatever the filters show.
+
+Overdue is evaluated per host: a schedule can show Overdue even while its own next/last run times look on track, if one of its target hosts hasn't completed a backup within its cron interval plus a 30-minute grace period. Hover the health chip of an overdue schedule to see which target host(s) are behind and when each last reported a backup; if a host's agent is currently disconnected, the tooltip also notes that ("Agent offline (last seen ...)") so you can tell at a glance whether the host is overdue because it's offline or because something else went wrong.
 
 ### Filter syntax
 
@@ -239,7 +255,7 @@ Each schedule row in the UI shows:
 
 | Field | Description |
 |-------|-------------|
-| **Enabled** | Toggle to pause or resume the schedule without deleting it |
+| **Enabled** | Switch under **Settings → General** on the schedule's detail page that pauses or resumes it without deleting it |
 | **Next run** | UTC timestamp of the next scheduled execution |
 | **Last run** | UTC timestamp of the most recent execution |
 | **Last result** | `success`, `warning`, or `error` from the last run |
@@ -248,7 +264,7 @@ Disabling a schedule clears the next-run time. Re-enabling it recalculates the n
 
 ### Missed Backup Threshold
 
-Settings → General has a **Mark as failed after** field (`missed_backup_threshold`, default 3): how many consecutive missed backups — the agent or the backup's target being unreachable when the scheduler tries to trigger the run — this schedule tolerates before it's marked failed and automatically disabled. Every miss shows as an **N/threshold missed** warning chip on the schedule card and fires the matching [failed or skipped backup notification](#hosts-that-are-not-always-online) if a channel has a rule for it; once the threshold is reached, the schedule is additionally disabled, its status pill reads "Auto-disabled" (see [Agent Status](agents.md#agent-status)), and a **Schedule Auto Disabled** [notification](notifications.md#supported-events) also fires for that same final miss.
+Settings → General has a **Mark as failed after** field (`missed_backup_threshold`, default 3): how many consecutive missed backups — the agent or the backup's target being unreachable when the scheduler tries to trigger the run — this schedule tolerates before it's marked failed and automatically disabled. Every miss shows as **N/threshold missed** in the schedule's health chip on the Schedules list and fires the matching [failed or skipped backup notification](#hosts-that-are-not-always-online) if a channel has a rule for it; once the threshold is reached, the schedule is additionally disabled, its health chip reads "Auto-disabled" (see [Agent Status](agents.md#agent-status)), and a **Schedule Auto Disabled** [notification](notifications.md#supported-events) also fires for that same final miss.
 
 The count goes back to zero, and the warning chip with it, as soon as a run reaches its host — the moment the backup starts, not once it finishes — whether the run was scheduled, a [catch-up](#catch-up-runs), or started by hand with **Run now** or **Retry**. A scheduled run of a schedule with several hosts clears it when the last of them starts without a miss. That holds only while none of the schedule's other hosts is unreachable: a run limited to one host leaves the count alone while another is still down.
 
@@ -304,7 +320,7 @@ Come back with less time than this left and the pending miss is dropped instead 
 
 <!-- screenshot: schedule-catch-up -->
 
-A pending catch-up is visible before it runs: the schedule card carries a **Catch-up pending** badge, and the schedule's Overview tab names the agent or repository it is waiting on. When one runs, it is recorded in the [activity log](activity.md) as a **Schedule Catch Up** event, and produces a normal backup report. Like a manual **Run now**, a catch-up run also updates the schedule's **Last run** and **Next run**.
+A pending catch-up is visible before it runs: the schedule's row on the Schedules list reads **Catch-up pending**, and the schedule's Overview tab names the agent or repository it is waiting on. When one runs, it is recorded in the [activity log](activity.md) as a **Schedule Catch Up** event, and produces a normal backup report. Like a manual **Run now**, a catch-up run also updates the schedule's **Last run** and **Next run**.
 
 | Field | Where | Default | Description |
 |-------|-------|---------|-------------|
@@ -320,7 +336,7 @@ A pending miss is also dropped, without running, when the schedule or its reposi
 
 ## Manual Trigger
 
-To run a backup immediately without waiting for the next scheduled time, click **Run now** on the schedule row. The server sends a `RunBackupNow` message to the connected agent. The agent starts the backup immediately and reports the result back to the server.
+To run a backup immediately without waiting for the next scheduled time, open the schedule and click **Run now** in its header. The server sends a `RunBackupNow` message to the connected agent. The agent starts the backup immediately and reports the result back to the server.
 
 If a host is offline when you press **Run now** or **Retry**, its run is queued rather than dropped: it is sent the moment the agent reconnects. Until then the schedule reads **Queued** instead of **Running**, and its Overview tab says which host the backup is waiting for rather than showing it in progress. **Cancel** calls off a queued run the same way it stops a running one.
 
@@ -474,7 +490,7 @@ The Backups tab is available only for schedules of type **Backup**.
 
 **Editing:** Changes take effect on the next scheduled run. If a backup is already in progress when you save an edit, the running backup completes with the old settings. The updated cron expression and retention policy apply from the next run onward.
 
-Saving an already-enabled schedule only re-checks that its target repositories are reachable over SSH when the save re-enables it from Disabled, or changes which repositories it writes into. A rename, a re-time, or a retention/hook edit that leaves an enabled schedule's targets untouched saves even if one of those targets is temporarily unreachable — the save isn't handing the schedule anything new to reach. Re-enabling from Disabled, or adding, removing, or swapping a target, always confirms every resulting target reachable first, same as the [list page's Enabled switch](#backup-targets).
+Saving an already-enabled schedule only re-checks that its target repositories are reachable over SSH when the save re-enables it from Disabled, or changes which repositories it writes into. A rename, a re-time, or a retention/hook edit that leaves an enabled schedule's targets untouched saves even if one of those targets is temporarily unreachable — the save isn't handing the schedule anything new to reach. Re-enabling from Disabled, or adding, removing, or swapping a target, always confirms every resulting target reachable first, same as turning the **Enabled** switch back on.
 
 **Deleting:** Deleting a schedule removes it from the database and pushes an updated configuration to the agent. Any backup currently in progress is not interrupted — it runs to completion. Archives already created by the deleted schedule remain in the repository and must be pruned manually if desired.
 

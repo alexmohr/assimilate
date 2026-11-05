@@ -7,7 +7,26 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 A dependency host is a machine a backup needs besides its agent and its repository: the SMB or NFS server whose share a pre-backup command mounts, for example. Assimilate checks that it answers on a TCP port before the backup starts, can wake it with Wake-on-LAN, and — when it is marked as not always online — skips the run and catches it up once the machine answers, instead of letting the pre-backup command fail.
 
-![Dependencies page, one card per dependency host](assets/screenshots/dependency-hosts.png)
+![Dependencies page, one row per dependency host](assets/screenshots/dependency-hosts.png)
+
+## The Dependencies Page
+
+**Dependencies** in the sidebar lists every dependency host as one row in a single **All dependencies** panel, whose heading counts the hosts and the schedules that depend on them. Dependencies that need attention come first: one that did not answer its last check, then one a run is waiting on, then one never checked.
+
+Each row shows:
+
+| Column | Content |
+|--------|---------|
+| **Dependency** | A status dot, the name, and what the last check found — **Answering**, **Not answering**, or **Not checked yet** — over the protocol and `address:port`, and **Same machine as** the repository host it shares a machine with |
+| **Availability** | **Always online** or **Not always online**, and **Wake** (**Wake on demand** on a machine that is not always online) when the machine is woken before a backup |
+| **Used by** | How many schedules and how many agents' backup defaults require it. Each count opens the dependency's [Used by](#used-by) section |
+| **Last checked** | When it was last checked; **Never** when it has not been |
+
+Select a row to open the dependency's page. When runs are waiting on a dependency to answer, a line under its row says how many, names each schedule and agent with the time the skipped run was due — and when it gives up, if it does — and **View run** opens the dependency's **Power & dependencies** section (described below), which lists them with **Check now**.
+
+Above the panel, the filter pills narrow the list to dependencies **Not answering**, with **Runs waiting**, or **Not checked**; each pill shows how many match and appears only when one does. The search box matches the name or the address.
+
+Checking and waking a dependency are on its own page, not on the list.
 
 ## Prerequisites
 
@@ -66,7 +85,7 @@ A dependency an agent's defaults require is shown on the schedule as **from agen
 
 ## The Dependency Page
 
-Open a dependency from its card. The page has four sections:
+Open a dependency from its row on the Dependencies page. The page has four sections:
 
 | Section | Content |
 |---------|---------|

@@ -2,7 +2,11 @@
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 import type { BadgeTone } from './badge'
-import type { DependencyTestResponse } from '../types/generated'
+import type {
+  DependencyHostResponse,
+  DependencyTestResponse,
+  MachineWaitResponse,
+} from '../types/generated'
 
 /**
  * The well-known ports a dependency is usually checked on. Anything else is
@@ -61,7 +65,7 @@ export interface ReachabilityBadge {
 export function reachabilityBadge(lastCheckReachable: boolean | null): ReachabilityBadge {
   if (lastCheckReachable === null) return { tone: 'neutral', label: 'Not checked yet' }
   return lastCheckReachable
-    ? { tone: 'success', label: 'Reachable' }
+    ? { tone: 'success', label: 'Answering' }
     : { tone: 'warning', label: 'Not answering' }
 }
 
@@ -70,4 +74,75 @@ export function testResultText(result: DependencyTestResponse): string {
   return result.reachable
     ? `${result.address} answered on port ${result.port}`
     : `${result.address} did not answer on port ${result.port} within ${result.timeout_seconds} seconds`
+}
+
+/**
+ * The Dependencies list's filters, each a question the list can answer from
+ * what it already has: did the last check fail, is a run waiting on it, has
+ * it never been asked.
+ */
+export type DependencyFilter = 'all' | 'not_answering' | 'waiting' | 'not_checked'
+
+export function matchesDependencyFilter(
+  host: DependencyHostResponse,
+  filter: DependencyFilter,
+): boolean {
+  switch (filter) {
+    case 'all':
+      return true
+    case 'not_answering':
+      return host.last_check_reachable === false
+    case 'waiting':
+      return host.waiting_count > 0
+    case 'not_checked':
+      return host.last_check_reachable === null
+  }
+}
+
+/**
+ * How urgently a dependency wants looking at: one that did not answer, then
+ * one runs are waiting on, then one never checked, then the rest.
+ */
+function attentionRank(host: DependencyHostResponse): number {
+  if (host.last_check_reachable === false) return 0
+  if (host.waiting_count > 0) return 1
+  if (host.last_check_reachable === null) return 2
+  return 3
+}
+
+/** Problems first, then by name. Returns a new array. */
+export function sortDependencies(
+  hosts: readonly DependencyHostResponse[],
+): DependencyHostResponse[] {
+  return [...hosts].sort(
+    (a, b) => attentionRank(a) - attentionRank(b) || a.name.localeCompare(b.name),
+  )
+}
+
+/** Whether the name or the address contains the search text, ignoring case. */
+export function matchesDependencySearch(host: DependencyHostResponse, query: string): boolean {
+  const q = query.trim().toLowerCase()
+  if (!q) return true
+  return host.name.toLowerCase().includes(q) || host.address.toLowerCase().includes(q)
+}
+
+/**
+ * The waits on a machine that are waits on this dependency. A machine lists
+ * the waits of every role on it, and other dependencies may share it.
+ */
+export function dependencyWaits(
+  waits: readonly MachineWaitResponse[],
+  dependencyName: string,
+): MachineWaitResponse[] {
+  return waits.filter((w) => w.role === 'dependency' && w.dependency_name === dependencyName)
+}
+
+/** "1 run waiting", "3 runs waiting". */
+export function waitingRunsText(count: number): string {
+  return count === 1 ? '1 run waiting' : `${count} runs waiting`
+}
+
+/** "1 schedule", "2 schedules". */
+export function countLabel(count: number, singular: string, plural: string): string {
+  return `${count} ${count === 1 ? singular : plural}`
 }

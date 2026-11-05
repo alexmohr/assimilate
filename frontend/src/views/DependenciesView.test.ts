@@ -99,11 +99,23 @@ function newButton(wrapper: VueWrapper<ComponentPublicInstance>): VueWrapper | u
 }
 
 describe('DependenciesView', () => {
-  it('lists every dependency, each card linking to its page', async () => {
+  it('lists every dependency, each row linking to its page', async () => {
     const { wrapper } = await mountPage('admin')
     expect(wrapper.get('h1').text()).toBe('Dependencies')
-    expect(wrapper.get('a.entity-card').attributes('href')).toBe('/dependency-hosts/3')
+    expect(wrapper.get('.page-description').text()).toBe(
+      'Hosts a backup needs before it can run. Runs wait for them, and Assimilate can wake them.',
+    )
+    expect(wrapper.get('[data-testid="dependency-row"] a.list-row-name').attributes('href')).toBe(
+      '/dependency-hosts/3',
+    )
     expect(wrapper.text()).toContain('nas-media')
+  })
+
+  it('offers no Check now or Wake on the list: those live on the dependency page', async () => {
+    const { wrapper } = await mountPage('admin')
+    const labels = wrapper.findAll('button').map((b) => b.text().trim())
+    expect(labels).not.toContain('Check now')
+    expect(labels).not.toContain('Wake')
   })
 
   it('makes New open the new-dependency dialog, then opens what it created', async () => {
@@ -156,7 +168,7 @@ describe('DependenciesView', () => {
     })
     ws.handlers['DataChanged']!()
     await flushPromises()
-    expect(wrapper.findAll('a.entity-card')).toHaveLength(2)
+    expect(wrapper.findAll('[data-testid="dependency-row"]')).toHaveLength(2)
   })
 })
 

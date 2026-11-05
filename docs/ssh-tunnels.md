@@ -30,7 +30,7 @@ Tunnel management requires admin privileges. Navigate to the **Tunnels** page in
 
 ![Tunnels](assets/screenshots/tunnels.png)
 
-1. Click **New tunnel**.
+1. Click **New**.
 2. Select the **Host** (agent machine) this tunnel is for.
 3. Fill in the connection fields:
 
@@ -130,24 +130,31 @@ See [Security](security.md) for the broader security model.
 
 ## Viewing Active Tunnels
 
-The **Tunnels** page lists all configured tunnels as cards, with a summary row at the top counting tunnels by status (Connected / Reconnecting / Needs attention). The status indicator on each card updates in real time via WebSocket — no page refresh needed.
+The **Tunnels** page lists every configured tunnel as a row in one panel. Tunnels that need attention come first: an error, then an enabled tunnel that is down, then one reconnecting, then the connected ones, and disabled tunnels last. The status updates in real time via WebSocket — no page refresh needed.
 
-Each card shows:
+Each row shows:
 
-- The agent this tunnel belongs to, and its current status
-- A small connection diagram between the agent and the SSH host, coloured and animated by status
-- SSH connection details (user, host, port) and the tunnel port
-- Reconnect, edit and delete actions
+| Column | Content |
+|--------|---------|
+| **Agent** | A status dot — green when connected, amber while reconnecting, red when disconnected or failed, grey when disabled — and the agent's hostname over its display name |
+| **Route** | `server → :<tunnel port> → <user>@<SSH host>:<SSH port>`: the tunnel port the agent connects to, and the SSH target the server dials |
+| **Status** | **Connected**, **Reconnecting**, **Disconnected** or **Error**, with the error message under it and **Disabled** for a disabled tunnel. Select an **Error** badge to read the full message |
+
+Above the panel, the filter pills count the tunnels — **All**, **Connected**, **Reconnecting** and **Needs attention** (disconnected or failed) — and narrow the list to one of them. The search box matches the agent or the SSH host.
+
+The **...** menu at the end of each row holds **Edit**, **Reconnect** (only for an enabled tunnel that is not connected) and **Delete**.
+
+On a phone, each row stacks into the agent with its menu, the route, and the status.
 
 ## Closing a Tunnel
 
 ### Manual disable
 
-Edit the tunnel and clear **Enabled**. The server immediately cancels the SSH session and marks the tunnel as **Disconnected**. The tunnel configuration is preserved and can be re-enabled at any time.
+Select **Edit** in the tunnel's **...** menu and clear **Enabled**. The server immediately cancels the SSH session and marks the tunnel as **Disconnected**. The tunnel configuration is preserved and can be re-enabled at any time.
 
 ### Delete
 
-Click **Delete** to permanently remove the tunnel. The SSH session is cancelled before the record is deleted. This cannot be undone.
+Select **Delete** in the tunnel's **...** menu to permanently remove the tunnel. The SSH session is cancelled before the record is deleted. This cannot be undone.
 
 ### Automatic behaviour
 

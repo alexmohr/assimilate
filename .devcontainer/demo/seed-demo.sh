@@ -1056,12 +1056,14 @@ WHERE name = 'Offline agent due soon';
 
 SQL
 
-# Second run into the *same* repository as 'Offline agent due soon', five
-# minutes after it, so the Schedules page's 24-hour rail always has a
-# collision to warn about and to expand (see docs/scheduling.md). It has to be
-# the same repository, not merely the same storage host: every demo repo lives
-# on localhost, so a host-keyed warning would fire for every pair of runs on
-# the page and say nothing.
+# Second run into the *same* repository as 'Offline agent due soon', from a
+# *different* agent, starting two minutes into that schedule's run, so the
+# Schedules page always has an overlap notice to show (see docs/scheduling.md).
+# Neither schedule has finished runs, so both are assumed to take five minutes:
+# 'Offline agent due soon' runs from +100 to +105 minutes, and this one starts
+# at +102. It has to be the same repository, not merely the same storage host,
+# and a different agent: two schedules on one agent are queued one after the
+# other and never contend for the repository lock.
 WEB01_COLLIDING_SCHEDULE_ID=$(api POST "/api/schedules" "{
     \"name\": \"Colliding daily window\",
     \"agent_ids\": [$WEB01_ID],
@@ -1078,7 +1080,7 @@ WEB01_COLLIDING_SCHEDULE_ID=$(api POST "/api/schedules" "{
 PGPASSWORD=borg_demo psql -h postgres -U borg -d borg <<SQL
 UPDATE schedules
 SET last_run_at = NULL,
-    next_run_at = NOW() + interval '105 minutes'
+    next_run_at = NOW() + interval '102 minutes'
 WHERE name = 'Colliding daily window';
 
 SQL

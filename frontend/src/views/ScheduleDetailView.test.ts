@@ -446,6 +446,53 @@ describe('ScheduleDetailView - edit mode', () => {
     expect(mockApiClient.put).toHaveBeenCalledWith('/schedules/1', expect.any(Object))
   })
 
+  // Pausing and resuming a schedule happens here, not on the Schedules list:
+  // the list's rows are links to this page and carry no switch of their own.
+  it('disables an enabled schedule from the Enabled switch in Settings', async () => {
+    setupEditMode()
+    mockApiClient.put.mockResolvedValue({ data: { ...mockSchedule, enabled: false } })
+    const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })
+    await flushPromises()
+    await goToSettings(wrapper)
+
+    const toggle = wrapper.find('.toggle-switch-stub[data-label="Enabled"]')
+    expect((toggle.element as HTMLInputElement).checked).toBe(true)
+    await toggle.setValue(false)
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text() === 'Save changes')!
+      .trigger('click')
+    await flushPromises()
+
+    expect(mockApiClient.put).toHaveBeenCalledWith(
+      '/schedules/1',
+      expect.objectContaining({ cron_expression: mockSchedule.cron_expression, enabled: false }),
+    )
+  })
+
+  it('enables a disabled schedule from the Enabled switch in Settings', async () => {
+    setupEditMode({ ...mockSchedule, enabled: false })
+    mockApiClient.put.mockResolvedValue({ data: { ...mockSchedule, enabled: true } })
+    const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('Disabled')
+    await goToSettings(wrapper)
+    const toggle = wrapper.find('.toggle-switch-stub[data-label="Enabled"]')
+    expect((toggle.element as HTMLInputElement).checked).toBe(false)
+    await toggle.setValue(true)
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text() === 'Save changes')!
+      .trigger('click')
+    await flushPromises()
+
+    expect(mockApiClient.put).toHaveBeenCalledWith(
+      '/schedules/1',
+      expect.objectContaining({ enabled: true }),
+    )
+  })
+
   it('shows error banner on load failure', async () => {
     mockApiClient.get.mockRejectedValue(new Error('Not found'))
     const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '999' } })
@@ -607,6 +654,7 @@ describe('ScheduleDetailView - edit mode', () => {
   })
 
   it('clicking Run now triggers the schedule with an empty body', async () => {
+    useToast().toasts.value = []
     mockApiClient.post.mockResolvedValue({ data: {} })
     const wrapper = await createEditWrapper()
 
@@ -616,6 +664,27 @@ describe('ScheduleDetailView - edit mode', () => {
     await flushPromises()
 
     expect(mockApiClient.post).toHaveBeenCalledWith('/schedules/1/run', {})
+    expect(useToast().toasts.value.map((t) => t.message)).toContain('Backup started.')
+  })
+
+  // A verify run is named by what borg is asked to do, not by its type word.
+  it('names a verify schedule by its full wording when Run now starts it', async () => {
+    useToast().toasts.value = []
+    setupEditMode(mockVerifySchedule)
+    mockApiClient.post.mockResolvedValue({ data: {} })
+    const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '3' } })
+    await flushPromises()
+
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text() === 'Run now')!
+      .trigger('click')
+    await flushPromises()
+
+    expect(mockApiClient.post).toHaveBeenCalledWith('/schedules/3/run', {})
+    expect(useToast().toasts.value.map((t) => t.message)).toContain(
+      'Verify (extract dry-run) started.',
+    )
   })
 
   // The backup_reports row for a run-now is inserted before the request even

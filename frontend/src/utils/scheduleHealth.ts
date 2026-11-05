@@ -108,16 +108,39 @@ function missedBackupsIssue(
   scheduleId: number,
   router: Router,
 ): EntityIssue | null {
+  const streak = missedBackupStreak(entry)
+  if (streak === null) return null
+  return {
+    key: 'missed-backups',
+    label: streak.label,
+    severity: 'warning',
+    title: streak.title,
+    onClick: () => router.push(`/schedules/${scheduleId}`),
+  }
+}
+
+/** A run of missed backups still below the schedule's threshold. */
+export interface MissedBackupStreak {
+  /** "1/3 missed" */
+  label: string
+  /** The sentence behind it, for a tooltip. */
+  title: string
+}
+
+/**
+ * The missed-backups streak worth showing, or null when there is none or it
+ * has already reached the threshold (and the schedule is auto-disabled).
+ */
+export function missedBackupStreak(
+  entry: ScheduleHealthEntry | undefined,
+): MissedBackupStreak | null {
   if (entry == null) return null
   const { consecutive_missed_backups: missed, missed_backup_threshold: threshold } = entry
   if (!Number.isFinite(missed) || !Number.isFinite(threshold)) return null
   if (missed <= 0 || missed >= threshold) return null
   return {
-    key: 'missed-backups',
     label: `${missed}/${threshold} missed`,
-    severity: 'warning',
     title: `${missed} consecutive missed backup${missed === 1 ? '' : 's'} (agent or target unreachable) - will be marked failed at ${threshold}`,
-    onClick: () => router.push(`/schedules/${scheduleId}`),
   }
 }
 

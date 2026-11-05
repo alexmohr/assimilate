@@ -20,15 +20,25 @@ interface ScheduleListEntry {
 }
 
 /**
- * The card for one seeded schedule, selected by its id.
+ * The Schedules list row for one seeded schedule, selected by its id.
  *
- * Not by its repository name: an unnamed schedule's card is titled after the
+ * Not by its repository name: an unnamed schedule's row is titled after the
  * repository it backs up, and more than one seeded schedule backs up to
- * `server-daily` - so a repo-name filter matches several cards and every
+ * `server-daily` - so a repo-name filter matches several rows and every
  * assertion under it is one status chip away from a strict-mode violation.
  */
-function scheduleCard(page: Page, id: number): Locator {
-  return page.locator(`.entity-card[data-schedule-id="${id}"]`)
+function scheduleRow(page: Page, id: number): Locator {
+  return page.locator(`.list-row[data-schedule-id="${id}"]`)
+}
+
+/** A row's one health chip. */
+function healthChip(row: Locator): Locator {
+  return row.locator('.schedules-health')
+}
+
+/** Unfolds the Disabled group, which the list shows collapsed to its header. */
+async function openDisabledGroup(page: Page): Promise<void> {
+  await page.locator('.schedules-group-toggle').click()
 }
 
 // Fills a numeric settings field, intercepts the PUT so the response echoes
@@ -108,18 +118,15 @@ async function saveNumericScheduleField(
 
 // Navigates to the schedules list with schedule 1 forced overdue, and returns
 // its card and Overdue chip locators.
-async function openOverdueScheduleCard(
-  page: Page,
-): Promise<{ card: Locator; overdueChip: Locator }> {
+async function openOverdueScheduleRow(page: Page): Promise<{ row: Locator; overdueChip: Locator }> {
   await loginAsAdmin(page)
   await mockScheduleOneHealth(page, { is_overdue: true })
 
   await page.goto('/schedules')
   await page.waitForLoadState('networkidle')
 
-  const card = scheduleCard(page, 1)
-  const overdueChip = card.locator('.entity-issue-chip.sev-warning')
-  return { card, overdueChip }
+  const row = scheduleRow(page, 1)
+  return { row, overdueChip: healthChip(row) }
 }
 
 test.describe('Schedules management', () => {
@@ -134,19 +141,19 @@ test.describe('Schedules management', () => {
     await expect(page.getByText('media-weekly').first()).toBeVisible()
   })
 
-  test('schedules list groups cards under at least one time-based section and shows a run-history strip', async ({
+  test('schedules list groups rows under at least one time-based section and shows a run-history strip', async ({
     page,
   }) => {
     await loginAsAdmin(page)
     await page.goto('/schedules')
     await page.waitForLoadState('networkidle')
 
-    // Every schedule falls into exactly one time bucket (or Paused), so with
+    // Every schedule falls into exactly one time bucket (or Disabled), so with
     // any seeded schedules present there is always at least one group header.
     await expect(page.locator('.list-group-header').first()).toBeVisible()
 
-    const card = page.locator('.entity-card', { hasText: 'server-daily' }).first()
-    await expect(card.locator('.run-history')).toBeVisible()
+    const row = page.locator('.list-row', { hasText: 'server-daily' }).first()
+    await expect(row.locator('.run-history')).toBeVisible()
   })
 
   test('a multi-agent run draws as one bar split into a segment per agent', async ({ page }) => {
@@ -156,8 +163,8 @@ test.describe('Schedules management', () => {
 
     // Seeded with three firings of two agents each (see seed-demo.sh), the
     // oldest of which one agent failed.
-    const card = page.locator('.entity-card', { hasText: 'Fleet nightly demo' }).first()
-    const bars = card.locator('.run-bar')
+    const row = page.locator('.list-row', { hasText: 'Fleet nightly demo' }).first()
+    const bars = row.locator('.run-bar')
     await expect(bars).toHaveCount(3)
     for (const bar of await bars.all()) {
       await expect(bar.locator('.run-bar-segment')).toHaveCount(2)
@@ -165,7 +172,7 @@ test.describe('Schedules management', () => {
     await expect(bars.first()).toHaveClass(/run-bar-danger/)
     await expect(bars.first().locator('.run-bar-segment-success')).toHaveCount(1)
     await expect(bars.first().locator('.run-bar-segment-danger')).toHaveCount(1)
-    await expect(card.locator('.run-history-caption')).toHaveText('3 runs · 1 failed')
+    await expect(row.locator('.run-history-caption')).toHaveText('3 runs · 1 failed')
   })
 
   test('the group control re-sections the list by agent and by repository', async ({ page }) => {
@@ -193,7 +200,7 @@ test.describe('Schedules management', () => {
     const weekly = page
       .locator('.list-group')
       .filter({ has: page.locator('.list-group-title', { hasText: 'media-weekly' }) })
-    await expect(weekly.locator('.entity-card').first()).toBeVisible()
+    await expect(weekly.locator('.list-row').first()).toBeVisible()
 
     // Back to the default: the time buckets are named for when a run is due,
     // never for an agent or a repository.
@@ -227,40 +234,34 @@ test.describe('Schedules management', () => {
     ).toBeVisible()
   })
 
-  test('schedules list shows the 24h collision rail above the groups', async ({ page }) => {
+  test('two agents writing to one repository at the same time get a notice', async ({ page }) => {
     await loginAsAdmin(page)
     await page.goto('/schedules')
     await page.waitForLoadState('networkidle')
 
-    // The seeded schedules span hourly to daily cadences, so at least one
-    // always has a next_run_at within the rail's 24h window.
-    const rail = page.locator('.timeline-rail')
-    await expect(rail).toBeVisible()
-    await expect(rail.locator('.timeline-tick').first()).toBeVisible()
-  })
+    // Seeded by seed-demo.sh: 'Offline agent due soon' (offline-due-01) and
+    // 'Colliding daily window' (web-server-01) both write into server-daily,
+    // the second starting while the first is still expected to run. Filtered
+    // by agent rather than counted: other seeded pairs may clash too.
+    const notice = page.locator('.notice-bar').filter({ hasText: 'offline-due-01 runs' })
+    await expect(notice).toHaveCount(1)
+    await expect(notice.locator('.notice-bar-title')).toHaveText(
+      'Two agents write to repo server-daily at the same time',
+    )
+    await expect(notice).toContainText('web-server-01 starts')
+    await expect(notice).toContainText('The repo lock makes one of them wait or fail.')
 
-  test('the rail collision note expands to the colliding runs and opens one', async ({ page }) => {
-    await loginAsAdmin(page)
-    await page.goto('/schedules')
-    await page.waitForLoadState('networkidle')
+    // Both rows say who they clash with.
+    await expect(
+      healthChip(page.locator('.list-row', { hasText: 'Colliding daily window' })),
+    ).toContainText('Overlaps offline-due-01')
+    await expect(
+      healthChip(page.locator('.list-row', { hasText: 'Offline agent due soon' })),
+    ).toContainText('Overlaps web-server-01')
 
-    // Seeded by seed-demo.sh: 'Colliding daily window' runs into the same
-    // repository as 'Offline agent due soon', five minutes apart.
-    const note = page.locator('.timeline-note')
-    await expect(note).toBeVisible()
-    await expect(note).toContainText('collide on server-daily')
-
-    await note.click()
-    // Asserted by name rather than by a count of the whole list: the expanded
-    // note covers every cluster, so a count would also be asserting that no
-    // other pair in the demo ever collides.
-    const runs = page.locator('.timeline-collision-run')
-    const collidingRun = runs.filter({ hasText: 'Colliding daily window' })
-    await expect(collidingRun).toHaveCount(1)
-    await expect(runs.filter({ hasText: 'Offline agent due soon' })).toHaveCount(1)
-
-    await collidingRun.click()
-    await expect(page).toHaveURL(/\/schedules\/\d+$/)
+    // The notice opens the repository's schedules, where one can be moved.
+    await notice.click()
+    await expect(page).toHaveURL(/\/repos\/\d+\?tab=schedules$/)
   })
 
   test('the text filter scopes agent: and host: terms and combines them with a pipe', async ({
@@ -271,11 +272,11 @@ test.describe('Schedules management', () => {
     await page.waitForLoadState('networkidle')
 
     const search = page.locator('input.search-input')
-    // `.first()` for every presence assertion, for the reason scheduleCard()
+    // `.first()` for every presence assertion, for the reason scheduleRow()
     // documents above: earlier specs in the run add schedules of their own to
-    // the shared demo, so more than one card can carry a given repo name and a
+    // the shared demo, so more than one row can carry a given repo name and a
     // bare locator is one extra schedule away from a strict-mode violation.
-    const cards = page.locator('.entity-card')
+    const cards = page.locator('.list-row')
 
     await search.fill('agent:media-store-01')
     await expect(cards.filter({ hasText: 'media-weekly' }).first()).toBeVisible()
@@ -319,14 +320,14 @@ test.describe('Schedules management', () => {
     await expect(dialog).toContainText('Storage host the repository lives on')
   })
 
-  test('overdue schedule card shows an Overdue chip with a per-host detail tooltip', async ({
+  test('overdue schedule row shows an Overdue chip with a per-host detail tooltip', async ({
     page,
   }) => {
     // The demo's seeded health data has no overdue hosts, so this reproduces
     // a host whose own last report is stale even though the schedule itself
     // looks on track, which is exactly what the Overdue chip's tooltip
     // exists to surface.
-    const { overdueChip } = await openOverdueScheduleCard(page)
+    const { overdueChip } = await openOverdueScheduleRow(page)
     await expect(overdueChip).toBeVisible()
     await expect(overdueChip).toContainText('Overdue')
 
@@ -336,39 +337,37 @@ test.describe('Schedules management', () => {
     )
   })
 
-  test('running schedule card shows a Running pill', async ({ page }) => {
+  test('running schedule row shows a Running chip', async ({ page }) => {
     await loginAsAdmin(page)
     await mockScheduleOneHealth(page, { last_status: 'started' })
 
     await page.goto('/schedules')
     await page.waitForLoadState('networkidle')
 
-    // Same reasoning as scheduleCard(): this mocks schedule one's health, so
-    // it has to assert against schedule one's card.
-    const card = scheduleCard(page, 1)
-    const runningPill = card.locator('.entity-running-pill')
-    await expect(runningPill).toBeVisible()
-    await expect(runningPill).toContainText('Running')
+    // Same reasoning as scheduleRow(): this mocks schedule one's health, so
+    // it has to assert against schedule one's row.
+    const runningChip = healthChip(scheduleRow(page, 1))
+    await expect(runningChip).toBeVisible()
+    await expect(runningChip).toHaveText('Running')
 
-    const otherCard = page.locator('.entity-card', { hasText: 'database-hourly' })
-    await expect(otherCard.locator('.entity-running-pill')).not.toBeVisible()
+    const otherRow = page.locator('.list-row', { hasText: 'database-hourly' }).first()
+    await expect(healthChip(otherRow)).not.toHaveText('Running')
   })
 
-  test("clicking a schedule card's Overdue chip navigates to the schedule detail page", async ({
-    page,
-  }) => {
-    const { overdueChip } = await openOverdueScheduleCard(page)
+  // A row is a link to the schedule: its chips no longer navigate on their
+  // own (the failed-run and warned-run links live on the detail page's Logs
+  // tab), so clicking an overdue row is what opens the schedule.
+  test('clicking an overdue schedule row opens the schedule detail page', async ({ page }) => {
+    const { row, overdueChip } = await openOverdueScheduleRow(page)
     await expect(overdueChip).toBeVisible()
 
-    await overdueChip.click()
+    await row.click()
     await page.waitForLoadState('networkidle')
 
     await expect(page).toHaveURL(/\/schedules\/1$/)
   })
 
-  test("clicking a schedule card's Failed chip navigates to the filtered activity log", async ({
-    page,
-  }) => {
+  test("a failing schedule row shows a Failed chip carrying the run's error", async ({ page }) => {
     await loginAsAdmin(page)
     await mockScheduleOneHealth(page, {
       last_status: 'failed',
@@ -378,19 +377,13 @@ test.describe('Schedules management', () => {
     await page.goto('/schedules')
     await page.waitForLoadState('networkidle')
 
-    const card = page.locator('.entity-card', { hasText: 'server-daily' })
-    const failedChip = card.locator('.entity-issue-chip.sev-danger')
-    await expect(failedChip).toBeVisible()
-
-    await failedChip.click()
-    await page.waitForLoadState('networkidle')
-
-    await expect(page).toHaveURL(/\/activity\?category=backup&schedule_id=1&status=failed/)
+    const chip = healthChip(scheduleRow(page, 1))
+    await expect(chip).toContainText('Failed')
+    await expect(chip).toHaveClass(/badge--danger/)
+    await expect(chip).toHaveAttribute('title', /Simulated failure/)
   })
 
-  test("clicking a schedule card's Warning chip navigates to the filtered activity log", async ({
-    page,
-  }) => {
+  test('a warned schedule row shows a Warning chip carrying the warning', async ({ page }) => {
     await loginAsAdmin(page)
     await mockScheduleOneHealth(page, {
       last_status: 'warning',
@@ -400,17 +393,12 @@ test.describe('Schedules management', () => {
     await page.goto('/schedules')
     await page.waitForLoadState('networkidle')
 
-    const card = page.locator('.entity-card', { hasText: 'server-daily' })
-    const warningChip = card.locator('.entity-issue-chip', { hasText: 'Warning' })
-    await expect(warningChip).toBeVisible()
-
-    await warningChip.click()
-    await page.waitForLoadState('networkidle')
-
-    await expect(page).toHaveURL(/\/activity\?category=backup&schedule_id=1&status=warning/)
+    const chip = healthChip(scheduleRow(page, 1))
+    await expect(chip).toContainText('Warning')
+    await expect(chip).toHaveAttribute('title', /Simulated warning/)
   })
 
-  test("schedule card shows a missed-backups warning chip below the schedule's threshold", async ({
+  test("schedule row shows a missed-backups warning below the schedule's threshold", async ({
     page,
   }) => {
     await loginAsAdmin(page)
@@ -422,16 +410,15 @@ test.describe('Schedules management', () => {
     await page.goto('/schedules')
     await page.waitForLoadState('networkidle')
 
-    const card = page.locator('.entity-card', { hasText: 'server-daily' })
-    const missedChip = card.locator('.entity-issue-chip', { hasText: '1/3 missed' })
-    await expect(missedChip).toBeVisible()
+    const row = scheduleRow(page, 1)
+    await expect(healthChip(row)).toContainText('1/3 missed')
 
-    await missedChip.click()
+    await row.click()
     await page.waitForLoadState('networkidle')
     await expect(page).toHaveURL(/\/schedules\/1$/)
   })
 
-  test('schedule card shows no missed-backups chip once the threshold is reached', async ({
+  test('schedule row shows no missed-backups warning once the threshold is reached', async ({
     page,
   }) => {
     await loginAsAdmin(page)
@@ -443,17 +430,16 @@ test.describe('Schedules management', () => {
     await page.goto('/schedules')
     await page.waitForLoadState('networkidle')
 
-    const card = page.locator('.entity-card', { hasText: 'server-daily' })
-    await expect(card.locator('.entity-issue-chip', { hasText: 'missed' })).toHaveCount(0)
+    await expect(healthChip(scheduleRow(page, 1))).not.toContainText('missed')
   })
 
   // The seed's config export/import round-trip leaves a second copy of every
-  // schedule, so the demo's name matches two cards. Only the original carries a
+  // schedule, so the demo's name matches two rows. Only the original carries a
   // pending marker - markers are per-target state, not configuration, so the
-  // imported copy has none - which makes the badge itself the unambiguous handle
-  // on the card these two tests mean.
+  // imported copy has none - which makes the chip itself the unambiguous handle
+  // on the row these two tests mean.
   function catchUpPendingCard(page: Page): Locator {
-    return page.locator('.entity-card', { hasText: 'Catch-up pending' })
+    return page.locator('.list-row', { hasText: 'Catch-up pending' })
   }
 
   test('a schedule waiting on a host to come back shows a catch-up pending badge', async ({
@@ -531,11 +517,10 @@ test.describe('Schedules management', () => {
     await page.goto('/schedules')
     await page.waitForLoadState('networkidle')
 
-    // The card, not the first 'server-daily' on the page: the collision rail
-    // above the groups names the repository its colliding runs write to, so a
-    // bare text locator now picks up the rail's note (a button that expands
-    // the runs) instead of a schedule card.
-    await page.locator('.entity-card', { hasText: 'server-daily' }).first().click()
+    // The row, not the first 'server-daily' on the page: an overlap notice
+    // above the groups names the repository both runs write to, so a bare
+    // text locator can pick up the notice instead of a schedule row.
+    await page.locator('.list-row', { hasText: 'server-daily' }).first().click()
     await page.waitForLoadState('networkidle')
 
     await expect(page).toHaveURL(/\/schedules\/\d+/)
@@ -1112,7 +1097,9 @@ test.describe('Schedules management', () => {
     })
   })
 
-  test('toggles a schedule enabled/disabled from the list card without opening it', async ({
+  // The list has no switch of its own: a schedule is paused from its detail
+  // page's Settings, and the list then files it under Disabled.
+  test('disables a schedule from its Settings and the list files it under Disabled', async ({
     page,
   }) => {
     await loginAsAdmin(page)
@@ -1120,23 +1107,14 @@ test.describe('Schedules management', () => {
     // Snapshot the seeded row so the mocked PUT response below can echo back a
     // complete ScheduleResponse, without ever sending the PUT to the real
     // backend (which would mutate demo data other, possibly-parallel, tests rely on).
-    // Schedule 1 is the daily web-server-01/server-daily schedule (see other
-    // tests in this file, e.g. the direct `/schedules/1` navigations below) -
-    // its own `name` field is blank, so the card falls back to the repo name.
-    // The other schedules seeded/created against the same repo across the
-    // full e2e run also fall back to "server-daily", so the card is located
-    // by its data-schedule-id rather than by text.
     const scheduleId = 1
     const getResp = await page.request.get(`/api/schedules/${scheduleId}`)
     expect(getResp.ok()).toBe(true)
     const original = (await getResp.json()) as Record<string, unknown>
 
-    await page.goto('/schedules')
+    await page.goto(`/schedules/${scheduleId}`)
     await page.waitForLoadState('networkidle')
-
-    const card = page.locator(`.entity-card[data-schedule-id="${scheduleId}"]`)
-    await expect(card.locator('.schedule-toggle-label')).toHaveText('Enabled')
-    await expect(card).not.toHaveClass(/entity-card--notable/)
+    await expect(page.locator('.detail-header').getByText('Enabled')).toBeVisible()
 
     await page.route(`**/api/schedules/${scheduleId}`, async (route) => {
       if (route.request().method() !== 'PUT') return route.fallback()
@@ -1148,19 +1126,22 @@ test.describe('Schedules management', () => {
       })
     })
 
+    await page.getByRole('tab', { name: 'Settings' }).click()
+    await page.getByRole('button', { name: 'General' }).click()
+    const toggle = page.getByRole('switch', { name: 'Enabled' })
+    await expect(toggle).toHaveAttribute('aria-checked', 'true')
+    await toggle.click()
+
     const [putResponse] = await Promise.all([
       page.waitForResponse(
         (resp) =>
           resp.url().endsWith(`/api/schedules/${scheduleId}`) && resp.request().method() === 'PUT',
       ),
-      card.locator('button[role="switch"]').click(),
+      page.getByRole('button', { name: 'Save changes' }).click(),
     ])
     expect(putResponse.ok()).toBe(true)
     expect(putResponse.request().postDataJSON()).toMatchObject({ enabled: false })
-
-    await expect(card.locator('.schedule-toggle-label')).toHaveText('Disabled')
-    await expect(card).toHaveClass(/entity-card--notable/)
-    await expect(card.locator('.entity-status-pill')).toHaveText('Disabled')
+    await expect(page.locator('.detail-header').getByText('Disabled')).toBeVisible()
   })
 
   test('the creation wizard gates each step and creates a multi-target schedule', async ({
@@ -1252,10 +1233,12 @@ test.describe('Schedules management', () => {
 
     // Several other seeded schedules also fall back to displaying the same
     // "server-daily" repo name (schedule 1 has no explicit name), so hasText
-    // would match multiple cards - the schedule's own data-schedule-id is
-    // the only unambiguous selector.
-    const card = page.locator('.entity-card[data-schedule-id="1"]')
-    const statusPill = card.locator('.entity-status-pill')
+    // would match multiple rows - the schedule's own data-schedule-id is
+    // the only unambiguous selector. A disabled schedule sits in the Disabled
+    // group, which starts folded.
+    await openDisabledGroup(page)
+    const card = scheduleRow(page, 1)
+    const statusPill = healthChip(card)
     await expect(statusPill).toBeVisible()
     await expect(statusPill).toHaveText('Auto-disabled · agent unreachable')
 
@@ -1269,7 +1252,7 @@ test.describe('Schedules management', () => {
     ).toBeVisible()
 
     // Third surface: the agent's own Schedules tab (AgentScheduleRow.vue), which
-    // reuses scheduleDisabledLabel independently of the schedule card/detail
+    // reuses scheduleDisabledLabel independently of the schedule row/detail
     // header - a wiring mistake there (wrong prop, label not reaching the DOM)
     // wouldn't be caught by the two assertions above.
     await page.goto('/agents/web-server-01?tab=schedules')
@@ -1296,8 +1279,9 @@ test.describe('Schedules management', () => {
     await page.goto('/schedules')
     await page.waitForLoadState('networkidle')
 
-    const card = page.locator('.entity-card[data-schedule-id="1"]')
-    const statusPill = card.locator('.entity-status-pill')
+    await openDisabledGroup(page)
+    const card = scheduleRow(page, 1)
+    const statusPill = healthChip(card)
     await expect(statusPill).toBeVisible()
     await expect(statusPill).toHaveText('Auto-disabled · error')
 
@@ -1334,7 +1318,7 @@ test.describe('Schedules management', () => {
 
     // Several other seeded schedules also target the "server-daily" repo, so
     // a text filter would match multiple rows - data-schedule-id (fallen
-    // through from AgentSchedulesTab, same pattern as the schedule card's
+    // through from AgentSchedulesTab, same pattern as the schedule list row's
     // data-schedule-id) is the only unambiguous selector.
     const row = page.locator('.rows .agent-row[data-schedule-id="1"]')
     const stats = row.locator('.agent-row-stats')

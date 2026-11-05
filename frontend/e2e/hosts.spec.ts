@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
-import type { Route } from '@playwright/test'
+import type { Page, Route } from '@playwright/test'
 import {
   expect,
   loginAsAdmin,
@@ -10,11 +10,27 @@ import {
   test,
 } from './fixtures'
 
+/**
+ * The Agents list folds its Offline group after five rows. Opens it, so a
+ * test looking for a particular offline host finds it wherever the demo's
+ * data puts it.
+ */
+async function showEveryAgent(page: Page): Promise<void> {
+  const more = page.locator('.list-more', { hasText: /^Show \d+ more/ })
+  if ((await more.count()) > 0) await more.first().click()
+}
+
+/** The Agents list row for `hostname`. */
+function agentRow(page: Page, hostname: string): ReturnType<Page['locator']> {
+  return page.locator('.list-row').filter({ hasText: hostname }).first()
+}
+
 test.describe('Hosts management', () => {
   test('hosts list shows connected agent hosts and imported placeholders', async ({ page }) => {
     await loginAsAdmin(page)
     await page.goto('/agents')
     await page.waitForLoadState('networkidle')
+    await showEveryAgent(page)
 
     await expect(page.getByText('web-server-01', { exact: true })).toBeVisible()
     await expect(page.getByText('db-server-01', { exact: true })).toBeVisible()
@@ -23,20 +39,21 @@ test.describe('Hosts management', () => {
     await expect(page.getByText('legacy-db-prod', { exact: true })).toBeVisible()
   })
 
-  test('hosts list shows the fleet summary band and a per-agent last-backup stat', async ({
-    page,
-  }) => {
+  test('hosts list shows the fleet tiles and a per-agent last-backup column', async ({ page }) => {
     await loginAsAdmin(page)
     await page.goto('/agents')
     await page.waitForLoadState('networkidle')
+    await showEveryAgent(page)
 
-    await expect(page.locator('.fleet-summary')).toBeVisible()
-    await expect(page.locator('.fleet-summary-counts')).toContainText('agent')
-
-    const card = page.locator('.entity-card').filter({ hasText: 'web-server-01' }).first()
-    // The card states the freshest completed backup outright rather than
-    // implying it through a fill; the coverage bar it replaces is gone.
-    await expect(card.locator('.coverage-meter')).toHaveCount(0)
+    const tiles = page.locator('.fleet-strip .fleet-cell')
+    await expect(tiles).toHaveCount(4)
+    await expect(tiles.locator('.stat-label')).toHaveText([
+      'Agents',
+      'Online',
+      'Needs attention',
+      'Versions',
+    ])
+    await expect(tiles.first().locator('.stat-sub')).toContainText('schedule')
 
     // web-server-01's own schedule (id 1) is the one backup-lifecycle.spec.ts
     // dispatches for real via Run now, so its Last backup stat is racy
@@ -46,22 +63,22 @@ test.describe('Hosts management', () => {
     // schedule of its own, so nothing else in the suite ever gives it a
     // report; it is the deterministic host for exercising the 'Never'
     // rendering path.
-    const neverReported = page.locator('.entity-card').filter({ hasText: 'unassigned-01' }).first()
-    const neverStat = neverReported.locator('.stat').filter({ hasText: 'Last backup' })
-    await expect(neverStat.locator('.stat-value')).toHaveText('Never')
+    const neverReported = agentRow(page, 'unassigned-01')
+    await expect(neverReported.locator('[data-col="last-backup"]')).toHaveText('Never')
 
     // stale-report-01 is the host the demo gives a real completed report
     // (backdated four days, see seed-demo.sh), so it is the one that
     // exercises the freshest-completed-backup path end to end.
-    const reported = page.locator('.entity-card').filter({ hasText: 'stale-report-01' }).first()
-    const lastBackup = reported.locator('.stat').filter({ hasText: 'Last backup' })
-    await expect(lastBackup.locator('.stat-value')).toHaveText(/^\d+d ago$/)
+    const reported = agentRow(page, 'stale-report-01')
+    await expect(reported.locator('[data-col="last-backup"]')).toHaveText(/^\d+d ago$/)
   })
 
-  test('hosts list groups its cards by the agent version each host reports', async ({ page }) => {
+  test('hosts list groups its rows by the agent version each host reports', async ({ page }) => {
     await loginAsAdmin(page)
     await page.goto('/agents')
     await page.waitForLoadState('networkidle')
+
+    await page.getByRole('radio', { name: 'Version' }).click()
 
     // Three groups: the version the live agent containers report (the agent
     // crate's own, so it is not hard-coded here), the 0.0.9 the seed backdates
@@ -75,14 +92,15 @@ test.describe('Hosts management', () => {
     // Unknown always sorts last, however many builds are in front of it.
     expect(titles[titles.length - 1]).toBe('Unknown')
 
-    // Every card lives in a group - grouping is the grid, not an extra section
-    // above an ungrouped remainder.
-    await expect(page.locator('.list-group .entity-card')).toHaveCount(
-      await page.locator('.entity-card').count(),
+    // Every row lives in a group - grouping is the list, not an extra section
+    // above an ungrouped remainder - and no version group folds any away.
+    await expect(page.locator('.list-group .list-row')).toHaveCount(
+      await page.locator('.list-row').count(),
     )
+    await expect(page.locator('.list-more')).toHaveCount(0)
 
     const behind = groups.filter({ has: page.locator('.list-group-title', { hasText: '0.0.9' }) })
-    await expect(behind.locator('.entity-card').filter({ hasText: 'offline-due-01' })).toBeVisible()
+    await expect(behind.locator('.list-row').filter({ hasText: 'offline-due-01' })).toBeVisible()
 
     // The demo server ships no arch-named agent binary, so it has no version
     // to compare against and the UI does not claim any group is behind - only
@@ -92,24 +110,56 @@ test.describe('Hosts management', () => {
     })
     await expect(unknown.locator('.list-group-header .badge')).toHaveText('Never reported')
 
-    // The version is the grouping now, so it is no longer a stat on the card.
-    const card = page.locator('.entity-card').filter({ hasText: 'web-server-01' }).first()
-    await expect(card.locator('.stat').filter({ hasText: 'Agent' })).toHaveCount(0)
-    await expect(card.locator('.badge--success')).toHaveText('Online')
+    // The row still names its own version in the Version column.
+    const row = agentRow(page, 'offline-due-01')
+    await expect(row.locator('[data-col="version"]')).toHaveText('0.0.9')
+
+    // The choice survives a reload.
+    await page.reload()
+    await page.waitForLoadState('networkidle')
+    await expect(page.getByRole('radio', { name: 'Version' })).toHaveAttribute(
+      'aria-checked',
+      'true',
+    )
   })
 
-  test('fleet band splits the fleet into health segments', async ({ page }) => {
+  test('hosts list groups its rows by status, folding the offline group', async ({ page }) => {
     await loginAsAdmin(page)
     await page.goto('/agents')
     await page.waitForLoadState('networkidle')
 
-    const track = page.locator('.fleet-track')
-    await expect(track).toBeVisible()
-    await expect(track.locator('.fleet-seg').first()).toBeVisible()
-    // Every segment the bar draws is named in the key below it.
-    const segments = await track.locator('.fleet-seg').count()
-    await expect(page.locator('.fleet-key .fleet-key-item')).toHaveCount(segments)
-    await expect(page.locator('.fleet-key')).toContainText('offline')
+    // Status is the default grouping: what needs attention first, then the
+    // healthy online hosts, then the offline ones with nothing due. Empty
+    // groups are left out, so the titles are an ordered subset.
+    const titles = await page.locator('.list-group-title').allTextContents()
+    const order = ['Needs attention', 'Online', 'Offline']
+    expect(titles.length).toBeGreaterThan(0)
+    expect(titles).toEqual(order.filter((title) => titles.includes(title)))
+
+    // The pills count each status and narrow the list to it.
+    const attention = page.locator('.filter-pill', { hasText: 'Needs attention' })
+    await expect(attention).toHaveText(/· \d+\s*$/)
+    await attention.click()
+    await expect(attention).toHaveClass(/active/)
+    // unassigned-01 has no schedule at all, so the group is never empty.
+    await expect(page.locator('.list-group-title')).toHaveText(['Needs attention'])
+    await expect(agentRow(page, 'unassigned-01')).toBeVisible()
+    await page.locator('.filter-pill', { hasText: 'All ·' }).click()
+
+    // The demo has more than five offline hosts with nothing due, so the
+    // Offline group shows five and folds the rest.
+    const offline = page.locator('.list-group').filter({
+      has: page.locator('.list-group-title', { hasText: 'Offline' }),
+    })
+    const more = offline.locator('.list-more')
+    if ((await more.count()) > 0) {
+      await expect(offline.locator('.list-row')).toHaveCount(5)
+      await more.click()
+      await expect(more).toHaveText('Show fewer')
+      expect(await offline.locator('.list-row').count()).toBeGreaterThan(5)
+      await more.click()
+      await expect(offline.locator('.list-row')).toHaveCount(5)
+    }
   })
 
   test('clicking a host navigates to its detail page', async ({ page }) => {
@@ -117,7 +167,8 @@ test.describe('Hosts management', () => {
     await page.goto('/agents')
     await page.waitForLoadState('networkidle')
 
-    await page.locator('.entity-card').filter({ hasText: 'web-server-01' }).first().click()
+    // On the name, not the row's centre, which can land on an issue chip.
+    await agentRow(page, 'web-server-01').locator('.list-row-name').click()
     await page.waitForLoadState('networkidle')
 
     await expect(page).toHaveURL(/\/agents\//)
@@ -133,16 +184,15 @@ test.describe('Hosts management', () => {
     await page.goto('/agents')
     await page.waitForLoadState('networkidle')
 
-    const statusFilter = page
-      .locator('select')
-      .filter({ has: page.locator('option[value="offline"]') })
-    await statusFilter.selectOption('offline')
+    const offlinePill = page.locator('.filter-pill', { hasText: 'Offline' })
+    await offlinePill.click()
+    await expect(offlinePill).toHaveClass(/active/)
     await expect(page.getByText('web-server-01', { exact: true })).not.toBeVisible()
 
     await page.reload()
     await page.waitForLoadState('networkidle')
 
-    await expect(statusFilter).toHaveValue('offline')
+    await expect(offlinePill).toHaveClass(/active/)
     await expect(page.getByText('web-server-01', { exact: true })).not.toBeVisible()
   })
 
@@ -154,13 +204,17 @@ test.describe('Hosts management', () => {
     // unassigned-01 is a placeholder with no backing container, so it never connects
     // and never reports an agent_version - unlike web-server-01, which runs a real
     // agent binary that reports its own version once connected (showing "Upgrade" or
-    // nothing instead of "Deploy").
-    const deployBtn = page
-      .locator('.entity-card')
-      .filter({ hasText: 'unassigned-01' })
-      .locator('.card-actions button', { hasText: /Deploy|Upgrade/ })
-      .first()
-    await expect(deployBtn).toBeVisible({ timeout: 15_000 })
+    // nothing instead of "Deploy"). The action lives in the row's overflow
+    // menu, which opens without following the row's link.
+    await showEveryAgent(page)
+    const menuToggle = agentRow(page, 'unassigned-01').getByRole('button', {
+      name: 'More actions for unassigned-01',
+    })
+    await expect(menuToggle).toBeVisible({ timeout: 15_000 })
+    await menuToggle.click()
+    await expect(page).toHaveURL(/\/agents$/)
+    const deployBtn = page.getByRole('menuitem', { name: /Deploy|Upgrade/ })
+    await expect(deployBtn).toBeVisible()
     await deployBtn.click()
 
     await expect(page.getByRole('heading', { name: /Deploy|Upgrade/ }).first()).toBeVisible()
@@ -171,7 +225,7 @@ test.describe('Hosts management', () => {
     await expect(loadBtn).not.toBeDisabled()
   })
 
-  test('agent card shows a Failed chip that navigates to the failed backup', async ({ page }) => {
+  test('agent row shows a Failed chip that navigates to the failed backup', async ({ page }) => {
     // Intercept the health API to inject a failure with an error message for web-server-01.
     await page.route('**/api/stats/health', async (route: Route) => {
       await route.fulfill({
@@ -193,7 +247,7 @@ test.describe('Hosts management', () => {
     await page.goto('/agents')
     await page.waitForLoadState('networkidle')
 
-    const card = page.locator('.entity-card').filter({ hasText: 'web-server-01' }).first()
+    const card = agentRow(page, 'web-server-01')
 
     const failedChip = card.locator('.entity-issue-chip.sev-danger')
     await expect(failedChip).toBeVisible()
@@ -226,14 +280,18 @@ test.describe('Hosts management', () => {
     await addHost(domainA)
     await addHost(domainB)
 
-    const cardA = page.locator('.entity-card').filter({ hasText: domainA })
-    const cardB = page.locator('.entity-card').filter({ hasText: domainB })
+    // Narrowed to the new pair, so neither can be folded away in a long
+    // Offline group.
+    const search = page.getByPlaceholder('Filter by hostname or tag...')
+    await search.fill(hostname)
+    const cardA = page.locator('.list-row').filter({ hasText: domainA })
+    const cardB = page.locator('.list-row').filter({ hasText: domainB })
     await expect(cardA).toHaveCount(1)
     await expect(cardB).toHaveCount(1)
-    await expect(cardA.locator('.card-name')).toContainText(hostname)
-    await expect(cardB.locator('.card-name')).toContainText(hostname)
+    await expect(cardA.locator('.list-row-name')).toContainText(hostname)
+    await expect(cardB.locator('.list-row-name')).toContainText(hostname)
 
-    await cardA.click()
+    await cardA.locator('.list-row-name').click()
     await page.waitForLoadState('networkidle')
     await expect(page).toHaveURL(new RegExp(`/agents/${hostname}\\?domain=${domainA}`))
     await expect(page.locator('.crumb-current')).toHaveText(hostname)
@@ -241,7 +299,8 @@ test.describe('Hosts management', () => {
 
     await page.goto('/agents')
     await page.waitForLoadState('networkidle')
-    await cardB.click()
+    await search.fill(hostname)
+    await cardB.locator('.list-row-name').click()
     await page.waitForLoadState('networkidle')
     await expect(page).toHaveURL(new RegExp(`/agents/${hostname}\\?domain=${domainB}`))
     await expect(page.locator('.detail-breadcrumb .muted')).toHaveText(`(${domainB})`)
@@ -254,7 +313,7 @@ test.describe('Hosts management', () => {
     await expect(page.getByText(domainB)).toBeVisible()
   })
 
-  test('agent card shows an Overdue chip that navigates to the schedules tab', async ({ page }) => {
+  test('agent row shows an Overdue chip that navigates to the schedules tab', async ({ page }) => {
     await page.route('**/api/stats/health', async (route: Route) => {
       await route.fulfill({
         contentType: 'application/json',
@@ -275,7 +334,7 @@ test.describe('Hosts management', () => {
     await page.goto('/agents')
     await page.waitForLoadState('networkidle')
 
-    const card = page.locator('.entity-card').filter({ hasText: 'web-server-01' }).first()
+    const card = agentRow(page, 'web-server-01')
 
     const overdueChip = card.locator('.entity-issue-chip.sev-warning')
     await expect(overdueChip).toBeVisible()
@@ -287,19 +346,19 @@ test.describe('Hosts management', () => {
     await expect(page).toHaveURL(/\/agents\/web-server-01\?tab=schedules&health=overdue/)
   })
 
-  test('agent card shows a Running pill while a backup is in progress', async ({ page }) => {
+  test('agent row shows a Running pill while a backup is in progress', async ({ page }) => {
     await mockRunningBackupOperation(page)
 
     await loginAsAdmin(page)
     await page.goto('/agents')
     await page.waitForLoadState('networkidle')
 
-    const card = page.locator('.entity-card').filter({ hasText: 'web-server-01' }).first()
+    const card = agentRow(page, 'web-server-01')
     const runningPill = card.locator('.entity-running-pill')
     await expect(runningPill).toBeVisible()
     await expect(runningPill).toContainText('server-daily')
 
-    const otherCard = page.locator('.entity-card').filter({ hasText: 'db-server-01' }).first()
+    const otherCard = agentRow(page, 'db-server-01')
     await expect(otherCard.locator('.entity-running-pill')).not.toBeVisible()
   })
 

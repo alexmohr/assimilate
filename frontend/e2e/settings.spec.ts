@@ -104,25 +104,36 @@ test.describe('Settings journey', () => {
     await expect(row.locator('.tunnel-status .badge')).toHaveText('Connected', { timeout: 15_000 })
   })
 
-  test("tunnels page keeps each tunnel's actions in its menu", async ({ page }) => {
+  // A tunnel row is a link to the tunnel's own page, which holds what the
+  // row's menu used to: its settings, the enabled switch, and Delete.
+  test('a tunnel row opens its page with settings, the enabled switch and Delete', async ({
+    page,
+  }) => {
     await loginAsAdmin(page)
     await page.goto('/tunnels')
     const row = page.locator('.tunnel-row').filter({ hasText: 'media-store-01' }).first()
     await expect(row).toBeVisible({ timeout: 15_000 })
+    await expect(row.getByRole('button')).toHaveCount(0)
 
-    await row.getByRole('button', { name: /Actions for the tunnel of media-store-01/ }).click()
-    await row.getByRole('menuitem', { name: 'Edit' }).click()
-    const dialog = page.getByRole('dialog', { name: 'Edit tunnel' })
-    await expect(dialog).toBeVisible()
-    await dialog.getByRole('button', { name: 'Cancel' }).click()
-    await expect(dialog).toHaveCount(0)
+    await row.click()
+    await expect(page).toHaveURL(/\/tunnels\/\d+$/)
+    await expect(page.locator('.detail-name')).toHaveText('media-store-01')
+    await expect(page.getByLabel('SSH host')).toHaveValue('127.0.0.1')
+    await expect(page.getByRole('switch', { name: 'Tunnel enabled' })).toHaveAttribute(
+      'aria-checked',
+      'true',
+    )
+    // Nothing edited yet, so there is nothing to save.
+    await expect(page.getByRole('button', { name: 'Save' })).toBeDisabled()
 
-    await row.getByRole('button', { name: /Actions for the tunnel of media-store-01/ }).click()
-    await row.getByRole('menuitem', { name: 'Delete' }).click()
+    await page.getByRole('button', { name: 'Delete tunnel' }).click()
     const confirm = page.getByRole('dialog', { name: 'Delete tunnel' })
     await expect(confirm).toContainText('media-store-01')
     await confirm.getByRole('button', { name: 'Cancel' }).click()
-    await expect(row).toBeVisible()
+    await expect(confirm).toHaveCount(0)
+
+    await page.getByRole('link', { name: 'Tunnels' }).first().click()
+    await expect(page).toHaveURL(/\/tunnels$/)
   })
 
   test('settings submenu contains excludes link', async ({ page }) => {

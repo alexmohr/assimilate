@@ -130,26 +130,6 @@ function rowOf(wrapper: Wrapper, hostname: string): ReturnType<Wrapper['get']> {
   return row
 }
 
-/** The labels of a row's action menu, opening it first. */
-async function openMenu(wrapper: Wrapper, hostname: string): Promise<string[]> {
-  await rowOf(wrapper, hostname).get('.overflow-toggle').trigger('click')
-  await flushPromises()
-  return rowOf(wrapper, hostname)
-    .findAll('.overflow-menu-item')
-    .map((b) => b.text().trim())
-}
-
-/** Opens a row's action menu and picks `label` from it. */
-async function pickFromMenu(wrapper: Wrapper, hostname: string, label: string): Promise<void> {
-  await openMenu(wrapper, hostname)
-  const item = rowOf(wrapper, hostname)
-    .findAll('.overflow-menu-item')
-    .find((b) => b.text().trim() === label)
-  if (!item) throw new Error(`no ${label} in the menu of ${hostname}`)
-  await item.trigger('click')
-  await flushPromises()
-}
-
 function rowNames(wrapper: Wrapper): string[] {
   return wrapper.findAll('.tunnel-row .list-row-name').map((n) => n.text())
 }
@@ -289,48 +269,22 @@ describe('TunnelsView', () => {
     expect(wrapper.find('.list-row-name').text()).toBe('web-server-01')
   })
 
-  it("puts each tunnel's actions in its menu, Reconnect only where it is down", async () => {
+  // Rows used to end in a "..." menu with Edit, Reconnect and Delete. Those
+  // live on the tunnel's own page now, so a row is a link to it and nothing
+  // else.
+  it('links every row to its tunnel page, with no row menu', async () => {
     setupSuccessMocks()
 
     const wrapper = renderWithPlugins(TunnelsView)
     await flushPromises()
 
-    expect(wrapper.findAll('.tunnel-row')).toHaveLength(3)
-    // No buttons on the rows themselves: one menu toggle each.
-    expect(wrapper.findAll('.tunnel-row .overflow-toggle')).toHaveLength(3)
-    expect(wrapper.findAll('.tunnel-row button:not(.overflow-toggle)')).toHaveLength(0)
-    expect(wrapper.findAll('button').some((button) => button.text() === 'New')).toBe(true)
-    expect(wrapper.findAll('button').some((button) => button.text() === 'Create')).toBe(false)
-
-    // Connected: nothing to reconnect. Disabled: not trying to connect.
-    expect(await openMenu(wrapper, 'web-server-01')).toEqual(['Edit', 'Delete'])
-    expect(await openMenu(wrapper, 'db-server-01')).toEqual(['Edit', 'Delete'])
-    expect(await openMenu(wrapper, 'media-store-01')).toEqual(['Edit', 'Reconnect', 'Delete'])
-  })
-
-  it('reconnects a tunnel and reflects its updated status', async () => {
-    const { reconnectTunnel } = await import('../api/tunnels')
-    vi.mocked(reconnectTunnel).mockResolvedValue({
-      ...mockTunnels[2],
-      status: 'connected',
-    } as never)
-    setupSuccessMocks()
-
-    const wrapper = renderWithPlugins(TunnelsView)
-    await flushPromises()
-
-    // Only the enabled, not-yet-connected tunnel (media-store-01) offers one.
-    await pickFromMenu(wrapper, 'media-store-01', 'Reconnect')
-
-    expect(vi.mocked(reconnectTunnel)).toHaveBeenCalledWith(103)
-
-    // Scoped to media-store-01's own row: the filter pills also say
-    // "Connected", and web-server-01 already started connected, so an
-    // unscoped assertion would pass even if the reconnect never updated
-    // tunnel 103's status at all.
-    const row = rowOf(wrapper, 'media-store-01')
-    expect(row.get('.tunnel-status .badge').text()).toBe('Connected')
-    expect(await openMenu(wrapper, 'media-store-01')).not.toContain('Reconnect')
+    expect(rowOf(wrapper, 'web-server-01').attributes('href')).toBe('/tunnels/101')
+    expect(rowOf(wrapper, 'media-store-01').attributes('href')).toBe('/tunnels/103')
+    for (const row of wrapper.findAll('.tunnel-row')) {
+      expect(row.find('.list-row-chevron').exists()).toBe(true)
+      expect(row.find('.overflow-toggle').exists()).toBe(false)
+      expect(row.findAll('button')).toHaveLength(0)
+    }
   })
 
   it('renders empty state when no tunnels exist', async () => {
@@ -345,7 +299,7 @@ describe('TunnelsView', () => {
     expect(wrapper.text()).toContain('New tunnel')
   })
 
-  describe('tunnel dialogs', () => {
+  describe('add dialog', () => {
     type View = Awaited<ReturnType<typeof render>>
 
     /**
@@ -504,40 +458,6 @@ describe('TunnelsView', () => {
       expect(wrapper.find('.field-checkbox').exists()).toBe(false)
     })
 
-    it('sends every edited field', async () => {
-      const { updateTunnel } = await import('../api/tunnels')
-      vi.mocked(updateTunnel).mockResolvedValue({ ...mockTunnels[0] } as never)
-
-      const wrapper = await render()
-      await pickFromMenu(wrapper, 'web-server-01', 'Edit')
-
-      await setByLabel(wrapper, 'SSH host', '10.0.0.88')
-      await setByLabel(wrapper, 'SSH user', 'operator')
-      await setByLabel(wrapper, 'SSH port', '2200')
-      await setByLabel(wrapper, 'Tunnel port', '2299')
-      await wrapper.find('.field-checkbox input[type="checkbox"]').setValue(false)
-
-      await clickButton(wrapper, 'Save')
-
-      expect(vi.mocked(updateTunnel)).toHaveBeenCalledWith(101, {
-        ssh_host: '10.0.0.88',
-        ssh_user: 'operator',
-        ssh_port: 2200,
-        tunnel_port: 2299,
-        enabled: false,
-      })
-    })
-
-    it('closes the edit dialog on Cancel without saving', async () => {
-      const { updateTunnel } = await import('../api/tunnels')
-      const wrapper = await render()
-      await pickFromMenu(wrapper, 'web-server-01', 'Edit')
-
-      await clickButton(wrapper, 'Cancel')
-
-      expect(vi.mocked(updateTunnel)).not.toHaveBeenCalled()
-    })
-
     it('reports a create failure and leaves the dialog open', async () => {
       const { createTunnel } = await import('../api/tunnels')
       vi.mocked(createTunnel).mockRejectedValue(new Error('port in use'))
@@ -554,117 +474,18 @@ describe('TunnelsView', () => {
       expect(wrapper.findAll('.tunnel-row')).toHaveLength(3)
     })
 
-    it('prefills the edit dialog from the row it was opened on', async () => {
-      const wrapper = await render()
-      await pickFromMenu(wrapper, 'db-server-01', 'Edit')
-
-      expect((fieldByLabel(wrapper, 'SSH host').element as HTMLInputElement).value).toBe(
-        '10.0.0.12',
-      )
-      expect((fieldByLabel(wrapper, 'SSH user').element as HTMLInputElement).value).toBe('borg')
-      expect((fieldByLabel(wrapper, 'SSH port').element as HTMLInputElement).value).toBe('2222')
-    })
-
-    it('saves the edited tunnel back into the table', async () => {
-      const { updateTunnel } = await import('../api/tunnels')
-      vi.mocked(updateTunnel).mockResolvedValue({
-        ...mockTunnels[0],
-        ssh_host: '10.0.0.77',
-      } as never)
-
-      const wrapper = await render()
-      await pickFromMenu(wrapper, 'web-server-01', 'Edit')
-      await setByLabel(wrapper, 'SSH host', '10.0.0.77')
-
-      await clickButton(wrapper, 'Save')
-
-      expect(vi.mocked(updateTunnel)).toHaveBeenCalledWith(
-        101,
-        expect.objectContaining({ ssh_host: '10.0.0.77' }),
-      )
-      expect(wrapper.text()).toContain('10.0.0.77')
-    })
-
-    it('reports a save failure without closing the dialog', async () => {
-      const { updateTunnel } = await import('../api/tunnels')
-      vi.mocked(updateTunnel).mockRejectedValue(new Error('conflict'))
-
-      const wrapper = await render()
-      await pickFromMenu(wrapper, 'web-server-01', 'Edit')
-
-      await clickButton(wrapper, 'Save')
-
-      expect(wrapper.find('.form-error').exists()).toBe(true)
-    })
-
-    it('names the host it is about to delete', async () => {
-      const wrapper = await render()
-      await pickFromMenu(wrapper, 'web-server-01', 'Delete')
-      expect(wrapper.text()).toContain('web-server-01')
-    })
-
-    it('deletes the tunnel on confirmation and drops the row', async () => {
-      const { deleteTunnel } = await import('../api/tunnels')
-      vi.mocked(deleteTunnel).mockResolvedValue(undefined as never)
-
-      const wrapper = await render()
-      await pickFromMenu(wrapper, 'web-server-01', 'Delete')
-      await clickButton(wrapper, 'Delete')
-
-      expect(vi.mocked(deleteTunnel)).toHaveBeenCalledWith(101)
-      expect(wrapper.findAll('.tunnel-row')).toHaveLength(2)
-    })
-
-    it('keeps the tunnel when the delete is cancelled', async () => {
-      const { deleteTunnel } = await import('../api/tunnels')
-      const wrapper = await render()
-      await pickFromMenu(wrapper, 'web-server-01', 'Delete')
-      await clickButton(wrapper, 'Cancel')
-
-      expect(vi.mocked(deleteTunnel)).not.toHaveBeenCalled()
-      expect(wrapper.findAll('.tunnel-row')).toHaveLength(3)
-    })
-
-    it('reports a delete failure and keeps the row', async () => {
-      const { deleteTunnel } = await import('../api/tunnels')
-      vi.mocked(deleteTunnel).mockRejectedValue(new Error('in use'))
-
-      const wrapper = await render()
-      await pickFromMenu(wrapper, 'web-server-01', 'Delete')
-      await clickButton(wrapper, 'Delete')
-
-      expect(wrapper.find('.form-error').exists()).toBe(true)
-      expect(wrapper.findAll('.tunnel-row')).toHaveLength(3)
-    })
-
-    // Escape and a backdrop click close a dialog through BaseModal, which each
-    // dialog wires separately from its own Cancel button.
-    it.each([
-      ['add', openAdd],
-      [
-        'edit',
-        async (w: Awaited<ReturnType<typeof render>>): Promise<void> => {
-          await pickFromMenu(w, 'web-server-01', 'Edit')
-        },
-      ],
-      [
-        'delete',
-        async (w: Awaited<ReturnType<typeof render>>): Promise<void> => {
-          await pickFromMenu(w, 'web-server-01', 'Delete')
-        },
-      ],
-    ])('closes the %s dialog when it is dismissed', async (_name, open) => {
-      const { createTunnel, updateTunnel, deleteTunnel } = await import('../api/tunnels')
+    // Escape and a backdrop click close the dialog through BaseModal, wired
+    // separately from its own Cancel button.
+    it('closes the add dialog when it is dismissed', async () => {
+      const { createTunnel } = await import('../api/tunnels')
       const wrapper = await render([...mockAgents, SPARE_AGENT])
-      await open(wrapper)
+      await openAdd(wrapper)
       expect(openModals(wrapper)).toHaveLength(1)
 
       await dismissModal(wrapper)
 
       expect(openModals(wrapper)).toHaveLength(0)
       expect(vi.mocked(createTunnel)).not.toHaveBeenCalled()
-      expect(vi.mocked(updateTunnel)).not.toHaveBeenCalled()
-      expect(vi.mocked(deleteTunnel)).not.toHaveBeenCalled()
     })
   })
 
@@ -684,45 +505,5 @@ describe('TunnelsView', () => {
     // The error itself is on the row, under the badge.
     expect(wrapper.get('[data-testid="tunnel-error"]').text()).toBe('handshake failed')
     expect(wrapper.get('.tunnel-row .status-dot').classes()).toContain('status-dot--danger')
-  })
-
-  // The full SSH error is too long for the table cell, so the status badge
-  // opens it in a dialog.
-  it('opens the full error from the status badge and closes it again', async () => {
-    mockListTunnels.mockResolvedValue([
-      { ...mockTunnels[0], status: { error: { message: 'handshake failed: no matching key' } } },
-    ])
-    mockApiClient.get.mockResolvedValue({ data: mockAgents })
-
-    const wrapper = renderWithPlugins(TunnelsView)
-    await flushPromises()
-
-    await wrapper.find('.badge--danger').trigger('click')
-    await flushPromises()
-    expect(wrapper.find('.error-pre').text()).toBe('handshake failed: no matching key')
-
-    await wrapper
-      .findAll('button')
-      .find((b) => b.text() === 'Close')!
-      .trigger('click')
-    await flushPromises()
-
-    expect(openModals(wrapper)).toHaveLength(0)
-  })
-
-  it('closes the error dialog when it is dismissed', async () => {
-    mockListTunnels.mockResolvedValue([
-      { ...mockTunnels[0], status: { error: { message: 'handshake failed' } } },
-    ])
-    mockApiClient.get.mockResolvedValue({ data: mockAgents })
-
-    const wrapper = renderWithPlugins(TunnelsView)
-    await flushPromises()
-    await wrapper.find('.badge--danger').trigger('click')
-    await flushPromises()
-
-    await dismissModal(wrapper)
-
-    expect(openModals(wrapper)).toHaveLength(0)
   })
 })

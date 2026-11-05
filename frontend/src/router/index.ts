@@ -124,6 +124,13 @@ export const routes: RouteRecordRaw[] = [
     meta: { requiresAdmin: true, serverOnly: true },
   },
   {
+    path: '/tunnels/:id',
+    name: 'tunnel-detail',
+    component: () => import('../views/TunnelDetailView.vue'),
+    props: true,
+    meta: { requiresAdmin: true, serverOnly: true },
+  },
+  {
     path: '/notifications',
     name: 'notifications',
     component: () => import('../views/NotificationsView.vue'),

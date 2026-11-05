@@ -556,6 +556,14 @@ test.describe('signed in', () => {
       await shot(page, name)
     }
 
+    // The seeded loopback tunnel's own page: its status, route, settings and
+    // Delete, which the tunnels list's rows used to keep in a menu.
+    const tunnelsRes = await page.request.get('/api/tunnels')
+    const tunnels = (await tunnelsRes.json()) as Array<{ id: number }>
+    await visit(page, `/tunnels/${tunnels[0]?.id ?? 1}`)
+    await expect(page.locator('.detail-name')).toBeVisible()
+    await shot(page, 'tunnel-detail')
+
     // The seeded restores: one of each outcome, and one waiting for its agent.
     await visit(page, '/activity?category=restores')
     await expect(page.getByTestId('restore-runs')).toBeVisible()

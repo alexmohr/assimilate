@@ -8,6 +8,7 @@ import {
   matchesTunnelSearch,
   sortTunnels,
   tunnelDotTone,
+  tunnelErrorMessage,
   tunnelState,
 } from './tunnel'
 
@@ -80,4 +81,17 @@ describe('tunnel list helpers', () => {
     expect(order).toEqual(['broken', 'down', 'coming-back', 'a-up', 'b-up', 'off'])
     expect(input[0].agent_hostname).toBe('b-up')
   })
+})
+
+describe('tunnelErrorMessage', () => {
+  it('returns the message of a failed tunnel', () => {
+    expect(tunnelErrorMessage({ error: { message: 'refused' } })).toBe('refused')
+  })
+
+  it.each(['connected', 'disconnected', 'reconnecting'] as const)(
+    'returns null for a %s tunnel',
+    (status) => {
+      expect(tunnelErrorMessage(status)).toBeNull()
+    },
+  )
 })

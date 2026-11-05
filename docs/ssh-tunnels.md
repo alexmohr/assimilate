@@ -138,23 +138,43 @@ Each row shows:
 |--------|---------|
 | **Agent** | A status dot — green when connected, amber while reconnecting, red when disconnected or failed, grey when disabled — and the agent's hostname over its display name |
 | **Route** | `server → :<tunnel port> → <user>@<SSH host>:<SSH port>`: the tunnel port the agent connects to, and the SSH target the server dials |
-| **Status** | **Connected**, **Reconnecting**, **Disconnected** or **Error**, with the error message under it and **Disabled** for a disabled tunnel. Select an **Error** badge to read the full message |
+| **Status** | **Connected**, **Reconnecting**, **Disconnected** or **Error**, with the error message under it and **Disabled** for a disabled tunnel |
 
 Above the panel, the filter pills count the tunnels — **All**, **Connected**, **Reconnecting** and **Needs attention** (disconnected or failed) — and narrow the list to one of them. The search box matches the agent or the SSH host.
 
-The **...** menu at the end of each row holds **Edit**, **Reconnect** (only for an enabled tunnel that is not connected) and **Delete**.
+Each row ends in an arrow and opens the tunnel's own page.
 
-On a phone, each row stacks into the agent with its menu, the route, and the status.
+On a phone, each row stacks into the agent with its arrow, the route, and the status.
+
+## Tunnel Page
+
+A tunnel's page shows everything about one tunnel and everything that can be done to it.
+
+![A tunnel's page: status, route, settings and delete](assets/screenshots/tunnel-detail.png)
+
+The header names the agent the tunnel serves, with its status badge and the date it was created. Next to it:
+
+- **Reconnect** appears only for an enabled tunnel that is not connected. It drops any half-open session and dials again.
+- The **Enabled** switch turns the tunnel on or off. See [Manual disable](#manual-disable).
+
+Below the header:
+
+| Section | Content |
+|---------|---------|
+| **Status** | What the tunnel is doing. A failed tunnel shows the full error message and what to check: the server's key in `authorized_keys` on the target, and sshd allowing TCP forwarding |
+| **Route** | The agent (linked to its page), the SSH target the server dials, the tunnel port bound on the agent's `127.0.0.1`, and the `ws://127.0.0.1:<port>` address the agent connects to |
+| **Settings** | **SSH host**, **SSH user**, **SSH port** and **Tunnel port**. **Save** and **Reset** turn on once a field changes. Saving a change reconnects the tunnel |
+| **Delete tunnel** | Removes the tunnel after a confirmation. See [Delete](#delete) |
 
 ## Closing a Tunnel
 
 ### Manual disable
 
-Select **Edit** in the tunnel's **...** menu and clear **Enabled**. The server immediately cancels the SSH session and marks the tunnel as **Disconnected**. The tunnel configuration is preserved and can be re-enabled at any time.
+Open the tunnel and turn off the **Enabled** switch in its header. The server immediately cancels the SSH session and marks the tunnel as **Disconnected**. The tunnel configuration is preserved and can be re-enabled at any time.
 
 ### Delete
 
-Select **Delete** in the tunnel's **...** menu to permanently remove the tunnel. The SSH session is cancelled before the record is deleted. This cannot be undone.
+Open the tunnel and click **Delete tunnel** at the bottom of its page to permanently remove it. The SSH session is cancelled before the record is deleted. This cannot be undone.
 
 ### Automatic behaviour
 

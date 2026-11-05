@@ -69,3 +69,9 @@ export function sortTunnels(
     (a, b) => attentionRank(a) - attentionRank(b) || label(a).localeCompare(label(b)),
   )
 }
+
+/** The message of a failed tunnel, or `null` for every other status. */
+export function tunnelErrorMessage(status: TunnelStatus): string | null {
+  if (typeof status === 'object' && 'error' in status) return status.error.message
+  return null
+}

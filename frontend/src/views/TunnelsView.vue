@@ -10,31 +10,20 @@ import { useEscapeKey } from '../composables/useEscapeKey'
 import { extractError } from '../utils/error'
 import { useAsyncAction } from '../composables/useAsyncAction'
 import { logger } from '../utils/logger'
-import {
-  listTunnels,
-  createTunnel,
-  updateTunnel,
-  deleteTunnel,
-  reconnectTunnel,
-} from '../api/tunnels'
+import { listTunnels, createTunnel } from '../api/tunnels'
 import { listAgents } from '../api/agents'
-import { ArrowRight, Cable, Plus } from '@lucide/vue'
+import { ArrowRight, Cable, ChevronRight, Plus } from '@lucide/vue'
 import BaseSpinner from '../components/BaseSpinner.vue'
 import EmptyState from '../components/EmptyState.vue'
 import { badgeClass, tunnelStatusTone, tunnelStatusLabel } from '../utils/badge'
-import type {
-  TunnelWithStatus,
-  TunnelStatus,
-  CreateTunnelRequest,
-  UpdateTunnelRequest,
-} from '../types/tunnel'
+import type { TunnelWithStatus, CreateTunnelRequest } from '../types/tunnel'
 import BaseModal from '../components/BaseModal.vue'
-import OverflowMenu from '../components/OverflowMenu.vue'
 import {
   matchesTunnelFilter,
   matchesTunnelSearch,
   sortTunnels,
   tunnelDotTone,
+  tunnelErrorMessage,
   type TunnelFilter,
 } from '../utils/tunnel'
 
@@ -105,41 +94,6 @@ const addForm = ref<CreateTunnelRequest>({
 })
 const addError = ref('')
 const addLoading = ref(false)
-
-const showEditDialog = ref(false)
-const editId = ref<number | null>(null)
-const editForm = ref<UpdateTunnelRequest>({
-  ssh_host: '',
-  ssh_user: '',
-  ssh_port: 22,
-  tunnel_port: 0,
-  enabled: true,
-})
-const editError = ref('')
-const editLoading = ref(false)
-
-const showDeleteDialog = ref(false)
-const deleteId = ref<number | null>(null)
-const deleteHostname = ref('')
-const deleteLoading = ref(false)
-const deleteError = ref('')
-
-const expandedErrorId = ref<number | null>(null)
-const errorDetailMessage = ref('')
-const showErrorDialog = computed(() => expandedErrorId.value !== null)
-
-function showErrorDetail(tunnel: TunnelWithStatus): void {
-  const msg = statusErrorMessage(tunnel.status)
-  if (msg) {
-    errorDetailMessage.value = msg
-    expandedErrorId.value = tunnel.id
-  }
-}
-
-function closeErrorDetail(): void {
-  expandedErrorId.value = null
-  errorDetailMessage.value = ''
-}
 
 async function loadTunnels(): Promise<void> {
   await run(async () => {
@@ -218,92 +172,8 @@ async function submitAdd(): Promise<void> {
   }
 }
 
-const reconnectingId = ref<number | null>(null)
-
-async function reconnect(tunnel: TunnelWithStatus): Promise<void> {
-  reconnectingId.value = tunnel.id
-  try {
-    const updated = await reconnectTunnel(tunnel.id)
-    const idx = tunnels.value.findIndex((t) => t.id === tunnel.id)
-    if (idx !== -1) {
-      tunnels.value[idx] = { ...tunnels.value[idx], ...updated }
-    }
-  } catch (e: unknown) {
-    error.value = extractError(e)
-  } finally {
-    reconnectingId.value = null
-  }
-}
-
-function openEdit(tunnel: TunnelWithStatus): void {
-  editId.value = tunnel.id
-  editForm.value = {
-    ssh_host: tunnel.ssh_host,
-    ssh_user: tunnel.ssh_user,
-    ssh_port: tunnel.ssh_port,
-    tunnel_port: tunnel.tunnel_port,
-    enabled: tunnel.enabled,
-  }
-  editError.value = ''
-  showEditDialog.value = true
-}
-
-async function submitEdit(): Promise<void> {
-  if (editId.value === null) return
-  editLoading.value = true
-  editError.value = ''
-  try {
-    const updated = await updateTunnel(editId.value, editForm.value)
-    const idx = tunnels.value.findIndex((t) => t.id === editId.value)
-    if (idx !== -1) {
-      tunnels.value[idx] = { ...tunnels.value[idx], ...updated }
-    }
-    showEditDialog.value = false
-  } catch (e: unknown) {
-    editError.value = extractError(e)
-  } finally {
-    editLoading.value = false
-  }
-}
-
-function openDelete(tunnel: TunnelWithStatus): void {
-  deleteId.value = tunnel.id
-  deleteHostname.value = agentLabel(tunnel)
-  deleteError.value = ''
-  showDeleteDialog.value = true
-}
-
-async function confirmDelete(): Promise<void> {
-  if (deleteId.value === null) return
-  deleteLoading.value = true
-  deleteError.value = ''
-  try {
-    await deleteTunnel(deleteId.value)
-    tunnels.value = tunnels.value.filter((t) => t.id !== deleteId.value)
-    showDeleteDialog.value = false
-  } catch (e: unknown) {
-    deleteError.value = extractError(e)
-  } finally {
-    deleteLoading.value = false
-  }
-}
-
-function statusErrorMessage(status: TunnelStatus): string | null {
-  if (typeof status === 'object' && 'error' in status) return status.error.message
-  return null
-}
-
 useEscapeKey(showAddDialog, () => {
   showAddDialog.value = false
-})
-useEscapeKey(showEditDialog, () => {
-  showEditDialog.value = false
-})
-useEscapeKey(showDeleteDialog, () => {
-  showDeleteDialog.value = false
-})
-useEscapeKey(showErrorDialog, () => {
-  closeErrorDetail()
 })
 
 const { onMessage } = useWebSocket()
@@ -391,7 +261,7 @@ onMounted(() => {
         />
       </div>
 
-      <section class="list-group list-group--menus">
+      <section class="list-group">
         <div class="list-group-header">
           <h2 class="list-group-title">Tunnels</h2>
           <span class="list-group-count">{{ countText(visibleTunnels.length) }}</span>
@@ -413,9 +283,10 @@ onMounted(() => {
           <span class="muted">No tunnel matches.</span>
         </div>
 
-        <div
+        <RouterLink
           v-for="tunnel in visibleTunnels"
           :key="tunnel.id"
+          :to="`/tunnels/${tunnel.id}`"
           class="list-row tunnel-row"
           :data-tunnel-id="tunnel.id"
         >
@@ -458,12 +329,7 @@ onMounted(() => {
           <div class="list-row-text tunnel-status">
             <span
               class="badge list-wide-only"
-              :class="[
-                badgeClass(tunnelStatusTone(tunnel.status)),
-                { 'status-cell-error': statusErrorMessage(tunnel.status) },
-              ]"
-              :title="statusErrorMessage(tunnel.status) ?? undefined"
-              @click="statusErrorMessage(tunnel.status) ? showErrorDetail(tunnel) : undefined"
+              :class="badgeClass(tunnelStatusTone(tunnel.status))"
             >
               <span class="badge-dot"></span>
               {{ tunnelStatusLabel(tunnel.status) }}
@@ -475,11 +341,11 @@ onMounted(() => {
               {{ tunnelStatusLabel(tunnel.status) }}
             </span>
             <span
-              v-if="statusErrorMessage(tunnel.status)"
+              v-if="tunnelErrorMessage(tunnel.status)"
               class="list-row-sub"
               data-testid="tunnel-error"
             >
-              {{ statusErrorMessage(tunnel.status) }}
+              {{ tunnelErrorMessage(tunnel.status) }}
             </span>
             <span
               v-if="!tunnel.enabled"
@@ -489,40 +355,11 @@ onMounted(() => {
             </span>
           </div>
 
-          <div class="tunnel-actions">
-            <OverflowMenu
-              v-slot="{ run: runItem }"
-              :label="`Actions for the tunnel of ${agentLabel(tunnel)}`"
-            >
-              <button
-                class="overflow-menu-item"
-                role="menuitem"
-                type="button"
-                @click="runItem(() => openEdit(tunnel))"
-              >
-                Edit
-              </button>
-              <button
-                v-if="tunnel.enabled && tunnel.status !== 'connected'"
-                class="overflow-menu-item"
-                role="menuitem"
-                type="button"
-                :disabled="reconnectingId === tunnel.id"
-                @click="runItem(() => reconnect(tunnel))"
-              >
-                {{ reconnectingId === tunnel.id ? 'Reconnecting...' : 'Reconnect' }}
-              </button>
-              <button
-                class="overflow-menu-item overflow-menu-item--danger"
-                role="menuitem"
-                type="button"
-                @click="runItem(() => openDelete(tunnel))"
-              >
-                Delete
-              </button>
-            </OverflowMenu>
-          </div>
-        </div>
+          <ChevronRight
+            :size="16"
+            class="list-row-chevron"
+          />
+        </RouterLink>
       </section>
     </div>
 
@@ -627,151 +464,12 @@ onMounted(() => {
         </button>
       </template>
     </BaseModal>
-
-    <!-- Edit Tunnel Dialog -->
-    <BaseModal
-      :open="showEditDialog"
-      title="Edit tunnel"
-      @close="showEditDialog = false"
-    >
-      <div class="field">
-        <label class="field-label">SSH host <span class="required">*</span></label>
-        <input
-          v-model="editForm.ssh_host"
-          class="input mono"
-          placeholder="e.g. 192.168.1.10"
-        />
-      </div>
-      <div class="field-row">
-        <div class="field">
-          <label class="field-label">SSH user</label>
-          <input
-            v-model="editForm.ssh_user"
-            class="input mono"
-            placeholder="root"
-          />
-        </div>
-        <div class="field field-narrow">
-          <label class="field-label">SSH port</label>
-          <input
-            v-model.number="editForm.ssh_port"
-            class="input"
-            type="number"
-            min="1"
-            max="65535"
-          />
-        </div>
-      </div>
-      <div class="field">
-        <label class="field-label">Tunnel port <span class="required">*</span></label>
-        <input
-          v-model.number="editForm.tunnel_port"
-          class="input"
-          type="number"
-          min="1"
-          max="65535"
-        />
-      </div>
-      <div class="field field-checkbox">
-        <label class="checkbox-label">
-          <input
-            v-model="editForm.enabled"
-            type="checkbox"
-          />
-          <span>Enabled</span>
-        </label>
-      </div>
-      <div
-        v-if="editError"
-        class="form-error"
-      >
-        {{ editError }}
-      </div>
-
-      <template #footer>
-        <button
-          class="btn btn-ghost"
-          @click="showEditDialog = false"
-        >
-          Cancel
-        </button>
-        <button
-          class="btn btn-primary"
-          :disabled="editLoading || !editForm.ssh_host?.trim() || !editForm.tunnel_port"
-          @click="submitEdit"
-        >
-          {{ editLoading ? 'Saving...' : 'Save' }}
-        </button>
-      </template>
-    </BaseModal>
-
-    <!-- Delete Tunnel Dialog -->
-    <BaseModal
-      :open="showDeleteDialog"
-      title="Delete tunnel"
-      size="sm"
-      @close="showDeleteDialog = false"
-    >
-      <p class="confirm-text">
-        Delete tunnel for <strong>{{ deleteHostname }}</strong
-        >?
-      </p>
-      <div
-        v-if="deleteError"
-        class="form-error"
-      >
-        {{ deleteError }}
-      </div>
-
-      <template #footer>
-        <button
-          class="btn btn-ghost"
-          @click="showDeleteDialog = false"
-        >
-          Cancel
-        </button>
-        <button
-          class="btn btn-danger"
-          :disabled="deleteLoading"
-          @click="confirmDelete"
-        >
-          {{ deleteLoading ? 'Deleting...' : 'Delete' }}
-        </button>
-      </template>
-    </BaseModal>
-
-    <!-- Error Detail Dialog -->
-    <BaseModal
-      :open="expandedErrorId !== null"
-      title="Tunnel error"
-      size="sm"
-      @close="closeErrorDetail"
-    >
-      <pre class="error-pre">{{ errorDetailMessage }}</pre>
-
-      <template #footer>
-        <button
-          class="btn btn-ghost"
-          @click="closeErrorDetail"
-        >
-          Close
-        </button>
-      </template>
-    </BaseModal>
   </div>
 </template>
 
 <style scoped>
 .tunnels-view {
   max-width: 1200px;
-}
-
-.status-cell-error {
-  cursor: pointer;
-}
-
-.status-cell-error:hover {
-  text-decoration: underline;
 }
 
 .tunnels-list {
@@ -823,10 +521,6 @@ onMounted(() => {
   align-items: flex-start;
 }
 
-.tunnel-actions {
-  justify-self: end;
-}
-
 .tunnel-status-text--success {
   color: var(--success);
 }
@@ -848,13 +542,8 @@ onMounted(() => {
     width: 100%;
   }
 
-  /* Line 1 is the agent with the menu beside it, line 2 the route, line 3
+  /* Line 1 is the agent with the chevron beside it, line 2 the route, line 3
      the status. */
-  .tunnel-actions {
-    position: absolute;
-    top: var(--space-3);
-    right: var(--space-3);
-  }
 
   .tunnel-row > .list-row-main {
     padding-right: var(--space-9);

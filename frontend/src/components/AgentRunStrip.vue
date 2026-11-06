@@ -174,7 +174,16 @@ const isSingleIncident = computed(() => {
 
 .run-strip--compact .run-strip-cells {
   margin-top: 0;
-  width: calc(var(--space-9) * 2);
+  /* Room for the Overview's ten cells at 6px with 2px gaps. */
+  width: calc(10 * 6px + 9 * 2px);
+  /* Every cell the same size on every row: a repository with five runs gets
+     five cells of the usual width, flush right, not five stretched ones. */
+  justify-content: flex-end;
+}
+
+.run-strip--compact .run-cell {
+  flex: none;
+  width: 6px;
 }
 
 .run-strip-value--bad {

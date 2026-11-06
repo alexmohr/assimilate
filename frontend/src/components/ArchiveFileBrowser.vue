@@ -1226,7 +1226,6 @@ const parentCrumb = computed(() => {
   gap: var(--space-4);
   padding: var(--space-4) var(--space-6);
   border-bottom: 1px solid var(--border);
-  background: var(--bg-base);
 }
 
 /* Each fact reads as its own chip, so the bar stays legible when it wraps on

@@ -921,7 +921,11 @@ async function fetchOverview(): Promise<void> {
 .status-banner {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
-  gap: var(--space-5);
+  gap: 1px;
+  background: var(--border);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
 }
 
 @media (max-width: 640px) {

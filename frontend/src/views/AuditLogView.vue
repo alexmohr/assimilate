@@ -324,7 +324,7 @@ onMounted(fetchAuditLog)
 
 .detail-expansion {
   padding: var(--space-6) var(--space-8);
-  background: var(--bg-base);
+  border-top: 1px solid var(--border-subtle);
 }
 
 .per-page-selector {

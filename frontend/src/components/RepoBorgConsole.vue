@@ -238,7 +238,7 @@ function exitClass(code: number): string {
   white-space: pre-wrap;
   word-break: break-all;
   color: var(--text-primary);
-  background: var(--bg-base);
+  background: var(--bg-code);
   max-height: 400px;
   overflow-y: auto;
 }

@@ -609,7 +609,7 @@ function navigateToScheduleAndClose(scheduleId: number): void {
   font-family: var(--mono);
   font-size: var(--fs-xs);
   color: var(--text-primary);
-  background: var(--bg-base);
+  background: var(--bg-code);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   padding: var(--space-5);

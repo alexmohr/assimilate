@@ -898,10 +898,8 @@ async function resetSystem(): Promise<void> {
 
 .import-result {
   margin-top: var(--space-4);
-  padding: var(--space-5) var(--space-6);
-  background: var(--bg-base);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
+  padding: var(--space-5) 0 0;
+  border-top: 1px solid var(--border);
   font-size: var(--fs-base);
 }
 
@@ -923,10 +921,8 @@ async function resetSystem(): Promise<void> {
   display: flex;
   gap: var(--space-7);
   margin-top: var(--space-6);
-  padding: var(--space-5) var(--space-6);
-  background: var(--bg-base);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
+  padding: var(--space-5) 0 0;
+  border-top: 1px solid var(--border);
   font-size: var(--fs-base);
   color: var(--text-secondary);
   flex-wrap: wrap;

@@ -462,6 +462,7 @@ const REPO_STATE_TONE: Record<RepoOverviewState, Tone | 'info'> = {
   grid-template-columns: repeat(2, minmax(0, 1fr));
   border: 1px solid var(--border);
   border-radius: var(--radius);
+  background: var(--bg-card);
 }
 
 .fact {

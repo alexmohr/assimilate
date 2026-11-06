@@ -98,7 +98,7 @@ const SECTIONS: readonly PatternSection[] = [
 
 <style scoped>
 .ref-panel {
-  background: var(--bg-base);
+  background: var(--bg-code);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   padding: var(--space-5);

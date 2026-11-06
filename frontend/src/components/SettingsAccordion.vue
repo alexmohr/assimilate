@@ -53,7 +53,6 @@ function setAll(expand: boolean): void {
 
 <template>
   <div
-    class="accordion"
     role="group"
     :aria-label="label"
   >

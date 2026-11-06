@@ -188,7 +188,7 @@ const { runNowLoading: runningId, runNow } = useScheduleRun(null, {
     />
     <div
       v-else
-      class="rows sched-table"
+      class="rows"
     >
       <div
         class="sched-row sched-cols"

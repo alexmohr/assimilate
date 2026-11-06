@@ -1434,7 +1434,6 @@ function filterByRun(runId: string): void {
 .detail-panel {
   padding: var(--space-6) var(--space-6) var(--space-7);
   border-top: 1px solid var(--border);
-  background: var(--bg-base);
 }
 
 .detail-loading {
@@ -1593,7 +1592,6 @@ function filterByRun(runId: string): void {
   gap: var(--space-4);
   padding: var(--space-4) var(--space-6);
   border-bottom: 1px solid var(--border);
-  background: var(--bg-base);
 }
 
 .live-session-title {
@@ -1615,7 +1613,7 @@ function filterByRun(runId: string): void {
   max-height: 200px;
   overflow-y: auto;
   padding: var(--space-4) var(--space-6);
-  background: var(--bg-base);
+  background: var(--bg-code);
   font-family: var(--mono);
   font-size: var(--fs-xs);
   color: var(--text-secondary);

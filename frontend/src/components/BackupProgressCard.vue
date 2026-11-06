@@ -146,7 +146,6 @@ const emit = defineEmits<{
   gap: var(--space-4);
   padding: var(--space-4) var(--space-6);
   border-bottom: 1px solid var(--border);
-  background: var(--bg-base);
 }
 
 .live-log-title {

@@ -295,7 +295,11 @@ function navigateToActivity(status?: string): void {
 .stats-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: var(--space-5);
+  gap: 1px;
+  background: var(--border);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
 }
 
 .mini-stat {
@@ -304,8 +308,7 @@ function navigateToActivity(status?: string): void {
   align-items: center;
   gap: var(--space-1);
   padding: var(--space-4);
-  background: var(--bg-base);
-  border-radius: var(--radius-sm);
+  background: var(--bg-card);
 }
 
 .mini-stat-link {

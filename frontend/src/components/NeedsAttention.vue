@@ -51,7 +51,7 @@ async function dismiss(finding: DashboardFinding): Promise<void> {
 <template>
   <section
     id="needs-attention"
-    class="panel attention-panel"
+    class="panel"
   >
     <div class="panel-heading">
       <div>
@@ -115,10 +115,6 @@ async function dismiss(finding: DashboardFinding): Promise<void> {
 </template>
 
 <style scoped>
-.attention-panel {
-  border-top: 3px solid var(--warning);
-}
-
 .panel-heading {
   display: flex;
   justify-content: space-between;

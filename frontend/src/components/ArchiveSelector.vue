@@ -414,7 +414,8 @@ defineExpose({ reset, unmatchedCount, unmatchedHostnames })
   overflow-y: auto;
 }
 
-.archive-group:last-child .group-archives > :last-child {
+.archive-group:last-child .group-archives > :last-child,
+.archive-group:last-child > .group-header:last-child {
   border-bottom: none;
 }
 
@@ -425,8 +426,7 @@ defineExpose({ reset, unmatchedCount, unmatchedHostnames })
   gap: var(--space-4);
   width: 100%;
   padding: var(--space-4) var(--space-6);
-  background: var(--bg-hover);
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid var(--border-subtle);
   cursor: pointer;
   font-size: var(--fs-sm);
   font-weight: 600;

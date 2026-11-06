@@ -1334,11 +1334,24 @@ function filterByRun(runId: string): void {
 .run-list {
   display: flex;
   flex-direction: column;
-  gap: var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-card);
+  overflow: hidden;
+}
+
+/* Entries are rows of one card, split by hairlines, not cards of their own. */
+.run-list > .run-card {
+  border: none;
+  border-radius: 0;
+}
+
+.run-list > .run-card + .run-card {
+  border-top: 1px solid var(--border-subtle);
 }
 
 .run-card.expanded {
-  border-color: var(--text-muted);
+  background: var(--bg-hover);
 }
 
 /* Only reachable once the Acknowledged filter is showing reviewed entries -

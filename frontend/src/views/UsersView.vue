@@ -718,7 +718,6 @@ onMounted(fetchUsers)
 
 <style scoped>
 .users-page {
-  max-width: 900px;
 }
 
 .loading {

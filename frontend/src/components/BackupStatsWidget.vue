@@ -189,7 +189,7 @@ function navigateToActivity(status?: string): void {
     </div>
     <div
       v-else
-      class="stats-grid"
+      class="tile-grid stats-grid"
     >
       <div
         class="mini-stat mini-stat-link"
@@ -293,13 +293,7 @@ function navigateToActivity(status?: string): void {
 }
 
 .stats-grid {
-  display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 1px;
-  background: var(--border);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  overflow: hidden;
 }
 
 .mini-stat {

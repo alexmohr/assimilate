@@ -45,7 +45,7 @@ import {
 } from '../utils/schedulePayload'
 import { parseLines } from '../utils/validation'
 import { normalizeBackupStatus } from '../utils/backupStatus'
-import { domainParams, isAgentOffline, lastSeenText } from '../utils/agent'
+import { isAgentOffline, lastSeenText } from '../utils/agent'
 import { openReportArchive } from '../utils/reportNavigation'
 import {
   dependencyCheckOutcomeText,
@@ -263,8 +263,8 @@ function openReportDetail(r: ReportRow): void {
     return
   }
   router.push({
-    path: `/agents/${encodeURIComponent(hostname)}`,
-    query: { ...domainParams(agent?.domain), tab: 'logs', report: String(r.id) },
+    path: '/activity',
+    query: { category: 'backup', hostname, schedule_id: String(props.id) },
   })
 }
 

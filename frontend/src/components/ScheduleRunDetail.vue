@@ -49,10 +49,10 @@ const target = computed(() => reportToOpen(props.run))
         v-if="target"
         class="btn btn-sm btn-ghost run-detail-open"
         type="button"
-        title="Open this run on the host's Logs tab"
+        title="Open this run in the Activity log"
         @click="emit('openReportDetail', target)"
       >
-        Open in Logs
+        Open in Activity log
       </button>
     </div>
     <div class="rows">
@@ -68,6 +68,13 @@ const target = computed(() => reportToOpen(props.run))
 </template>
 
 <style scoped>
+/* Already inside the overview's card: rows split by hairlines, no second frame. */
+.run-detail > .rows {
+  border: none;
+  border-radius: 0;
+  background: none;
+}
+
 .run-detail {
   display: flex;
   flex-direction: column;

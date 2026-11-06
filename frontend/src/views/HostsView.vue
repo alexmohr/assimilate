@@ -583,7 +583,7 @@ function hiddenCount(group: AgentListGroup): number {
 
 /** Where each issue chip lands on the agent's detail page. */
 const ISSUE_QUERY: Record<'failed' | 'overdue' | 'unprotected', Record<string, string>> = {
-  failed: { tab: 'logs', status: 'failed' },
+  failed: { tab: 'schedules' },
   overdue: { tab: 'schedules', health: 'overdue' },
   unprotected: { tab: 'schedules' },
 }

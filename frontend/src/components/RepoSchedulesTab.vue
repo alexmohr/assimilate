@@ -8,17 +8,11 @@ import { ref, watch, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { CalendarClock } from '@lucide/vue'
 import { listRepoSchedules, getScheduleHealth } from '../api/schedules'
-import { formatDate } from '../utils/format'
 import { useScheduleRun } from '../composables/useScheduleRun'
-import {
-  scheduleIssuesFromEntries,
-  withErrorTitles,
-  type ScheduleHealthEntry,
-} from '../utils/scheduleHealth'
+import type { ScheduleHealthEntry } from '../utils/scheduleHealth'
 import BaseSpinner from './BaseSpinner.vue'
 import EmptyState from './EmptyState.vue'
-import type { EntityIssue } from './EntityStatusBadges.vue'
-import ScheduleCard from './ScheduleCard.vue'
+import ScheduleTable from './ScheduleTable.vue'
 import type { ScheduleRow } from '../types/schedule'
 import { scheduleTypeLabel } from '../utils/scheduleType'
 
@@ -32,9 +26,9 @@ const loading = ref(false)
 const error = ref<string | null>(null)
 const health = ref<ScheduleHealthEntry[]>([])
 
-function scheduleIssues(s: ScheduleRow): EntityIssue[] {
-  const entries = health.value.filter((h) => h.schedule_id === s.id)
-  return withErrorTitles(scheduleIssuesFromEntries(entries, s.id, router), entries)
+function agentsLine(s: ScheduleRow): string {
+  const n = s.target_hostnames.length
+  return n === 1 ? s.target_hostnames[0] : `${n} agents`
 }
 
 async function load(): Promise<void> {
@@ -77,37 +71,13 @@ defineExpose({ reload: load })
     title="No schedules yet"
     description="Nothing backs up to this repository. Create a schedule to start."
   />
-  <div
+  <ScheduleTable
     v-else
-    class="card-grid card-grid--compact"
-  >
-    <ScheduleCard
-      v-for="s in schedules"
-      :key="s.id"
-      :schedule="s"
-      :issues="scheduleIssues(s)"
-      :format-run="formatDate"
-      @select="router.push(`/schedules/${s.id}`)"
-    >
-      <template #title>{{ s.name || `Schedule #${s.id}` }}</template>
-      <template #meta>
-        <span class="meta-pill">
-          {{ s.target_hostnames.length }}
-          agent{{ s.target_hostnames.length === 1 ? '' : 's' }}
-        </span>
-      </template>
-      <template #actions>
-        <button
-          class="btn btn-sm btn-ghost"
-          :disabled="runNowLoading === s.id"
-          :title="`Run ${scheduleTypeLabel(s.schedule_type ?? 'backup').toLowerCase()} now`"
-          @click="runNow(s)"
-        >
-          {{ runNowLoading === s.id ? '...' : 'Run' }}
-        </button>
-      </template>
-    </ScheduleCard>
-  </div>
+    :schedules="schedules"
+    :health="health"
+    :subtitle-for="agentsLine"
+    :running-id="runNowLoading"
+    @open="router.push(`/schedules/${$event.id}`)"
+    @run="runNow"
+  />
 </template>
-
-<style scoped></style>

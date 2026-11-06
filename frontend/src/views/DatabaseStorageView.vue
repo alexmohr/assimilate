@@ -60,7 +60,7 @@ onMounted(loadDatabaseStorage)
       PostgreSQL allocation by application table, including table data, indexes, and TOAST data.
     </p>
 
-    <div class="panel">
+    <div class="panel panel--sectioned">
       <BaseSpinner
         v-if="databaseStorageLoading"
         size="lg"

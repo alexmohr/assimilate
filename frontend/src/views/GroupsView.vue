@@ -479,7 +479,6 @@ onMounted(async () => {
 
 <style scoped>
 .groups-page {
-  max-width: 900px;
 }
 
 @media (max-width: 768px) {

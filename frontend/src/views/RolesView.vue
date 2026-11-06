@@ -246,7 +246,7 @@ onMounted((): void => {
     <!-- Permission Matrix -->
     <div
       v-else
-      class="table-wrap"
+      class="table-wrap table-wrap--framed"
     >
       <table class="data-table data-table--compact">
         <thead>
@@ -452,8 +452,8 @@ onMounted((): void => {
   min-width: 120px;
 }
 
-.data-table tr.seeded {
-  background: var(--bg-hover);
+.data-table tr.seeded td:first-child {
+  font-weight: 600;
 }
 
 .role-name-cell {

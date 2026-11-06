@@ -17,6 +17,9 @@ import { formatNetworkList, parseNetworkList } from '../utils/apiToken'
 import BaseSpinner from './BaseSpinner.vue'
 import type { MetricsSettingsResponse } from '../types/generated'
 
+/** Inside a settings section, which already frames and names it. */
+defineProps<{ embedded?: boolean }>()
+
 const loading = ref(true)
 const error = ref('')
 const saving = ref(false)
@@ -65,8 +68,11 @@ async function save(): Promise<void> {
 </script>
 
 <template>
-  <div class="panel">
-    <div class="panel-header">
+  <div :class="embedded ? 'settings-pane' : 'panel'">
+    <div
+      v-if="!embedded"
+      class="panel-header"
+    >
       <h2 class="panel-title">Prometheus metrics</h2>
     </div>
     <p class="pane-lede">

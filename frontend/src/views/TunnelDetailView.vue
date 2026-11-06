@@ -462,7 +462,8 @@ onMounted(load)
 
 .tunnel-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  /* One column: side by side, the short Route card left a hole under it. */
+  grid-template-columns: minmax(0, 1fr);
   gap: var(--space-6);
 }
 

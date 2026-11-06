@@ -477,7 +477,7 @@ async function fetchOverview(): Promise<void> {
     </template>
 
     <template v-else>
-      <section class="status-banner">
+      <section class="tiles status-banner">
         <div
           class="tile tile--lg tile--link"
           @click="router.push({ name: 'agents', query: { status: 'offline' } })"
@@ -919,13 +919,7 @@ async function fetchOverview(): Promise<void> {
 
 /* Section 1: Status Banner */
 .status-banner {
-  display: grid;
   grid-template-columns: repeat(4, 1fr);
-  gap: 1px;
-  background: var(--border);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  overflow: hidden;
 }
 
 @media (max-width: 640px) {
@@ -1028,7 +1022,7 @@ async function fetchOverview(): Promise<void> {
 /* Trends Row */
 .trends-row {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap: var(--space-8);
   align-items: start;
 }

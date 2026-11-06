@@ -198,6 +198,5 @@ onMounted(fetchTokens)
 
 <style scoped>
 .tokens-page {
-  max-width: 900px;
 }
 </style>

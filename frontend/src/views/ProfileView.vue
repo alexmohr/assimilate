@@ -240,7 +240,7 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div class="profile-view">
+  <div>
     <div class="page-header">
       <h1 class="page-title">Profile</h1>
     </div>
@@ -260,7 +260,7 @@ onMounted(async () => {
       class="tab-content fade-in"
     >
       <form
-        class="password-form"
+        class="panel password-form"
         @submit.prevent="handlePasswordSubmit"
       >
         <div class="field">
@@ -770,12 +770,8 @@ onMounted(async () => {
 </template>
 
 <style scoped>
-.profile-view {
-  max-width: 700px;
-}
-
 .password-form {
-  max-width: 380px;
+  max-width: 480px;
 }
 
 .tokens-header {

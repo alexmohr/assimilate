@@ -174,7 +174,7 @@ onMounted(fetchAuditLog)
 
     <div
       v-else
-      class="table-wrap table-wrap--framed"
+      class="table-wrap"
     >
       <DataTable
         v-model:expanded-rows="expandedRows"

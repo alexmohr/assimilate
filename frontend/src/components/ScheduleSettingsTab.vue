@@ -151,7 +151,6 @@ const catchUpSourceLinks = computed(() => {
     v-slot="{ section: currentSection }"
     :sections="sections"
     :section="section"
-    even
     label="Schedule settings sections"
     @update:section="emit('update:section', $event)"
   >

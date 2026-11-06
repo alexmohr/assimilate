@@ -1,6 +1,5 @@
 <script setup lang="ts">
-import SettingsAccordion from './SettingsAccordion.vue'
-import type { SettingsSections } from './SettingsRail.vue'
+import SettingsRail, { type SettingsSections } from './SettingsRail.vue'
 import AgentVmsCard from './AgentVmsCard.vue'
 import AgentDatabasesCard from './AgentDatabasesCard.vue'
 import type { AgentRow } from '../types/agent'
@@ -26,7 +25,7 @@ const sections: SettingsSections<SourcesSection> = [
 </script>
 
 <template>
-  <SettingsAccordion
+  <SettingsRail
     v-slot="{ section: currentSection }"
     :sections="sections"
     :section="section"
@@ -43,5 +42,5 @@ const sections: SettingsSections<SourcesSection> = [
       :agent="agent"
       :can-edit="!agent.is_imported"
     />
-  </SettingsAccordion>
+  </SettingsRail>
 </template>

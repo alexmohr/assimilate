@@ -7,8 +7,7 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 import { computed, ref } from 'vue'
 import { formatDate } from '../utils/format'
 import HelpHint from './HelpHint.vue'
-import SettingsAccordion from './SettingsAccordion.vue'
-import type { SettingsSections } from './SettingsRail.vue'
+import SettingsRail, { type SettingsSections } from './SettingsRail.vue'
 import AgentDefaultsCard from './AgentDefaultsCard.vue'
 import AgentDependenciesCard from './AgentDependenciesCard.vue'
 import AgentHostnameAliases from './AgentHostnameAliases.vue'
@@ -70,7 +69,7 @@ const sections = computed<SettingsSections<SettingsSection>>(() => [
 </script>
 
 <template>
-  <SettingsAccordion
+  <SettingsRail
     v-slot="{ section: currentSection }"
     :sections="sections"
     :section="section"
@@ -167,5 +166,5 @@ const sections = computed<SettingsSections<SettingsSection>>(() => [
         :can-edit="!isImported && isAdmin"
       />
     </MachinePane>
-  </SettingsAccordion>
+  </SettingsRail>
 </template>

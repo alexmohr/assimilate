@@ -77,7 +77,7 @@ onMounted(loadDatabaseStorage)
           <strong>{{ formatBytes(databaseStorage.database_bytes) }}</strong>
         </div>
         <div class="table-wrap">
-          <table class="data-table data-table--compact">
+          <table class="data-table data-table--stack data-table--compact">
             <thead>
               <tr>
                 <th>Table</th>
@@ -94,11 +94,19 @@ onMounted(loadDatabaseStorage)
                 :key="relation.table_name"
               >
                 <td class="storage-name">{{ relation.table_name }}</td>
-                <td>{{ formatBytes(relation.table_bytes) }}</td>
-                <td>{{ formatBytes(relation.index_bytes) }}</td>
-                <td>{{ formatBytes(relation.toast_bytes) }}</td>
-                <td class="storage-total">{{ formatBytes(relation.total_bytes) }}</td>
-                <td class="storage-share">
+                <td data-label="Table data">{{ formatBytes(relation.table_bytes) }}</td>
+                <td data-label="Indexes">{{ formatBytes(relation.index_bytes) }}</td>
+                <td data-label="TOAST">{{ formatBytes(relation.toast_bytes) }}</td>
+                <td
+                  data-label="Total"
+                  class="storage-total"
+                >
+                  {{ formatBytes(relation.total_bytes) }}
+                </td>
+                <td
+                  data-label="Share"
+                  class="storage-share"
+                >
                   <div class="storage-share-value">
                     {{ storagePercent(relation.total_bytes).toFixed(1) }}%
                   </div>
@@ -113,8 +121,16 @@ onMounted(loadDatabaseStorage)
               <tr v-if="databaseStorage.other_bytes > 0">
                 <td class="storage-name">Other PostgreSQL storage</td>
                 <td colspan="3">System catalogs and database overhead</td>
-                <td class="storage-total">{{ formatBytes(databaseStorage.other_bytes) }}</td>
-                <td class="storage-share">
+                <td
+                  data-label="Total"
+                  class="storage-total"
+                >
+                  {{ formatBytes(databaseStorage.other_bytes) }}
+                </td>
+                <td
+                  data-label="Share"
+                  class="storage-share"
+                >
                   <div class="storage-share-value">
                     {{ storagePercent(databaseStorage.other_bytes).toFixed(1) }}%
                   </div>

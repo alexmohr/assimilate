@@ -78,12 +78,14 @@ const emit = defineEmits<{
       class="pane-head"
       :class="{ 'pane-head--end': !lede }"
     >
-      <HelpHint
+      <!-- Said in words, not behind a lone "?": that icon on a row of its own
+           was the first thing every opened settings section showed. -->
+      <p
         v-if="lede"
-        :label="ledeLabel ?? 'this section'"
+        class="pane-lede"
       >
         {{ lede }}
-      </HelpHint>
+      </p>
       <button
         v-if="canEdit && !editing"
         class="btn btn-sm btn-ghost"

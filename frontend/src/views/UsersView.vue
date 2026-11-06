@@ -314,7 +314,7 @@ onMounted(fetchUsers)
         />
       </template>
       <div class="table-wrap table-wrap--framed">
-        <table class="data-table">
+        <table class="data-table data-table--stack">
           <thead>
             <tr>
               <th>Username</th>
@@ -339,17 +339,23 @@ onMounted(fetchUsers)
                   >
                 </span>
               </td>
-              <td>
+              <td data-label="Role">
                 <span
                   class="badge badge--neutral"
                   :class="user.role"
                   >{{ user.role }}</span
                 >
               </td>
-              <td class="date-cell col-date">
+              <td
+                data-label="Created"
+                class="date-cell col-date"
+              >
                 {{ formatDate(user.created_at) }}
               </td>
-              <td class="date-cell col-date">
+              <td
+                data-label="Last login"
+                class="date-cell col-date"
+              >
                 {{ formatDate(user.last_login_at, 'Never') }}
               </td>
               <td>

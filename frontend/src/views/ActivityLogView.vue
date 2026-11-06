@@ -50,8 +50,14 @@ import { extractError } from '../utils/error'
 import { normalizeBackupStatus } from '../utils/backupStatus'
 import { scheduleLabel } from '../utils/machine'
 import type { ReportRow } from '../types/report'
-import { backupStatusBadgeClass, badgeClass, logLevelTone, systemEventTone } from '../utils/badge'
-import BaseSegmented, { type SegmentedOption } from '../components/BaseSegmented.vue'
+import {
+  backupStatusBadgeClass,
+  backupStatusTone,
+  badgeClass,
+  logLevelTone,
+  systemEventTone,
+} from '../utils/badge'
+import type { SegmentedOption } from '../components/BaseSegmented.vue'
 import { useAuthStore } from '../stores/auth'
 import type { AcknowledgedFilter } from '../types/generated'
 
@@ -701,8 +707,13 @@ async function acknowledgeAll(): Promise<void> {
   }
 }
 
-function eventBadgeClass(event: SystemEventEntry): string {
-  return badgeClass(systemEventTone(event.severity))
+/** The row's status dot, in the same tone as its badge. */
+function backupDotClass(status: string): string {
+  return `status-dot--${backupStatusTone(status)}`
+}
+
+function eventDotClass(event: SystemEventEntry): string {
+  return `status-dot--${systemEventTone(event.severity)}`
 }
 
 function logRowClass(entry: LogEntry): string {
@@ -807,11 +818,25 @@ function filterByRun(runId: string): void {
       <div class="filter-row">
         <div class="filter-group">
           <label class="filter-label">Type</label>
-          <BaseSegmented
-            v-model="activeCategory"
-            :options="categoryOptions"
-            label="Activity type"
-          />
+          <!-- Pills, which wrap on a phone, rather than a segmented control
+               that cut its last options off. -->
+          <div
+            class="filter-pills"
+            role="group"
+            aria-label="Activity type"
+          >
+            <button
+              v-for="option in categoryOptions"
+              :key="option.value"
+              type="button"
+              class="filter-pill"
+              :class="{ active: activeCategory === option.value }"
+              :aria-pressed="activeCategory === option.value"
+              @click="activeCategory = option.value"
+            >
+              {{ option.label }}
+            </button>
+          </div>
         </div>
 
         <button
@@ -1087,17 +1112,42 @@ function filterByRun(runId: string): void {
               'run-card--acknowledged': row.backup.acknowledged,
             }"
           >
+            <!-- Two lines like every other row list: who and where, then which
+                 schedule and how long. The actions wait in the opened entry. -->
             <div
-              class="run-card-summary"
+              class="run-card-summary run-row"
               @click="toggleRow(row.backup)"
             >
-              <div class="run-card-top">
-                <div class="run-card-host">
+              <span
+                class="status-dot run-row-dot"
+                :class="backupDotClass(row.backup.status)"
+              />
+              <span class="run-row-text">
+                <span class="run-row-title">
                   <span class="run-card-hostname">{{ row.backup.hostname }}</span>
-                  <span class="run-card-time">{{ formatDateShort(row.backup.started_at) }}</span>
-                </div>
-                <div class="run-card-badges">
+                  <span class="run-row-target">{{ row.backup.target_name }}</span>
+                </span>
+                <span class="run-row-sub">
                   <span
+                    v-if="row.backup.schedule_id"
+                    class="schedule-label"
+                    >{{
+                      scheduleLabel({
+                        schedule_id: row.backup.schedule_id,
+                        schedule_name: row.backup.schedule_name ?? '',
+                      })
+                    }}</span
+                  >
+                  <span class="run-card-duration">{{
+                    formatDuration(row.backup.duration_secs)
+                  }}</span>
+                </span>
+              </span>
+              <span class="run-row-end">
+                <span class="run-card-time">{{ formatDateShort(row.backup.started_at) }}</span>
+                <span class="run-card-badges">
+                  <span
+                    v-if="backupStatusTone(row.backup.status) !== 'success'"
                     class="badge"
                     :class="statusClass(row.backup.status)"
                     >{{ row.backup.status }}</span
@@ -1107,44 +1157,8 @@ function filterByRun(runId: string): void {
                     class="badge badge--neutral"
                     >Acknowledged</span
                   >
-                </div>
-              </div>
-              <div class="run-card-meta">
-                <span>{{ row.backup.target_name }}</span>
-                <span
-                  v-if="row.backup.schedule_id"
-                  class="schedule-label"
-                  >{{
-                    scheduleLabel({
-                      schedule_id: row.backup.schedule_id,
-                      schedule_name: row.backup.schedule_name ?? '',
-                    })
-                  }}</span
-                >
-              </div>
-              <div class="run-card-foot">
-                <span class="run-card-duration">{{
-                  formatDuration(row.backup.duration_secs)
-                }}</span>
-                <div class="run-card-actions">
-                  <button
-                    v-if="row.backup.run_id && filterRunId !== row.backup.run_id"
-                    class="btn btn-xs btn-ghost"
-                    title="View all events for this run"
-                    @click.stop="filterByRun(row.backup.run_id)"
-                  >
-                    View run
-                  </button>
-                  <button
-                    v-if="isAckable(row.backup)"
-                    class="btn btn-xs btn-ghost"
-                    :disabled="ackingId === row.backup.id"
-                    @click.stop="toggleAcknowledge(row.backup)"
-                  >
-                    {{ row.backup.acknowledged ? 'Unacknowledge' : 'Acknowledge' }}
-                  </button>
-                </div>
-              </div>
+                </span>
+              </span>
             </div>
 
             <div
@@ -1152,6 +1166,29 @@ function filterByRun(runId: string): void {
               class="detail-panel"
               @click.stop
             >
+              <div
+                v-if="
+                  (row.backup.run_id && filterRunId !== row.backup.run_id) || isAckable(row.backup)
+                "
+                class="entry-actions"
+              >
+                <button
+                  v-if="row.backup.run_id && filterRunId !== row.backup.run_id"
+                  class="btn btn-sm btn-ghost"
+                  title="View all events for this run"
+                  @click.stop="filterByRun(row.backup.run_id)"
+                >
+                  View run
+                </button>
+                <button
+                  v-if="isAckable(row.backup)"
+                  class="btn btn-sm"
+                  :disabled="ackingId === row.backup.id"
+                  @click.stop="toggleAcknowledge(row.backup)"
+                >
+                  {{ row.backup.acknowledged ? 'Unacknowledge' : 'Acknowledge' }}
+                </button>
+              </div>
               <div
                 v-if="expandedLoading"
                 class="detail-loading"
@@ -1236,42 +1273,28 @@ function filterByRun(runId: string): void {
             }"
           >
             <div
-              class="run-card-summary"
+              class="run-card-summary run-row"
               @click="toggleSystemRow(row.event)"
             >
-              <div class="run-card-top">
-                <div class="run-card-host">
+              <span
+                class="status-dot run-row-dot"
+                :class="eventDotClass(row.event)"
+              />
+              <span class="run-row-text">
+                <span class="run-row-title">
                   <span class="run-card-hostname">{{ row.event.hostname ?? '—' }}</span>
-                  <span class="run-card-time">{{ formatDateShort(row.event.created_at) }}</span>
-                </div>
-                <div class="run-card-badges">
-                  <span
-                    class="badge"
-                    :class="eventBadgeClass(row.event)"
-                    >{{ formatEventType(row.event.event_type) }}</span
-                  >
-                  <span
-                    v-if="row.event.acknowledged"
-                    class="badge badge--neutral"
-                    >Acknowledged</span
-                  >
-                </div>
-              </div>
-              <p class="run-card-message">{{ row.event.message }}</p>
-              <div
-                v-if="isSystemEventAckable(row.event)"
-                class="run-card-foot"
-              >
-                <div class="run-card-actions">
-                  <button
-                    class="btn btn-xs btn-ghost"
-                    :disabled="ackingSystemId === row.event.id"
-                    @click.stop="toggleSystemAcknowledge(row.event)"
-                  >
-                    {{ row.event.acknowledged ? 'Unacknowledge' : 'Acknowledge' }}
-                  </button>
-                </div>
-              </div>
+                  <span class="run-row-target">{{ formatEventType(row.event.event_type) }}</span>
+                </span>
+                <span class="run-row-sub run-row-message">{{ row.event.message }}</span>
+              </span>
+              <span class="run-row-end">
+                <span class="run-card-time">{{ formatDateShort(row.event.created_at) }}</span>
+                <span
+                  v-if="row.event.acknowledged"
+                  class="badge badge--neutral"
+                  >Acknowledged</span
+                >
+              </span>
             </div>
 
             <div
@@ -1279,6 +1302,18 @@ function filterByRun(runId: string): void {
               class="detail-panel"
               @click.stop
             >
+              <div
+                v-if="isSystemEventAckable(row.event)"
+                class="entry-actions"
+              >
+                <button
+                  class="btn btn-sm"
+                  :disabled="ackingSystemId === row.event.id"
+                  @click.stop="toggleSystemAcknowledge(row.event)"
+                >
+                  {{ row.event.acknowledged ? 'Unacknowledge' : 'Acknowledge' }}
+                </button>
+              </div>
               <pre class="error-pre">{{ row.event.message }}</pre>
             </div>
           </article>
@@ -1374,6 +1409,67 @@ function filterByRun(runId: string): void {
   transition: background var(--duration-fast);
 }
 
+/* dot | two lines of text | time and badges */
+.run-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: start;
+  gap: var(--space-2) var(--space-5);
+  font-size: var(--fs-sm);
+}
+
+.run-row-dot {
+  margin-top: 0.45em;
+}
+
+.run-row-text,
+.run-row-end {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.run-row-end {
+  align-items: flex-end;
+}
+
+.run-row-title {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-4);
+  min-width: 0;
+}
+
+.run-row-target {
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.run-row-sub {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-4);
+  font-size: var(--fs-xs);
+  color: var(--text-muted);
+}
+
+.run-row-message {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.entry-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-4);
+  margin-bottom: var(--space-5);
+}
+
 .run-card-summary:hover {
   background: var(--bg-hover);
 }
@@ -1394,6 +1490,8 @@ function filterByRun(runId: string): void {
 }
 
 .run-card-hostname {
+  flex: none;
+  white-space: nowrap;
   font-weight: 600;
   color: var(--text-primary);
 }
@@ -1508,7 +1606,7 @@ function filterByRun(runId: string): void {
 
 .load-more {
   display: flex;
-  justify-content: center;
+  justify-content: flex-start;
   padding: var(--space-4) 0;
 }
 

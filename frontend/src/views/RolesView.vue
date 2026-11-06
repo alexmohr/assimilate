@@ -248,7 +248,7 @@ onMounted((): void => {
       v-else
       class="table-wrap table-wrap--framed"
     >
-      <table class="data-table data-table--compact">
+      <table class="data-table data-table--stack data-table--compact">
         <thead>
           <tr>
             <th class="role-name-col">Role</th>
@@ -282,6 +282,7 @@ onMounted((): void => {
             <td
               v-for="perm in PERMISSION_LABELS"
               :key="perm.key"
+              :data-label="perm.label"
               class="perm-cell"
             >
               <span

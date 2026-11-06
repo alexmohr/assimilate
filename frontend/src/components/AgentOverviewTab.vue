@@ -457,6 +457,12 @@ const REPO_STATE_TONE: Record<RepoOverviewState, Tone | 'info'> = {
   color: var(--accent);
 }
 
+/* Both actions travel together at the right edge; each taking its own
+   auto margin split the free space and left the first one mid-row. */
+.attention-action ~ .attention-link {
+  margin-left: 0;
+}
+
 .facts {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));

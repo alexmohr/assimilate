@@ -206,6 +206,11 @@ Reach for these rather than rebuilding them.
   by hairlines (`--border` between cells, `--border-subtle` between rows),
   never by another filled or bordered box, and never by the darker
   `--bg-base`. Code and log output is the one inset, on `--bg-code`.
+* **Buttons are never centred.** A row of actions sits at the right end
+  of what it acts on (Cancel / Save at a form's foot, a row's actions at its
+  far right); an empty state, error card or "Load more" is left-aligned with
+  its button under it. Two actions that belong together share one
+  `margin-left: auto` group instead of each taking an auto margin.
 * **Tiles** — `.tiles` is one card split into cells by 1px hairlines (the
   container's border colour shows through a 1px gap), not a row of separate
   boxes; `.tile` is a cell. `--lg` is the dashboard's headline step and

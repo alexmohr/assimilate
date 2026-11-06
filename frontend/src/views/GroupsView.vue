@@ -269,7 +269,7 @@ onMounted(async () => {
       v-else
       class="table-wrap table-wrap--framed"
     >
-      <table class="data-table">
+      <table class="data-table data-table--stack">
         <thead>
           <tr>
             <th>Name</th>
@@ -284,8 +284,18 @@ onMounted(async () => {
             :key="group.id"
           >
             <td class="name-cell">{{ group.name }}</td>
-            <td class="desc-cell">{{ group.description ?? '\u2014' }}</td>
-            <td class="count-cell">{{ memberCounts[group.id] ?? 0 }}</td>
+            <td
+              data-label="Description"
+              class="desc-cell"
+            >
+              {{ group.description ?? '\u2014' }}
+            </td>
+            <td
+              data-label="Members"
+              class="count-cell"
+            >
+              {{ memberCounts[group.id] ?? 0 }}
+            </td>
             <td class="actions-cell">
               <button
                 class="btn btn-sm btn-ghost"

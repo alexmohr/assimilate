@@ -2635,6 +2635,13 @@
       gap: var(--space-5);
     }
 
+    /* The row's buttons, which have no label, sit at its right edge. */
+    .data-table--stack td:last-child:not([data-label]) {
+      display: flex;
+      justify-content: flex-end;
+      gap: var(--space-3);
+    }
+
     .data-table--stack td[data-label]::before {
       content: attr(data-label);
       color: var(--text-muted);
@@ -3655,7 +3662,6 @@
   }
 
   .error-card {
-    text-align: center;
     max-width: 420px;
     background: var(--bg-card);
     border: 1px solid var(--border);

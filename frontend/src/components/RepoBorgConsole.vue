@@ -7,7 +7,6 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 import { ref } from 'vue'
 import { execRepoCommand } from '../api/repos'
 import { extractError } from '../utils/error'
-import HelpHint from './HelpHint.vue'
 import type { ExecBorgResponse } from '../types/generated'
 
 const props = defineProps<{ repoId: number }>()
@@ -60,15 +59,12 @@ function exitClass(code: number): string {
 
 <template>
   <div>
-    <div class="pane-head pane-head--end console-head">
-      <HelpHint
-        label="running ad-hoc commands"
-        align="end"
-      >
+    <div class="pane-head console-head">
+      <p class="pane-lede">
         Execute borg commands directly against this repository. The repository URL and passphrase
         are injected automatically. Use <code class="console-code">::archive</code> notation to
         reference a specific archive.
-      </HelpHint>
+      </p>
     </div>
     <div class="console-input-row">
       <span class="console-prefix">borg</span>

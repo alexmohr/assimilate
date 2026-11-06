@@ -79,9 +79,7 @@ const sections = computed<SettingsSections<SettingsSection>>(() => [
     <template v-if="currentSection === 'identity'">
       <section class="pane-section">
         <div class="pane-head">
-          <HelpHint label="host naming">
-            How this host names itself, and what the server knows about it.
-          </HelpHint>
+          <p class="pane-lede">How this host names itself, and what the server knows about it.</p>
           <button
             v-if="!isImported"
             class="btn btn-sm"

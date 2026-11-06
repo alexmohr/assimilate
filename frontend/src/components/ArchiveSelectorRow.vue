@@ -148,7 +148,6 @@ const hostLabel = computed(() => resolveArchiveHost(props.archive))
   gap: var(--space-2);
   padding-right: var(--space-4);
   border-bottom: 1px solid var(--border-subtle);
-  border-left: 3px solid transparent;
   transition: background var(--duration-fast);
 }
 
@@ -162,15 +161,10 @@ const hostLabel = computed(() => resolveArchiveHost(props.archive))
 
 .archive-row.selected {
   background: var(--accent-subtle);
-  border-left-color: var(--accent);
 }
 
-/* borg recorded a hostname no agent claims. The stripe is the only place left
-   to say so in the flat list, where there is no group header carrying the
-   warning. */
-.archive-row--unmatched {
-  border-left-color: var(--warning);
-}
+/* borg recorded a hostname no agent claims: the host name itself turns
+   amber (below), rather than a stripe down the row's edge. */
 
 .archive-row--deleting .archive-row-body {
   opacity: 0.55;
@@ -237,7 +231,8 @@ const hostLabel = computed(() => resolveArchiveHost(props.archive))
 }
 
 .archive-row-sub {
-  gap: var(--space-3);
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-3);
   font-size: var(--fs-2xs);
   color: var(--text-muted);
 }

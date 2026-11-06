@@ -10,7 +10,6 @@ import BaseSegmented, { type SegmentedOption } from './BaseSegmented.vue'
 import ToggleSwitch from './ToggleSwitch.vue'
 import FileChangePatternsEditor from './FileChangePatternsEditor.vue'
 import CommandListEditor from './CommandListEditor.vue'
-import HelpHint from './HelpHint.vue'
 import PaneRow from './PaneRow.vue'
 import PerAgentFields from './PerAgentFields.vue'
 import BorgPatternReference from './BorgPatternReference.vue'
@@ -69,14 +68,11 @@ const hostsWithoutSnapshotTools = computed(() =>
 
 <template>
   <div class="form-stack">
-    <div class="pane-head pane-head--end">
-      <HelpHint
-        label="bandwidth, patterns and commands"
-        align="end"
-      >
+    <div class="pane-head">
+      <p class="pane-lede">
         Settings most schedules leave alone: bandwidth and verification, the patterns that decide
         what is skipped, and commands to run around each backup.
-      </HelpHint>
+      </p>
     </div>
     <section class="pane-section">
       <span class="group-label group-label--lg">Options</span>

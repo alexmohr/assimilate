@@ -6,17 +6,14 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { formatDate } from '../utils/format'
-import { domainParams } from '../utils/agent'
-import EntityTags from './EntityTags.vue'
 import HelpHint from './HelpHint.vue'
-import SettingsRail, { type SettingsSections } from './SettingsRail.vue'
+import SettingsAccordion from './SettingsAccordion.vue'
+import type { SettingsSections } from './SettingsRail.vue'
 import AgentDefaultsCard from './AgentDefaultsCard.vue'
 import AgentDependenciesCard from './AgentDependenciesCard.vue'
 import AgentHostnameAliases from './AgentHostnameAliases.vue'
 import AgentProcessCard from './AgentProcessCard.vue'
-import AgentVmsCard from './AgentVmsCard.vue'
 import MachinePane from './MachinePane.vue'
-import AgentDatabasesCard from './AgentDatabasesCard.vue'
 import type { AgentRow } from '../types/agent'
 import type { SettingsSection } from '../utils/agentSettings'
 import { useSystemModeStore } from '../stores/systemMode'
@@ -68,19 +65,12 @@ const offersTokenRegeneration = computed(() => !isImported.value && !systemMode.
 const sections = computed<SettingsSections<SettingsSection>>(() => [
   { id: 'identity', label: 'Identity' },
   { id: 'defaults', label: 'Backup defaults' },
-  ...(props.isAdmin
-    ? [
-        { id: 'power', label: 'Power & dependencies' } as const,
-        { id: 'vms', label: 'Virtual machines' } as const,
-        { id: 'databases', label: 'Databases' } as const,
-        { id: 'tags', label: 'Tags' } as const,
-      ]
-    : []),
+  ...(props.isAdmin ? [{ id: 'power', label: 'Power & dependencies' } as const] : []),
 ])
 </script>
 
 <template>
-  <SettingsRail
+  <SettingsAccordion
     v-slot="{ section: currentSection }"
     :sections="sections"
     :section="section"
@@ -177,24 +167,5 @@ const sections = computed<SettingsSections<SettingsSection>>(() => [
         :can-edit="!isImported && isAdmin"
       />
     </MachinePane>
-
-    <AgentVmsCard
-      v-else-if="currentSection === 'vms'"
-      :agent="agent"
-      :can-edit="!isImported"
-    />
-
-    <AgentDatabasesCard
-      v-else-if="currentSection === 'databases'"
-      :agent="agent"
-      :can-edit="!isImported"
-    />
-
-    <EntityTags
-      v-else-if="currentSection === 'tags'"
-      scope="host"
-      :entity-path="`/agents/${agent.hostname}`"
-      :entity-params="domainParams(agent.domain)"
-    />
-  </SettingsRail>
+  </SettingsAccordion>
 </template>

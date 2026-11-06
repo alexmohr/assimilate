@@ -27,7 +27,14 @@ const props = defineProps<{
    * applied to the `/tags` namespace request.
    */
   entityParams?: Record<string, string>
+  /**
+   * Header form: the chips and a "+ Tag" button that reveals the add row,
+   * with no empty-state line.
+   */
+  compact?: boolean
 }>()
+
+const adding = ref(false)
 
 const DEFAULT_TAG_COLOR = '#6b7280'
 
@@ -114,9 +121,12 @@ defineExpose({ reload: load })
 </script>
 
 <template>
-  <div class="tags-section">
+  <div
+    class="tags-section"
+    :class="{ 'tags-section--compact': compact }"
+  >
     <div
-      v-if="assigned.length > 0"
+      v-if="assigned.length > 0 || compact"
       class="tag-list"
     >
       <span
@@ -138,6 +148,15 @@ defineExpose({ reload: load })
           <X :size="12" />
         </button>
       </span>
+      <button
+        v-if="compact"
+        type="button"
+        class="tag-add-toggle"
+        :aria-expanded="adding"
+        @click="adding = !adding"
+      >
+        + Tag
+      </button>
     </div>
     <span
       v-else
@@ -145,7 +164,10 @@ defineExpose({ reload: load })
       >No tags assigned.</span
     >
 
-    <div class="tag-add-row">
+    <div
+      v-if="!compact || adding"
+      class="tag-add-row"
+    >
       <select
         v-if="available.length > 0"
         class="input input-sm"
@@ -187,6 +209,26 @@ defineExpose({ reload: load })
 </template>
 
 <style scoped>
+.tags-section--compact {
+  gap: var(--space-3);
+}
+
+.tag-add-toggle {
+  font: inherit;
+  font-size: var(--fs-2xs);
+  padding: var(--space-1) var(--space-4);
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-pill);
+  background: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.tag-add-toggle:hover {
+  color: var(--text-primary);
+  border-color: var(--text-muted);
+}
+
 .color-input {
   width: 2.5rem;
   padding: var(--space-1);

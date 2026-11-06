@@ -8,6 +8,8 @@ import { computed } from 'vue'
 import { formatDate, relativeTime } from '../utils/format'
 import { badgeClass, type AgentPowerPhase } from '../utils/badge'
 import DetailHeader from './DetailHeader.vue'
+import EntityTags from './EntityTags.vue'
+import { domainParams } from '../utils/agent'
 import OverflowMenu from './OverflowMenu.vue'
 import { useSystemModeStore } from '../stores/systemMode'
 import type { AgentRow } from '../types/agent'
@@ -302,6 +304,18 @@ const restartNote = computed(() =>
           </button>
         </template>
       </OverflowMenu>
+    </template>
+
+    <template
+      v-if="isAdmin"
+      #tags
+    >
+      <EntityTags
+        scope="host"
+        :entity-path="`/agents/${agent.hostname}`"
+        :entity-params="domainParams(agent.domain)"
+        compact
+      />
     </template>
 
     <template #footer>

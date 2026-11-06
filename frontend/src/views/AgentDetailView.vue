@@ -53,6 +53,7 @@ import AgentArchivesTab from '../components/AgentArchivesTab.vue'
 import RunLogTab, { type BackupFilter } from '../components/RunLogTab.vue'
 import AgentSettingsTab from '../components/AgentSettingsTab.vue'
 import AgentRemovalDialogs from '../components/AgentRemovalDialogs.vue'
+import AgentSourcesTab from '../components/AgentSourcesTab.vue'
 import { useReportsPager } from '../composables/useReportsPager'
 import { useReportRetry } from '../composables/useReportRetry'
 
@@ -68,13 +69,14 @@ import { useReportRetry } from '../composables/useReportRetry'
  * layout exists to shrink. Settings is self-contained either way, so
  * promoting it later is a router change and nothing else.
  */
-type TabId = 'overview' | 'schedules' | 'backups' | 'logs' | 'settings'
+type TabId = 'overview' | 'schedules' | 'backups' | 'sources' | 'logs' | 'settings'
 
 function isTabId(value: unknown): value is TabId {
   return (
     value === 'overview' ||
     value === 'schedules' ||
     value === 'backups' ||
+    value === 'sources' ||
     value === 'logs' ||
     value === 'settings'
   )
@@ -99,6 +101,15 @@ const settingsSection = computed<SettingsSection>({
     return isSettingsSection(route.query.section) ? route.query.section : 'identity'
   },
   set(val: SettingsSection) {
+    router.replace({ query: { ...route.query, section: val } })
+  },
+})
+
+const sourcesSection = computed<'vms' | 'databases'>({
+  get() {
+    return route.query.section === 'databases' ? 'databases' : 'vms'
+  },
+  set(val) {
     router.replace({ query: { ...route.query, section: val } })
   },
 })
@@ -145,6 +156,7 @@ const tabs = computed<TabOption<TabId>[]>(() => [
   { id: 'overview', label: 'Overview' },
   { id: 'schedules', label: 'Schedules', count: agentSchedules.value.length },
   { id: 'backups', label: 'Backups' },
+  ...(isAdmin.value ? [{ id: 'sources', label: 'Sources' } as const] : []),
   { id: 'logs', label: 'Logs', count: reportsPager.total.value },
   { id: 'settings', label: 'Settings' },
 ])
@@ -1017,6 +1029,12 @@ watch(wsStatus, (newStatus, oldStatus) => {
           :domain="agent.domain"
           :repos="repos"
           :is-admin="isAdmin"
+        />
+
+        <AgentSourcesTab
+          v-else-if="activeTab === 'sources' && agent"
+          v-model:section="sourcesSection"
+          :agent="agent"
         />
 
         <RunLogTab

@@ -219,13 +219,24 @@ defineExpose({ reset, unmatchedCount, unmatchedHostnames })
           :options="groupOptions"
           label="Group archives"
         />
-        <BaseSegmented
+        <div
           v-if="multiRepo"
-          v-model="repoChoice"
-          class="archive-repo-filter"
-          :options="repoOptions"
-          label="Repository"
-        />
+          class="filter-pills archive-repo-filter"
+          role="group"
+          aria-label="Repository"
+        >
+          <button
+            v-for="option in repoOptions"
+            :key="option.value"
+            type="button"
+            class="filter-pill"
+            :class="{ active: repoChoice === option.value }"
+            :aria-pressed="repoChoice === option.value"
+            @click="repoChoice = option.value"
+          >
+            {{ option.label }}
+          </button>
+        </div>
       </div>
 
       <div
@@ -387,11 +398,9 @@ defineExpose({ reset, unmatchedCount, unmatchedHostnames })
   flex: none;
 }
 
-/* A repository per option: let a long list scroll in place rather than push
-   the pane wider than a phone. */
+/* A repository per pill; the pills wrap onto more lines on a phone. */
 .archive-repo-filter {
-  max-width: 100%;
-  overflow-x: auto;
+  flex-basis: 100%;
 }
 
 .archive-day-group + .archive-day-group {

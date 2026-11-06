@@ -183,6 +183,7 @@ function setAll(expand: boolean): void {
 .accordion-body {
   border-top: 1px solid var(--border-subtle);
   padding: var(--space-6);
+  background: var(--bg-base);
 }
 
 /* The box already frames the section; the nest's left rule would be a

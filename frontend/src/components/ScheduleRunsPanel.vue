@@ -5,7 +5,7 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { formatDateShort, formatDuration } from '../utils/format'
+import { formatDateShort, formatDuration, relativeTime } from '../utils/format'
 import { scheduleRepoRuns } from '../utils/scheduleRepos'
 import {
   RUN_OUTCOME_LABELS,
@@ -108,20 +108,6 @@ function oldestFirst(list: readonly ScheduleRun[]): ScheduleRun[] {
   return [...list].reverse()
 }
 
-/**
- * When the oldest and the newest pill ran, under either end of the strip - or
- * just the one date, for a strip of one.
- */
-function axis(newestFirst: readonly ScheduleRun[]): { first: string; last: string | null } | null {
-  const newest = newestFirst[0]
-  const oldest = newestFirst[newestFirst.length - 1]
-  if (!newest || !oldest) return null
-  return {
-    first: formatDateShort(oldest.finishedAt),
-    last: newest === oldest ? null : formatDateShort(newest.finishedAt),
-  }
-}
-
 function pillLabel(run: ScheduleRun): string {
   return `${formatDateShort(run.finishedAt)}: ${RUN_OUTCOME_LABELS[run.status]}`
 }
@@ -140,61 +126,97 @@ function repoLabel(report: ReportRow): string | null {
   const option = props.repoOptions.find((o) => o.id === report.repo_id)
   return option?.name ?? report.repo_name ?? `#${report.repo_id}`
 }
+
+/**
+ * One row per repository - or a single row when the schedule writes to one -
+ * laid out like the agent Overview's repository rows: a dot for the newest
+ * run, the name over a line of facts, the run cells on the right.
+ */
+interface StripRow {
+  key: string
+  name: string
+  runs: readonly ScheduleRun[]
+}
+
+const stripRows = computed<StripRow[]>(() =>
+  multiRepo.value
+    ? repoStrips.value.map((s) => ({ key: String(s.repo.id), name: s.repo.name, runs: s.runs }))
+    : [{ key: 'all', name: props.repoOptions[0]?.name ?? 'All runs', runs: runs.value }],
+)
+
+const DOT_FOR: Record<RunOutcome, string> = {
+  success: 'status-dot--success',
+  warning: 'status-dot--warning',
+  skipped: 'status-dot--warning',
+  failed: 'status-dot--danger',
+  cancelled: '',
+}
+
+function rowMeta(list: readonly ScheduleRun[]): string {
+  const newest = list[0]
+  if (!newest) return 'No runs yet'
+  return `last ${relativeTime(newest.finishedAt)} · ${list.length} runs`
+}
 </script>
 
 <template>
-  <div class="panel">
-    <div class="runs-head">
-      <div class="runs-headline">
-        <span class="stat-label">Recent runs</span>
-        <span class="stat-value stat-value--lg">{{ headline }}</span>
-      </div>
-      <div
-        v-if="runs.length > 0"
-        class="chart-legend chart-legend--start"
+  <section class="runs-section">
+    <div class="section-head">
+      <h2 class="section-title">Recent runs</h2>
+      <button
+        class="section-link"
+        type="button"
+        @click="emit('openLogs')"
       >
-        <span
-          v-for="entry in legend"
-          :key="entry.outcome"
-          class="chart-legend-item"
-        >
-          <i
-            class="chart-legend-swatch chart-legend-swatch--dot"
-            :class="`run-tone--${entry.outcome}`"
-            aria-hidden="true"
-          />
-          {{ entry.text }}
-        </span>
-        <span
-          v-if="averageText"
-          class="chart-legend-item muted"
-          >{{ averageText }}</span
-        >
-        <button
-          class="section-link"
-          type="button"
-          @click="emit('openLogs')"
-        >
-          View all in Logs
-        </button>
-      </div>
+        View all in Activity log
+      </button>
+    </div>
+    <div
+      v-if="runs.length > 0"
+      class="chart-legend chart-legend--start"
+    >
+      <span class="chart-legend-item">{{ headline }}</span>
+      <span
+        v-for="entry in legend"
+        :key="entry.outcome"
+        class="chart-legend-item"
+      >
+        <i
+          class="chart-legend-swatch chart-legend-swatch--dot"
+          :class="`run-tone--${entry.outcome}`"
+          aria-hidden="true"
+        />
+        {{ entry.text }}
+      </span>
+      <span
+        v-if="averageText"
+        class="chart-legend-item muted"
+        >{{ averageText }}</span
+      >
     </div>
 
-    <template v-if="multiRepo">
+    <div class="rows">
       <div
-        v-for="strip in repoStrips"
-        :key="strip.repo.id"
-        class="repo-strip"
+        v-for="row in stripRows"
+        :key="row.key"
+        class="runs-row"
       >
-        <span class="group-label">{{ strip.repo.name }}</span>
+        <span
+          class="status-dot"
+          :class="row.runs[0] ? DOT_FOR[row.runs[0].status] : ''"
+        />
+        <span class="runs-row-text">
+          <span class="runs-row-name">{{ row.name }}</span>
+          <span class="runs-row-meta">{{ rowMeta(row.runs) }}</span>
+        </span>
         <div
-          v-if="strip.runs.length > 0"
+          v-if="row.runs.length > 0"
           class="run-strip"
           role="group"
-          :aria-label="`${strip.repo.name}: last ${strip.runs.length} runs, oldest first`"
+          :aria-label="`${row.name}: last ${row.runs.length} runs, oldest first`"
         >
           <button
-            v-for="run in oldestFirst(strip.runs)"
+            v-for="run in oldestFirst(row.runs)"
             :key="run.key"
             class="run-pill"
             :class="`run-tone--${run.status}`"
@@ -205,82 +227,72 @@ function repoLabel(report: ReportRow): string | null {
             @click="selectedKey = run.key"
           />
         </div>
-        <span
-          v-else
-          class="field-hint"
-          >No runs yet.</span
-        >
-        <div
-          v-if="axis(strip.runs)"
-          class="run-axis"
-        >
-          <span>{{ axis(strip.runs)?.first }}</span>
-          <span v-if="axis(strip.runs)?.last">{{ axis(strip.runs)?.last }}</span>
-        </div>
       </div>
-    </template>
-    <template v-else-if="runs.length > 0">
       <div
-        class="run-strip"
-        role="group"
-        :aria-label="`Last ${runs.length} runs, oldest first`"
+        v-if="selectedRun"
+        class="runs-detail"
       >
-        <button
-          v-for="run in oldestFirst(runs)"
-          :key="run.key"
-          class="run-pill"
-          :class="`run-tone--${run.status}`"
-          type="button"
-          :title="pillLabel(run)"
-          :aria-label="pillLabel(run)"
-          :aria-pressed="selectedRun?.key === run.key"
-          @click="selectedKey = run.key"
+        <ScheduleRunDetail
+          :key="selectedRun.key"
+          :run="selectedRun"
+          :host-label="hostLabel"
+          :repo-label="repoLabel"
+          @open-report-detail="emit('openReportDetail', $event)"
         />
       </div>
-      <div
-        v-if="axis(runs)"
-        class="run-axis"
-      >
-        <span>{{ axis(runs)?.first }}</span>
-        <span v-if="axis(runs)?.last">{{ axis(runs)?.last }}</span>
-      </div>
-    </template>
-
-    <ScheduleRunDetail
-      v-if="selectedRun"
-      :key="selectedRun.key"
-      :run="selectedRun"
-      :host-label="hostLabel"
-      :repo-label="repoLabel"
-      @open-report-detail="emit('openReportDetail', $event)"
-    />
-  </div>
+    </div>
+  </section>
 </template>
 
 <style scoped>
-.runs-head {
+.runs-section {
   display: flex;
-  flex-wrap: wrap;
-  align-items: flex-end;
-  justify-content: space-between;
-  gap: var(--space-4) var(--space-7);
-  margin-bottom: var(--space-5);
+  flex-direction: column;
+  gap: var(--space-4);
 }
 
-.runs-headline {
+.runs-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) minmax(0, 14rem);
+  align-items: center;
+  gap: var(--space-3) var(--space-5);
+  padding: var(--space-5) var(--space-6);
+  font-size: var(--fs-sm);
+}
+
+.runs-row + .runs-row,
+.runs-detail {
+  border-top: 1px solid var(--border-subtle);
+}
+
+.runs-detail {
+  padding: var(--space-5) var(--space-6);
+}
+
+.runs-row-text {
   display: flex;
   flex-direction: column;
   gap: var(--space-1);
+  min-width: 0;
 }
 
-.repo-strip {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
+.runs-row-name {
+  font-weight: 600;
 }
 
-.repo-strip + .repo-strip {
-  margin-top: var(--space-5);
+.runs-row-meta {
+  font-size: var(--fs-xs);
+  color: var(--text-muted);
+}
+
+@media (max-width: 640px) {
+  .runs-row {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .runs-row .run-strip {
+    grid-column: 2;
+  }
 }
 
 /* Small on purpose: about the height of the agent Overview's run cells. */
@@ -307,15 +319,6 @@ function repoLabel(report: ReportRow): string | null {
 .run-pill[aria-pressed='true'] {
   outline: 2px solid var(--text-primary);
   outline-offset: 2px;
-}
-
-.run-axis {
-  display: flex;
-  justify-content: space-between;
-  margin-top: var(--space-2);
-  font-size: var(--fs-2xs);
-  color: var(--text-muted);
-  font-variant-numeric: tabular-nums;
 }
 
 .run-tone--success {

@@ -102,10 +102,10 @@ const visible = computed(() =>
     return true
   }),
 )
-const FILTERS: readonly { id: Filter; label: string }[] = [
+const FILTERS: readonly { id: Filter; label: string; dot?: string }[] = [
   { id: 'all', label: 'All' },
-  { id: 'failing', label: 'Failing' },
-  { id: 'healthy', label: 'Healthy' },
+  { id: 'failing', label: 'Failing', dot: 'status-dot--danger' },
+  { id: 'healthy', label: 'Healthy', dot: 'status-dot--success' },
 ]
 
 function nextRun(schedule: ScheduleRow): string {
@@ -125,7 +125,7 @@ function openActivity(row: Row): void {
   <div class="schedule-table">
     <div class="sched-toolbar">
       <div
-        class="sched-filters"
+        class="filter-pills"
         role="group"
         aria-label="Filter schedules"
       >
@@ -133,12 +133,17 @@ function openActivity(row: Row): void {
           v-for="f in FILTERS"
           :key="f.id"
           type="button"
-          class="sched-pill"
-          :class="{ 'sched-pill--danger': f.id === 'failing' && counts.failing > 0 }"
+          class="filter-pill"
+          :class="{ active: filter === f.id }"
           :aria-pressed="filter === f.id"
           @click="filter = f.id"
         >
-          {{ f.label }}<b>{{ counts[f.id] }}</b>
+          <span
+            v-if="f.dot"
+            class="status-dot"
+            :class="f.dot"
+          ></span>
+          {{ f.label }} · {{ counts[f.id] }}
         </button>
       </div>
       <div class="sched-add">
@@ -247,12 +252,6 @@ function openActivity(row: Row): void {
   flex-wrap: wrap;
 }
 
-.sched-filters {
-  display: flex;
-  gap: var(--space-2);
-  flex-wrap: wrap;
-}
-
 .sched-add {
   margin-left: auto;
 }
@@ -263,44 +262,14 @@ function openActivity(row: Row): void {
   gap: var(--space-2);
 }
 
-.sched-pill {
-  font: inherit;
-  font-size: var(--fs-xs);
-  padding: var(--space-2) var(--space-4);
-  border-radius: var(--radius-pill);
-  border: 1px solid var(--border);
-  background: none;
-  color: var(--text-secondary);
-  cursor: pointer;
-}
-
-.sched-pill b {
-  margin-left: var(--space-2);
-  font-weight: 600;
-  color: var(--text-muted);
-}
-
-.sched-pill[aria-pressed='true'] {
-  background: var(--accent-subtle);
-  border-color: transparent;
-  color: var(--accent);
-}
-
-.sched-pill[aria-pressed='true'] b {
-  color: var(--accent);
-}
-
-.sched-pill--danger b {
-  color: var(--danger);
-}
-
 .sched-row {
   display: grid;
   grid-template-columns: 10px minmax(0, 1fr) auto 32px;
   column-gap: var(--space-4);
-  row-gap: var(--space-1);
+  row-gap: var(--space-2);
   align-items: center;
-  padding: var(--space-4) var(--space-3) var(--space-4) var(--space-5);
+  /* The Overview tab's repository rows set the rhythm for every row list. */
+  padding: var(--space-5) var(--space-4) var(--space-5) var(--space-6);
   border-top: 1px solid var(--border-subtle);
   font-size: var(--fs-sm);
   cursor: pointer;
@@ -480,7 +449,7 @@ function openActivity(row: Row): void {
       10px minmax(0, 2.2fr) minmax(0, 1.6fr) minmax(0, 1.3fr) minmax(0, 1fr)
       40px;
     column-gap: var(--space-6);
-    padding: var(--space-4) var(--space-4) var(--space-4) var(--space-6);
+    padding: var(--space-5) var(--space-4) var(--space-5) var(--space-6);
   }
 
   .sched-cols {

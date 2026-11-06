@@ -574,7 +574,7 @@ onMounted(load)
         v-else
         class="table-wrap"
       >
-        <table class="data-table">
+        <table class="data-table data-table--stack">
           <thead>
             <tr>
               <th>Domain</th>
@@ -606,7 +606,7 @@ onMounted(load)
                   {{ vm.last_error }}
                 </div>
               </td>
-              <td>
+              <td data-label="State">
                 <span
                   class="badge"
                   :class="stateBadge(vm.state)"
@@ -614,7 +614,7 @@ onMounted(load)
                   {{ stateLabel(vm.state) }}
                 </span>
               </td>
-              <td>
+              <td data-label="Mode">
                 <span
                   class="badge"
                   :class="modeBadge(vm.mode)"
@@ -622,7 +622,7 @@ onMounted(load)
                   {{ modeLabel(vm.mode) }}
                 </span>
               </td>
-              <td>
+              <td data-label="Staged size">
                 <div class="cell-size">
                   {{ formatBytes(vm.staged_bytes) }} of {{ limitLabel(vm) }}
                 </div>
@@ -637,7 +637,7 @@ onMounted(load)
                   />
                 </div>
               </td>
-              <td>
+              <td data-label="Limit (GiB)">
                 <input
                   class="input input-sm vm-limit"
                   type="number"
@@ -652,7 +652,7 @@ onMounted(load)
                   {{ vm.limit_bytes === null ? 'Host default' : 'Overridden' }}
                 </div>
               </td>
-              <td>
+              <td data-label="Backed up">
                 <ToggleSwitch
                   :model-value="vm.included"
                   :disabled="!canEdit || rowSaving === vm.name || snapshotting === vm.name"

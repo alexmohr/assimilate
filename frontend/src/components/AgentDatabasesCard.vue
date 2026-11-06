@@ -728,7 +728,7 @@ onMounted(load)
         class="table-wrap"
       >
         <table
-          class="data-table"
+          class="data-table data-table--stack"
           data-testid="database-sources"
         >
           <thead>
@@ -760,7 +760,7 @@ onMounted(load)
                   {{ source.last_error }}
                 </div>
               </td>
-              <td>
+              <td data-label="Found as">
                 <span class="badge badge--neutral">{{ kindLabel(source) }}</span>
                 <div
                   v-if="source.engine"
@@ -769,11 +769,19 @@ onMounted(load)
                   {{ ENGINE_LABELS[source.engine] }}
                 </div>
               </td>
-              <td class="cell-mono">{{ databaseList(source) }}</td>
-              <td class="cell-date">
+              <td
+                data-label="Databases"
+                class="cell-mono"
+              >
+                {{ databaseList(source) }}
+              </td>
+              <td
+                data-label="Last scanned"
+                class="cell-date"
+              >
                 {{ source.last_scanned_at ? formatDate(source.last_scanned_at) : 'Never' }}
               </td>
-              <td>
+              <td data-label="Backed up">
                 <ToggleSwitch
                   :model-value="source.included"
                   :disabled="!canEdit || rowSaving === sourceKey(source)"

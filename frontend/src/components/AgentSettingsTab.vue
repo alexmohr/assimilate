@@ -77,39 +77,41 @@ const sections = computed<SettingsSections<SettingsSection>>(() => [
     @update:section="emit('update:section', $event)"
   >
     <template v-if="currentSection === 'identity'">
-      <div class="pane-head">
-        <HelpHint label="host naming">
-          How this host names itself, and what the server knows about it.
-        </HelpHint>
-        <button
-          v-if="!isImported"
-          class="btn btn-sm"
-          type="button"
-          @click="emit('editIdentity')"
-        >
-          Edit
-        </button>
-      </div>
-      <dl class="info-grid">
-        <dt>Hostname</dt>
-        <dd class="mono">{{ agent.hostname }}</dd>
-        <dt>Domain</dt>
-        <dd class="mono">{{ agent.domain ?? 'Not set' }}</dd>
-        <dt>Display name</dt>
-        <dd>{{ agent.display_name ?? 'Not set' }}</dd>
-        <template v-if="!isImported">
-          <dt>Agent version</dt>
-          <dd class="mono">{{ agent.agent_version ?? 'Unknown' }}</dd>
-          <dt>Revision</dt>
-          <dd class="mono">{{ agent.agent_git_sha ?? 'Unknown' }}</dd>
-          <dt>Built</dt>
-          <dd class="mono">{{ agent.agent_build_time ?? 'Unknown' }}</dd>
-        </template>
-        <dt>Registered</dt>
-        <dd>{{ formatDate(agent.created_at ?? null, 'Never') }}</dd>
-        <dt>Last seen</dt>
-        <dd>{{ formatDate(agent.last_seen_at ?? null, 'Never') }}</dd>
-      </dl>
+      <section class="pane-section">
+        <div class="pane-head">
+          <HelpHint label="host naming">
+            How this host names itself, and what the server knows about it.
+          </HelpHint>
+          <button
+            v-if="!isImported"
+            class="btn btn-sm"
+            type="button"
+            @click="emit('editIdentity')"
+          >
+            Edit
+          </button>
+        </div>
+        <dl class="info-grid">
+          <dt>Hostname</dt>
+          <dd class="mono">{{ agent.hostname }}</dd>
+          <dt>Domain</dt>
+          <dd class="mono">{{ agent.domain ?? 'Not set' }}</dd>
+          <dt>Display name</dt>
+          <dd>{{ agent.display_name ?? 'Not set' }}</dd>
+          <template v-if="!isImported">
+            <dt>Agent version</dt>
+            <dd class="mono">{{ agent.agent_version ?? 'Unknown' }}</dd>
+            <dt>Revision</dt>
+            <dd class="mono">{{ agent.agent_git_sha ?? 'Unknown' }}</dd>
+            <dt>Built</dt>
+            <dd class="mono">{{ agent.agent_build_time ?? 'Unknown' }}</dd>
+          </template>
+          <dt>Registered</dt>
+          <dd>{{ formatDate(agent.created_at ?? null, 'Never') }}</dd>
+          <dt>Last seen</dt>
+          <dd>{{ formatDate(agent.last_seen_at ?? null, 'Never') }}</dd>
+        </dl>
+      </section>
 
       <section
         v-if="offersTokenRegeneration"

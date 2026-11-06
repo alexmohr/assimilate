@@ -46,7 +46,6 @@ import {
 import { parseLines } from '../utils/validation'
 import { normalizeBackupStatus } from '../utils/backupStatus'
 import { isAgentOffline, lastSeenText } from '../utils/agent'
-import { openReportArchive } from '../utils/reportNavigation'
 import {
   dependencyCheckOutcomeText,
   dependencyWaitBadge,
@@ -57,10 +56,8 @@ import ScheduleHeader from '../components/ScheduleHeader.vue'
 import ScheduleOverviewTab from '../components/ScheduleOverviewTab.vue'
 import ScheduleSettingsTab from '../components/ScheduleSettingsTab.vue'
 import ScheduleBackupsTab from '../components/ScheduleBackupsTab.vue'
-import RunLogTab, { type BackupFilter } from '../components/RunLogTab.vue'
 import { useArchiveDeletionEvents } from '../composables/useArchiveDeletionEvents'
 import { useReportsPager } from '../composables/useReportsPager'
-import { useReportRetry } from '../composables/useReportRetry'
 import { DEFAULT_SCHEDULE_FORM_STATE } from '../types/scheduleForm'
 import type { ScheduleAgentOverrides, ScheduleFormState } from '../types/scheduleForm'
 import BaseSpinner from '../components/BaseSpinner.vue'
@@ -119,9 +116,6 @@ const reportsPager = useReportsPager((limit, offset) =>
 const reports = reportsPager.reports
 const reportsLoading = reportsPager.loading
 const reportsError = reportsPager.error
-const filterStatus = ref<BackupFilter>('all')
-const sortAscending = ref(false)
-const expandedReportId = ref<number | null>(null)
 const { success: toastSuccess, error: toastError } = useToast()
 const { onMessage } = useWebSocket()
 const selectedAgentIds = ref<number[]>([])
@@ -219,10 +213,10 @@ const estimatedRemainingSecs = computed<number | null>(() => {
   return Math.max(0, Math.round(estimatedTotal - backupElapsedSecs.value))
 })
 
-type TabId = 'overview' | 'backups' | 'logs' | 'settings'
+type TabId = 'overview' | 'backups' | 'settings'
 
 function isTabId(value: unknown): value is TabId {
-  return value === 'overview' || value === 'backups' || value === 'logs' || value === 'settings'
+  return value === 'overview' || value === 'backups' || value === 'settings'
 }
 
 const activeTab = computed<TabId>({
@@ -255,6 +249,11 @@ const settingsSection = computed<ScheduleSettingsSection>({
  * one level down, on the host's own Logs tab - which renders it in place,
  * expanded.
  */
+/** The schedule's whole run history lives in the Activity log, filtered to it. */
+function openActivityLog(): void {
+  router.push({ path: '/activity', query: { category: 'backup', schedule_id: String(props.id) } })
+}
+
 function openReportDetail(r: ReportRow): void {
   const agent = agentMap.value.get(r.agent_id ?? 0)
   const hostname = agent?.hostname ?? r.hostname
@@ -279,7 +278,6 @@ const isBackup = computed(() => scheduleType.value === 'backup')
 const visibleTabs = computed<TabOption<TabId>[]>(() => {
   const tabs: TabOption<TabId>[] = [{ id: 'overview', label: 'Overview' }]
   if (isBackup.value) tabs.push({ id: 'backups', label: 'Backups' })
-  tabs.push({ id: 'logs', label: 'Logs', count: reportsPager.total.value })
   tabs.push({ id: 'settings', label: 'Settings' })
   return tabs
 })
@@ -423,9 +421,6 @@ function clearScheduleState(): void {
   // carry over onto schedule B after an in-app navigation that reuses this
   // component instance, with nothing on screen explaining why the tab
   // looks empty or differently sorted.
-  filterStatus.value = 'all'
-  sortAscending.value = false
-  expandedReportId.value = null
   failedReportCount.value = 0
   backupRunning.value = false
   backupHostname.value = null
@@ -828,8 +823,6 @@ function findRunningReport(): ReportRow | undefined {
   })
 }
 
-const { retryingReportIds, retry: retryReport } = useReportRetry(loadReports)
-
 function loadMoreReports(): void {
   void reportsPager.loadMore()
 }
@@ -844,14 +837,6 @@ async function cancelBackup(): Promise<void> {
   } finally {
     cancelLoading.value = false
   }
-}
-
-function toggleReport(r: ReportRow): void {
-  expandedReportId.value = expandedReportId.value === r.id ? null : r.id
-}
-
-function openReport(r: ReportRow): void {
-  openReportArchive(router, r)
 }
 
 onMessage('BackupStarted', (payload) => {
@@ -987,7 +972,7 @@ watch(
 // "Load more" progress the reports pager had - so this now only fills a
 // tab that has never loaded anything, not one already showing data.
 watch(activeTab, (tab) => {
-  if ((tab === 'backups' || tab === 'logs') && reports.value.length === 0) {
+  if (tab === 'backups' && reports.value.length === 0) {
     loadReports().catch(() => undefined)
   }
 })
@@ -1082,7 +1067,7 @@ watch(activeTab, (tab) => {
           :can-check-dependencies="isAdmin"
           :checking-dependency-id="checkingDependencyId"
           @retry="runNow($event)"
-          @open-logs="activeTab = 'logs'"
+          @open-logs="openActivityLog"
           @open-report-detail="openReportDetail"
           @check-dependency="checkDependency"
         />
@@ -1103,25 +1088,6 @@ watch(activeTab, (tab) => {
           :repo-options="repoOptions"
           :is-admin="isAdmin"
           :reload="loadReports"
-          @load-more="loadMoreReports"
-        />
-
-        <RunLogTab
-          v-else-if="activeTab === 'logs'"
-          v-model:filter="filterStatus"
-          v-model:sort-ascending="sortAscending"
-          :reports="reports"
-          :total="reportsPager.total.value"
-          :loading="reportsLoading"
-          :loading-more="reportsPager.loadingMore.value"
-          :error="reportsError"
-          :expanded-report-id="expandedReportId"
-          :highlighted-archive-name="undefined"
-          :retrying-report-ids="retryingReportIds"
-          :pinned-report-id="null"
-          @toggle="toggleReport"
-          @open="openReport"
-          @retry="retryReport"
           @load-more="loadMoreReports"
         />
 

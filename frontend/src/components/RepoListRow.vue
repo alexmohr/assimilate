@@ -38,18 +38,6 @@ const target = computed<string>(() =>
     : `/repos/${props.repo.id}`,
 )
 
-/** The borg address and settings, plus a note on a sleeping host the row's header does not carry. */
-const subline = computed<string>(() => {
-  const { repo } = props
-  const parts = [
-    `${repo.ssh_user}@${repo.ssh_host}:${repo.repo_path}`,
-    repo.encryption,
-    repo.compression,
-  ]
-  if (!props.pooled && repo.repo_host.intermittent) parts.push('host sleeps')
-  return parts.join(' · ')
-})
-
 const lastBackup = computed<string>(() => relativeTime(props.repo.last_backup_at ?? ''))
 
 const sizeText = computed<string>(() => {
@@ -105,7 +93,6 @@ const barTone = computed<BadgeTone>(() => {
       ></span>
       <span class="list-row-text">
         <span class="list-row-name">{{ repo.name }}</span>
-        <span class="list-row-sub">{{ subline }}</span>
       </span>
       <span class="list-narrow-only repo-row-when">{{ lastBackup }}</span>
     </span>

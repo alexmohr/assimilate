@@ -150,13 +150,16 @@ p {
   gap: var(--space-5);
   align-items: center;
   padding: var(--space-5) 0;
-  border-top: 1px solid var(--border);
+  border-top: 1px solid var(--border-subtle);
 }
 
+/* The same status dot as every other row list, not a coloured bar. */
 .severity-mark {
   width: 8px;
-  height: 32px;
-  border-radius: var(--radius-pill);
+  height: 8px;
+  border-radius: 50%;
+  align-self: start;
+  margin-top: 0.4em;
 }
 
 .severity-critical {

@@ -353,11 +353,10 @@
 
   /* Ruled footer holding a panel's buttons. */
   .info-actions {
-    margin-top: var(--space-8);
-    padding-top: var(--space-6);
-    border-top: 1px solid var(--border);
+    margin-top: var(--space-4);
     display: flex;
     align-items: center;
+    justify-content: flex-end;
     flex-wrap: wrap;
     gap: var(--space-5);
   }
@@ -1063,6 +1062,24 @@
   .pane-section {
     border-top: 1px solid var(--border);
     padding-top: var(--space-6);
+  }
+
+  /* One editable block: its own Edit, and Cancel / Save at its foot. Inside a
+     settings section each block - an EditableSection, or a .pane-section
+     that holds one - is a card of its own, so it is clear which fields a
+     Save applies to. The open section's body is page-coloured behind them. */
+  .edit-block {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-5);
+  }
+
+  .settings-pane > .edit-block,
+  .settings-pane > .pane-section {
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--bg-card);
+    padding: var(--space-6);
   }
 
   /* A section whose head is nothing but its label still needs the gap the
@@ -2173,28 +2190,26 @@
       margin-left: 0;
     }
 
-    /* Once the row wraps, a stripe left in the flow only stretches to its own
-       flex line and sits above the content as a short dash. Pinned to the
-       row's left edge instead, it runs the full height of every line. */
+    /* Once the row wraps, the status dot stays at the top-left of the
+       first line rather than floating in the middle of the block. */
     .agent-row:has(> .agent-row-line) {
       position: relative;
-      padding-left: calc(var(--space-5) + 3px + var(--space-3));
+      padding-left: calc(var(--space-5) + 8px + var(--space-4));
     }
 
     .agent-row:has(> .agent-row-line) > .agent-row-stripe {
       position: absolute;
-      top: var(--space-4);
-      bottom: var(--space-4);
+      top: calc(var(--space-4) + 0.45em);
       left: var(--space-5);
-      min-height: 0;
     }
   }
 
+  /* The row's status, as the same 8px dot every list uses - no longer a
+     coloured bar down the row's edge. The class keeps its old name. */
   .agent-row-stripe {
-    width: 3px;
-    align-self: stretch;
-    min-height: 1.25rem;
-    border-radius: var(--radius-pill);
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
     flex: none;
     background: var(--border);
   }
@@ -2569,13 +2584,52 @@
       display: revert;
     }
 
-    .filter-pills {
-      flex-wrap: nowrap;
-      overflow-x: auto;
-    }
-
     .filter-pill {
       padding: var(--space-3) var(--space-5);
+    }
+  }
+
+  /* A table that becomes one card per row on a phone instead of scrolling
+     sideways: the first cell is the row's title, every other cell a
+     label/value line, its label taken from `data-label`. */
+  @media (max-width: 768px) {
+    .data-table--stack thead {
+      display: none;
+    }
+
+    .data-table--stack,
+    .data-table--stack tbody,
+    .data-table--stack tr,
+    .data-table--stack td {
+      display: block;
+      width: 100%;
+    }
+
+    .data-table--stack tr {
+      padding: var(--space-4) var(--space-5);
+      border-top: 1px solid var(--border-subtle);
+    }
+
+    .data-table--stack tr:first-child {
+      border-top: none;
+    }
+
+    .data-table--stack td {
+      border: none;
+      padding: var(--space-2) 0;
+    }
+
+    .data-table--stack td[data-label] {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: var(--space-5);
+    }
+
+    .data-table--stack td[data-label]::before {
+      content: attr(data-label);
+      color: var(--text-muted);
+      font-size: var(--fs-xs);
     }
   }
 

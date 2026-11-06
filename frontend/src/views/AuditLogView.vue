@@ -5,13 +5,13 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 <script setup lang="ts">
 import { ref, reactive, computed, onMounted, watch } from 'vue'
-import { ShieldAlert } from '@lucide/vue'
-import DataTable from 'primevue/datatable'
-import Column from 'primevue/column'
+import { ChevronLeft, ChevronRight, ShieldAlert } from '@lucide/vue'
 import BaseSpinner from '../components/BaseSpinner.vue'
 import EmptyState from '../components/EmptyState.vue'
+import LogList from '../components/LogList.vue'
+import LogRow from '../components/LogRow.vue'
 import { getAuditLog } from '../api/auditLog'
-import { formatDateShort } from '../utils/format'
+import { formatDate, formatDateShort, formatEventType } from '../utils/format'
 import { useAuthStore } from '../stores/auth'
 import { useAsyncAction } from '../composables/useAsyncAction'
 import type { AuditEntryResponse } from '../types/generated'
@@ -26,7 +26,7 @@ const isAdmin = computed(() => authStore.isAdmin)
 const entries = ref<AuditEntry[]>([])
 const total = ref(0)
 const { loading, error, run } = useAsyncAction()
-const expandedRows = ref<AuditEntry[]>([])
+const expandedId = ref<number | null>(null)
 
 const filters = reactive({
   action: '',
@@ -55,10 +55,35 @@ async function fetchAuditLog(): Promise<void> {
   })
 }
 
-function onPageChange(event: { page: number; rows: number }): void {
-  page.value = event.page + 1
-  perPage.value = event.rows
+const pageCount = computed((): number => Math.max(1, Math.ceil(total.value / perPage.value)))
+
+/** "26-50 of 112": the entries this page shows. */
+const rangeLabel = computed((): string => {
+  const first = (page.value - 1) * perPage.value + 1
+  const last = Math.min(page.value * perPage.value, total.value)
+  return `${first}-${last} of ${total.value}`
+})
+
+function goToPage(next: number): void {
+  page.value = Math.min(Math.max(1, next), pageCount.value)
+  expandedId.value = null
   fetchAuditLog()
+}
+
+function toggle(entry: AuditEntry): void {
+  expandedId.value = expandedId.value === entry.id ? null : entry.id
+}
+
+/** "delete_user" as "Delete user". */
+function actionLabel(action: AuditEntry['action']): string {
+  const words = formatEventType(action)
+  return words.charAt(0).toUpperCase() + words.slice(1)
+}
+
+/** "repository #4", or nothing for an action with no single target. */
+function targetLabel(entry: AuditEntry): string | null {
+  if (entry.target_type === null) return null
+  return entry.target_id === null ? entry.target_type : `${entry.target_type} #${entry.target_id}`
 }
 
 function clearFilters(): void {
@@ -172,110 +197,89 @@ onMounted(fetchAuditLog)
       description="Mutation operations will appear here once they occur."
     />
 
-    <div
-      v-else
-      class="table-wrap"
-    >
-      <DataTable
-        v-model:expanded-rows="expandedRows"
-        :value="entries"
-        :rows="perPage"
-        :total-records="total"
-        :lazy="true"
-        :paginator="true"
-        :rows-per-page-options="perPageOptions"
-        :first="(page - 1) * perPage"
-        data-key="id"
-        table-class="audit-table"
-        @page="onPageChange"
-      >
-        <Column
-          header="Timestamp"
-          field="created_at"
-          :sortable="true"
+    <template v-else>
+      <LogList data-testid="audit-entries">
+        <LogRow
+          v-for="entry in entries"
+          :key="entry.id"
+          :tone="auditActionTone(entry.action)"
+          :title="entry.username"
+          :subtitle="actionLabel(entry.action)"
+          :facts="[targetLabel(entry), entry.ip_address]"
+          :time="formatDateShort(entry.created_at)"
+          :time-title="formatDate(entry.created_at)"
+          :expanded="expandedId === entry.id"
+          @toggle="toggle(entry)"
         >
-          <template #body="{ data }">
-            <span class="cell-ts">{{ formatDateShort(data.created_at) }}</span>
-          </template>
-        </Column>
-        <Column
-          header="User"
-          field="username"
-          :sortable="true"
-        >
-          <template #body="{ data }">
-            <span class="cell-user">{{ data.username }}</span>
-          </template>
-        </Column>
-        <Column
-          header="Action"
-          field="action"
-          :sortable="true"
-        >
-          <template #body="{ data }">
-            <span
-              class="badge"
-              :class="badgeClass(auditActionTone(data.action))"
-            >
-              {{ data.action }}
-            </span>
-          </template>
-        </Column>
-        <Column
-          header="Target"
-          field="target_type"
-        >
-          <template #body="{ data }">
-            <span class="cell-target">{{ data.target_type }} #{{ data.target_id }}</span>
-          </template>
-        </Column>
-        <Column
-          header="IP"
-          field="ip_address"
-        >
-          <template #body="{ data }">
-            <span class="cell-ip mono">{{ data.ip_address ?? '—' }}</span>
-          </template>
-        </Column>
-        <Column
-          header="Details"
-          :expander="true"
-        />
-        <template #expansion="{ data }">
-          <div class="detail-expansion">
+          <template #detail>
+            <dl class="info-grid">
+              <dt>Time</dt>
+              <dd>{{ formatDate(entry.created_at) }}</dd>
+              <dt>User</dt>
+              <dd>{{ entry.username }}</dd>
+              <dt>Action</dt>
+              <dd>
+                <span
+                  class="badge"
+                  :class="badgeClass(auditActionTone(entry.action))"
+                  >{{ actionLabel(entry.action) }}</span
+                >
+              </dd>
+              <dt>Target</dt>
+              <dd>{{ targetLabel(entry) ?? '\u2014' }}</dd>
+              <dt>IP address</dt>
+              <dd class="audit-ip">{{ entry.ip_address ?? '\u2014' }}</dd>
+            </dl>
             <pre
-              v-if="hasAuditDetails(data)"
+              v-if="hasAuditDetails(entry)"
               class="detail-pre"
-              >{{ data.details }}</pre
+              >{{ entry.details }}</pre
             >
-            <span
-              v-else
-              class="muted"
-              >No additional details.</span
-            >
-          </div>
-        </template>
-        <template #empty>
-          <div class="state-msg">No audit entries match the current filters.</div>
-        </template>
-      </DataTable>
-    </div>
+          </template>
+        </LogRow>
+      </LogList>
 
-    <div class="per-page-selector">
-      <label class="filter-label">Rows per page</label>
-      <select
-        v-model="perPage"
-        class="input input-sm select-input"
-      >
-        <option
-          v-for="opt in perPageOptions"
-          :key="opt"
-          :value="opt"
-        >
-          {{ opt }}
-        </option>
-      </select>
-    </div>
+      <div class="audit-pager">
+        <span class="row-count">{{ rangeLabel }}</span>
+        <div class="audit-pager-controls">
+          <label
+            class="filter-label"
+            for="audit-per-page"
+            >Rows per page</label
+          >
+          <select
+            id="audit-per-page"
+            v-model="perPage"
+            class="input input-sm select-input"
+          >
+            <option
+              v-for="opt in perPageOptions"
+              :key="opt"
+              :value="opt"
+            >
+              {{ opt }}
+            </option>
+          </select>
+          <button
+            class="btn btn-sm btn-ghost"
+            aria-label="Previous page"
+            :disabled="page <= 1"
+            @click="goToPage(page - 1)"
+          >
+            <ChevronLeft :size="14" />
+          </button>
+          <span class="audit-page">Page {{ page }} of {{ pageCount }}</span>
+          <button
+            class="btn btn-sm btn-ghost"
+            aria-label="Next page"
+            :disabled="page >= pageCount"
+            @click="goToPage(page + 1)"
+          >
+            <ChevronRight :size="14" />
+          </button>
+        </div>
+      </div>
+    </template>
   </div>
 </template>
 
@@ -303,34 +307,29 @@ onMounted(fetchAuditLog)
   align-self: flex-end;
 }
 
-.cell-user {
-  font-weight: 600;
-  color: var(--text-primary);
-}
-
-.cell-target {
-  color: var(--text-secondary);
-  font-size: var(--fs-base);
-}
-
-.cell-ip {
-  color: var(--text-muted);
-  font-size: var(--fs-sm);
-}
-
-.mono {
+.audit-ip {
   font-family: var(--mono);
 }
 
-.detail-expansion {
-  padding: var(--space-6) var(--space-8);
-  border-top: 1px solid var(--border-subtle);
+/* The count on the left, the page controls together at the right end. */
+.audit-pager {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
 }
 
-.per-page-selector {
+.audit-pager-controls {
   display: flex;
   align-items: center;
   gap: var(--space-4);
-  align-self: flex-end;
+  margin-left: auto;
+}
+
+.audit-page {
+  font-size: var(--fs-sm);
+  color: var(--text-secondary);
+  white-space: nowrap;
 }
 </style>

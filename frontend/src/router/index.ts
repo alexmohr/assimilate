@@ -91,6 +91,13 @@ export const routes: RouteRecordRaw[] = [
     meta: { requiresAdmin: true, serverOnly: true },
   },
   {
+    path: '/users/:id',
+    component: () => import('../views/UserDetailView.vue'),
+    name: 'user-detail',
+    props: true,
+    meta: { requiresAdmin: true, serverOnly: true },
+  },
+  {
     path: '/system',
     component: () => import('../views/SystemView.vue'),
     name: 'system',
@@ -134,6 +141,13 @@ export const routes: RouteRecordRaw[] = [
     path: '/notifications',
     name: 'notifications',
     component: () => import('../views/NotificationsView.vue'),
+    meta: { requiresAdmin: true },
+  },
+  {
+    path: '/notifications/channels/:id',
+    name: 'notification-channel-detail',
+    component: () => import('../views/ChannelDetailView.vue'),
+    props: true,
     meta: { requiresAdmin: true },
   },
   {

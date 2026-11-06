@@ -5,35 +5,31 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 <script setup lang="ts">
 import { computed } from 'vue'
-import { AlertTriangle, BellRing, Globe, Mail } from '@lucide/vue'
-import OverflowMenu from './OverflowMenu.vue'
-import { relativeTime } from '../utils/format'
+import { AlertTriangle, BellRing, ChevronRight, Globe, Mail } from '@lucide/vue'
 import {
   channelFailureSummaries,
   channelTarget,
   deliveryTone,
   lastDeliveryLabel,
   latestDeliveryByChannel,
-  recentDeliveries,
-  shortError,
   sortChannelsByTrouble,
   type ChannelFailureSummary,
   type DeliveryTone,
 } from '../utils/notificationChannels'
 import type {
   ChannelType,
-  EventType,
   NotificationChannelResponse,
   NotificationDeliveryResponse,
 } from '../types/generated'
 
 /**
- * The Channels tab: a call-out for any channel that has been failing, the
- * channels as one panel of rows, and the last few deliveries under them.
+ * The Channels tab: a call-out for any channel that has been failing, and the
+ * channels as one panel of rows.
  *
- * A row carries no buttons of its own. Clicking it opens the channel's edit
- * dialog; everything else a channel can do - its content, events and scope,
- * a test send, pausing it, deleting it - is in the row's overflow menu.
+ * A row carries no buttons of its own: it opens the channel's page, where
+ * everything a channel can do - its settings, events, scope and content, a
+ * test send, pausing it, deleting it, its delivery history - lives. Every
+ * channel's history together is the page's History tab.
  */
 const props = defineProps<{
   channels: NotificationChannelResponse[]
@@ -42,26 +38,8 @@ const props = defineProps<{
   eventsLabel: (channelId: number) => string
   /** "All", or what the channel is narrowed to. */
   scopeLabel: (channel: NotificationChannelResponse) => string
-  eventTypeLabel: (event: EventType) => string
   channelTypeLabel: (type: ChannelType) => string
-  /** The channel a test send is in flight for, if any. */
-  testingChannelId: number | null
 }>()
-
-const emit = defineEmits<{
-  edit: [channel: NotificationChannelResponse]
-  editContent: [channel: NotificationChannelResponse]
-  editEvents: [channel: NotificationChannelResponse]
-  editScope: [channel: NotificationChannelResponse]
-  test: [channel: NotificationChannelResponse]
-  toggle: [channel: NotificationChannelResponse]
-  delete: [channel: NotificationChannelResponse]
-  /** Open the History tab, narrowed to one channel or (null) to all of them. */
-  history: [channelId: number | null]
-}>()
-
-/** How many deliveries the "Recent deliveries" panel shows. */
-const RECENT_COUNT = 5
 
 const failures = computed((): ChannelFailureSummary[] =>
   channelFailureSummaries(props.channels, props.deliveries),
@@ -75,10 +53,6 @@ const latest = computed(
   (): Map<number, NotificationDeliveryResponse> => latestDeliveryByChannel(props.deliveries),
 )
 
-const recent = computed((): NotificationDeliveryResponse[] =>
-  recentDeliveries(props.deliveries, RECENT_COUNT),
-)
-
 function typeIcon(type: ChannelType): typeof Mail {
   if (type === 'email') return Mail
   if (type === 'webhook') return Globe
@@ -90,8 +64,8 @@ function failureTitle(f: ChannelFailureSummary): string {
   return `${f.channel.name} failed ${f.failed} of its last ${f.total} deliveries`
 }
 
-function channelName(id: number): string {
-  return props.channels.find((c) => c.id === id)?.name ?? `Channel ${id}`
+function channelLink(channel: NotificationChannelResponse): string {
+  return `/notifications/channels/${channel.id}`
 }
 
 function lastDelivery(
@@ -108,12 +82,6 @@ function channelTone(channel: NotificationChannelResponse): DeliveryTone | null 
 
 function dotClass(tone: DeliveryTone | null): string {
   return tone ? `status-dot status-dot--${tone}` : 'status-dot'
-}
-
-function deliveryDetail(d: NotificationDeliveryResponse): string {
-  if (d.status === 'sent') return 'Delivered'
-  if (d.status === 'pending') return 'Pending'
-  return shortError(d.error_message) || 'Failed'
 }
 
 function channelSub(channel: NotificationChannelResponse): string {
@@ -145,16 +113,15 @@ function narrowSummary(channel: NotificationChannelResponse): string {
           Last error: {{ f.lastError }}
         </span>
       </div>
-      <button
+      <RouterLink
         class="btn btn-sm btn-ghost"
-        type="button"
-        @click="emit('history', f.channel.id)"
+        :to="{ path: channelLink(f.channel), query: { section: 'history' } }"
       >
         View history
-      </button>
+      </RouterLink>
     </div>
 
-    <section class="list-group list-group--menus channel-group">
+    <section class="list-group channel-group">
       <div class="list-group-header">
         <h2 class="list-group-title">Channels</h2>
         <span class="list-group-count">{{ channels.length }}</span>
@@ -170,15 +137,12 @@ function narrowSummary(channel: NotificationChannelResponse): string {
         <span>State</span>
         <span></span>
       </div>
-      <div
+      <RouterLink
         v-for="channel in sortedChannels"
         :key="channel.id"
-        class="list-row list-row--link channel-row"
-        tabindex="0"
+        class="list-row"
+        :to="channelLink(channel)"
         :data-channel="channel.name"
-        :aria-label="`Edit ${channel.name}`"
-        @click="emit('edit', channel)"
-        @keydown.enter.self="emit('edit', channel)"
       >
         <div class="list-row-main">
           <span
@@ -221,124 +185,18 @@ function narrowSummary(channel: NotificationChannelResponse): string {
             {{ channel.enabled ? 'On' : 'Paused' }}
           </span>
         </span>
-        <!-- The menu's own clicks must not reach the row, which opens the editor. -->
-        <div
-          class="channel-row-menu"
-          @click.stop
-          @keydown.stop
-        >
-          <OverflowMenu
-            v-slot="{ run }"
-            :label="`More actions for ${channel.name}`"
-          >
-            <button
-              class="overflow-menu-item"
-              role="menuitem"
-              type="button"
-              @click="run(() => emit('edit', channel))"
-            >
-              Edit
-            </button>
-            <button
-              class="overflow-menu-item"
-              role="menuitem"
-              type="button"
-              @click="run(() => emit('editContent', channel))"
-            >
-              Edit content
-            </button>
-            <button
-              class="overflow-menu-item"
-              role="menuitem"
-              type="button"
-              @click="run(() => emit('editEvents', channel))"
-            >
-              Edit events
-            </button>
-            <button
-              class="overflow-menu-item"
-              role="menuitem"
-              type="button"
-              @click="run(() => emit('editScope', channel))"
-            >
-              Edit scope
-            </button>
-            <button
-              class="overflow-menu-item"
-              role="menuitem"
-              type="button"
-              :disabled="testingChannelId === channel.id"
-              @click="run(() => emit('test', channel))"
-            >
-              {{ testingChannelId === channel.id ? 'Sending...' : 'Send test' }}
-            </button>
-            <button
-              class="overflow-menu-item"
-              role="menuitem"
-              type="button"
-              @click="run(() => emit('toggle', channel))"
-            >
-              {{ channel.enabled ? 'Pause' : 'Resume' }}
-            </button>
-            <button
-              class="overflow-menu-item overflow-menu-item--danger"
-              role="menuitem"
-              type="button"
-              @click="run(() => emit('delete', channel))"
-            >
-              Delete
-            </button>
-          </OverflowMenu>
-        </div>
-      </div>
-    </section>
-
-    <section
-      v-if="recent.length > 0"
-      class="list-group recent-group"
-    >
-      <div class="list-group-header">
-        <h2 class="list-group-title">Recent deliveries</h2>
-        <div class="list-group-aside">
-          <button
-            class="btn btn-sm btn-ghost"
-            type="button"
-            @click="emit('history', null)"
-          >
-            All history
-          </button>
-        </div>
-      </div>
-      <div
-        v-for="d in recent"
-        :key="d.id"
-        class="list-row"
-      >
-        <div class="list-row-main">
-          <span :class="dotClass(deliveryTone(d.status))"></span>
-          <span class="recent-event">{{ eventTypeLabel(d.event_type) }}</span>
-        </div>
-        <span class="recent-channel">{{ channelName(d.channel_id) }}</span>
-        <span
-          class="recent-detail"
-          :class="{ 'channel-delivery--danger': d.status === 'failed' }"
-        >
-          {{ deliveryDetail(d) }}
-        </span>
-        <span class="list-row-value recent-when">{{ relativeTime(d.attempted_at) }}</span>
-      </div>
+        <ChevronRight
+          :size="16"
+          class="list-row-chevron"
+        />
+      </RouterLink>
     </section>
   </div>
 </template>
 
 <style scoped>
-/* The overflow menu drops below its row, so the panel must not clip it. */
 .channel-list .channel-group {
   --list-cols: minmax(0, 2.4fr) minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1.8fr) 5rem 2.5rem;
-}
-
-.channel-list .recent-group {
-  --list-cols: minmax(0, 1.4fr) minmax(0, 1fr) minmax(0, 2fr) 5rem;
 }
 
 .channel-tile {
@@ -354,8 +212,7 @@ function narrowSummary(channel: NotificationChannelResponse): string {
 }
 
 .channel-events,
-.channel-scope,
-.recent-channel {
+.channel-scope {
   color: var(--text-secondary);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -371,7 +228,6 @@ function narrowSummary(channel: NotificationChannelResponse): string {
 }
 
 .channel-delivery-text,
-.recent-detail,
 .notice-error {
   overflow: hidden;
   text-overflow: ellipsis;
@@ -389,36 +245,7 @@ function narrowSummary(channel: NotificationChannelResponse): string {
   color: var(--text-secondary);
 }
 
-.channel-row-menu {
-  justify-self: end;
-}
-
-.recent-event {
-  font-weight: 600;
-}
-
-.recent-detail {
-  color: var(--text-secondary);
-}
-
-.recent-when {
-  color: var(--text-secondary);
-  justify-self: end;
-}
-
 @media (max-width: 640px) {
-  /* The menu sits in the row's top-right corner, where the name line leaves
-     room for it. */
-  .channel-row {
-    padding-right: calc(var(--space-5) + 32px);
-  }
-
-  .channel-row-menu {
-    position: absolute;
-    top: var(--space-3);
-    right: var(--space-3);
-  }
-
   .channel-summary {
     flex: 1 1 100%;
     color: var(--text-secondary);
@@ -426,15 +253,6 @@ function narrowSummary(channel: NotificationChannelResponse): string {
 
   .channel-delivery {
     flex: 1 1 100%;
-  }
-
-  .recent-channel,
-  .recent-detail {
-    flex: 0 1 auto;
-  }
-
-  .recent-when {
-    margin-left: auto;
   }
 }
 </style>

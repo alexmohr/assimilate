@@ -5,8 +5,10 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { useWebSocket } from '../composables/useWebSocket'
 import { useEscapeKey } from '../composables/useEscapeKey'
+import { usePushSubscription } from '../composables/usePushSubscription'
 import { extractError } from '../utils/error'
 import { validateEmailConfig } from '../utils/smtpValidation'
 import { useAsyncAction } from '../composables/useAsyncAction'
@@ -14,12 +16,8 @@ import { logger } from '../utils/logger'
 import {
   listChannels,
   createChannel,
-  updateChannel,
-  deleteChannel,
-  testChannel,
   listRules,
   createRule,
-  deleteRule,
   getVapidPublicKey,
   subscribePush,
   listDeliveries,
@@ -27,22 +25,27 @@ import {
 import { listRepos } from '../api/repos'
 import { listAgents } from '../api/agents'
 import { listSchedules } from '../api/schedules'
-import { Plus, Bell, Send } from '@lucide/vue'
+import { Plus, Bell } from '@lucide/vue'
 import BaseSpinner from '../components/BaseSpinner.vue'
 import EmptyState from '../components/EmptyState.vue'
 import ToggleSwitch from '../components/ToggleSwitch.vue'
 import ChannelConfigFields from '../components/ChannelConfigFields.vue'
 import NotificationEventToggles from '../components/NotificationEventToggles.vue'
 import ScopeSelector, { type ScopeOption } from '../components/ScopeSelector.vue'
-import NotificationContentEditor from '../components/NotificationContentEditor.vue'
 import NotificationHistoryTab from '../components/NotificationHistoryTab.vue'
 import NotificationChannelList from '../components/NotificationChannelList.vue'
-import { useToast } from '../composables/useToast'
 import { configInputFor } from '../utils/channelConfig'
+import {
+  CHANNEL_TYPES,
+  EVENT_TYPES,
+  channelEventsLabel,
+  channelScopeLabel,
+  channelTypeLabel,
+  eventTypeLabel,
+} from '../utils/notificationEvents'
 import {
   duplicateHeaderNames,
   headersForRequest,
-  rowsFromSaved,
   type WebhookHeaderRow,
 } from '../utils/webhookHeaders'
 import type {
@@ -54,13 +57,24 @@ import type {
   NotificationChannelResponse,
   NotificationDeliveryResponse,
   NotificationRuleResponse,
-  UpdateChannelRequest,
   WebhookConfigInput,
 } from '../types/generated'
 import BaseModal from '../components/BaseModal.vue'
 import BaseTabs, { type TabOption } from '../components/BaseTabs.vue'
 
-type TabId = 'channels' | 'history'
+/**
+ * Every notification channel as one panel of rows, and every channel's
+ * delivery history under the History tab. A row opens the channel's own page,
+ * where its settings, events, scope and content are edited, a test is sent,
+ * and its own history is shown. Only creating a channel stays a dialog: the
+ * three-step wizard.
+ */
+const TAB_IDS = ['channels', 'history'] as const
+type TabId = (typeof TAB_IDS)[number]
+
+function isTabId(value: unknown): value is TabId {
+  return TAB_IDS.some((t) => t === value)
+}
 
 /** The add wizard's transport-independent fields; each transport keeps its own draft. */
 interface AddChannelForm {
@@ -69,33 +83,40 @@ interface AddChannelForm {
   enabled: boolean
 }
 
-/** The edit dialog's transport-independent fields. */
-interface EditChannelForm {
-  name: string
-  enabled: boolean
-}
+const route = useRoute()
+const router = useRouter()
 
-const activeTab = ref<TabId>('channels')
+/** `?tab=history` opens the History tab, so a link can land on it. */
+const activeTab = computed<TabId>({
+  get() {
+    const t = route.query.tab
+    return isTabId(t) ? t : 'channels'
+  },
+  set(val: TabId) {
+    void router.replace({ query: { ...route.query, tab: val } })
+  },
+})
 /** The channel the History tab is narrowed to, or null for every channel. */
 const historyChannelId = ref<number | null>(null)
 const channels = ref<NotificationChannelResponse[]>([])
 
 const tabs = computed((): TabOption<TabId>[] => [
-  { id: 'channels', label: 'Channels', icon: Bell, count: channels.value.length },
-  { id: 'history', label: 'History', icon: Send },
+  { id: 'channels', label: 'Channels', count: channels.value.length },
+  { id: 'history', label: 'History' },
 ])
 
-const toast = useToast()
 const rules = ref<NotificationRuleResponse[]>([])
 const deliveries = ref<NotificationDeliveryResponse[]>([])
 const { loading, error, run } = useAsyncAction()
 const scopeRepos = ref<ScopeOption[]>([])
 const scopeAgents = ref<ScopeOption[]>([])
 const scopeSchedules = ref<ScopeOption[]>([])
+const scopeSearch = ref('')
+
+const { isPushSupported, subscription, ensurePushSubscription } = usePushSubscription()
 
 // Add channel wizard state
 const addConfigFields = ref<InstanceType<typeof ChannelConfigFields> | null>(null)
-const editConfigFields = ref<InstanceType<typeof ChannelConfigFields> | null>(null)
 const showAddChannelDialog = ref(false)
 const wizardStep = ref(1)
 const addChannelForm = ref<AddChannelForm>({
@@ -109,75 +130,7 @@ const addChannelError = ref('')
 const addChannelLoading = ref(false)
 const toAddressesInput = ref('')
 
-const addChannelFormValid = computed((): boolean => {
-  const form = addChannelForm.value
-  if (!form.name.trim()) return false
-  if (form.channel_type === 'web_push' && !vapidConfigured.value) return false
-  if (form.channel_type === 'email') {
-    if (
-      !addChannelEmailCfg.value.smtp_host.trim() ||
-      !addChannelEmailCfg.value.from_address.trim() ||
-      !toAddressesInput.value.trim()
-    )
-      return false
-  } else if (form.channel_type === 'webhook') {
-    if (!addChannelWebhookCfg.value.url.trim()) return false
-  }
-  return true
-})
-
-// Edit channel dialog state
-const showEditChannelDialog = ref(false)
-const editChannelId = ref<number | null>(null)
-const editChannelForm = ref<EditChannelForm>({ name: '', enabled: false })
-const editChannelError = ref('')
-const editChannelLoading = ref(false)
-const editToAddressesInput = ref('')
-
-// Delete channel dialog state
-const showDeleteChannelDialog = ref(false)
-const deleteChannelId = ref<number | null>(null)
-const deleteChannelName = ref('')
-const deleteChannelLoading = ref(false)
-const deleteChannelError = ref('')
-
-// Events edit modal state
-const showEventsModal = ref(false)
-const eventsModalChannelId = ref<number | null>(null)
-
-// Scope edit modal state
-const showScopeModal = ref(false)
-const scopeModalChannelId = ref<number | null>(null)
-const scopeSearch = ref('')
-
-const ruleTogglingKey = ref<string | null>(null)
-
-const testingChannelId = ref<number | null>(null)
-
-// Content edit modal state
-const contentModalChannelId = ref<number | null>(null)
-
-const currentPushSubscription = ref<PushSubscription | null>(null)
 const vapidConfigured = ref(false)
-
-const EVENT_TYPES: EventType[] = [
-  'backup_success',
-  'backup_warning',
-  'backup_failed',
-  'check_success',
-  'check_failed',
-  'agent_connected',
-  'agent_disconnected',
-  'schedule_auto_disabled',
-  'backup_skipped_agent_offline',
-  'backup_skipped_repo_offline',
-  'backup_skipped_dependency_offline',
-  'backup_waiting_for_host',
-  'backup_file_changed',
-  'backup_catch_up_abandoned',
-]
-
-const CHANNEL_TYPES: ChannelType[] = ['email', 'webhook', 'web_push']
 
 function createEmailConfig(): EmailConfigInput {
   return {
@@ -197,101 +150,28 @@ function createWebhookConfig(): WebhookConfigInput {
 
 const addChannelEmailCfg = ref<EmailConfigInput>(createEmailConfig())
 const addChannelWebhookCfg = ref<WebhookConfigInput>(createWebhookConfig())
-const editChannelEmailCfg = ref<EmailConfigInput>(createEmailConfig())
-const editChannelWebhookCfg = ref<WebhookConfigInput>(createWebhookConfig())
 const addHeaderRows = ref<WebhookHeaderRow[]>([])
-const editHeaderRows = ref<WebhookHeaderRow[]>([])
-const editSavedWebhookUrl = ref<string | undefined>(undefined)
 
-const activeEventsChannel = computed((): NotificationChannelResponse | undefined => {
-  if (eventsModalChannelId.value == null) return undefined
-  return channels.value.find((c) => c.id === eventsModalChannelId.value)
+const addChannelFormValid = computed((): boolean => {
+  const form = addChannelForm.value
+  if (!form.name.trim()) return false
+  if (form.channel_type === 'web_push' && !vapidConfigured.value) return false
+  if (form.channel_type === 'email') {
+    if (
+      !addChannelEmailCfg.value.smtp_host.trim() ||
+      !addChannelEmailCfg.value.from_address.trim() ||
+      !toAddressesInput.value.trim()
+    )
+      return false
+  } else if (form.channel_type === 'webhook') {
+    if (!addChannelWebhookCfg.value.url.trim()) return false
+  }
+  return true
 })
 
-const activeContentChannel = computed((): NotificationChannelResponse | undefined => {
-  if (contentModalChannelId.value == null) return undefined
-  return channels.value.find((c) => c.id === contentModalChannelId.value)
-})
-
-const activeScopeChannel = computed((): NotificationChannelResponse | undefined => {
-  if (scopeModalChannelId.value == null) return undefined
-  return channels.value.find((c) => c.id === scopeModalChannelId.value)
-})
-
-// The events and scope dialogs act on whichever channel they were opened for.
-function isActiveEventEnabled(et: EventType): boolean {
-  const channel = activeEventsChannel.value
-  return channel !== undefined && isEventEnabled(channel.id, et)
+function eventsLabel(channelId: number): string {
+  return channelEventsLabel(rules.value, channelId)
 }
-
-function isActiveRuleToggling(et: EventType): boolean {
-  const channel = activeEventsChannel.value
-  return channel !== undefined && isRuleToggling(channel.id, et)
-}
-
-async function toggleActiveRule(et: EventType): Promise<void> {
-  const channel = activeEventsChannel.value
-  if (channel) await toggleRule(channel.id, et)
-}
-
-async function toggleActiveScopeItem(type: keyof ChannelScope, id: number): Promise<void> {
-  const channel = activeScopeChannel.value
-  if (channel) await toggleScopeItem(channel, type, id)
-}
-
-function eventTypeLabel(et: EventType): string {
-  const words = et.split('_')
-  return [words[0].charAt(0).toUpperCase() + words[0].slice(1), ...words.slice(1)].join(' ')
-}
-
-function channelTypeLabel(ct: ChannelType): string {
-  if (ct === 'email') return 'Email'
-  if (ct === 'webhook') return 'Webhook'
-  return 'Web push'
-}
-
-function channelEventsLabel(channelId: number): string {
-  const count = rules.value.filter((r) => r.channel_id === channelId).length
-  if (count === 0) return 'No events'
-  return `${count} of ${EVENT_TYPES.length} events`
-}
-
-function channelScopeLabel(channel: NotificationChannelResponse): string {
-  const s = channel.scope
-  if (!s) return 'All'
-  const parts: string[] = []
-  if (s.repo_ids && s.repo_ids.length > 0) {
-    parts.push(`${s.repo_ids.length} repo${s.repo_ids.length > 1 ? 's' : ''}`)
-  }
-  if (s.agent_ids && s.agent_ids.length > 0) {
-    parts.push(`${s.agent_ids.length} host${s.agent_ids.length > 1 ? 's' : ''}`)
-  }
-  if (s.schedule_ids && s.schedule_ids.length > 0) {
-    parts.push(`${s.schedule_ids.length} schedule${s.schedule_ids.length > 1 ? 's' : ''}`)
-  }
-  return parts.length > 0 ? parts.join(', ') : 'All'
-}
-
-async function toggleScopeItem(
-  channel: NotificationChannelResponse,
-  type: keyof ChannelScope,
-  id: number,
-): Promise<void> {
-  const current = channel.scope?.[type] ?? []
-  const updated = current.includes(id) ? current.filter((x) => x !== id) : [...current, id]
-  const newScope: ChannelScope = { ...channel.scope, [type]: updated }
-  try {
-    const result = await updateChannel(channel.id, { scope: newScope })
-    const idx = channels.value.findIndex((c) => c.id === channel.id)
-    if (idx >= 0) channels.value[idx] = result
-  } catch (e: unknown) {
-    logger.error('toggleScopeItem failed', e)
-  }
-}
-
-const isPushSupported = computed((): boolean => {
-  return 'serviceWorker' in navigator && 'PushManager' in window
-})
 
 async function loadChannels(): Promise<void> {
   await run(async () => {
@@ -312,10 +192,10 @@ async function loadPushStatus(): Promise<void> {
   try {
     const vapidStatus = await getVapidPublicKey()
     vapidConfigured.value = vapidStatus.configured
-    if (isPushSupported.value && vapidStatus.configured) {
+    if (isPushSupported() && vapidStatus.configured) {
       const registration = await navigator.serviceWorker.ready
       const existing = await registration.pushManager.getSubscription()
-      currentPushSubscription.value = existing
+      subscription.value = existing
       if (existing) {
         await subscribePush(existing.toJSON())
       }
@@ -360,6 +240,7 @@ function openAddChannel(): void {
   wizardStep.value = 1
   wizardEvents.value = []
   wizardScope.value = {}
+  scopeSearch.value = ''
   addConfigFields.value?.reset()
   showAddChannelDialog.value = true
 }
@@ -447,262 +328,8 @@ function toggleWizardScopeItem(type: keyof ChannelScope, id: number): void {
   wizardScope.value = { ...wizardScope.value, [type]: updated }
 }
 
-function openEditChannel(channel: NotificationChannelResponse): void {
-  editChannelId.value = channel.id
-  editChannelForm.value = {
-    name: channel.name,
-    enabled: channel.enabled,
-  }
-  if (channel.channel_type === 'email') {
-    // The server never returns the stored password; blank here means "keep it".
-    editChannelEmailCfg.value = { ...channel.config, smtp_password: '' }
-    editToAddressesInput.value = channel.config.to_addresses.join(', ')
-  } else if (channel.channel_type === 'webhook') {
-    editChannelWebhookCfg.value = { ...channel.config }
-  }
-  // Header values are never returned either: the rows carry names only, and a
-  // blank value keeps the saved one.
-  editHeaderRows.value = rowsFromSaved(channel.webhook_headers)
-  editSavedWebhookUrl.value = channel.channel_type === 'webhook' ? channel.config.url : undefined
-  editChannelError.value = ''
-  editConfigFields.value?.reset()
-  showEditChannelDialog.value = true
-}
-
-function editChannelType(): ChannelType {
-  const ch = channels.value.find((c) => c.id === editChannelId.value)
-  return ch?.channel_type ?? 'email'
-}
-
-function editChannelHasPassword(): boolean {
-  return channels.value.find((c) => c.id === editChannelId.value)?.has_password ?? false
-}
-
-async function submitEditChannel(): Promise<void> {
-  if (editChannelId.value === null) return
-  const channelType = editChannelType()
-  if (channelType === 'email') {
-    editChannelEmailCfg.value.to_addresses = editToAddressesInput.value
-      .split(',')
-      .map((s) => s.trim())
-      .filter((s) => s.length > 0)
-  }
-  if (channelType === 'webhook') {
-    const duplicates = duplicateHeaderNames(editHeaderRows.value)
-    if (duplicates.length > 0) {
-      editChannelError.value = `Each header can only be given once: ${duplicates.join(', ')}`
-      return
-    }
-    editChannelWebhookCfg.value.headers = headersForRequest(editHeaderRows.value)
-  }
-  editChannelLoading.value = true
-  editChannelError.value = ''
-  try {
-    if (channelType === 'email') {
-      const verdict = await validateEmailConfig(editChannelEmailCfg.value, editChannelId.value)
-      if (!verdict.success) {
-        editChannelError.value = verdict.message
-        return
-      }
-    }
-    // A web push channel has no settings of its own to edit here.
-    const req: UpdateChannelRequest =
-      channelType === 'web_push'
-        ? { ...editChannelForm.value }
-        : {
-            ...editChannelForm.value,
-            ...configInputFor(channelType, {
-              email: editChannelEmailCfg.value,
-              webhook: editChannelWebhookCfg.value,
-            }),
-          }
-    const updated = await updateChannel(editChannelId.value, req)
-    const idx = channels.value.findIndex((c) => c.id === editChannelId.value)
-    if (idx !== -1) {
-      channels.value[idx] = updated
-    }
-    showEditChannelDialog.value = false
-  } catch (e: unknown) {
-    editChannelError.value = extractError(e)
-  } finally {
-    editChannelLoading.value = false
-  }
-}
-
-function openDeleteChannel(channel: NotificationChannelResponse): void {
-  deleteChannelId.value = channel.id
-  deleteChannelName.value = channel.name
-  deleteChannelError.value = ''
-  showDeleteChannelDialog.value = true
-}
-
-async function confirmDeleteChannel(): Promise<void> {
-  if (deleteChannelId.value === null) return
-  deleteChannelLoading.value = true
-  deleteChannelError.value = ''
-  try {
-    await deleteChannel(deleteChannelId.value)
-    channels.value = channels.value.filter((c) => c.id !== deleteChannelId.value)
-    rules.value = rules.value.filter((r) => r.channel_id !== deleteChannelId.value)
-    showDeleteChannelDialog.value = false
-  } catch (e: unknown) {
-    deleteChannelError.value = extractError(e)
-  } finally {
-    deleteChannelLoading.value = false
-  }
-}
-
-async function toggleChannel(channel: NotificationChannelResponse): Promise<void> {
-  try {
-    const updated = await updateChannel(channel.id, { enabled: !channel.enabled })
-    const idx = channels.value.findIndex((c) => c.id === channel.id)
-    if (idx !== -1) {
-      channels.value[idx] = updated
-    }
-  } catch (e: unknown) {
-    logger.error('toggleChannel failed', e)
-  }
-}
-
-function onContentUpdated(channel: NotificationChannelResponse): void {
-  const idx = channels.value.findIndex((c) => c.id === channel.id)
-  if (idx !== -1) {
-    channels.value[idx] = channel
-  }
-}
-
-/** Sends a test through the channel and says how it went in a toast. */
-async function handleTestChannel(channel: NotificationChannelResponse): Promise<void> {
-  testingChannelId.value = channel.id
-  try {
-    if (channel.channel_type === 'web_push') {
-      await ensurePushSubscription()
-    }
-    await testChannel(channel.id)
-    toast.success(`Test sent to ${channel.name}`)
-  } catch (e: unknown) {
-    toast.error(`Test to ${channel.name} failed: ${extractError(e)}`)
-  } finally {
-    testingChannelId.value = null
-  }
-}
-
-function openContentModal(channel: NotificationChannelResponse): void {
-  contentModalChannelId.value = channel.id
-}
-
-/** Opens the History tab, narrowed to one channel or to none. */
-function showHistory(channelId: number | null): void {
-  historyChannelId.value = channelId
-  activeTab.value = 'history'
-}
-
-function isEventEnabled(channelId: number, et: EventType): boolean {
-  return rules.value.some((r) => r.channel_id === channelId && r.event_type === et)
-}
-
-function isRuleToggling(channelId: number, et: EventType): boolean {
-  return ruleTogglingKey.value === `${channelId}:${et}`
-}
-
-async function toggleRule(channelId: number, et: EventType): Promise<void> {
-  const key = `${channelId}:${et}`
-  ruleTogglingKey.value = key
-  const existing = rules.value.find((r) => r.channel_id === channelId && r.event_type === et)
-  try {
-    if (existing) {
-      await deleteRule(existing.id)
-      rules.value = rules.value.filter((r) => r.id !== existing.id)
-    } else {
-      const created = await createRule({
-        channel_id: channelId,
-        event_type: et,
-        enabled: true,
-      })
-      rules.value.push(created)
-    }
-  } catch (e: unknown) {
-    logger.error('toggleRule failed', e)
-  } finally {
-    ruleTogglingKey.value = null
-  }
-}
-
-function openEventsModal(channel: NotificationChannelResponse): void {
-  eventsModalChannelId.value = channel.id
-  showEventsModal.value = true
-}
-
-function openScopeModal(channel: NotificationChannelResponse): void {
-  scopeModalChannelId.value = channel.id
-  scopeSearch.value = ''
-  showScopeModal.value = true
-}
-
-function urlBase64ToUint8Array(base64String: string): Uint8Array<ArrayBuffer> {
-  const padding = '='.repeat((4 - (base64String.length % 4)) % 4)
-  const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/')
-  const rawData = window.atob(base64)
-  const outputArray = new Uint8Array(rawData.length)
-  for (let i = 0; i < rawData.length; ++i) {
-    outputArray[i] = rawData.charCodeAt(i)
-  }
-  return outputArray
-}
-
-async function ensurePushSubscription(): Promise<void> {
-  if (!isPushSupported.value) {
-    throw new Error('Push notifications are not supported in this browser')
-  }
-
-  if (Notification.permission === 'denied') {
-    throw new Error('Notification permission was denied. Please enable it in browser settings.')
-  }
-
-  if (Notification.permission !== 'granted') {
-    let result = await Notification.requestPermission()
-    if (result === 'default') {
-      result = await Notification.requestPermission()
-    }
-    if (result !== 'granted') {
-      throw new Error('Notification permission is required for web push')
-    }
-  }
-
-  const vapidStatus = await getVapidPublicKey()
-  if (!vapidStatus.configured) {
-    throw new Error('VAPID keys not configured on the server')
-  }
-
-  const registration = await navigator.serviceWorker.ready
-
-  const existing = await registration.pushManager.getSubscription()
-  if (existing) {
-    await existing.unsubscribe()
-  }
-
-  const subscription = await registration.pushManager.subscribe({
-    userVisibleOnly: true,
-    applicationServerKey: urlBase64ToUint8Array(vapidStatus.key),
-  })
-  await subscribePush(subscription.toJSON())
-  currentPushSubscription.value = subscription
-}
-
 useEscapeKey(showAddChannelDialog, () => {
   showAddChannelDialog.value = false
-})
-useEscapeKey(showEditChannelDialog, () => {
-  showEditChannelDialog.value = false
-})
-useEscapeKey(showDeleteChannelDialog, () => {
-  showDeleteChannelDialog.value = false
-})
-useEscapeKey(showEventsModal, () => {
-  showEventsModal.value = false
-})
-useEscapeKey(showScopeModal, () => {
-  showScopeModal.value = false
 })
 
 const { onMessage } = useWebSocket()
@@ -770,19 +397,9 @@ onMounted(() => {
         v-else
         :channels="channels"
         :deliveries="deliveries"
-        :events-label="channelEventsLabel"
+        :events-label="eventsLabel"
         :scope-label="channelScopeLabel"
-        :event-type-label="eventTypeLabel"
         :channel-type-label="channelTypeLabel"
-        :testing-channel-id="testingChannelId"
-        @edit="openEditChannel"
-        @edit-content="openContentModal"
-        @edit-events="openEventsModal"
-        @edit-scope="openScopeModal"
-        @test="handleTestChannel"
-        @toggle="toggleChannel"
-        @delete="openDeleteChannel"
-        @history="showHistory"
       />
     </div>
 
@@ -937,201 +554,6 @@ onMounted(() => {
           @click="submitAddChannel"
         >
           {{ addChannelLoading ? 'Creating...' : 'Create' }}
-        </button>
-      </template>
-    </BaseModal>
-
-    <!-- Edit Channel Dialog -->
-    <BaseModal
-      :open="showEditChannelDialog"
-      title="Edit channel"
-      @close="showEditChannelDialog = false"
-    >
-      <div class="field">
-        <label class="field-label">Name</label>
-        <input
-          v-model="editChannelForm.name"
-          class="input"
-        />
-      </div>
-
-      <!-- One-way for the same reason as the add dialog above. -->
-      <ChannelConfigFields
-        ref="editConfigFields"
-        v-model:to-addresses="editToAddressesInput"
-        v-model:webhook-headers="editHeaderRows"
-        :email-config="editChannelEmailCfg"
-        :webhook-config="editChannelWebhookCfg"
-        :channel-type="editChannelType()"
-        :channel-id="editChannelId ?? undefined"
-        :has-stored-password="editChannelHasPassword()"
-        :saved-webhook-url="editSavedWebhookUrl"
-      />
-
-      <div class="field">
-        <ToggleSwitch
-          :model-value="editChannelForm.enabled"
-          @update:model-value="editChannelForm.enabled = $event"
-        >
-          Enabled
-        </ToggleSwitch>
-      </div>
-      <div
-        v-if="editChannelError"
-        class="form-error"
-      >
-        {{ editChannelError }}
-      </div>
-
-      <template #footer>
-        <button
-          class="btn btn-ghost"
-          @click="showEditChannelDialog = false"
-        >
-          Cancel
-        </button>
-        <button
-          class="btn btn-primary"
-          :disabled="editChannelLoading"
-          @click="submitEditChannel"
-        >
-          {{ editChannelLoading ? 'Saving...' : 'Save' }}
-        </button>
-      </template>
-    </BaseModal>
-
-    <!-- Delete Channel Dialog -->
-    <BaseModal
-      :open="showDeleteChannelDialog"
-      title="Delete channel"
-      size="sm"
-      @close="showDeleteChannelDialog = false"
-    >
-      <p class="confirm-text">
-        Delete channel <strong>{{ deleteChannelName }}</strong
-        >? All associated rules will also be removed.
-      </p>
-      <div
-        v-if="deleteChannelError"
-        class="form-error"
-      >
-        {{ deleteChannelError }}
-      </div>
-
-      <template #footer>
-        <button
-          class="btn btn-ghost"
-          @click="showDeleteChannelDialog = false"
-        >
-          Cancel
-        </button>
-        <button
-          class="btn btn-danger"
-          :disabled="deleteChannelLoading"
-          @click="confirmDeleteChannel"
-        >
-          {{ deleteChannelLoading ? 'Deleting...' : 'Delete' }}
-        </button>
-      </template>
-    </BaseModal>
-
-    <!-- Events Edit Modal -->
-    <BaseModal
-      v-if="activeEventsChannel"
-      :open="showEventsModal"
-      @close="showEventsModal = false"
-    >
-      <template #header="{ titleId }">
-        <h2
-          :id="titleId"
-          class="modal-title"
-        >
-          Events — {{ activeEventsChannel.name }}
-        </h2>
-      </template>
-      <p class="step-description">Toggle which events trigger notifications for this channel.</p>
-      <NotificationEventToggles
-        :event-types="EVENT_TYPES"
-        :label-for="eventTypeLabel"
-        :is-enabled="isActiveEventEnabled"
-        :is-disabled="isActiveRuleToggling"
-        @toggle="toggleActiveRule"
-      />
-
-      <template #footer>
-        <button
-          class="btn btn-primary"
-          @click="showEventsModal = false"
-        >
-          Done
-        </button>
-      </template>
-    </BaseModal>
-
-    <!-- Content Edit Modal -->
-    <BaseModal
-      v-if="activeContentChannel"
-      :open="contentModalChannelId !== null"
-      size="lg"
-      @close="contentModalChannelId = null"
-    >
-      <template #header="{ titleId }">
-        <h2
-          :id="titleId"
-          class="modal-title"
-        >
-          Content — {{ activeContentChannel.name }}
-        </h2>
-      </template>
-      <NotificationContentEditor
-        :key="activeContentChannel.id"
-        :channel="activeContentChannel"
-        standalone
-        @updated="onContentUpdated"
-      />
-
-      <template #footer>
-        <button
-          class="btn btn-ghost"
-          @click="contentModalChannelId = null"
-        >
-          Done
-        </button>
-      </template>
-    </BaseModal>
-
-    <!-- Scope Edit Modal -->
-    <BaseModal
-      v-if="activeScopeChannel"
-      :open="showScopeModal"
-      @close="showScopeModal = false"
-    >
-      <template #header="{ titleId }">
-        <h2
-          :id="titleId"
-          class="modal-title"
-        >
-          Scope — {{ activeScopeChannel.name }}
-        </h2>
-      </template>
-      <p class="step-description">
-        Restrict this channel to specific resources. Leave empty for all.
-      </p>
-      <ScopeSelector
-        v-model:search="scopeSearch"
-        :selected="activeScopeChannel.scope ?? {}"
-        :repos="scopeRepos"
-        :agents="scopeAgents"
-        :schedules="scopeSchedules"
-        @toggle="toggleActiveScopeItem"
-      />
-
-      <template #footer>
-        <button
-          class="btn btn-primary"
-          @click="showScopeModal = false"
-        >
-          Done
         </button>
       </template>
     </BaseModal>

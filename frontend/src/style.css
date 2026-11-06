@@ -1064,22 +1064,23 @@
     padding-top: var(--space-6);
   }
 
-  /* One editable block: its own Edit, and Cancel / Save at its foot. Inside a
-     settings section each block - an EditableSection, or a .pane-section
-     that holds one - is a card of its own, so it is clear which fields a
-     Save applies to. The open section's body is page-coloured behind them. */
+  /* One editable block: its own Edit, and Cancel / Save at its foot. */
   .edit-block {
     display: flex;
     flex-direction: column;
     gap: var(--space-5);
   }
 
-  .settings-pane > .edit-block,
-  .settings-pane > .pane-section {
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    background: var(--bg-card);
-    padding: var(--space-6);
+  /* Inside a settings section the blocks are split by a hairline, not
+     boxed: the section's card is the only frame. */
+  .settings-pane > * + .edit-block {
+    border-top: 1px solid var(--border);
+    padding-top: var(--space-6);
+  }
+
+  .settings-pane > .pane-section:first-child {
+    border-top: none;
+    padding-top: 0;
   }
 
   /* A section whose head is nothing but its label still needs the gap the

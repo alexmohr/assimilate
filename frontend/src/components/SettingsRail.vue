@@ -92,7 +92,7 @@ function setAll(expand: boolean): void {
         {{ open.size < sections.length ? 'Expand all' : 'Collapse all' }}
       </button>
     </div>
-    <div class="rows">
+    <div class="accordion-list">
       <section
         v-for="s in sections"
         :key="s.id"
@@ -138,8 +138,18 @@ function setAll(expand: boolean): void {
   margin-bottom: var(--space-3);
 }
 
-.accordion-item + .accordion-item {
-  border-top: 1px solid var(--border-subtle);
+/* Each section is a card of its own, a little apart from the next. */
+.accordion-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.accordion-item {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-card);
+  overflow: hidden;
 }
 
 .accordion-head {
@@ -183,7 +193,6 @@ function setAll(expand: boolean): void {
 .accordion-body {
   border-top: 1px solid var(--border-subtle);
   padding: var(--space-6);
-  background: var(--bg-base);
 }
 
 /* The box already frames the section; the nest's left rule would be a

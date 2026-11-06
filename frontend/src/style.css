@@ -1269,6 +1269,12 @@
     justify-content: flex-end;
   }
 
+  /* A segmented choice keeps every option visible: it takes the width it
+     needs instead of the shared 220px track. */
+  .pane-row:has(> .pane-row-control > .segmented) {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
   /* A row whose control is an editor - a textarea, a pattern list, a block
      per agent - has no use for a 220px track: it keeps the label column and
      takes the full width underneath. */
@@ -1320,6 +1326,7 @@
     .pane-row:has(> .pane-row-control > input[type='text']),
     .pane-row:has(> .pane-row-control > input:not([type])),
     .pane-row:has(> .pane-row-control > select),
+    .pane-row:has(> .pane-row-control > .segmented),
     .pane-row:has(> .pane-row-control > .field-row) {
       grid-template-columns: minmax(0, 1fr);
     }
@@ -1335,6 +1342,7 @@
     .pane-row:has(> .pane-row-control > input[type='text']) > .pane-row-control,
     .pane-row:has(> .pane-row-control > input:not([type])) > .pane-row-control,
     .pane-row:has(> .pane-row-control > select) > .pane-row-control,
+    .pane-row:has(> .pane-row-control > .segmented) > .pane-row-control,
     .pane-row:has(> .pane-row-control > .field-row) > .pane-row-control {
       justify-content: flex-start;
     }
@@ -1356,8 +1364,8 @@
      its parent is what says so; as a sibling row it reads as an unrelated
      setting that happens to sit nearby. Was `.catch-up-lead`, scoped to the
      schedule's General pane, until the second and third use turned up. */
+  /* Indented under the row it depends on, without a vertical rule. */
   .pane-nest {
-    border-left: 2px solid var(--border);
     padding-left: var(--space-6);
     margin-left: var(--space-2);
   }

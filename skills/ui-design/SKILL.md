@@ -200,8 +200,16 @@ Reach for these rather than rebuilding them.
   `.meta-pill` for a count or classification beside the name. A schedule card
   (the repository's Schedules tab) renders through `ScheduleCard`, which fills
   that shape from a `ScheduleRow`.
-* **Tiles** — `.tiles` is the grid, `.tile` the box; `--lg` is the dashboard's
-  headline step and `--link` marks one that navigates.
+* **One card style.** Every card - `.panel`, `.tiles`, `.rows`,
+  `.list-group`, a framed table - is the same surface: `--bg-card` fill, a
+  1px `--border` line and `--radius` corners. What sits inside a card is split
+  by hairlines (`--border` between cells, `--border-subtle` between rows),
+  never by another filled or bordered box, and never by the darker
+  `--bg-base`. Code and log output is the one inset, on `--bg-code`.
+* **Tiles** — `.tiles` is one card split into cells by 1px hairlines (the
+  container's border colour shows through a 1px gap), not a row of separate
+  boxes; `.tile` is a cell. `--lg` is the dashboard's headline step and
+  `--link` marks one that navigates.
 * **Stats** — a labelled number is `.stat-label` + `.stat-value`, with
   `.stat-sub` for the line under it saying what the number is of. The two
   larger roles are modifiers: `.stat-value--lg` for a panel tile, `--xl` for a

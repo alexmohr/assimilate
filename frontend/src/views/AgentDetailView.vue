@@ -42,7 +42,6 @@ import { parseArchiveProgress } from '../utils/archiveProgress'
 import type { ScheduleHealthEntry } from '../utils/scheduleHealth'
 import { isSettingsSection, type SettingsSection } from '../utils/agentSettings'
 import { domainParams } from '../utils/agent'
-import { openReportArchive } from '../utils/reportNavigation'
 import type { Repo } from '../types/repo'
 import BaseModal from '../components/BaseModal.vue'
 import BaseTabs, { type TabOption } from '../components/BaseTabs.vue'
@@ -50,12 +49,10 @@ import AgentHeader from '../components/AgentHeader.vue'
 import AgentOverviewTab, { type LiveBackup } from '../components/AgentOverviewTab.vue'
 import AgentSchedulesTab from '../components/AgentSchedulesTab.vue'
 import AgentArchivesTab from '../components/AgentArchivesTab.vue'
-import RunLogTab, { type BackupFilter } from '../components/RunLogTab.vue'
 import AgentSettingsTab from '../components/AgentSettingsTab.vue'
 import AgentRemovalDialogs from '../components/AgentRemovalDialogs.vue'
 import AgentSourcesTab from '../components/AgentSourcesTab.vue'
 import { useReportsPager } from '../composables/useReportsPager'
-import { useReportRetry } from '../composables/useReportRetry'
 
 /**
  * An agent's detail page: a persistent header, then five tabs. Backups is
@@ -69,7 +66,7 @@ import { useReportRetry } from '../composables/useReportRetry'
  * layout exists to shrink. Settings is self-contained either way, so
  * promoting it later is a router change and nothing else.
  */
-type TabId = 'overview' | 'schedules' | 'backups' | 'sources' | 'logs' | 'settings'
+type TabId = 'overview' | 'schedules' | 'backups' | 'sources' | 'settings'
 
 function isTabId(value: unknown): value is TabId {
   return (
@@ -77,7 +74,6 @@ function isTabId(value: unknown): value is TabId {
     value === 'schedules' ||
     value === 'backups' ||
     value === 'sources' ||
-    value === 'logs' ||
     value === 'settings'
   )
 }
@@ -135,12 +131,6 @@ const scheduleHealth = ref<ScheduleHealthEntry[]>([])
 const { loading, error, runLatest, latestGuard } = useAsyncAction()
 const expandedReportId = ref<number | null>(null)
 
-const { retryingReportIds, retry: retryReport } = useReportRetry(() => reportsPager.load())
-
-function loadMoreReports(): void {
-  void reportsPager.loadMore()
-}
-
 const agentSchedules = computed(() => {
   const hostname = agent.value?.hostname
   return hostname ? schedules.value.filter((s) => s.target_hostnames.includes(hostname)) : []
@@ -157,7 +147,6 @@ const tabs = computed<TabOption<TabId>[]>(() => [
   { id: 'schedules', label: 'Schedules', count: agentSchedules.value.length },
   { id: 'backups', label: 'Backups' },
   ...(isAdmin.value ? [{ id: 'sources', label: 'Sources' } as const] : []),
-  { id: 'logs', label: 'Logs', count: reportsPager.total.value },
   { id: 'settings', label: 'Settings' },
 ])
 
@@ -165,10 +154,6 @@ const tabs = computed<TabOption<TabId>[]>(() => [
 function isRunStatusFilter(value: unknown): value is 'success' | 'warning' | 'failed' {
   return value === 'success' || value === 'warning' || value === 'failed'
 }
-const filterStatus = ref<BackupFilter>(
-  isRunStatusFilter(route.query.status) ? route.query.status : 'all',
-)
-const sortAscending = ref(false)
 
 const highlightedArchiveName = computed(() => {
   const a = route.query.archive
@@ -189,9 +174,6 @@ const linkedReportId = computed<number | null>(() => {
   const id = Number(r)
   return Number.isInteger(id) ? id : null
 })
-
-/** Whichever run the route is pointing at, for the row that marks itself. */
-const highlightedReportId = computed(() => linkedReportId.value ?? pinnedReportId.value)
 
 function isOverdueQuery(value: unknown): value is 'overdue' {
   return value === 'overdue'
@@ -424,10 +406,6 @@ useEscapeKey(showTokenDialog, () => {
   showTokenDialog.value = false
 })
 
-function openReport(r: ReportRow): void {
-  openReportArchive(router, r)
-}
-
 /**
  * The other half of a preview row: a failed or warned run has no archive to
  * browse, so it lands on its own row in the Logs tab with the output
@@ -438,14 +416,11 @@ function openReport(r: ReportRow): void {
  * dropped: they select a run of their own, and the one asked for here wins.
  */
 function openReportDetail(r: ReportRow): void {
-  const query: LocationQueryRaw = { ...route.query, tab: 'logs', report: String(r.id) }
-  delete query.status
-  delete query.archive
-  router.push({ query })
-}
-
-function toggleReport(r: ReportRow): void {
-  expandedReportId.value = expandedReportId.value === r.id ? null : r.id
+  const query: LocationQueryRaw = { category: 'backup', hostname: props.hostname }
+  if (r.schedule_id) query.schedule_id = String(r.schedule_id)
+  const status = isRunStatusFilter(r.status) ? r.status : undefined
+  if (status && status !== 'success') query.status = status
+  router.push({ path: '/activity', query })
 }
 
 // SSH-key deploy, merge, redeploy, the failed-reports cleanup dialog and the
@@ -1035,25 +1010,6 @@ watch(wsStatus, (newStatus, oldStatus) => {
           v-else-if="activeTab === 'sources' && agent"
           v-model:section="sourcesSection"
           :agent="agent"
-        />
-
-        <RunLogTab
-          v-else-if="activeTab === 'logs'"
-          v-model:filter="filterStatus"
-          v-model:sort-ascending="sortAscending"
-          :reports="reports"
-          :total="reportsPager.total.value"
-          :loading="reportsPager.loading.value"
-          :loading-more="reportsPager.loadingMore.value"
-          :error="reportsPager.error.value"
-          :expanded-report-id="expandedReportId"
-          :highlighted-archive-name="highlightedArchiveName"
-          :retrying-report-ids="retryingReportIds"
-          :pinned-report-id="highlightedReportId"
-          @toggle="toggleReport"
-          @open="openReport"
-          @retry="retryReport"
-          @load-more="loadMoreReports"
         />
 
         <AgentSettingsTab

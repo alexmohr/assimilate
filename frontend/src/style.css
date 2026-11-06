@@ -332,11 +332,19 @@
 
   /* Key/value rows: a muted label column sized to its content, values
      taking the rest. */
+  /* Room between lines, so a list of settings reads as rows rather than a
+     block of text. */
   .info-grid {
     display: grid;
     grid-template-columns: auto 1fr;
-    gap: var(--space-4) var(--space-8);
+    gap: var(--space-5) var(--space-8);
     margin: 0;
+    line-height: 1.4;
+  }
+
+  .info-grid + .field-hint,
+  .info-grid + p {
+    margin-top: var(--space-4);
   }
 
   .info-grid dt {
@@ -485,13 +493,18 @@
   }
 
   @media (max-width: 640px) {
+    /* Stacked on a phone, the button keeps its own width at the right. */
     .danger-body {
       flex-direction: column;
-      align-items: stretch;
+      align-items: flex-end;
+    }
+
+    .danger-body > .danger-info {
+      align-self: stretch;
     }
 
     .danger-action-wrap {
-      align-items: stretch;
+      align-items: flex-end;
     }
   }
 
@@ -975,7 +988,7 @@
     min-width: 0;
     display: flex;
     flex-direction: column;
-    gap: var(--space-6);
+    gap: var(--space-8);
   }
 
   /* Below the md breakpoint the rail becomes a row above the pane. Declared
@@ -1072,21 +1085,21 @@
      `.settings-pane`. */
   .pane-section {
     border-top: 1px solid var(--border);
-    padding-top: var(--space-6);
+    padding-top: var(--space-8);
   }
 
   /* One editable block: its own Edit, and Cancel / Save at its foot. */
   .edit-block {
     display: flex;
     flex-direction: column;
-    gap: var(--space-5);
+    gap: var(--space-6);
   }
 
   /* Inside a settings section the blocks are split by a hairline, not
      boxed: the section's card is the only frame. */
   .settings-pane > * + .edit-block {
     border-top: 1px solid var(--border);
-    padding-top: var(--space-6);
+    padding-top: var(--space-8);
   }
 
   .settings-pane > .pane-section:first-child {
@@ -1287,7 +1300,7 @@
 
   /* A segmented choice keeps every option visible: it takes the width it
      needs instead of the shared 220px track. */
-  .pane-row:has(> .pane-row-control > .segmented) {
+  .pane-row:not(.pane-row--stack):has(> .pane-row-control > .segmented) {
     grid-template-columns: minmax(0, 1fr) auto;
   }
 

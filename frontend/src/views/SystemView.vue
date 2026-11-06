@@ -873,8 +873,10 @@ const section = ref<SystemSection>('version')
 }
 
 .config-io-controls {
+  flex: 1;
   display: flex;
   align-items: center;
+  justify-content: flex-end;
   gap: var(--space-5);
   flex-wrap: wrap;
 }

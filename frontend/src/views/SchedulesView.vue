@@ -44,7 +44,6 @@ import BaseSpinner from '../components/BaseSpinner.vue'
 import EmptyState from '../components/EmptyState.vue'
 import SortControls from '../components/SortControls.vue'
 import BaseSegmented, { type SegmentedOption } from '../components/BaseSegmented.vue'
-import RunHistoryStrip, { type RunHistoryEntry } from '../components/RunHistoryStrip.vue'
 import FilterSyntaxHelp from '../components/FilterSyntaxHelp.vue'
 import type { AgentRow } from '../types/agent'
 import { scheduleDisabledLabel } from '../utils/scheduleStatus'
@@ -213,25 +212,6 @@ const activityBySchedule = computed(() => {
     const list = map.get(entry.schedule_id) ?? []
     list.push(entry)
     map.set(entry.schedule_id, list)
-  }
-  return map
-})
-
-const runsBySchedule = computed(() => {
-  const map = new Map<number, RunHistoryEntry[]>()
-  for (const [scheduleId, entries] of activityBySchedule.value) {
-    map.set(
-      scheduleId,
-      entries.map((entry) => ({
-        id: entry.id,
-        startedAt: entry.started_at,
-        durationSecs: entry.duration_secs,
-        status: entry.status,
-        runId: entry.run_id,
-        hostname: entry.hostname,
-        targetName: entry.target_name,
-      })),
-    )
   }
   return map
 })
@@ -975,7 +955,6 @@ useQueryOverride(() => route.query.filter, isFilterHealth, filterHealth)
             <span>Schedule</span>
             <span>Agent</span>
             <span>Health</span>
-            <span>Last 10 runs</span>
             <span>Next run</span>
             <span></span>
           </div>
@@ -1029,9 +1008,6 @@ useQueryOverride(() => route.query.filter, isFilterHealth, filterHealth)
                 {{ s.rowHealth.label }}
               </span>
             </span>
-            <span class="list-wide-only">
-              <RunHistoryStrip :runs="runsBySchedule.get(s.id) ?? []" />
-            </span>
             <span
               class="list-row-value list-wide-only"
               :class="{ 'schedules-next--overdue': s.isOverdue }"
@@ -1074,7 +1050,9 @@ useQueryOverride(() => route.query.filter, isFilterHealth, filterHealth)
 }
 
 .schedules-list .list-group {
-  --list-cols: minmax(0, 2.4fr) minmax(0, 1.2fr) minmax(0, 1.5fr) 11rem 7rem 1.25rem;
+  /* The health pill's column is as wide as its longest pill, so
+     "Overdue · warning" is never cut off. */
+  --list-cols: minmax(0, 2.4fr) minmax(0, 1.2fr) max-content 9rem 1.25rem;
 }
 
 /* The Disabled group's title is a button that folds the group open. */
@@ -1097,6 +1075,9 @@ useQueryOverride(() => route.query.filter, isFilterHealth, filterHealth)
 }
 
 .schedules-sub-arrow {
+  /* An inline arrow; Tailwind's preflight makes every svg a block, which put
+     it on a line of its own. */
+  display: inline;
   vertical-align: middle;
 }
 

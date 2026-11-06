@@ -156,7 +156,8 @@ onMounted(loadDatabaseStorage)
   align-items: baseline;
   justify-content: space-between;
   gap: var(--space-6);
-  margin-bottom: var(--space-6);
+  padding: var(--space-6) var(--space-7);
+  border-bottom: 1px solid var(--border);
   color: var(--text-secondary);
   font-size: var(--fs-base);
 }

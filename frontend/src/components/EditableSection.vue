@@ -97,12 +97,13 @@ const emit = defineEmits<{
     </div>
     <template v-if="!editing">
       <slot name="view" />
-      <HelpHint
+      <!-- A footnote in words, not a "?" alone on the last line. -->
+      <p
         v-if="$slots.hint"
-        :label="hintLabel ?? 'this section'"
+        class="field-hint"
       >
         <slot name="hint" />
-      </HelpHint>
+      </p>
     </template>
     <template v-else>
       <slot name="edit" />

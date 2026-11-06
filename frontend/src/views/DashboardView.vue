@@ -707,14 +707,16 @@ async function fetchOverview(): Promise<void> {
             @dismissed="fetchOverview().catch(logger.error)"
           />
           <BackupCalendar :repos="repoOptions" />
-          <RepositoryCapacity :repositories="overview?.repository_capacity ?? []" />
         </div>
+        <!-- Capacity sits under Recent activity so the two columns end at
+             about the same height instead of leaving a hole on the right. -->
         <div class="dashboard-column">
           <UpcomingWork
             :operations="overview?.running_operations ?? []"
             :schedules="overview?.upcoming_schedules ?? []"
           />
           <RecentActivityWidget />
+          <RepositoryCapacity :repositories="overview?.repository_capacity ?? []" />
         </div>
       </div>
 

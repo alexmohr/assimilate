@@ -203,6 +203,13 @@ function setAll(expand: boolean): void {
   margin-left: 0;
 }
 
+/* A log list inside a section: the section's card is the frame already. */
+.accordion-body :deep(.log-list) {
+  border: none;
+  border-radius: 0;
+  background: none;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .accordion-chevron {
     transition: none;

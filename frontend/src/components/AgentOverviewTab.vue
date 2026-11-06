@@ -11,7 +11,6 @@ import { byFinishedDesc, normalizeBackupStatus, filterSettledReports } from '../
 import { backupStatusBadgeClass } from '../utils/badge'
 import { buildRepoOverview, type RepoOverviewState } from '../utils/repoOverview'
 import BackupProgressCard from './BackupProgressCard.vue'
-import AgentRunStrip from './AgentRunStrip.vue'
 import type { ScheduleHealthEntry } from '../utils/scheduleHealth'
 import type { ScheduleRow } from '../types/schedule'
 import type { ReportRow } from '../types/report'
@@ -34,9 +33,6 @@ export interface LiveBackup {
   elapsedSecs: number
   progress: { nfiles: number; originalSize: number; currentPath: string } | null
 }
-
-/** Runs drawn in each repository's own strip. */
-const REPO_STRIP_RUNS = 10
 
 const props = defineProps<{
   agent: AgentRow
@@ -360,11 +356,6 @@ const REPO_STATE_TONE: Record<RepoOverviewState, Tone | 'info'> = {
             :class="`badge--${REPO_STATE_TONE[row.state]}`"
             >{{ REPO_STATE_LABEL[row.state] }}</span
           >
-          <AgentRunStrip
-            compact
-            :reports="row.reports"
-            :limit="REPO_STRIP_RUNS"
-          />
           <span class="repo-meta">
             <span v-if="row.lastRun">last {{ relativeTime(row.lastRun.finished_at) }}</span>
             <span v-if="row.lastGood && row.lastRun?.id !== row.lastGood.id">
@@ -496,7 +487,7 @@ const REPO_STATE_TONE: Record<RepoOverviewState, Tone | 'info'> = {
 
 .repo-row {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
   gap: var(--space-3) var(--space-5);
   padding: var(--space-5) var(--space-6);

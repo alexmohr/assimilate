@@ -701,7 +701,8 @@ onMounted(load)
 }
 
 .vm-limit {
-  width: 5.5rem;
+  /* Wide enough for the "Host default" placeholder. */
+  width: 8.5rem;
   text-align: right;
 }
 

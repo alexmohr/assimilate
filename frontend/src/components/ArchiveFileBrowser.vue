@@ -5,17 +5,15 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 <script setup lang="ts">
 import { computed, ref, watch, onBeforeUnmount } from 'vue'
-import { filesLabel, formatBytes, formatDate } from '../utils/format'
+import { filesLabel, formatBytes, formatDate, formatDayYear } from '../utils/format'
 import { extractBlobError } from '../utils/error'
 import { resolveArchiveHost } from '../utils/archiveHost'
 import { useToast } from '../composables/useToast'
 import { useRestoreToasts } from '../composables/useRestoreToasts'
-import DataTable from 'primevue/datatable'
-import Column from 'primevue/column'
+import { useClipboard } from '../composables/useClipboard'
 import {
-  ArrowLeft,
   ArrowRight,
-  CornerLeftUp,
+  Copy,
   Download,
   File,
   FileDiff,
@@ -24,14 +22,20 @@ import {
   FolderSymlink,
   History,
   RotateCcw,
+  Search,
   Trash2,
+  X,
 } from '@lucide/vue'
 import axios from 'axios'
 import { downloadArchiveFiles, getArchiveContents } from '../api/archives'
 import BaseSpinner from './BaseSpinner.vue'
 import BaseHostLink from './BaseHostLink.vue'
-import BaseSegmented, { type SegmentedOption } from './BaseSegmented.vue'
+import BaseTabs, { type TabOption } from './BaseTabs.vue'
+import BrowserRow from './BrowserRow.vue'
+import EmptyState from './EmptyState.vue'
+import OverflowMenu from './OverflowMenu.vue'
 import ArchiveDatabaseDumps from './ArchiveDatabaseDumps.vue'
+import ArchiveDiff from './ArchiveDiff.vue'
 import ArchiveGrowth from './ArchiveGrowth.vue'
 import FileDiffDialog from './FileDiffDialog.vue'
 import FileHistoryDialog from './FileHistoryDialog.vue'
@@ -43,6 +47,7 @@ import { extractError } from '../utils/error'
 import {
   directChildren,
   isDirectoryEntry,
+  parentOf,
   tickAll,
   tickState,
   toggle,
@@ -67,6 +72,18 @@ import {
 } from '../composables/useArchivePathRoute'
 import type { RestoreRun } from '../types/generated'
 
+/**
+ * The open archive, as one card: its name over one muted line of facts, a
+ * menu of what acts on the whole archive, and four tabs - its files, what
+ * changed against another archive, the database dumps it holds and where its
+ * size went.
+ *
+ * The files tab lists a folder as two-line rows. Ticking rows (from any
+ * folder, and from search results) brings up the selection bar under the
+ * list, which carries the one main action - restore - and, for a single file,
+ * its history and a comparison with another archive.
+ */
+
 const CURRENT_DIR_MARKER = '.'
 const PARENT_DIR_MARKER = '..'
 
@@ -83,39 +100,40 @@ const BROWSER_LISTING_LIMIT = 100
  */
 const SPLIT_LISTING_LIMIT = 10_000
 
-/**
- * What the browser shows of the archive: its files, the database dumps it
- * holds, or where its deduplicated size went.
- */
-type BrowserView = 'files' | 'databases' | 'growth'
+/** What the card shows of the archive. */
+type BrowserView = 'files' | 'changes' | 'databases' | 'growth'
 
-const VIEW_LABELS: Record<BrowserView, string> = {
-  files: 'Files',
-  databases: 'Databases',
-  growth: 'Growth',
-}
-
-const VIEW_OPTIONS: readonly SegmentedOption<BrowserView>[] = [
-  { value: 'files', label: VIEW_LABELS.files },
-  { value: 'databases', label: VIEW_LABELS.databases },
-  { value: 'growth', label: VIEW_LABELS.growth },
+const VIEW_TABS: readonly TabOption<BrowserView>[] = [
+  { id: 'files', label: 'Files' },
+  { id: 'changes', label: 'Changes' },
+  { id: 'databases', label: 'Databases' },
+  { id: 'growth', label: 'Growth' },
 ]
+
+/** A file or folder to show and tick once its archive opens, e.g. one a search found. */
+export interface ArchiveReveal {
+  /** `archiveKey` of the archive it is in. */
+  archiveKey: string
+  /** Its archive path, without a leading slash. */
+  path: string
+  isDir: boolean
+}
 
 const props = withDefaults(
   defineProps<{
     repoId: number | null
     archive: ArchiveEntry | null
     /**
-     * The repository `repoId` names. Browsing, restoring and - above all -
-     * the Delete button in this header all act against one repository, and a
-     * schedule that copies into several writes an archive of the same name
-     * into each of them, so the header has to say which copy is open.
+     * The repository `repoId` names. Browsing, restoring and deleting all act
+     * against one repository, and a schedule that copies into several writes
+     * an archive of the same name into each of them, so the card has to say
+     * which copy is open.
      */
     repoName?: string
     isAdmin?: boolean
     // Whether `archive` already has a delete in flight - deletion is async
     // (the request just enqueues the borg job), so without this the delete
-    // button stays clickable for an archive that's already being removed.
+    // entry stays clickable for an archive that's already being removed.
     deleting?: boolean
     /**
      * The route query parameter the open directory is kept under, so Back
@@ -132,11 +150,15 @@ const props = withDefaults(
      */
     routeArchiveName?: string | null
     /**
-     * The other archives a file can be compared with - the list the archive
-     * was picked from. Without a second archive there is nothing to compare,
-     * so the Compare button stays hidden.
+     * The other archives of the open one's repository - the list it was
+     * picked from. Changes, Compare and Growth compare with these; without a
+     * second archive there is nothing to compare.
      */
     archives?: readonly ArchiveEntry[]
+    /** A path to show and tick once the archive it names is open. */
+    reveal?: ArchiveReveal | null
+    /** `archiveKey` of `archive`, to match `reveal` against. */
+    archiveKey?: string | null
   }>(),
   {
     repoName: '',
@@ -144,13 +166,15 @@ const props = withDefaults(
     deleting: false,
     pathQueryKey: DEFAULT_ARCHIVE_PATH_QUERY_KEY,
     archives: () => [],
+    reveal: null,
+    archiveKey: null,
   },
 )
 
 const emit = defineEmits<{
   'delete-archive': [archive: ArchiveEntry]
-  /** Back to the archive list - the phone layout shows one pane at a time. */
-  back: []
+  /** `reveal` has been shown, so the caller can let go of it. */
+  revealed: []
 }>()
 
 const view = ref<BrowserView>('files')
@@ -181,16 +205,18 @@ const seenEntries = ref<Map<string, ContentEntry>>(new Map())
 /** Whether a ticked folder is being split, which first loads the listings it needs. */
 const splitting = ref(false)
 
+/** Whether the search box under the path bar is open. */
+const searchOpen = ref(false)
+
 /** Whether a search is entered, so its results stand in for the folder's listing. */
 const searching = ref(false)
 
 /** The paths the open restore dialog restores (empty: the whole archive), or null. */
 const restorePaths = ref<readonly string[] | null>(null)
 
-const viewLabel = computed<string>(() => VIEW_LABELS[view.value])
-
-const { error: toastError } = useToast()
+const { success: toastSuccess, error: toastError } = useToast()
 const { track: trackRestore } = useRestoreToasts()
+const { copy } = useClipboard()
 
 const repoIdRef = computed(() => props.repoId ?? 0)
 const browser = useArchiveBrowser(repoIdRef)
@@ -202,7 +228,6 @@ const contentsError = browser.contentsError
 const indexing = browser.indexing
 const downloadEntry = browser.downloadEntry
 const browserEntries = browser.browserEntries
-const browserFilters = browser.browserFilters
 
 const pathRoute = useArchivePathRoute(() => props.pathQueryKey)
 
@@ -220,11 +245,14 @@ function navigateTo(path: string): void {
   }
 }
 
+/** A folder opens, a link to a folder opens its target, a file ticks. */
 function handleRowClick(entry: DisplayEntry): void {
-  if (entry.isDir && entry.displayName !== CURRENT_DIR_MARKER) {
+  if (entry.isDir) {
     navigateTo(entry.path)
   } else if (entry.link !== null && linksToFolder(entry.link)) {
     openLinkTarget(entry)
+  } else if (!splitting.value) {
+    togglePicked(entry)
   }
 }
 
@@ -234,7 +262,7 @@ function openLinkTarget(entry: DisplayEntry): void {
   if (folder !== null) navigateTo(folder)
 }
 
-function isClickable(entry: DisplayEntry): boolean {
+function opensFolder(entry: DisplayEntry): boolean {
   return entry.isDir || (entry.link !== null && linksToFolder(entry.link))
 }
 
@@ -262,6 +290,7 @@ watch(
     const archive = props.archive
     // Another archive opens on its files, as a fresh selection does.
     view.value = 'files'
+    searchOpen.value = false
     comparePath.value = null
     historyPath.value = null
     picked.value = new Map()
@@ -299,6 +328,28 @@ watch(pathRoute.path, (path) => {
   }
 })
 
+/**
+ * A file found by the list's search: once its archive is the open one, its
+ * folder opens with it ticked. Runs after the archive watcher above, which
+ * clears the selection a new archive starts with.
+ */
+watch(
+  () => [props.reveal, props.archiveKey] as const,
+  ([target, key]) => {
+    if (target === null || target.archiveKey !== key || props.archive === null) return
+    view.value = 'files'
+    const folder = target.isDir ? target.path : parentOf(target.path)
+    navigateTo(`/${folder}`)
+    if (!target.isDir) {
+      const entry: ContentEntry = { type: '-', path: target.path, size: 0, mtime: '', mode: '' }
+      rememberEntries([entry])
+      applySelection([target.path])
+    }
+    emit('revealed')
+  },
+  { immediate: true },
+)
+
 onBeforeUnmount(() => {
   browser.stopPolling()
   // The explorer releases both keys at once when it owns the archive key: two
@@ -309,8 +360,8 @@ onBeforeUnmount(() => {
 
 /**
  * The current folder's own "." row stands for the folder, and the ".." row
- * for the one above it: neither is an entry in it, and picking ".." would
- * restore or download the whole parent.
+ * for the one above it: neither is an entry in it - the path bar above the
+ * rows does their job - and picking ".." would restore the whole parent.
  */
 function isPickable(entry: DisplayEntry): boolean {
   return (
@@ -338,6 +389,16 @@ function rememberEntries(entries: readonly ContentEntry[]): void {
 
 watch(contents, (entries) => {
   rememberEntries(entries)
+  // A file picked before its folder was listed (a search hit) learns its size.
+  const known = new Map(picked.value)
+  let changed = false
+  for (const entry of entries) {
+    if (known.has(entry.path) && known.get(entry.path) !== entry) {
+      known.set(entry.path, entry)
+      changed = true
+    }
+  }
+  if (changed) picked.value = known
   if (entries.length > 0 && entries.length < BROWSER_LISTING_LIMIT) {
     recordListing(currentDir.value, entries)
   }
@@ -421,11 +482,12 @@ function tickStateOfPath(path: string): TickState {
   return tickState(pickedPaths.value, path)
 }
 
-const pickableHere = computed(() => browserEntries.value.filter(isPickable))
+/** The rows of the folder shown: its folders first, then its files, each by name. */
+const rows = computed(() => browserEntries.value.filter(isPickable))
 
-/** The folder's own tick state, shown by the header checkbox. */
+/** The folder's own tick state, shown by the path bar's checkbox. */
 const hereState = computed<TickState>(() => {
-  const states = pickableHere.value.map(tickStateOf)
+  const states = rows.value.map(tickStateOf)
   if (states.length > 0 && states.every((state) => state === 'checked')) return 'checked'
   return states.some((state) => state !== 'unchecked') ? 'partial' : 'unchecked'
 })
@@ -437,7 +499,7 @@ function toggleAllHere(): void {
     applySelection(
       tickAll(
         pickedPaths.value,
-        pickableHere.value.map((entry) => entry.path),
+        rows.value.map((entry) => entry.path),
         childrenOf,
       ),
     )
@@ -448,6 +510,10 @@ function clearPicked(): void {
   picked.value = new Map()
 }
 
+function toggleSearch(): void {
+  searchOpen.value = !searchOpen.value
+}
+
 const treeTotals = useArchiveTreeTotals(
   () => props.repoId,
   () => props.archive?.name ?? null,
@@ -456,7 +522,7 @@ const totals = treeTotals.totals
 
 // A folder's size is what is under it, which the listing does not say.
 watch(
-  () => (props.archive === null || contents.value.length === 0 ? [] : pickableHere.value),
+  () => (props.archive === null || contents.value.length === 0 ? [] : rows.value),
   (entries) => {
     void treeTotals.ensure(entries.filter((entry) => entry.isDir).map((entry) => entry.path))
   },
@@ -479,32 +545,32 @@ watch(
   },
 )
 
-/** How a row's change badge reads and looks. */
-interface ChangeBadge {
+/** How a row's change against the previous archive reads and looks. */
+interface ChangeMark {
   label: string
-  tone: string
+  dot: string
   title: string
 }
 
-const CHANGE_BADGES: Record<ChangeKind, Omit<ChangeBadge, 'title'>> = {
-  new: { label: 'New', tone: 'badge--success' },
-  changed: { label: 'Changed', tone: 'badge--info' },
+const CHANGE_MARKS: Record<ChangeKind, Omit<ChangeMark, 'title'>> = {
+  new: { label: 'new', dot: 'status-dot--success' },
+  changed: { label: 'changed', dot: 'status-dot--warning' },
 }
 
-/** A file's change against the previous archive, for its row; never for the `.` and `..` rows. */
-function changeBadge(entry: DisplayEntry): ChangeBadge | null {
-  const change = isPickable(entry) ? changes.changeOf(entry) : null
+/** A file's change against the previous archive, for its row. */
+function changeMark(entry: DisplayEntry): ChangeMark | null {
+  const change = changes.changeOf(entry)
   if (change === null) return null
-  const badge = CHANGE_BADGES[change]
-  return { ...badge, title: `${badge.label} since ${changes.previous.value?.name ?? ''}` }
+  const mark = CHANGE_MARKS[change]
+  return { ...mark, title: `${mark.label} since ${changes.previous.value?.name ?? ''}` }
 }
 
 /** A file's own size; a folder's, what the index says is under it, once it has said. */
-function sizeLabel(entry: DisplayEntry): string {
-  if (entry.link !== null) return '-'
+function sizeLabel(entry: DisplayEntry): string | null {
+  if (entry.link !== null) return null
   if (!entry.isDir) return entry.displaySize
-  const total = isPickable(entry) ? totals.value.get(entry.path) : undefined
-  return total === undefined ? '-' : formatBytes(total.bytes)
+  const total = totals.value.get(entry.path)
+  return total === undefined ? null : formatBytes(total.bytes)
 }
 
 /**
@@ -525,6 +591,13 @@ const pickedSummary = computed(() => {
   return `${count} · ${formatBytes(bytes)} · ${filesLabel(files)}`
 })
 
+/** The one file ticked, when exactly one is: what History and Compare act on. */
+const onlyFile = computed<ContentEntry | null>(() => {
+  const entries = [...picked.value.values()]
+  const [only] = entries
+  return entries.length === 1 && only !== undefined && entryKind(only.type) === 'file' ? only : null
+})
+
 function openRestore(paths: readonly string[]): void {
   restorePaths.value = paths
 }
@@ -542,9 +615,8 @@ const downloading = computed(() => downloadController.value !== null)
 async function downloadPicked(): Promise<void> {
   const archive = props.archive
   if (archive === null || props.repoId === null) return
-  const entries = [...picked.value.values()]
-  const [only] = entries
-  if (entries.length === 1 && only !== undefined && !isDirectoryEntry(only)) {
+  const only = onlyFile.value
+  if (only !== null) {
     downloadEntry(only)
     return
   }
@@ -585,23 +657,24 @@ const canCompare = computed(
     comparableArchives(props.archives, props.archive).length > 0,
 )
 
-function isComparable(entry: DisplayEntry): boolean {
-  return canCompare.value && entryKind(entry.type) === 'file'
-}
-
-/** A file's history needs only the archive it is in: "now" is always one more version. */
-function hasHistory(entry: DisplayEntry): boolean {
-  return props.repoId !== null && props.archive !== null && entryKind(entry.type) === 'file'
-}
-
 function handleDeleteWholeArchive(): void {
   if (props.archive && !props.deleting) emit('delete-archive', props.archive)
 }
 
+async function copyName(): Promise<void> {
+  if (props.archive === null) return
+  try {
+    await copy(props.archive.name)
+    toastSuccess('Archive name copied')
+  } catch (e: unknown) {
+    toastError(extractError(e))
+  }
+}
+
 /**
- * The archive root as a directory entry, so the header's whole-archive
- * download and restore reuse exactly the paths the table rows use. An empty
- * path is what both endpoints read as "everything".
+ * The archive root as a directory entry, so the menu's whole-archive download
+ * reuses exactly the paths the rows use. An empty path is what the endpoint
+ * reads as "everything".
  */
 const ROOT_ENTRY: ContentEntry = { type: 'd', path: '', size: 0, mtime: '', mode: '' }
 
@@ -609,147 +682,140 @@ const archiveHost = computed(() =>
   props.archive === null ? null : resolveArchiveHost(props.archive),
 )
 
-/** The parent of the directory being shown, or null at the archive root. */
-const parentCrumb = computed(() => {
-  const trail = breadcrumbs.value
-  return trail.length > 1 ? trail[trail.length - 2] : null
-})
+/** The facts under a row's name: a folder's file count, a file's modification day. */
+function rowFacts(entry: DisplayEntry): string | null {
+  if (entry.isDir) {
+    const total = totals.value.get(entry.path)
+    return total === undefined ? 'folder' : filesLabel(total.files)
+  }
+  return entry.mtime ? `modified ${formatDayYear(entry.mtime)}` : null
+}
 </script>
 
 <template>
   <div class="archive-file-browser">
-    <div
+    <EmptyState
       v-if="!archive"
-      class="browser-placeholder"
-    >
-      <Folder
-        :size="40"
-        class="browser-placeholder-icon"
-      />
-      <span class="browser-placeholder-title">No archive selected</span>
-      <span class="browser-placeholder-hint">Select an archive to browse its contents.</span>
-    </div>
+      :icon="Folder"
+      title="Pick an archive"
+      description="Its files, the changes since the archive before it, its database dumps and its growth open here."
+    />
 
     <template v-else>
-      <div class="browser-header">
-        <button
-          class="btn btn-sm btn-ghost browser-back"
-          type="button"
-          @click="emit('back')"
-        >
-          <ArrowLeft :size="14" />
-          Archives
-        </button>
-        <span class="browser-title">
-          <span class="browser-title-label">{{ viewLabel }}</span>
-          <span class="browser-title-name">{{ archive.name }}</span>
-        </span>
+      <div class="archive-head">
+        <div class="archive-head-text">
+          <h2 class="archive-head-name">{{ archive.name }}</h2>
+          <p class="archive-head-facts">
+            <template v-if="archiveHost">
+              <BaseHostLink
+                class="archive-head-link"
+                :hostname="archiveHost"
+              />
+              <span aria-hidden="true">&middot;</span>
+            </template>
+            <template v-if="repoName">
+              <RouterLink
+                v-if="repoId !== null"
+                class="archive-head-link"
+                :to="`/repos/${repoId}`"
+                >{{ repoName }}</RouterLink
+              >
+              <span v-else>{{ repoName }}</span>
+              <span aria-hidden="true">&middot;</span>
+            </template>
+            <span>{{ formatDate(archive.start) }}</span>
+            <span aria-hidden="true">&middot;</span>
+            <span>{{ formatBytes(archive.original_size) }}</span>
+            <span aria-hidden="true">&middot;</span>
+            <span>+{{ formatBytes(archive.deduplicated_size) }} new</span>
+            <template v-if="deleting">
+              <span aria-hidden="true">&middot;</span>
+              <span class="archive-head-deleting">
+                <BaseSpinner size="sm" />
+                Deleting
+              </span>
+            </template>
+          </p>
+        </div>
         <!--
-          Whole-archive actions live here, spelled out. Download and restore
-          used to be reachable only through the file table's "." row, and
-          delete only through an icon on that row that was transparent until
-          the pointer happened to land on it - so the repository screen had a
-          delete nobody could find and the schedule screen had none at all.
+          Everything that acts on the whole archive is in here, so the open
+          archive carries one menu instead of three header buttons and the list
+          a bin on every row. Restoring single files is the selection bar's.
         -->
-        <span class="browser-actions">
+        <OverflowMenu
+          v-slot="{ run }"
+          label="Archive actions"
+        >
           <button
-            class="btn btn-sm btn-ghost"
+            v-if="isAdmin"
+            class="overflow-menu-item archive-menu-item"
+            role="menuitem"
             type="button"
-            title="Download whole archive"
-            @click="downloadEntry(ROOT_ENTRY)"
+            @click="run(() => openRestore([]))"
+          >
+            <RotateCcw :size="14" />
+            Restore whole archive...
+          </button>
+          <button
+            class="overflow-menu-item archive-menu-item"
+            role="menuitem"
+            type="button"
+            @click="run(() => downloadEntry(ROOT_ENTRY))"
           >
             <Download :size="14" />
             Download
           </button>
           <button
-            v-if="isAdmin"
-            class="btn btn-sm btn-ghost"
+            v-if="repoId !== null"
+            class="overflow-menu-item archive-menu-item"
+            role="menuitem"
             type="button"
-            title="Restore whole archive"
-            @click="openRestore([])"
+            @click="run(() => (view = 'changes'))"
           >
-            <RotateCcw :size="14" />
-            Restore
+            <FileDiff :size="14" />
+            Compare with another archive
+          </button>
+          <button
+            class="overflow-menu-item archive-menu-item"
+            role="menuitem"
+            type="button"
+            @click="run(copyName)"
+          >
+            <Copy :size="14" />
+            Copy archive name
           </button>
           <button
             v-if="isAdmin"
-            class="btn btn-sm btn-danger-text"
+            class="overflow-menu-item overflow-menu-item--danger archive-menu-item"
+            role="menuitem"
             type="button"
             :disabled="deleting"
-            :title="deleting ? 'Deletion in progress' : 'Delete whole archive'"
-            @click="handleDeleteWholeArchive"
+            :title="deleting ? 'Deletion in progress' : undefined"
+            @click="run(handleDeleteWholeArchive)"
           >
-            <BaseSpinner
-              v-if="deleting"
-              size="sm"
-            />
-            <Trash2
-              v-else
-              :size="14"
-            />
-            {{ deleting ? 'Deleting...' : 'Delete' }}
+            <Trash2 :size="14" />
+            {{ deleting ? 'Deleting...' : 'Delete archive...' }}
           </button>
-        </span>
+        </OverflowMenu>
       </div>
 
-      <div
-        v-if="archive.start"
-        class="archive-meta-bar"
-      >
-        <span
-          v-if="archiveHost"
-          class="archive-meta-item"
-        >
-          <span class="archive-meta-label">Host</span>
-          <BaseHostLink
-            class="host-link"
-            :hostname="archiveHost"
-          />
-        </span>
-        <span
-          v-if="repoName"
-          class="archive-meta-item"
-        >
-          <span class="archive-meta-label">Repo</span>
-          <RouterLink
-            v-if="repoId !== null"
-            class="repo-link"
-            :to="`/repos/${repoId}`"
-            >{{ repoName }}</RouterLink
-          >
-          <span
-            v-else
-            class="archive-meta-value"
-            >{{ repoName }}</span
-          >
-        </span>
-        <span class="archive-meta-item">
-          <span class="archive-meta-label">Date</span>
-          <span class="archive-meta-value">{{ formatDate(archive.start) }}</span>
-        </span>
-        <span class="archive-meta-item">
-          <span class="archive-meta-label">Original</span>
-          <span class="archive-meta-value">{{ formatBytes(archive.original_size) }}</span>
-        </span>
-        <span class="archive-meta-item">
-          <span class="archive-meta-label">Dedup</span>
-          <span class="archive-meta-value">{{ formatBytes(archive.deduplicated_size) }}</span>
-        </span>
-      </div>
-
-      <div
+      <BaseTabs
         v-if="repoId !== null"
-        class="browser-view"
-      >
-        <BaseSegmented
-          v-model="view"
-          :options="VIEW_OPTIONS"
-          label="What to show of the archive"
-        />
-      </div>
+        v-model="view"
+        class="archive-tabs"
+        :tabs="VIEW_TABS"
+        label="What to show of the archive"
+      />
+
+      <ArchiveDiff
+        v-if="view === 'changes' && repoId !== null"
+        :repo-id="repoId"
+        :archive="archive"
+        :archives="archives"
+      />
 
       <ArchiveDatabaseDumps
-        v-if="view === 'databases' && repoId !== null"
+        v-else-if="view === 'databases' && repoId !== null"
         :repo-id="repoId"
         :archive="archive"
         :can-restore="isAdmin"
@@ -763,31 +829,60 @@ const parentCrumb = computed(() => {
       />
 
       <template v-else>
-        <div class="browser-path">
-          <button
-            class="btn btn-xs btn-ghost browser-up"
-            type="button"
-            :disabled="parentCrumb === null"
-            title="Up one level"
-            aria-label="Up one level"
-            @click="parentCrumb && navigateTo(parentCrumb.path)"
+        <div class="archive-pathbar">
+          <input
+            type="checkbox"
+            class="browser-pick"
+            :checked="hereState === 'checked'"
+            :indeterminate="hereState === 'partial'"
+            :disabled="rows.length === 0 || splitting || searching"
+            aria-label="Select everything in this folder"
+            title="Select everything in this folder"
+            data-testid="pick-all"
+            @change="toggleAllHere"
+          />
+          <nav
+            class="path-crumbs archive-path"
+            aria-label="Folder"
           >
-            <CornerLeftUp :size="14" />
-          </button>
-          <div class="path-crumbs">
             <button
               v-for="(seg, i) in breadcrumbs"
               :key="seg.path"
+              type="button"
               class="crumb"
-              :class="{ 'crumb-last': i === breadcrumbs.length - 1 }"
+              :class="{
+                'crumb-last': i === breadcrumbs.length - 1,
+                'crumb-root': seg.path === '/',
+              }"
+              :aria-current="i === breadcrumbs.length - 1 ? 'location' : undefined"
               @click="navigateTo(seg.path)"
             >
-              {{ seg.label }}
+              {{ seg.path === '/' ? '/' : seg.label }}
             </button>
-          </div>
+          </nav>
+          <button
+            class="btn btn-sm btn-ghost archive-search-toggle"
+            :class="{ 'archive-search-toggle--open': searchOpen }"
+            type="button"
+            :aria-expanded="searchOpen"
+            :aria-label="searchOpen ? 'Close the search' : 'Search this archive'"
+            :title="searchOpen ? 'Close the search' : 'Search this archive'"
+            data-testid="tree-search-toggle"
+            @click="toggleSearch"
+          >
+            <X
+              v-if="searchOpen"
+              :size="14"
+            />
+            <Search
+              v-else
+              :size="14"
+            />
+          </button>
         </div>
 
         <ArchiveTreeSearch
+          v-if="searchOpen"
           v-model:active="searching"
           :repo-id="repoId"
           :archive-name="archive.name"
@@ -797,281 +892,203 @@ const parentCrumb = computed(() => {
           @open="(path: string) => navigateTo(`/${path}`)"
         />
 
-        <template v-if="searching" />
-        <BaseSpinner
-          v-else-if="contentsLoading"
-          size="sm"
-        />
         <div
-          v-else-if="indexing"
-          class="state-msg state-msg--inline"
+          v-if="!searching"
+          class="archive-rows"
         >
-          <BaseSpinner size="sm" />
-          Indexing archive contents -- this only happens once...
-        </div>
-        <div
-          v-else-if="contentsError"
-          class="error-banner"
-        >
-          {{ contentsError }}
-        </div>
-        <div
-          v-else-if="contents.length === 0"
-          class="state-msg state-msg--inline"
-        >
-          Empty directory.
-        </div>
-        <DataTable
-          v-else
-          v-model:filters="browserFilters"
-          :value="browserEntries"
-          :row-class="(data: DisplayEntry) => (isClickable(data) ? 'clickable' : '')"
-          filter-display="row"
-          table-class="data-table browser-table"
-          resizable-columns
-          column-resize-mode="expand"
-          @row-click="(e: { data: DisplayEntry }) => handleRowClick(e.data)"
-        >
-          <Column
-            header=""
-            style="width: 2.5rem"
+          <div
+            v-if="contentsLoading"
+            class="loading-row"
           >
-            <template #header>
-              <input
-                type="checkbox"
-                class="browser-pick"
-                :checked="hereState === 'checked'"
-                :indeterminate="hereState === 'partial'"
-                :disabled="pickableHere.length === 0 || splitting"
-                aria-label="Select everything in this folder"
-                data-testid="pick-all"
-                @change="toggleAllHere"
-              />
-            </template>
-            <template #body="{ data }">
-              <input
-                v-if="isPickable(data)"
-                type="checkbox"
-                class="browser-pick"
-                :checked="tickStateOf(data) === 'checked'"
-                :indeterminate="tickStateOf(data) === 'partial'"
-                :disabled="splitting"
-                :aria-label="`Select ${data.displayName}`"
-                data-testid="pick-entry"
-                @click.stop
-                @change="togglePicked(data)"
-              />
-            </template>
-          </Column>
-          <Column
-            field="displayName"
-            header="Name"
-            :sortable="true"
-            :show-filter-menu="false"
-            style="min-width: 12rem"
+            <BaseSpinner size="sm" />
+          </div>
+          <div
+            v-else-if="indexing"
+            class="state-msg state-msg--inline archive-rows-msg"
           >
-            <template #filter="{ filterModel, filterCallback }">
-              <input
-                v-model="filterModel.value"
-                class="input filter-input"
-                type="text"
-                placeholder="Filter name..."
-                @input="filterCallback()"
-              />
-            </template>
-            <template #body="{ data }">
-              <span
-                class="td-name"
-                :class="{ 'td-name--link': data.link }"
-                :title="data.link ? linkTitle(data.path, data.link) : data.displayName"
-              >
+            <BaseSpinner size="sm" />
+            Indexing archive contents -- this only happens once...
+          </div>
+          <div
+            v-else-if="contentsError"
+            class="error-banner"
+          >
+            {{ contentsError }}
+          </div>
+          <div
+            v-else-if="rows.length === 0"
+            class="state-msg state-msg--inline archive-rows-msg"
+          >
+            This folder is empty.
+          </div>
+          <template v-else>
+            <BrowserRow
+              v-for="entry in rows"
+              :key="entry.path"
+              clickable
+              :selected="tickStateOf(entry) === 'checked'"
+              :size="sizeLabel(entry)"
+              data-testid="browser-entry"
+              @click="handleRowClick(entry)"
+            >
+              <template #lead>
+                <input
+                  type="checkbox"
+                  class="browser-pick"
+                  :checked="tickStateOf(entry) === 'checked'"
+                  :indeterminate="tickStateOf(entry) === 'partial'"
+                  :disabled="splitting"
+                  :aria-label="`Select ${entry.displayName}`"
+                  data-testid="pick-entry"
+                  @click.stop
+                  @change="togglePicked(entry)"
+                />
                 <FolderSymlink
-                  v-if="data.link && linksToFolder(data.link)"
+                  v-if="entry.link && linksToFolder(entry.link)"
                   :size="16"
-                  class="entry-icon"
+                  class="browser-icon browser-icon--dir"
                 />
                 <FileSymlink
-                  v-else-if="data.link"
+                  v-else-if="entry.link"
                   :size="16"
-                  class="entry-icon"
+                  class="browser-icon"
                 />
                 <Folder
-                  v-else-if="data.isDir"
+                  v-else-if="entry.isDir"
                   :size="16"
-                  class="entry-icon"
+                  class="browser-icon browser-icon--dir"
                 />
                 <File
                   v-else
                   :size="16"
-                  class="entry-icon"
+                  class="browser-icon"
                 />
-                <span class="name-text">{{ data.displayName }}</span>
-                <span
-                  v-if="changeBadge(data)"
-                  class="badge entry-change"
-                  :class="changeBadge(data)?.tone"
-                  :title="changeBadge(data)?.title"
-                  data-testid="change-badge"
-                  >{{ changeBadge(data)?.label }}</span
+              </template>
+              <template #title>
+                <button
+                  v-if="opensFolder(entry)"
+                  type="button"
+                  class="browser-open"
+                  :title="entry.link ? linkTitle(entry.path, entry.link) : undefined"
+                  @click.stop="handleRowClick(entry)"
                 >
+                  {{ entry.displayName }}
+                </button>
                 <span
-                  v-if="data.link"
-                  class="link-info"
+                  v-else
+                  :title="entry.link ? linkTitle(entry.path, entry.link) : undefined"
+                  >{{ entry.displayName }}</span
+                >
+              </template>
+              <template #facts>
+                <template v-if="changeMark(entry)">
+                  <span
+                    class="browser-change"
+                    :title="changeMark(entry)?.title"
+                    data-testid="change-badge"
+                  >
+                    <span
+                      class="status-dot"
+                      :class="changeMark(entry)?.dot"
+                    />
+                    {{ changeMark(entry)?.label }}
+                  </span>
+                  <span aria-hidden="true">&middot;</span>
+                </template>
+                <span
+                  v-if="entry.link"
+                  class="browser-link"
                   data-testid="entry-link"
                 >
-                  <span class="badge badge--info">Link</span>
-                  <span
-                    v-if="data.link.target !== undefined"
-                    class="link-to"
-                  >
+                  link
+                  <template v-if="entry.link.target !== undefined">
                     <ArrowRight
                       :size="12"
-                      class="entry-icon"
                       aria-hidden="true"
                     />
                     <button
-                      v-if="linkFolder(data.link) !== null"
+                      v-if="linkFolder(entry.link) !== null"
                       type="button"
-                      class="link-target"
-                      :aria-label="`Open link target ${data.link.target}`"
+                      class="browser-link-target"
+                      :aria-label="`Open link target ${entry.link.target}`"
                       data-testid="link-target"
-                      @click.stop="openLinkTarget(data)"
+                      @click.stop="openLinkTarget(entry)"
                     >
-                      {{ data.link.target }}
+                      {{ entry.link.target }}
                     </button>
                     <span
                       v-else
-                      class="link-target link-target--away"
+                      class="mono"
                       data-testid="link-target"
-                      >{{ data.link.target }}</span
+                      >{{ entry.link.target }}</span
                     >
-                  </span>
-                  <span
-                    v-if="data.link.resolved.state === 'not_in_archive'"
-                    class="link-note"
-                    >not in archive</span
-                  >
+                  </template>
+                  <template v-if="entry.link.resolved.state === 'not_in_archive'">
+                    (not in archive)
+                  </template>
                 </span>
                 <span
-                  v-if="data.isDir && isPickable(data) && totals.get(data.path)"
-                  class="muted entry-totals"
-                  data-testid="folder-files"
-                  >{{ filesLabel(totals.get(data.path)?.files ?? 0) }}</span
+                  v-else-if="rowFacts(entry)"
+                  :title="entry.mtime ? formatDate(entry.mtime) : undefined"
+                  :data-testid="entry.isDir ? 'folder-files' : undefined"
+                  >{{ rowFacts(entry) }}</span
                 >
-              </span>
-            </template>
-          </Column>
-          <Column
-            field="displaySize"
-            header="Size"
-            :sortable="true"
-            :show-filter-menu="false"
-            style="width: 6rem"
-          >
-            <template #filter="{ filterModel, filterCallback }">
-              <input
-                v-model="filterModel.value"
-                class="input filter-input"
-                type="text"
-                placeholder="Filter size..."
-                @input="filterCallback()"
-              />
-            </template>
-            <template #body="{ data }">
-              <span class="td-size">{{ sizeLabel(data) }}</span>
-            </template>
-          </Column>
-          <Column
-            field="displayMtime"
-            header="Modified"
-            :sortable="true"
-            :show-filter-menu="false"
-            style="width: 10rem"
-          >
-            <template #filter="{ filterModel, filterCallback }">
-              <input
-                v-model="filterModel.value"
-                class="input filter-input"
-                type="text"
-                placeholder="Filter date..."
-                @input="filterCallback()"
-              />
-            </template>
-            <template #body="{ data }">
-              <span class="td-date">{{ data.displayMtime }}</span>
-            </template>
-          </Column>
-          <Column
-            header=""
-            style="width: 9rem"
-          >
-            <template #body="{ data }">
-              <span class="td-action">
-                <button
-                  class="btn btn-sm btn-ghost"
-                  :title="
-                    data.isDir
-                      ? data.path
-                        ? 'Download as .tar.lz4'
-                        : 'Download whole archive'
-                      : 'Download'
-                  "
-                  @click.stop="downloadEntry(data)"
-                >
-                  <Download :size="14" />
-                </button>
-                <button
-                  v-if="isComparable(data)"
-                  class="btn btn-sm btn-ghost"
-                  title="Compare with another archive"
-                  :aria-label="`Compare ${data.displayName} with another archive`"
-                  data-testid="compare-file"
-                  @click.stop="comparePath = data.path"
-                >
-                  <FileDiff :size="14" />
-                </button>
-                <button
-                  v-if="hasHistory(data)"
-                  class="btn btn-sm btn-ghost"
-                  title="History, and compare with the file now"
-                  :aria-label="`History of ${data.displayName}`"
-                  data-testid="file-history"
-                  @click.stop="historyPath = data.path"
-                >
-                  <History :size="14" />
-                </button>
-              </span>
-            </template>
-          </Column>
-        </DataTable>
+              </template>
+            </BrowserRow>
+          </template>
+        </div>
 
         <!--
           Restoring and downloading act on what is ticked, from any folder of
-          the archive, and say where a restore goes before it is started: the
-          agent the archive came from, which the dialog behind the button can
-          change, together with where on it.
+          the archive, and the bar says where a restore goes before it is
+          started: the machine the archive came from, which the dialog behind
+          the button can change, together with where on it.
         -->
         <div
           v-if="picked.size > 0"
-          class="browser-selection"
+          class="selection-bar"
           role="region"
           aria-label="Selection"
           data-testid="browser-selection"
         >
-          <span class="browser-selection-count">{{ pickedSummary }}</span>
-          <button
-            class="btn btn-xs btn-ghost"
-            type="button"
-            @click="clearPicked"
-          >
-            Clear
-          </button>
-          <span
-            v-if="isAdmin && archiveHost"
-            class="muted browser-selection-target"
-            >to their original paths on {{ archiveHost }}, or elsewhere</span
-          >
-          <span class="browser-selection-actions">
+          <span class="selection-text">
+            <span class="selection-count">{{ pickedSummary }}</span>
+            <span
+              v-if="isAdmin && archiveHost"
+              class="selection-target"
+              >Restores to {{ archiveHost }}, at the original paths or elsewhere</span
+            >
+          </span>
+          <span class="selection-actions">
+            <button
+              class="btn btn-sm btn-ghost"
+              type="button"
+              @click="clearPicked"
+            >
+              Clear
+            </button>
+            <button
+              v-if="onlyFile !== null && repoId !== null"
+              class="btn btn-sm btn-ghost"
+              type="button"
+              title="Versions of this file across archives, and compare with the file now"
+              data-testid="file-history"
+              @click="historyPath = onlyFile?.path ?? null"
+            >
+              <History :size="14" />
+              History
+            </button>
+            <button
+              v-if="onlyFile !== null && canCompare"
+              class="btn btn-sm btn-ghost"
+              type="button"
+              title="Compare with another archive"
+              data-testid="compare-file"
+              @click="comparePath = onlyFile?.path ?? null"
+            >
+              <FileDiff :size="14" />
+              Compare
+            </button>
             <button
               class="btn btn-sm btn-ghost"
               type="button"
@@ -1105,10 +1122,16 @@ const parentCrumb = computed(() => {
               @click="openRestore(pickedPaths)"
             >
               <RotateCcw :size="14" />
-              Restore{{ archiveHost ? ` to ${archiveHost}` : '' }}
+              Restore...
             </button>
           </span>
         </div>
+        <p
+          v-else-if="!searching"
+          class="selection-hint"
+        >
+          Tick files or folders to restore or download them. Open a folder by clicking its name.
+        </p>
       </template>
     </template>
 
@@ -1146,298 +1169,129 @@ const parentCrumb = computed(() => {
 <style scoped>
 .archive-file-browser {
   color: var(--text-primary);
-  /* The table's layout follows the pane it sits in, not the viewport: beside
-     a 380px archive list a 1280px desktop leaves this pane narrower than a
-     phone-width breakpoint would ever notice. */
-  container-type: inline-size;
 }
 
-.browser-placeholder {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: var(--space-5);
-  min-height: 15rem;
-  padding: var(--space-9);
-  text-align: center;
-  font-size: var(--fs-base);
-  color: var(--text-muted);
-}
-
-.browser-placeholder-icon {
-  opacity: 0.45;
-}
-
-.browser-placeholder-title {
-  font-size: var(--fs-md);
-  font-weight: 600;
-  color: var(--text-primary);
-}
-
-.browser-placeholder-hint {
-  max-width: 32ch;
-  font-size: var(--fs-sm);
-}
-
-.browser-header {
+.archive-head {
   display: flex;
   align-items: flex-start;
-  flex-wrap: wrap;
   gap: var(--space-5);
-  padding: var(--space-5) var(--space-6);
-  border-bottom: 1px solid var(--border);
+  padding: var(--space-5) var(--space-7);
 }
 
-.browser-title {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
+.archive-head-text {
+  flex: 1;
   min-width: 0;
 }
 
-.browser-title-label {
-  font-size: var(--fs-2xs);
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--text-muted);
-}
-
-.browser-title-name {
+.archive-head-name {
+  margin: 0;
   font-family: var(--mono);
   font-size: var(--fs-base);
   font-weight: 600;
-  color: var(--text-primary);
   overflow-wrap: anywhere;
 }
 
-.browser-actions {
-  margin-left: auto;
+.archive-head-facts {
   display: flex;
   flex-wrap: wrap;
-  gap: var(--space-3);
-}
-
-.archive-meta-bar {
-  display: flex;
   align-items: center;
-  flex-wrap: wrap;
-  gap: var(--space-4);
-  padding: var(--space-4) var(--space-6);
-  border-bottom: 1px solid var(--border);
-}
-
-/* Each fact reads as its own chip, so the bar stays legible when it wraps on
-   a narrow pane instead of running together across a single line. */
-.archive-meta-item {
-  display: inline-flex;
-  align-items: baseline;
-  gap: var(--space-3);
-  padding: var(--space-2) var(--space-5);
-  border-radius: var(--radius-pill);
-  background: var(--bg-hover);
-}
-
-.archive-meta-label {
-  font-size: var(--fs-2xs);
-  font-weight: 600;
+  gap: var(--space-1) var(--space-3);
+  margin: var(--space-2) 0 0;
+  font-size: var(--fs-sm);
   color: var(--text-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
 }
 
-.archive-meta-value {
-  font-size: var(--fs-2xs);
-  color: var(--text-primary);
-  font-variant-numeric: tabular-nums;
-}
-
-/* The host chip is a link into the agent; size it like its neighbours rather
-   than at `.host-link`'s table-cell size. */
-.archive-meta-item .host-link {
-  font-size: var(--fs-2xs);
-}
-
-/* The repo chip is the same shape aimed at the repository; `.repo-link`
-   carries no size of its own, so it takes the bar's. */
-.archive-meta-item .repo-link {
-  font-size: var(--fs-2xs);
-}
-
-.browser-view {
-  padding: var(--space-4) var(--space-6);
-  border-bottom: 1px solid var(--border);
-}
-
-.browser-path {
-  display: flex;
-  align-items: center;
-  gap: var(--space-4);
-  padding: var(--space-4) var(--space-6);
-  border-bottom: 1px solid var(--border);
-}
-
-.browser-up {
-  flex: none;
-}
-
-:deep(.browser-table) {
-  table-layout: fixed;
-}
-
-:deep(.data-table) {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: var(--fs-base);
-}
-
-/* No border-bottom here: the global PrimeVue passthrough config
-   (primevue-pt.ts) already draws row separators via `tbody: divide-y` and
-   `headerRow: border-b`. Adding a second border on th/td doubled the line. */
-:deep(.data-table th) {
-  text-align: left;
-  padding: var(--space-4) var(--space-6);
-  color: var(--text-muted);
-  font-weight: 600;
-  font-size: var(--fs-xs);
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-}
-
-:deep(.data-table td) {
-  padding: var(--space-4) var(--space-6);
-  color: var(--text-secondary);
-}
-
-:deep(.data-table tr.clickable) {
-  cursor: pointer;
-  transition: background var(--duration-fast);
-}
-
-:deep(.data-table tr.clickable:hover) {
-  background: var(--bg-hover);
-}
-
-/* 37.5rem is the full table's own floor: the pick column (2.5rem), the Name
-   column's 12rem minimum, and the fixed Size (6rem), Modified (10rem) and
-   action (7rem) columns. A pane narrower than that used to keep every column
-   and scroll sideways, which pushed each row's restore button past the
-   panel's edge - so the table drops the Modified column (the 4th) and narrows
-   Size (the 3rd) instead, keeping every row's actions in view. */
-@container (max-width: 37.5rem) {
-  :deep(.browser-table th:nth-child(4)),
-  :deep(.browser-table td:nth-child(4)) {
-    display: none;
-  }
-
-  :deep(.browser-table th:nth-child(3)),
-  :deep(.browser-table td:nth-child(3)) {
-    width: 4rem;
-  }
-}
-
-@media (max-width: 640px) {
-  .td-name {
-    flex-wrap: wrap;
-    align-items: flex-start;
-  }
-
-  .name-text {
-    white-space: normal;
-    overflow-wrap: anywhere;
-    word-break: break-word;
-  }
-
-  .td-size {
-    white-space: normal;
-  }
-}
-
-/* Only the phone layout shows one pane at a time, so only there is there a
-   list to go back to. */
-.browser-back {
-  display: none;
-}
-
-@media (max-width: 768px) {
-  .browser-back {
-    display: inline-flex;
-    align-self: flex-start;
-  }
-}
-
-/* A link's badge and target sit on their own line under its name, lined up
-   with the name past the icon: beside the archive list the Name column is
-   too narrow to hold the name, the badge and the target on one line. */
-.td-name--link {
-  flex-wrap: wrap;
-  row-gap: var(--space-2);
-}
-
-.link-info {
-  display: flex;
-  flex-wrap: wrap;
-  flex-basis: 100%;
-  align-items: center;
-  gap: var(--space-3);
-  min-width: 0;
-  padding-inline-start: var(--space-8);
-  font-size: var(--fs-xs);
-}
-
-/* The arrow travels with its target, so a wrapped line never leaves it
-   behind. */
-.link-to {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-3);
-  min-width: 0;
-}
-
-.link-target {
-  overflow: hidden;
-  min-width: 0;
-  padding: 0;
-  border: none;
-  background: none;
-  color: var(--accent);
-  font: inherit;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  cursor: pointer;
-}
-
-.link-target:hover {
-  text-decoration: underline;
-}
-
-.link-target--away {
-  color: var(--text-secondary);
-  cursor: default;
-}
-
-.link-target--away:hover {
+.archive-head-link {
+  color: inherit;
   text-decoration: none;
 }
 
-.link-note {
-  flex: none;
-  color: var(--text-muted);
-  font-family: var(--sans);
+.archive-head-link:hover {
+  color: var(--accent);
+  text-decoration: underline;
 }
 
-.entry-change {
+.archive-head-deleting {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-3);
+  color: var(--danger);
+}
+
+.archive-menu-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  white-space: nowrap;
+}
+
+/* The tabs sit inside the card, ruled off from the head above them, and
+   wrap rather than scroll on a phone: there are only four. */
+.archive-tabs {
+  flex-wrap: wrap;
+  padding: 0 var(--space-4);
+  border-top: 1px solid var(--border);
+}
+
+.archive-tabs :deep(.tablist) {
+  flex-wrap: wrap;
+}
+
+.archive-tabs :deep(.tab) {
+  padding: var(--space-4) var(--space-3);
+  margin: 0 var(--space-3);
+  font-size: var(--fs-sm);
+}
+
+@media (max-width: 768px) {
+  .archive-tabs {
+    overflow-x: visible;
+  }
+}
+
+.archive-pathbar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-5);
+  padding: var(--space-3) var(--space-5) var(--space-3) var(--space-7);
+  border-bottom: 1px solid var(--border);
+}
+
+.archive-path {
+  flex: 1;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+}
+
+.archive-search-toggle {
   flex: none;
 }
 
-.entry-totals {
-  flex: none;
-  font-size: var(--fs-xs);
-  font-variant-numeric: tabular-nums;
+.archive-search-toggle--open {
+  color: var(--accent);
+}
+
+/* The listing scrolls inside the card beside the archive list, so the
+   selection bar under it stays in view. On a phone the page scrolls. */
+.archive-rows {
+  max-height: 36rem;
+  overflow-y: auto;
+}
+
+@media (max-width: 768px) {
+  .archive-rows {
+    max-height: none;
+  }
+}
+
+.archive-rows-msg {
+  padding: var(--space-5) var(--space-7);
 }
 
 .browser-pick {
+  flex: none;
   width: 1rem;
   height: 1rem;
   margin: 0;
@@ -1445,9 +1299,63 @@ const parentCrumb = computed(() => {
   cursor: pointer;
 }
 
-/* Pinned to the bottom of the screen while the table scrolls under it, so
-   what a restore will act on stays in sight. */
-.browser-selection {
+.browser-icon {
+  flex: none;
+  color: var(--text-muted);
+}
+
+.browser-icon--dir {
+  color: var(--accent);
+}
+
+/* A folder's name is the button that opens it, so the keyboard can too. */
+.browser-open {
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+
+.browser-open:hover {
+  color: var(--accent);
+}
+
+.browser-change {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.browser-link {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+  min-width: 0;
+}
+
+.browser-link-target {
+  padding: 0;
+  border: 0;
+  background: none;
+  font-family: var(--mono);
+  font-size: inherit;
+  color: var(--accent);
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+
+.browser-link-target:hover {
+  text-decoration: underline;
+}
+
+/* Pinned to the bottom of the screen while a long folder scrolls the page
+   on a phone, so what a restore will act on stays in sight. */
+.selection-bar {
   position: sticky;
   bottom: 0;
   z-index: 1;
@@ -1455,36 +1363,43 @@ const parentCrumb = computed(() => {
   flex-wrap: wrap;
   align-items: center;
   gap: var(--space-4) var(--space-5);
-  padding: var(--space-5) var(--space-6);
+  padding: var(--space-5) var(--space-7);
   border-top: 1px solid var(--border);
-  background: var(--bg-elevated);
-  box-shadow: var(--shadow-lg);
+  border-radius: 0 0 var(--radius) var(--radius);
+  background: var(--bg-card);
 }
 
-.browser-selection-count {
-  font-weight: 600;
-}
-
-.browser-selection-target {
+.selection-text {
+  display: flex;
+  flex: 1 1 12rem;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
   font-size: var(--fs-sm);
 }
 
-.browser-selection-actions {
+.selection-count {
+  font-weight: 600;
+}
+
+.selection-target {
+  font-size: var(--fs-xs);
+  color: var(--text-muted);
+}
+
+.selection-actions {
   display: flex;
-  gap: var(--space-4);
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--space-3);
   margin-left: auto;
 }
 
-@media (max-width: 768px) {
-  .browser-selection-actions {
-    flex: 1 1 100%;
-    margin-left: 0;
-  }
-
-  .browser-selection-actions > .btn {
-    flex: 1;
-    justify-content: center;
-    min-height: 2.75rem;
-  }
+.selection-hint {
+  margin: 0;
+  padding: var(--space-4) var(--space-7);
+  border-top: 1px solid var(--border-subtle);
+  font-size: var(--fs-xs);
+  color: var(--text-muted);
 }
 </style>

@@ -2829,7 +2829,6 @@
     gap: var(--space-1);
     padding: var(--space-4) var(--space-6);
     border-bottom: 1px solid var(--border);
-    background: var(--bg-base);
   }
 
   .crumb {
@@ -2866,7 +2865,7 @@
 
   /* A filesystem root crumb is already spelled "/", so the trail's own
      separator would double it up. */
-  .crumb-root::after {
+  .crumb.crumb-root::after {
     content: none;
   }
 

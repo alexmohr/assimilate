@@ -181,7 +181,26 @@ function openActivity(row: Row): void {
         />
         <div class="sched-name">
           <span class="sched-title">{{ r.schedule.name || r.subtitle }}</span>
-          <span class="sched-sub">
+          <!-- Always two lines, so every row is the same height: a failing
+               schedule's error takes the place of its cadence line. -->
+          <button
+            v-if="r.error"
+            type="button"
+            class="sched-sub sched-error"
+            :class="`sched-error--${r.error.kind}`"
+            :title="r.error.message ?? undefined"
+            @click.stop="openActivity(r)"
+          >
+            <span class="sched-error-label"
+              >{{ r.error.kind === 'failed' ? 'Failed' : 'Warning'
+              }}{{ r.lastAt ? ` ${relativeTime(r.lastAt)}` : '' }}</span
+            >
+            <span class="sched-error-msg">{{ r.error.message ?? 'Open in Activity log' }}</span>
+          </button>
+          <span
+            v-else
+            class="sched-sub"
+          >
             <span class="sched-sub-cadence">{{ r.cadence }} · </span>{{ r.subtitle }}
           </span>
         </div>
@@ -212,20 +231,6 @@ function openActivity(row: Row): void {
           @keydown.enter.stop
         >
           <Play :size="16" />
-        </button>
-        <button
-          v-if="r.error"
-          type="button"
-          class="sched-error"
-          :class="`sched-error--${r.error.kind}`"
-          @click.stop="openActivity(r)"
-        >
-          <span class="sched-error-label"
-            >{{ r.error.kind === 'failed' ? 'Failed' : 'Warning'
-            }}{{ r.lastAt ? ` ${relativeTime(r.lastAt)}` : '' }}</span
-          >
-          <span class="sched-error-msg mono">{{ r.error.message ?? 'Open in Activity log' }}</span>
-          <span class="sched-error-link">Open in Activity log</span>
         </button>
       </div>
       <p
@@ -330,7 +335,7 @@ function openActivity(row: Row): void {
   display: flex;
   flex-direction: column;
   min-width: 0;
-  gap: var(--space-1);
+  gap: var(--space-3);
 }
 
 .sched-title {
@@ -384,12 +389,9 @@ function openActivity(row: Row): void {
 }
 
 .sched-error {
-  grid-column: 2 / -1;
   display: flex;
   align-items: baseline;
   gap: var(--space-3);
-  min-width: 0;
-  margin-top: var(--space-2);
   padding: 0;
   border: none;
   background: none;
@@ -413,19 +415,10 @@ function openActivity(row: Row): void {
 }
 
 .sched-error-msg {
-  color: var(--text-secondary);
-  font-size: var(--fs-2xs);
-  white-space: nowrap;
+  color: var(--text-muted);
   overflow: hidden;
   text-overflow: ellipsis;
   min-width: 0;
-}
-
-.sched-error-link {
-  display: none;
-  margin-left: auto;
-  flex: none;
-  color: var(--accent);
 }
 
 .sched-none {
@@ -472,10 +465,6 @@ function openActivity(row: Row): void {
   .sched-next {
     text-align: left;
     font-size: var(--fs-sm);
-  }
-
-  .sched-error-link {
-    display: inline;
   }
 }
 </style>

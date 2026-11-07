@@ -351,7 +351,10 @@ const REPO_STATE_TONE: Record<RepoOverviewState, Tone | 'info'> = {
             aria-hidden="true"
           />
           <span class="repo-name">{{ row.name }}</span>
+          <!-- The dot already says healthy; the badge only speaks up when
+               there is something else to say. -->
           <span
+            v-if="row.state !== 'success'"
             class="badge"
             :class="`badge--${REPO_STATE_TONE[row.state]}`"
             >{{ REPO_STATE_LABEL[row.state] }}</span

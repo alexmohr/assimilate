@@ -203,8 +203,12 @@ function setAll(expand: boolean): void {
   margin-left: 0;
 }
 
-/* A log list inside a section: the section's card is the frame already. */
-.accordion-body :deep(.log-list) {
+/* A list or table inside a section: the section's card is the frame already,
+   so the list keeps only its hairlines between rows. */
+.accordion-body :deep(.log-list),
+.accordion-body :deep(.rows),
+.accordion-body :deep(.list-group),
+.accordion-body :deep(.table-wrap--framed) {
   border: none;
   border-radius: 0;
   background: none;

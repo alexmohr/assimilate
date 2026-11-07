@@ -73,3 +73,32 @@ export function relativeTime(iso: string): string {
   if (futureHrs < 24) return `in ${futureHrs}h`
   return `in ${Math.floor(futureHrs / 24)}d`
 }
+
+/** The time of day, `14:30`, in the configured timezone. */
+export function formatClock(iso: string): string {
+  return new Date(iso).toLocaleTimeString(undefined, {
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+    timeZone: getConfiguredTimezone(),
+  })
+}
+
+/** A day without its year, `6 Nov`, in the configured timezone. */
+export function formatDay(iso: string): string {
+  return new Date(iso).toLocaleDateString(undefined, {
+    day: 'numeric',
+    month: 'short',
+    timeZone: getConfiguredTimezone(),
+  })
+}
+
+/** A day with its year, `6 Nov 2026`, in the configured timezone. */
+export function formatDayYear(iso: string): string {
+  return new Date(iso).toLocaleDateString(undefined, {
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+    timeZone: getConfiguredTimezone(),
+  })
+}

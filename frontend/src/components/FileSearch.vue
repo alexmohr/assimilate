@@ -4,300 +4,272 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 -->
 
 <script setup lang="ts">
-import { ref, computed } from 'vue'
-import { Search } from '@lucide/vue'
-import DataTable from 'primevue/datatable'
-import Column from 'primevue/column'
-import { searchAcrossArchives, searchArchive } from '../api/archives'
-import { formatBytes, formatDate } from '../utils/format'
-import { useAsyncAction } from '../composables/useAsyncAction'
+import { computed, ref, watch } from 'vue'
+import { File, Folder, Search, X } from '@lucide/vue'
+import axios from 'axios'
+import { searchAcrossArchives } from '../api/archives'
+import { isDirectoryEntry } from '../utils/archiveSelection'
+import { extractError } from '../utils/error'
+import { fileNameGlob } from '../utils/fileSearchPattern'
+import { formatBytes, formatDate, formatDay } from '../utils/format'
+import { sameArchive, type RepoArchive } from '../utils/repoArchive'
 import BaseSpinner from './BaseSpinner.vue'
+import BrowserRow from './BrowserRow.vue'
 import EmptyState from './EmptyState.vue'
-import BaseSegmented, { type SegmentedOption } from './BaseSegmented.vue'
+import type { CrossSearchEntryResponse } from '../types/generated'
 
-interface ArchiveOption {
-  name: string
+/**
+ * Files found by name across every archive the list holds, in the card the
+ * open archive otherwise takes. Opening one browses it in the newest archive
+ * that has it, at its folder, with it ticked.
+ *
+ * borg answers one repository at a time, so a list spanning several asks each
+ * of them; each answer names a path once, in the newest of its archives that
+ * holds it.
+ */
+const props = defineProps<{
+  /** What was typed into the list's search. */
+  query: string
+  /** The archives to look in: the list, narrowed by its repository pills. */
+  archives: readonly RepoArchive[]
+}>()
+
+const emit = defineEmits<{
+  close: []
+  /** Browse `path` in `archive`. */
+  open: [archive: RepoArchive, entry: CrossSearchEntryResponse]
+}>()
+
+/** The most archives one repository's search looks through, as the server caps it. */
+const MAX_ARCHIVES = 100
+
+interface Hit {
+  entry: CrossSearchEntryResponse
+  archive: RepoArchive
 }
 
-interface SearchResultItem {
-  path: string
-  size: number
-  mtime: string
-  type: string
-  archive_name?: string
-}
+const hits = ref<Hit[]>([])
+const searched = ref(0)
+const loading = ref(false)
+const error = ref<string | null>(null)
 
-interface Props {
-  repoId: number | null
-  archives: ArchiveOption[]
-}
+const repoIds = computed(() => [...new Set(props.archives.map((a) => a.repo_id))])
 
-const props = defineProps<Props>()
+const repoLabel = computed(() =>
+  repoIds.value.length === 1 ? (props.archives[0]?.repo_name ?? null) : null,
+)
 
-type SearchMode = 'single' | 'cross'
+let controller: AbortController | null = null
 
-const modeOptions: SegmentedOption<SearchMode>[] = [
-  { value: 'cross', label: 'All archives' },
-  { value: 'single', label: 'Single archive' },
-]
-
-const searchMode = ref<SearchMode>('cross')
-const selectedArchiveName = ref<string | null>(null)
-const pattern = ref('')
-const maxArchives = ref(20)
-const { loading, error, run } = useAsyncAction()
-const results = ref<SearchResultItem[]>([])
-const totalResults = ref(0)
-const hasSearched = ref(false)
-
-const canSearch = computed<boolean>(() => {
-  if (!pattern.value.trim()) return false
-  if (searchMode.value === 'single' && !selectedArchiveName.value) return false
-  return true
-})
-
-async function doSearch(): Promise<void> {
-  const repoId = props.repoId
-  if (!canSearch.value || repoId === null) return
-  results.value = []
-  totalResults.value = 0
-  hasSearched.value = true
-
-  await run(async () => {
-    if (searchMode.value === 'single' && selectedArchiveName.value) {
-      const res = await searchArchive(repoId, selectedArchiveName.value, {
-        pattern: pattern.value,
-        limit: 100,
-        offset: 0,
-      })
-      results.value = res.items
-      totalResults.value = res.total_matched
-    } else {
-      const res = await searchAcrossArchives(repoId, {
-        pattern: pattern.value,
-        maxArchives: maxArchives.value,
-      })
-      results.value = res.items
-      totalResults.value = res.items.length
+async function run(): Promise<void> {
+  controller?.abort()
+  const current = new AbortController()
+  controller = current
+  hits.value = []
+  searched.value = 0
+  error.value = null
+  loading.value = true
+  const pattern = fileNameGlob(props.query)
+  try {
+    const answers = await Promise.all(
+      repoIds.value.map(async (repoId) => {
+        const own = props.archives.filter((a) => a.repo_id === repoId)
+        const response = await searchAcrossArchives(repoId, {
+          pattern,
+          maxArchives: Math.min(own.length, MAX_ARCHIVES),
+        })
+        return { repoId, own, response }
+      }),
+    )
+    if (controller !== current) return
+    // One row per path: a list spanning several repositories opens the copy
+    // in whichever of them holds the newest archive with it.
+    const found = new Map<string, Hit>()
+    for (const { repoId, own, response } of answers) {
+      searched.value += response.total_archives_searched
+      for (const entry of response.items) {
+        // The server searches the repository's newest archives, which may
+        // include another host's; only an archive this list holds can open.
+        const archive = own.find((a) =>
+          sameArchive(a, { repo_id: repoId, name: entry.archive_name }),
+        )
+        const seen = found.get(entry.path)
+        if (archive && (!seen || Date.parse(archive.start) > Date.parse(seen.archive.start))) {
+          found.set(entry.path, { entry, archive })
+        }
+      }
     }
-  })
+    hits.value = [...found.values()].sort((a, b) => a.entry.path.localeCompare(b.entry.path))
+  } catch (e: unknown) {
+    if (controller === current && !axios.isCancel(e)) error.value = extractError(e)
+  } finally {
+    if (controller === current) loading.value = false
+  }
 }
 
-function handleKeydown(event: KeyboardEvent): void {
-  if (event.key === 'Enter' && canSearch.value) {
-    doSearch()
-  }
+watch(
+  () => [props.query, repoIds.value.join(',')],
+  () => void run(),
+  { immediate: true },
+)
+
+function parentLabel(path: string): string {
+  const slash = path.lastIndexOf('/')
+  return slash <= 0 ? '/' : `/${path.slice(0, slash)}`
+}
+
+function nameOf(path: string): string {
+  return path.slice(path.lastIndexOf('/') + 1)
 }
 </script>
 
 <template>
-  <div class="file-search">
-    <div class="search-header">
-      <span class="search-title">File search</span>
+  <div
+    class="panel panel--sectioned file-search"
+    data-testid="file-search"
+  >
+    <div class="file-search-head">
+      <div class="file-search-heading">
+        <h2 class="file-search-title">Files matching &ldquo;{{ query }}&rdquo;</h2>
+        <p class="file-search-facts">
+          <template v-if="loading">Searching {{ archives.length }} archives...</template>
+          <template v-else>
+            {{ hits.length }} {{ hits.length === 1 ? 'path' : 'paths' }} &middot; {{ searched }}
+            {{ searched === 1 ? 'archive' : 'archives' }} searched
+            <template v-if="repoLabel"> &middot; {{ repoLabel }}</template>
+          </template>
+        </p>
+      </div>
+      <button
+        class="btn btn-sm btn-ghost"
+        type="button"
+        aria-label="Close search"
+        title="Close search"
+        @click="emit('close')"
+      >
+        <X :size="14" />
+      </button>
     </div>
 
-    <div class="search-controls">
-      <BaseSegmented
-        v-model="searchMode"
-        :options="modeOptions"
-        label="Search scope"
-      />
-
-      <div
-        v-if="searchMode === 'single'"
-        class="archive-select-row"
-      >
-        <label class="field-label">Archive</label>
-        <select
-          v-model="selectedArchiveName"
-          class="input select-input select-input--md"
-        >
-          <option
-            :value="null"
-            disabled
-          >
-            — select archive —
-          </option>
-          <option
-            v-for="archive in archives"
-            :key="archive.name"
-            :value="archive.name"
-          >
-            {{ archive.name }}
-          </option>
-        </select>
-      </div>
-
-      <div
-        v-if="searchMode === 'cross'"
-        class="max-archives-row"
-      >
-        <label class="field-label">Max archives</label>
-        <input
-          v-model.number="maxArchives"
-          type="number"
-          class="input input-sm max-archives-input"
-          min="1"
-          max="100"
-        />
-      </div>
-
-      <div class="pattern-row">
-        <label class="field-label">Pattern</label>
-        <input
-          v-model="pattern"
-          type="text"
-          class="input"
-          placeholder="e.g. *.sql or home/**/*.conf"
-          @keydown="handleKeydown"
-        />
-        <button
-          class="btn btn-primary btn-sm"
-          :disabled="!canSearch || loading"
-          @click="doSearch"
-        >
-          Search
-        </button>
-      </div>
-    </div>
-
-    <div class="search-results">
+    <div
+      v-if="loading"
+      class="loading-row"
+    >
       <BaseSpinner
-        v-if="loading"
-        size="sm"
+        size="md"
+        label="Searching the archives"
       />
-
-      <div
-        v-else-if="error"
-        class="state-msg state-msg--inline state-error"
-      >
-        {{ error }}
-      </div>
-
-      <EmptyState
-        v-else-if="hasSearched && results.length === 0"
-        :icon="Search"
-        title="No files found"
-        description="Try a different glob pattern."
-      />
-
-      <DataTable
-        v-else-if="results.length > 0"
-        :value="results"
-        :rows="100"
-        striped-rows
-      >
-        <Column
-          v-if="searchMode === 'cross'"
-          field="archive_name"
-          header="Archive"
-        >
-          <template #body="{ data }">
-            <span class="cell-mono">{{ (data as SearchResultItem).archive_name }}</span>
-          </template>
-        </Column>
-        <Column
-          field="path"
-          header="Path"
-        >
-          <template #body="{ data }">
-            <span class="cell-mono">{{ (data as SearchResultItem).path }}</span>
-          </template>
-        </Column>
-        <Column
-          field="size"
-          header="Size"
-        >
-          <template #body="{ data }">
-            <span class="cell-muted">{{ formatBytes((data as SearchResultItem).size) }}</span>
-          </template>
-        </Column>
-        <Column
-          field="mtime"
-          header="Modified"
-        >
-          <template #body="{ data }">
-            <span class="cell-muted">{{ formatDate((data as SearchResultItem).mtime) }}</span>
-          </template>
-        </Column>
-        <Column
-          field="type"
-          header="Type"
-        >
-          <template #body="{ data }">
-            <span class="cell-muted">{{ (data as SearchResultItem).type }}</span>
-          </template>
-        </Column>
-      </DataTable>
-
-      <div
-        v-if="results.length > 0"
-        class="results-summary"
-      >
-        {{ totalResults }} result{{ totalResults === 1 ? '' : 's' }} found
-      </div>
     </div>
+    <div
+      v-else-if="error"
+      class="error-banner"
+    >
+      {{ error }}
+    </div>
+    <EmptyState
+      v-else-if="hits.length === 0"
+      :icon="Search"
+      :title="`No file names contain “${query}”`"
+      description="Search matches part of a name, e.g. nginx or .pdf, or a glob such as *.sql."
+    />
+    <template v-else>
+      <div class="file-search-rows">
+        <BrowserRow
+          v-for="hit in hits"
+          :key="hit.entry.path"
+          as="button"
+          :title="nameOf(hit.entry.path)"
+          :size="isDirectoryEntry(hit.entry) ? null : formatBytes(hit.entry.size)"
+          data-testid="file-search-hit"
+          @click="emit('open', hit.archive, hit.entry)"
+        >
+          <template #lead>
+            <Folder
+              v-if="isDirectoryEntry(hit.entry)"
+              :size="16"
+              class="file-search-icon file-search-icon--dir"
+            />
+            <File
+              v-else
+              :size="16"
+              class="file-search-icon"
+            />
+          </template>
+          <template #facts>
+            <span class="mono">{{ parentLabel(hit.entry.path) }}</span>
+            <span aria-hidden="true">&middot;</span>
+            <span :title="formatDate(hit.archive.start)"
+              >newest in {{ hit.archive.name }}, {{ formatDay(hit.archive.start) }}</span
+            >
+            <template v-if="!repoLabel">
+              <span aria-hidden="true">&middot;</span>
+              <span>{{ hit.archive.repo_name }}</span>
+            </template>
+          </template>
+        </BrowserRow>
+      </div>
+      <p class="file-search-note">Open a result to browse it in the newest archive that has it.</p>
+    </template>
   </div>
 </template>
 
 <style scoped>
+/* Nothing drops out of this card, but its corners still round the rows. */
 .file-search {
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  overflow: hidden;
+  min-height: 18rem;
 }
 
-.search-header {
+.file-search-head {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
+  gap: var(--space-5);
   padding: var(--space-5) var(--space-7);
   border-bottom: 1px solid var(--border);
 }
 
-.search-title {
-  font-size: var(--fs-sm);
+.file-search-heading {
+  flex: 1;
+  min-width: 0;
+}
+
+.file-search-title {
+  margin: 0;
+  font-size: var(--fs-md);
   font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
+  overflow-wrap: anywhere;
+}
+
+.file-search-facts {
+  margin: var(--space-1) 0 0;
+  font-size: var(--fs-sm);
   color: var(--text-muted);
 }
 
-.search-controls {
-  padding: var(--space-6) var(--space-7);
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-5);
+.file-search-rows {
+  max-height: min(40rem, 75vh);
+  overflow-y: auto;
 }
 
-.archive-select-row,
-.max-archives-row,
-.pattern-row {
-  display: flex;
-  align-items: center;
-  gap: var(--space-5);
+@media (max-width: 768px) {
+  .file-search-rows {
+    max-height: none;
+  }
 }
 
-.field-label {
-  white-space: nowrap;
-  min-width: 90px;
+.file-search-icon {
+  flex: none;
+  color: var(--text-muted);
 }
 
-.max-archives-input {
-  width: 80px;
+.file-search-icon--dir {
+  color: var(--accent);
 }
 
-.pattern-row .input {
-  flex: 1;
-}
-
-.search-results {
-  padding: 0 var(--space-7) var(--space-7);
-}
-
-.results-summary {
-  margin-top: var(--space-5);
-  font-size: var(--fs-sm);
+.file-search-note {
+  margin: 0;
+  padding: var(--space-4) var(--space-7);
+  border-top: 1px solid var(--border-subtle);
+  font-size: var(--fs-xs);
   color: var(--text-muted);
 }
 </style>

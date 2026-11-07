@@ -9,7 +9,6 @@ import { ArrowDown, ArrowUp } from '@lucide/vue'
 import AgentMultiSelect from './AgentMultiSelect.vue'
 import CronBuilder from './CronBuilder.vue'
 import DurationField from './DurationField.vue'
-import HelpHint from './HelpHint.vue'
 import PaneRow from './PaneRow.vue'
 import ScheduleRepoTargets from './ScheduleRepoTargets.vue'
 import ToggleSwitch from './ToggleSwitch.vue'
@@ -151,18 +150,12 @@ const catchUpSourceLinks = computed(() => {
     v-slot="{ section: currentSection }"
     :sections="sections"
     :section="section"
-    even
     label="Schedule settings sections"
     @update:section="emit('update:section', $event)"
   >
     <template v-if="currentSection === 'general'">
-      <div class="pane-head pane-head--end">
-        <HelpHint
-          label="naming and timing"
-          align="end"
-        >
-          What this schedule is called, and when it runs.
-        </HelpHint>
+      <div class="pane-head">
+        <p class="pane-lede">What this schedule is called, and when it runs.</p>
       </div>
       <div class="pane-rows">
         <PaneRow
@@ -250,14 +243,11 @@ const catchUpSourceLinks = computed(() => {
     </template>
 
     <template v-else-if="currentSection === 'targets'">
-      <div class="pane-head pane-head--end">
-        <HelpHint
-          label="hosts and destinations"
-          align="end"
-        >
+      <div class="pane-head">
+        <p class="pane-lede">
           Which hosts this schedule runs on, which repositories they write to, and what happens when
           one of them fails.
-        </HelpHint>
+        </p>
       </div>
       <div class="pane-rows">
         <PaneRow
@@ -393,14 +383,11 @@ const catchUpSourceLinks = computed(() => {
     </template>
 
     <template v-else-if="currentSection === 'retention'">
-      <div class="pane-head pane-head--end">
-        <HelpHint
-          label="how long archives are kept"
-          align="end"
-        >
+      <div class="pane-head">
+        <p class="pane-lede">
           How many archives borg keeps when this schedule prunes. Blank or zero keeps none of that
           interval.
-        </HelpHint>
+        </p>
       </div>
       <div class="pane-rows">
         <PaneRow title="Hourly">

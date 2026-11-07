@@ -1,23 +1,18 @@
-<!--
-SPDX-License-Identifier: Apache-2.0
-SPDX-FileCopyrightText: 2026 Alexander Mohr
--->
-
 <script setup lang="ts" generic="T extends string">
-import { computed } from 'vue'
+import { shallowRef, watch } from 'vue'
+import { ChevronRight } from '@lucide/vue'
 
 /**
- * The rail-and-pane shell every settings tab uses: a narrow list of sections
- * down the side, the current one's content beside it.
+ * The shell every settings tab uses (agent, schedule, repository, repository
+ * host, dependency host): its sections as collapsible rows inside one
+ * bordered card, the same card the Overview tab's repository rows sit in.
+ * It replaced a side rail that collapsed into a second, wrapping row of
+ * tabs on a phone, under the page's own tab bar. Several sections may be
+ * open at once.
  *
- * Agents, schedules and repositories each grew their own copy of the nav
- * markup, the fallback rule and the mobile collapse. The rule is the part
- * worth having once: `?section=` comes from the URL, so a section this viewer
- * has no button for must not render behind their back just because they typed
- * its name - it falls back to the first section they do have.
- *
- * The rail names the current section, so the pane it wraps does not repeat it
- * - see `.pane-head` / `.pane-lede` in `skills/ui-design/SKILL.md`.
+ * `?section=` comes from the URL, so a section this viewer has no row for
+ * must not render behind their back just because they typed its name - the
+ * first section they do have opens instead.
  */
 export interface SettingsSectionOption<V extends string> {
   id: V
@@ -40,49 +35,188 @@ export type SettingsSections<V extends string> = readonly [
 
 const props = defineProps<{
   sections: SettingsSections<T>
-  /** The requested section, which may be one this viewer cannot open. */
+  /** The section named in the URL; it starts open. */
   section: T
-  /** Names the rail for assistive tech, e.g. "Agent settings sections". */
+  /** Names the group for assistive tech, e.g. "Agent settings sections". */
   label: string
-  /**
-   * Spreads the sections into equal cells when the rail collapses, rather
-   * than letting them wrap. For a rail with a small, fixed set of sections
-   * that fits one row at any width.
-   */
-  even?: boolean
 }>()
 
 const emit = defineEmits<{ 'update:section': [value: T] }>()
 
-/** What the pane renders and what the rail marks current - deliberately not
-    the `section` prop. */
-const current = computed<T>(() =>
-  props.sections.some((s) => s.id === props.section) ? props.section : props.sections[0].id,
+function initialOpen(): Set<T> {
+  const requested = props.sections.some((s) => s.id === props.section)
+    ? props.section
+    : props.sections[0].id
+  return new Set([requested])
+}
+
+const open = shallowRef<ReadonlySet<T>>(initialOpen())
+
+watch(
+  () => props.section,
+  (s) => {
+    if (props.sections.some((x) => x.id === s)) open.value = new Set([...open.value, s])
+  },
 )
+
+function toggle(id: T): void {
+  const next = new Set(open.value)
+  if (next.has(id)) {
+    next.delete(id)
+  } else {
+    next.add(id)
+    emit('update:section', id)
+  }
+  open.value = next
+}
+
+function setAll(expand: boolean): void {
+  open.value = expand ? new Set(props.sections.map((s) => s.id)) : new Set()
+}
 </script>
 
 <template>
-  <div class="settings-tab">
-    <nav
-      class="settings-nav"
-      :class="{ 'settings-nav--even': even }"
-      :aria-label="label"
+  <div
+    role="group"
+    :aria-label="label"
+  >
+    <div
+      v-if="sections.length > 1"
+      class="accordion-tools"
     >
       <button
+        type="button"
+        class="btn btn-sm btn-ghost"
+        @click="setAll(open.size < sections.length)"
+      >
+        {{ open.size < sections.length ? 'Expand all' : 'Collapse all' }}
+      </button>
+    </div>
+    <div class="accordion-list">
+      <section
         v-for="s in sections"
         :key="s.id"
-        type="button"
-        class="settings-nav-item"
-        :class="{ 'settings-nav-item--danger': s.danger }"
-        :aria-current="s.id === current"
-        @click="emit('update:section', s.id)"
+        class="accordion-item"
       >
-        {{ s.label }}
-      </button>
-    </nav>
-
-    <div class="settings-pane">
-      <slot :section="current" />
+        <button
+          :id="`acc-head-${s.id}`"
+          type="button"
+          class="accordion-head"
+          :aria-expanded="open.has(s.id)"
+          :aria-controls="`acc-body-${s.id}`"
+          @click="toggle(s.id)"
+        >
+          <ChevronRight
+            :size="16"
+            class="accordion-chevron"
+            :class="{ 'accordion-chevron--open': open.has(s.id) }"
+          />
+          <span
+            class="accordion-title"
+            :class="{ 'accordion-title--danger': s.danger }"
+            >{{ s.label }}</span
+          >
+        </button>
+        <div
+          v-if="open.has(s.id)"
+          :id="`acc-body-${s.id}`"
+          class="accordion-body settings-pane"
+          role="region"
+          :aria-labelledby="`acc-head-${s.id}`"
+        >
+          <slot :section="s.id" />
+        </div>
+      </section>
     </div>
   </div>
 </template>
+
+<style scoped>
+.accordion-tools {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: var(--space-3);
+}
+
+/* Each section is a card of its own, a little apart from the next. */
+.accordion-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.accordion-item {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-card);
+  overflow: hidden;
+}
+
+.accordion-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  width: 100%;
+  padding: var(--space-5) var(--space-6);
+  border: none;
+  background: none;
+  font: inherit;
+  font-weight: 600;
+  color: var(--text-primary);
+  text-align: left;
+  cursor: pointer;
+}
+
+.accordion-head:hover {
+  background: var(--bg-hover);
+}
+
+.accordion-chevron {
+  flex: none;
+  color: var(--text-muted);
+  transition: transform var(--duration-base);
+}
+
+.accordion-chevron--open {
+  transform: rotate(90deg);
+}
+
+.accordion-title {
+  flex: 1;
+  min-width: 0;
+}
+
+.accordion-title--danger {
+  color: var(--danger);
+}
+
+.accordion-body {
+  border-top: 1px solid var(--border-subtle);
+  padding: var(--space-6);
+}
+
+/* The box already frames the section; the nest's left rule would be a
+   third vertical line beside the box edge and the indent. */
+.accordion-body :deep(.pane-nest) {
+  border-left: none;
+  padding-left: 0;
+  margin-left: 0;
+}
+
+/* A list or table inside a section: the section's card is the frame already,
+   so the list keeps only its hairlines between rows. */
+.accordion-body :deep(.log-list),
+.accordion-body :deep(.rows),
+.accordion-body :deep(.list-group),
+.accordion-body :deep(.table-wrap--framed) {
+  border: none;
+  border-radius: 0;
+  background: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .accordion-chevron {
+    transition: none;
+  }
+}
+</style>

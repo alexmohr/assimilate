@@ -10,6 +10,12 @@ describe('cronToHuman', () => {
     expect(cronToHuman('0 */6 * * *')).toBe('Every 6 hours')
   })
 
+  it('describes an hourly cadence at a minute past the hour', () => {
+    expect(cronToHuman('30 */6 * * *')).toBe('Every 6 hours at :30')
+    expect(cronToHuman('5 * * * *')).toBe('Every hour at :05')
+    expect(cronToHuman('* */6 * * *')).toBe('')
+  })
+
   it('describes a daily cadence', () => {
     expect(cronToHuman('30 4 * * *')).toBe('Daily at 04:30')
   })

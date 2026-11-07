@@ -240,7 +240,7 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div class="profile-view">
+  <div>
     <div class="page-header">
       <h1 class="page-title">Profile</h1>
     </div>
@@ -260,7 +260,7 @@ onMounted(async () => {
       class="tab-content fade-in"
     >
       <form
-        class="password-form"
+        class="panel password-form"
         @submit.prevent="handlePasswordSubmit"
       >
         <div class="field">
@@ -770,12 +770,8 @@ onMounted(async () => {
 </template>
 
 <style scoped>
-.profile-view {
-  max-width: 700px;
-}
-
 .password-form {
-  max-width: 380px;
+  max-width: 480px;
 }
 
 .tokens-header {
@@ -862,28 +858,45 @@ onMounted(async () => {
 }
 
 /* TOTP Styles */
+/* Each two-factor block is a card; its buttons keep their own width at the
+   bottom right instead of stretching across it. */
+.totp-status-section,
+.totp-setup-section,
+.recovery-codes-section {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: var(--space-7) var(--space-8);
+}
+
+.totp-status-section > .btn,
+.totp-setup-section > .btn,
+.recovery-codes-section > .btn {
+  align-self: flex-end;
+}
+
 .totp-status-section {
   display: flex;
   flex-direction: column;
   gap: var(--space-6);
 }
 
+/* A status pill, not a tinted box inside the card. */
 .totp-status-badge {
-  padding: var(--space-5) var(--space-6);
-  border-radius: var(--radius-sm);
+  align-self: flex-start;
+  padding: var(--space-2) var(--space-5);
+  border-radius: var(--radius-pill);
   font-weight: 600;
-  font-size: var(--fs-md);
+  font-size: var(--fs-xs);
 }
 
 .totp-enabled {
   background: var(--success-subtle);
-  border: 1px solid var(--success);
   color: var(--success);
 }
 
 .totp-disabled {
-  background: var(--bg-card);
-  border: 1px solid var(--border);
+  background: var(--bg-hover);
   color: var(--text-muted);
 }
 
@@ -943,6 +956,7 @@ onMounted(async () => {
 
 .totp-actions {
   display: flex;
+  justify-content: flex-end;
   gap: var(--space-5);
 }
 

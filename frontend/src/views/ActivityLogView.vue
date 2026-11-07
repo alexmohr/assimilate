@@ -15,12 +15,12 @@ import {
   CheckCheck,
   Copy,
   Trash2,
+  ScrollText,
 } from '@lucide/vue'
-import DataTable from 'primevue/datatable'
-import Column from 'primevue/column'
 import BaseSpinner from '../components/BaseSpinner.vue'
-import BaseDisclosure from '../components/BaseDisclosure.vue'
 import EmptyState from '../components/EmptyState.vue'
+import LogList from '../components/LogList.vue'
+import LogRow from '../components/LogRow.vue'
 import RestoreRunsPanel from '../components/RestoreRunsPanel.vue'
 import { apiClient } from '../api/client'
 import {
@@ -43,15 +43,21 @@ import { useTimeout } from '../composables/useTimeout'
 import { useToast } from '../composables/useToast'
 import { useClientLogs } from '../composables/useClientLogs'
 import { useClipboard } from '../composables/useClipboard'
-import { formatDuration, formatBytes, formatDateShort, formatEventType } from '../utils/format'
+import {
+  formatDuration,
+  formatBytes,
+  formatDate,
+  formatDateShort,
+  formatEventType,
+} from '../utils/format'
 import { logger } from '../utils/logger'
 import { formatClientLogs, type ClientLogEntry, type ClientLogLevel } from '../utils/clientLog'
 import { extractError } from '../utils/error'
 import { normalizeBackupStatus } from '../utils/backupStatus'
 import { scheduleLabel } from '../utils/machine'
 import type { ReportRow } from '../types/report'
-import { backupStatusBadgeClass, badgeClass, logLevelTone, systemEventTone } from '../utils/badge'
-import BaseSegmented, { type SegmentedOption } from '../components/BaseSegmented.vue'
+import { backupStatusTone, logLevelTone, systemEventTone } from '../utils/badge'
+import type { SegmentedOption } from '../components/BaseSegmented.vue'
 import { useAuthStore } from '../stores/auth'
 import type { AcknowledgedFilter } from '../types/generated'
 
@@ -579,10 +585,6 @@ const unifiedRows = computed<UnifiedRow[]>(() => {
   )
 })
 
-function statusClass(status: string): string {
-  return backupStatusBadgeClass(status)
-}
-
 /** Only a warning or a failure needs acknowledging - a clean run has nothing to mute. */
 function isAckable(entry: ActivityEntry): boolean {
   const status = normalizeBackupStatus(entry.status)
@@ -701,13 +703,39 @@ async function acknowledgeAll(): Promise<void> {
   }
 }
 
-function eventBadgeClass(event: SystemEventEntry): string {
-  return badgeClass(systemEventTone(event.severity))
+/** The schedule a run belongs to, for the row's second line; none for a manual run. */
+function scheduleText(entry: ActivityEntry): string | null {
+  if (!entry.schedule_id) return null
+  return scheduleLabel({
+    schedule_id: entry.schedule_id,
+    schedule_name: entry.schedule_name ?? '',
+  })
 }
 
-function logRowClass(entry: LogEntry): string {
-  return `log-entry-row log-level-${entry.level.toLowerCase()}`
+/** A system event's message block, in the event's own tone. */
+function systemEventPreClass(event: SystemEventEntry): string {
+  switch (systemEventTone(event.severity)) {
+    case 'danger':
+      return 'error-pre'
+    case 'warning':
+      return 'warning-pre'
+    default:
+      return 'detail-pre'
+  }
 }
+
+/** The open log entry, by its position in the shown list. */
+const expandedLogIndex = ref<number | null>(null)
+
+function toggleLogRow(index: number): void {
+  expandedLogIndex.value = expandedLogIndex.value === index ? null : index
+}
+
+// A new fetch or a new filter reorders the list, so a remembered position
+// would open a different entry.
+watch(displayedLogs, () => {
+  expandedLogIndex.value = null
+})
 
 function clearFilters(): void {
   activeCategory.value = 'all'
@@ -807,11 +835,25 @@ function filterByRun(runId: string): void {
       <div class="filter-row">
         <div class="filter-group">
           <label class="filter-label">Type</label>
-          <BaseSegmented
-            v-model="activeCategory"
-            :options="categoryOptions"
-            label="Activity type"
-          />
+          <!-- Pills, which wrap on a phone, rather than a segmented control
+               that cut its last options off. -->
+          <div
+            class="filter-pills"
+            role="group"
+            aria-label="Activity type"
+          >
+            <button
+              v-for="option in categoryOptions"
+              :key="option.value"
+              type="button"
+              class="filter-pill"
+              :class="{ active: activeCategory === option.value }"
+              :aria-pressed="activeCategory === option.value"
+              @click="activeCategory = option.value"
+            >
+              {{ option.label }}
+            </button>
+          </div>
         </div>
 
         <button
@@ -991,69 +1033,50 @@ function filterByRun(runId: string): void {
     </section>
 
     <template v-if="isLogTab">
-      <div
+      <BaseSpinner
         v-if="!isBrowserTab && loadingLogs"
-        class="loading"
-      >
-        Loading server logs...
-      </div>
+        size="lg"
+      />
 
-      <div
+      <EmptyState
         v-else-if="displayedLogs.length === 0"
-        class="state-msg"
-      >
-        {{ emptyLogsMessage }}
-      </div>
+        :icon="ScrollText"
+        title="No log entries"
+        :description="emptyLogsMessage"
+      />
 
-      <div
+      <LogList
         v-else
-        class="log-panel"
+        data-testid="log-entries"
       >
-        <DataTable
-          :value="displayedLogs"
-          :row-class="logRowClass"
-          table-class="log-table log-table-mono"
+        <LogRow
+          v-for="(entry, i) in displayedLogs"
+          :key="`${entry.timestamp}-${i}`"
+          :tone="logLevelTone(entry.level)"
+          :title="entry.message"
+          :facts="[entry.level.toUpperCase(), entry.target]"
+          :time="formatDateShort(entry.timestamp)"
+          :time-title="formatDate(entry.timestamp)"
+          :expanded="expandedLogIndex === i"
+          @toggle="toggleLogRow(i)"
         >
-          <Column header="Timestamp">
-            <template #body="{ data }">
-              <span class="cell-ts cell-mono">{{ formatDateShort(data.timestamp) }}</span>
+          <template #detail>
+            <dl class="info-grid">
+              <dt>Time</dt>
+              <dd>{{ formatDate(entry.timestamp) }}</dd>
+              <dt>Level</dt>
+              <dd>{{ entry.level }}</dd>
+              <dt>{{ isBrowserTab ? 'Source' : 'Target' }}</dt>
+              <dd class="log-detail-value">{{ entry.target }}</dd>
+            </dl>
+            <pre class="detail-pre">{{ entry.message }}</pre>
+            <template v-if="entry.stack">
+              <h3 class="group-label">Stack trace</h3>
+              <pre class="detail-pre">{{ entry.stack }}</pre>
             </template>
-          </Column>
-          <Column header="Level">
-            <template #body="{ data }">
-              <span
-                class="badge"
-                :class="badgeClass(logLevelTone(data.level))"
-              >
-                {{ data.level }}
-              </span>
-            </template>
-          </Column>
-          <Column :header="isBrowserTab ? 'Source' : 'Target'">
-            <template #body="{ data }">
-              <span
-                class="cell-target-log cell-mono"
-                :title="data.target"
-                >{{ data.target }}</span
-              >
-            </template>
-          </Column>
-          <Column header="Message">
-            <template #body="{ data }">
-              <span class="cell-msg-log">{{ data.message }}</span>
-              <BaseDisclosure
-                v-if="data.stack"
-                title="Stack trace"
-              >
-                <pre class="detail-pre">{{ data.stack }}</pre>
-              </BaseDisclosure>
-            </template>
-          </Column>
-          <template #empty>
-            <div class="state-msg">No log entries match the current filters.</div>
           </template>
-        </DataTable>
-      </div>
+        </LogRow>
+      </LogList>
     </template>
 
     <RestoreRunsPanel v-else-if="isRestoresTab" />
@@ -1071,87 +1094,62 @@ function filterByRun(runId: string): void {
         description="Backup activity will appear here once backups run."
       />
 
-      <div
+      <LogList
         v-else
-        class="run-list"
+        data-testid="activity-entries"
       >
         <template
           v-for="row in unifiedRows"
           :key="row.id"
         >
-          <article
+          <!-- Two lines like every other log: who and where, then which
+               schedule and how long. The actions wait in the opened entry. -->
+          <LogRow
             v-if="row.kind === 'backup' && row.backup"
-            class="panel panel--sectioned run-card"
-            :class="{
-              expanded: expandedId === row.backup.id,
-              'run-card--acknowledged': row.backup.acknowledged,
-            }"
+            :tone="backupStatusTone(row.backup.status)"
+            :title="row.backup.hostname"
+            :subtitle="row.backup.target_name"
+            :facts="[scheduleText(row.backup), formatDuration(row.backup.duration_secs)]"
+            :time="formatDateShort(row.backup.started_at)"
+            :time-title="formatDate(row.backup.started_at)"
+            :expanded="expandedId === row.backup.id"
+            :dimmed="row.backup.acknowledged"
+            @toggle="toggleRow(row.backup)"
           >
-            <div
-              class="run-card-summary"
-              @click="toggleRow(row.backup)"
+            <template
+              v-if="backupStatusTone(row.backup.status) !== 'success' || row.backup.acknowledged"
+              #badges
             >
-              <div class="run-card-top">
-                <div class="run-card-host">
-                  <span class="run-card-hostname">{{ row.backup.hostname }}</span>
-                  <span class="run-card-time">{{ formatDateShort(row.backup.started_at) }}</span>
-                </div>
-                <div class="run-card-badges">
-                  <span
-                    class="badge"
-                    :class="statusClass(row.backup.status)"
-                    >{{ row.backup.status }}</span
-                  >
-                  <span
-                    v-if="row.backup.acknowledged"
-                    class="badge badge--neutral"
-                    >Acknowledged</span
-                  >
-                </div>
-              </div>
-              <div class="run-card-meta">
-                <span>{{ row.backup.target_name }}</span>
-                <span
-                  v-if="row.backup.schedule_id"
-                  class="schedule-label"
-                  >{{
-                    scheduleLabel({
-                      schedule_id: row.backup.schedule_id,
-                      schedule_name: row.backup.schedule_name ?? '',
-                    })
-                  }}</span
-                >
-              </div>
-              <div class="run-card-foot">
-                <span class="run-card-duration">{{
-                  formatDuration(row.backup.duration_secs)
-                }}</span>
-                <div class="run-card-actions">
-                  <button
-                    v-if="row.backup.run_id && filterRunId !== row.backup.run_id"
-                    class="btn btn-xs btn-ghost"
-                    title="View all events for this run"
-                    @click.stop="filterByRun(row.backup.run_id)"
-                  >
-                    View run
-                  </button>
-                  <button
-                    v-if="isAckable(row.backup)"
-                    class="btn btn-xs btn-ghost"
-                    :disabled="ackingId === row.backup.id"
-                    @click.stop="toggleAcknowledge(row.backup)"
-                  >
-                    {{ row.backup.acknowledged ? 'Unacknowledge' : 'Acknowledge' }}
-                  </button>
-                </div>
-              </div>
-            </div>
-
-            <div
-              v-if="expandedId === row.backup.id"
-              class="detail-panel"
-              @click.stop
+              <span
+                v-if="row.backup.acknowledged"
+                class="badge badge--neutral"
+                >Acknowledged</span
+              >
+            </template>
+            <template
+              v-if="
+                (row.backup.run_id && filterRunId !== row.backup.run_id) || isAckable(row.backup)
+              "
+              #actions
             >
+              <button
+                v-if="row.backup.run_id && filterRunId !== row.backup.run_id"
+                class="btn btn-sm btn-ghost"
+                title="View all events for this run"
+                @click="filterByRun(row.backup.run_id)"
+              >
+                View run
+              </button>
+              <button
+                v-if="isAckable(row.backup)"
+                class="btn btn-sm"
+                :disabled="ackingId === row.backup.id"
+                @click="toggleAcknowledge(row.backup)"
+              >
+                {{ row.backup.acknowledged ? 'Unacknowledge' : 'Acknowledge' }}
+              </button>
+            </template>
+            <template #detail>
               <div
                 v-if="expandedLoading"
                 class="detail-loading"
@@ -1198,7 +1196,7 @@ function filterByRun(runId: string): void {
                   class="detail-section detail-command-section"
                 >
                   <h3 class="detail-heading">Command</h3>
-                  <pre class="command-pre">{{ expandedDetail.borg_command }}</pre>
+                  <pre class="detail-pre command-pre">{{ expandedDetail.borg_command }}</pre>
                 </div>
                 <div
                   v-if="expandedDetail.warnings.length > 0"
@@ -1224,66 +1222,46 @@ function filterByRun(runId: string): void {
               >
                 No detail available.
               </div>
-            </div>
-          </article>
+            </template>
+          </LogRow>
 
-          <article
+          <LogRow
             v-if="row.kind === 'system' && row.event"
-            class="panel panel--sectioned run-card run-card-system"
-            :class="{
-              expanded: expandedSystemId === row.event.id,
-              'run-card--acknowledged': row.event.acknowledged,
-            }"
+            class="run-card-system"
+            :tone="systemEventTone(row.event.severity)"
+            :title="row.event.hostname ?? 'Server'"
+            :subtitle="formatEventType(row.event.event_type)"
+            :facts="[row.event.message]"
+            :time="formatDateShort(row.event.created_at)"
+            :time-title="formatDate(row.event.created_at)"
+            :expanded="expandedSystemId === row.event.id"
+            :dimmed="row.event.acknowledged"
+            @toggle="toggleSystemRow(row.event)"
           >
-            <div
-              class="run-card-summary"
-              @click="toggleSystemRow(row.event)"
+            <template
+              v-if="row.event.acknowledged"
+              #badges
             >
-              <div class="run-card-top">
-                <div class="run-card-host">
-                  <span class="run-card-hostname">{{ row.event.hostname ?? '—' }}</span>
-                  <span class="run-card-time">{{ formatDateShort(row.event.created_at) }}</span>
-                </div>
-                <div class="run-card-badges">
-                  <span
-                    class="badge"
-                    :class="eventBadgeClass(row.event)"
-                    >{{ formatEventType(row.event.event_type) }}</span
-                  >
-                  <span
-                    v-if="row.event.acknowledged"
-                    class="badge badge--neutral"
-                    >Acknowledged</span
-                  >
-                </div>
-              </div>
-              <p class="run-card-message">{{ row.event.message }}</p>
-              <div
-                v-if="isSystemEventAckable(row.event)"
-                class="run-card-foot"
+              <span class="badge badge--neutral">Acknowledged</span>
+            </template>
+            <template
+              v-if="isSystemEventAckable(row.event)"
+              #actions
+            >
+              <button
+                class="btn btn-sm"
+                :disabled="ackingSystemId === row.event.id"
+                @click="toggleSystemAcknowledge(row.event)"
               >
-                <div class="run-card-actions">
-                  <button
-                    class="btn btn-xs btn-ghost"
-                    :disabled="ackingSystemId === row.event.id"
-                    @click.stop="toggleSystemAcknowledge(row.event)"
-                  >
-                    {{ row.event.acknowledged ? 'Unacknowledge' : 'Acknowledge' }}
-                  </button>
-                </div>
-              </div>
-            </div>
-
-            <div
-              v-if="expandedSystemId === row.event.id"
-              class="detail-panel"
-              @click.stop
-            >
-              <pre class="error-pre">{{ row.event.message }}</pre>
-            </div>
-          </article>
+                {{ row.event.acknowledged ? 'Unacknowledge' : 'Acknowledge' }}
+              </button>
+            </template>
+            <template #detail>
+              <pre :class="systemEventPreClass(row.event)">{{ row.event.message }}</pre>
+            </template>
+          </LogRow>
         </template>
-      </div>
+      </LogList>
 
       <div
         v-if="!loading && hasMore && unifiedRows.length > 0"
@@ -1307,134 +1285,6 @@ function filterByRun(runId: string): void {
   flex-direction: column;
   gap: var(--space-7);
   color: var(--text-primary);
-}
-
-.loading,
-.log-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: var(--fs-base);
-}
-
-.log-table thead tr {
-  background: var(--bg-card);
-}
-
-.log-table th {
-  padding: var(--space-5) var(--space-6);
-  text-align: left;
-  font-size: var(--fs-xs);
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--text-muted);
-  border-bottom: 1px solid var(--border);
-}
-
-.run-list {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-4);
-}
-
-.run-card.expanded {
-  border-color: var(--text-muted);
-}
-
-/* Only reachable once the Acknowledged filter is showing reviewed entries -
-   under the default they leave the feed instead. Dimmed so they read as
-   already dealt with next to the entries that still need attention. */
-.run-card--acknowledged {
-  opacity: 0.6;
-}
-
-.run-card-badges {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  flex-shrink: 0;
-}
-
-.run-card-summary {
-  cursor: pointer;
-  padding: var(--space-5) var(--space-6);
-  transition: background var(--duration-fast);
-}
-
-.run-card-summary:hover {
-  background: var(--bg-hover);
-}
-
-.run-card-top {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: var(--space-5);
-}
-
-.run-card-host {
-  display: flex;
-  align-items: baseline;
-  gap: var(--space-4);
-  min-width: 0;
-  flex-wrap: wrap;
-}
-
-.run-card-hostname {
-  font-weight: 600;
-  color: var(--text-primary);
-}
-
-.run-card-time {
-  font-size: var(--fs-sm);
-  color: var(--text-muted);
-  white-space: nowrap;
-}
-
-.run-card-meta {
-  margin-top: var(--space-3);
-  font-size: var(--fs-base);
-  color: var(--text-secondary);
-}
-
-.run-card-message {
-  margin: var(--space-3) 0 0;
-  font-size: var(--fs-base);
-  color: var(--text-secondary);
-  word-break: break-word;
-}
-
-.run-card-foot {
-  margin-top: var(--space-4);
-  padding-top: var(--space-4);
-  border-top: 1px solid var(--border-subtle);
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: var(--space-5);
-}
-
-/* Stacked in one right-hand column rather than spread across the card: with
-   the buttons as direct children of a space-between row, a second action
-   drifts into the middle of a wide card, nowhere near the run it acts on. */
-.run-card-actions {
-  display: flex;
-  flex-direction: column;
-  align-items: stretch;
-  gap: var(--space-3);
-  margin-left: auto;
-}
-
-.run-card-duration {
-  font-size: var(--fs-sm);
-  color: var(--text-muted);
-  font-family: var(--mono);
-}
-
-.detail-panel {
-  padding: var(--space-6) var(--space-6) var(--space-7);
-  border-top: 1px solid var(--border);
-  background: var(--bg-base);
 }
 
 .detail-loading {
@@ -1482,21 +1332,12 @@ function filterByRun(runId: string): void {
 }
 
 .command-pre {
-  margin: 0;
-  padding: var(--space-5) var(--space-6);
-  background: var(--bg-input);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  color: var(--text-primary);
-  font-size: var(--fs-sm);
-  white-space: pre-wrap;
   word-break: break-all;
-  font-family: monospace;
 }
 
 .load-more {
   display: flex;
-  justify-content: center;
+  justify-content: flex-start;
   padding: var(--space-4) 0;
 }
 
@@ -1505,57 +1346,9 @@ function filterByRun(runId: string): void {
   min-width: 180px;
 }
 
-.log-panel {
-  overflow-x: auto;
-}
-
-.log-table-mono {
-  font-family: 'SF Mono', 'Cascadia Code', 'Fira Code', monospace;
-  font-size: var(--fs-sm);
-}
-
-.log-entry-row {
-  border-bottom: 1px solid var(--border-subtle);
-}
-
-.log-entry-row td {
-  padding: var(--space-3) var(--space-5);
-  vertical-align: top;
-}
-
-.log-level-error {
-  background: color-mix(in srgb, var(--danger) 6%, transparent);
-}
-
-.log-level-warn {
-  background: color-mix(in srgb, var(--warning) 6%, transparent);
-}
-
-.cell-target-log {
-  /* Inline, the max-width below would not apply and a long browser source
-     location would push the message column off screen. */
-  display: inline-block;
-  color: var(--text-muted);
-  white-space: nowrap;
-  max-width: 200px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.cell-msg-log {
-  /* Keeps the message readable on a phone: the table scrolls inside its
-     panel instead of squeezing this column to a few characters. */
-  display: inline-block;
-  min-width: 240px;
-  color: var(--text-primary);
-  word-break: break-word;
-}
-
-.schedule-label {
-  display: block;
-  font-size: var(--fs-xs);
-  color: var(--text-muted);
-  margin-top: var(--space-1);
+/* A browser source location is one long unbroken token. */
+.log-detail-value {
+  word-break: break-all;
 }
 
 .run-id-filter {
@@ -1593,7 +1386,6 @@ function filterByRun(runId: string): void {
   gap: var(--space-4);
   padding: var(--space-4) var(--space-6);
   border-bottom: 1px solid var(--border);
-  background: var(--bg-base);
 }
 
 .live-session-title {
@@ -1615,7 +1407,7 @@ function filterByRun(runId: string): void {
   max-height: 200px;
   overflow-y: auto;
   padding: var(--space-4) var(--space-6);
-  background: var(--bg-base);
+  background: var(--bg-code);
   font-family: var(--mono);
   font-size: var(--fs-xs);
   color: var(--text-secondary);

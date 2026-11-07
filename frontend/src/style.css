@@ -332,11 +332,19 @@
 
   /* Key/value rows: a muted label column sized to its content, values
      taking the rest. */
+  /* Room between lines, so a list of settings reads as rows rather than a
+     block of text. */
   .info-grid {
     display: grid;
     grid-template-columns: auto 1fr;
-    gap: var(--space-4) var(--space-8);
+    gap: var(--space-5) var(--space-8);
     margin: 0;
+    line-height: 1.4;
+  }
+
+  .info-grid + .field-hint,
+  .info-grid + p {
+    margin-top: var(--space-4);
   }
 
   .info-grid dt {
@@ -353,11 +361,10 @@
 
   /* Ruled footer holding a panel's buttons. */
   .info-actions {
-    margin-top: var(--space-8);
-    padding-top: var(--space-6);
-    border-top: 1px solid var(--border);
+    margin-top: var(--space-4);
     display: flex;
     align-items: center;
+    justify-content: flex-end;
     flex-wrap: wrap;
     gap: var(--space-5);
   }
@@ -486,13 +493,18 @@
   }
 
   @media (max-width: 640px) {
+    /* Stacked on a phone, the button keeps its own width at the right. */
     .danger-body {
       flex-direction: column;
-      align-items: stretch;
+      align-items: flex-end;
+    }
+
+    .danger-body > .danger-info {
+      align-self: stretch;
     }
 
     .danger-action-wrap {
-      align-items: stretch;
+      align-items: flex-end;
     }
   }
 
@@ -976,7 +988,7 @@
     min-width: 0;
     display: flex;
     flex-direction: column;
-    gap: var(--space-6);
+    gap: var(--space-8);
   }
 
   /* Below the md breakpoint the rail becomes a row above the pane. Declared
@@ -1034,12 +1046,23 @@
      right-aligns the action that applies to the whole of it. Every pane used
      to repeat its rail item as an uppercase card title one line below the
      rail itself. */
+  /* Text on the left, Edit pinned top-right beside it - never wrapped under
+     a long description to the left edge. */
   .pane-head {
     display: flex;
     align-items: flex-start;
     justify-content: space-between;
-    flex-wrap: wrap;
     gap: var(--space-5) var(--space-6);
+  }
+
+  .pane-head > .pane-lede {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .pane-head > .btn {
+    flex: none;
+    margin-left: auto;
   }
 
   /* A pane whose lede moved behind a `HelpHint` and has no Edit button beside
@@ -1062,7 +1085,26 @@
      `.settings-pane`. */
   .pane-section {
     border-top: 1px solid var(--border);
-    padding-top: var(--space-6);
+    padding-top: var(--space-8);
+  }
+
+  /* One editable block: its own Edit, and Cancel / Save at its foot. */
+  .edit-block {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-6);
+  }
+
+  /* Inside a settings section the blocks are split by a hairline, not
+     boxed: the section's card is the only frame. */
+  .settings-pane > * + .edit-block {
+    border-top: 1px solid var(--border);
+    padding-top: var(--space-8);
+  }
+
+  .settings-pane > .pane-section:first-child {
+    border-top: none;
+    padding-top: 0;
   }
 
   /* A section whose head is nothing but its label still needs the gap the
@@ -1074,10 +1116,15 @@
   .pane-section-head {
     display: flex;
     align-items: center;
-    justify-content: space-between;
     flex-wrap: wrap;
-    gap: var(--space-4) var(--space-6);
+    gap: var(--space-4) var(--space-4);
     margin-bottom: var(--space-5);
+  }
+
+  /* The title and its "?" stay together on the left; the button goes right. */
+  .pane-section-head > .btn,
+  .pane-section-head > a {
+    margin-left: auto;
   }
 
   .field {
@@ -1251,6 +1298,12 @@
     justify-content: flex-end;
   }
 
+  /* A segmented choice keeps every option visible: it takes the width it
+     needs instead of the shared 220px track. */
+  .pane-row:not(.pane-row--stack):has(> .pane-row-control > .segmented) {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
   /* A row whose control is an editor - a textarea, a pattern list, a block
      per agent - has no use for a 220px track: it keeps the label column and
      takes the full width underneath. */
@@ -1302,6 +1355,7 @@
     .pane-row:has(> .pane-row-control > input[type='text']),
     .pane-row:has(> .pane-row-control > input:not([type])),
     .pane-row:has(> .pane-row-control > select),
+    .pane-row:has(> .pane-row-control > .segmented),
     .pane-row:has(> .pane-row-control > .field-row) {
       grid-template-columns: minmax(0, 1fr);
     }
@@ -1317,6 +1371,7 @@
     .pane-row:has(> .pane-row-control > input[type='text']) > .pane-row-control,
     .pane-row:has(> .pane-row-control > input:not([type])) > .pane-row-control,
     .pane-row:has(> .pane-row-control > select) > .pane-row-control,
+    .pane-row:has(> .pane-row-control > .segmented) > .pane-row-control,
     .pane-row:has(> .pane-row-control > .field-row) > .pane-row-control {
       justify-content: flex-start;
     }
@@ -1338,8 +1393,8 @@
      its parent is what says so; as a sibling row it reads as an unrelated
      setting that happens to sit nearby. Was `.catch-up-lead`, scoped to the
      schedule's General pane, until the second and third use turned up. */
+  /* Indented under the row it depends on, without a vertical rule. */
   .pane-nest {
-    border-left: 2px solid var(--border);
     padding-left: var(--space-6);
     margin-left: var(--space-2);
   }
@@ -1924,17 +1979,35 @@
     color: var(--text-primary);
   }
 
-  .tiles {
+  /* One card split into cells by hairlines, not a row of separate cards.
+     Each cell draws a hairline into the 1px gap on its right and below it;
+     the card clips the ones along its own edge, and a cell left empty in
+     the last row stays card-coloured. `.tile-grid` is the same split for a
+     grid that sits inside a card and so has no frame of its own. */
+  .tiles,
+  .tile-grid {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(min(180px, 100%), 1fr));
-    gap: var(--space-4);
+    gap: 1px;
+    background: var(--bg-card);
+    overflow: hidden;
+  }
+
+  .tiles {
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+  }
+
+  .tiles > *,
+  .tile-grid > * {
+    box-shadow:
+      1px 0 0 var(--border),
+      0 1px 0 var(--border);
   }
 
   .tile {
     background: var(--bg-card);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    padding: var(--space-5) var(--space-5);
+    padding: var(--space-5) var(--space-6);
     display: flex;
     flex-direction: column;
     gap: var(--space-2);
@@ -1956,7 +2029,6 @@
   }
 
   .tile--link:hover {
-    border-color: var(--accent);
     background: var(--bg-hover);
   }
 
@@ -2096,7 +2168,7 @@
     border: 1px solid var(--border);
     border-radius: var(--radius);
     overflow: hidden;
-    background: var(--bg-base);
+    background: var(--bg-card);
   }
 
   .agent-row {
@@ -2156,28 +2228,26 @@
       margin-left: 0;
     }
 
-    /* Once the row wraps, a stripe left in the flow only stretches to its own
-       flex line and sits above the content as a short dash. Pinned to the
-       row's left edge instead, it runs the full height of every line. */
+    /* Once the row wraps, the status dot stays at the top-left of the
+       first line rather than floating in the middle of the block. */
     .agent-row:has(> .agent-row-line) {
       position: relative;
-      padding-left: calc(var(--space-5) + 3px + var(--space-3));
+      padding-left: calc(var(--space-5) + 8px + var(--space-4));
     }
 
     .agent-row:has(> .agent-row-line) > .agent-row-stripe {
       position: absolute;
-      top: var(--space-4);
-      bottom: var(--space-4);
+      top: calc(var(--space-4) + 0.45em);
       left: var(--space-5);
-      min-height: 0;
     }
   }
 
+  /* The row's status, as the same 8px dot every list uses - no longer a
+     coloured bar down the row's edge. The class keeps its old name. */
   .agent-row-stripe {
-    width: 3px;
-    align-self: stretch;
-    min-height: 1.25rem;
-    border-radius: var(--radius-pill);
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
     flex: none;
     background: var(--border);
   }
@@ -2273,7 +2343,7 @@
     border: 1px solid var(--border);
     border-radius: var(--radius);
     overflow: hidden;
-    background: var(--bg-base);
+    background: var(--bg-card);
   }
 
   /* A group whose rows carry an `OverflowMenu`: the menu drops below its
@@ -2552,13 +2622,63 @@
       display: revert;
     }
 
-    .filter-pills {
-      flex-wrap: nowrap;
-      overflow-x: auto;
-    }
-
     .filter-pill {
       padding: var(--space-3) var(--space-5);
+    }
+  }
+
+  /* A table that becomes one card per row on a phone instead of scrolling
+     sideways: the first cell is the row's title, every other cell a
+     label/value line, its label taken from `data-label`. */
+  @media (max-width: 768px) {
+    .data-table--stack thead {
+      display: none;
+    }
+
+    .data-table--stack,
+    .data-table--stack tbody,
+    .data-table--stack tr,
+    .data-table--stack td {
+      display: block;
+      width: 100%;
+    }
+
+    .data-table--stack tr {
+      padding: var(--space-4) var(--space-5);
+      border-top: 1px solid var(--border-subtle);
+    }
+
+    .data-table--stack tr:first-child {
+      border-top: none;
+    }
+
+    .data-table--stack td {
+      border: none;
+      padding: var(--space-2) 0;
+    }
+
+    /* Label on the left, everything in the cell together on the right - a
+       cell holding an input and a note used to strand the input mid-row. */
+    .data-table--stack td[data-label] {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      flex-wrap: wrap;
+      gap: var(--space-2) var(--space-4);
+    }
+
+    /* The row's buttons, which have no label, sit at its right edge. */
+    .data-table--stack td:last-child:not([data-label]) {
+      display: flex;
+      justify-content: flex-end;
+      gap: var(--space-3);
+    }
+
+    .data-table--stack td[data-label]::before {
+      margin-right: auto;
+      content: attr(data-label);
+      color: var(--text-muted);
+      font-size: var(--fs-xs);
     }
   }
 
@@ -2695,6 +2815,7 @@
   .table-wrap--framed {
     border: 1px solid var(--border);
     border-radius: var(--radius);
+    background: var(--bg-card);
   }
 
   /* --- Path crumbs --------------------------------------------------------
@@ -2708,7 +2829,6 @@
     gap: var(--space-1);
     padding: var(--space-4) var(--space-6);
     border-bottom: 1px solid var(--border);
-    background: var(--bg-base);
   }
 
   .crumb {
@@ -2745,7 +2865,7 @@
 
   /* A filesystem root crumb is already spelled "/", so the trail's own
      separator would double it up. */
-  .crumb-root::after {
+  .crumb.crumb-root::after {
     content: none;
   }
 
@@ -3051,6 +3171,15 @@
     text-transform: uppercase;
     letter-spacing: 0.04em;
     margin-right: var(--space-2);
+  }
+
+  /* In a settings row the sort buttons start at the left edge and wrap, the
+     same on a phone and on desktop. */
+  .pane-row-control > .sort-controls {
+    margin-left: 0;
+    flex-wrap: wrap;
+    overflow: visible;
+    flex-shrink: 1;
   }
 
   .sort-controls .btn.active {
@@ -3574,7 +3703,6 @@
   }
 
   .error-card {
-    text-align: center;
     max-width: 420px;
     background: var(--bg-card);
     border: 1px solid var(--border);

@@ -11,7 +11,6 @@ import { byFinishedDesc, normalizeBackupStatus, filterSettledReports } from '../
 import { backupStatusBadgeClass } from '../utils/badge'
 import { buildRepoOverview, type RepoOverviewState } from '../utils/repoOverview'
 import BackupProgressCard from './BackupProgressCard.vue'
-import AgentRunStrip from './AgentRunStrip.vue'
 import type { ScheduleHealthEntry } from '../utils/scheduleHealth'
 import type { ScheduleRow } from '../types/schedule'
 import type { ReportRow } from '../types/report'
@@ -34,9 +33,6 @@ export interface LiveBackup {
   elapsedSecs: number
   progress: { nfiles: number; originalSize: number; currentPath: string } | null
 }
-
-/** Runs drawn in each repository's own strip. */
-const REPO_STRIP_RUNS = 10
 
 const props = defineProps<{
   agent: AgentRow
@@ -355,16 +351,14 @@ const REPO_STATE_TONE: Record<RepoOverviewState, Tone | 'info'> = {
             aria-hidden="true"
           />
           <span class="repo-name">{{ row.name }}</span>
+          <!-- The dot already says healthy; the badge only speaks up when
+               there is something else to say. -->
           <span
+            v-if="row.state !== 'success'"
             class="badge"
             :class="`badge--${REPO_STATE_TONE[row.state]}`"
             >{{ REPO_STATE_LABEL[row.state] }}</span
           >
-          <AgentRunStrip
-            compact
-            :reports="row.reports"
-            :limit="REPO_STRIP_RUNS"
-          />
           <span class="repo-meta">
             <span v-if="row.lastRun">last {{ relativeTime(row.lastRun.finished_at) }}</span>
             <span v-if="row.lastGood && row.lastRun?.id !== row.lastGood.id">
@@ -457,11 +451,18 @@ const REPO_STATE_TONE: Record<RepoOverviewState, Tone | 'info'> = {
   color: var(--accent);
 }
 
+/* Both actions travel together at the right edge; each taking its own
+   auto margin split the free space and left the first one mid-row. */
+.attention-action ~ .attention-link {
+  margin-left: 0;
+}
+
 .facts {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   border: 1px solid var(--border);
   border-radius: var(--radius);
+  background: var(--bg-card);
 }
 
 .fact {
@@ -489,7 +490,7 @@ const REPO_STATE_TONE: Record<RepoOverviewState, Tone | 'info'> = {
 
 .repo-row {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
   gap: var(--space-3) var(--space-5);
   padding: var(--space-5) var(--space-6);

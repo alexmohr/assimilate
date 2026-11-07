@@ -155,11 +155,12 @@ function removeRow(index: number): void {
 .fcp-row .fcp-input:first-child {
   flex: 1;
   width: auto;
+  min-width: 0;
 }
 
 .fcp-select {
   width: auto;
-  min-width: 8rem;
+  min-width: 6rem;
   flex-shrink: 0;
 }
 

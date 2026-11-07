@@ -20,7 +20,7 @@ defineEmits<{
 
 <template>
   <div class="table-wrap table-wrap--framed">
-    <table class="data-table">
+    <table class="data-table data-table--stack">
       <thead>
         <tr>
           <th>Name</th>
@@ -46,10 +46,16 @@ defineEmits<{
               Monitoring
             </span>
           </td>
-          <td class="cell-date">
+          <td
+            data-label="Created"
+            class="cell-date"
+          >
             {{ formatDate(token.created_at) }}
           </td>
-          <td class="cell-date">
+          <td
+            data-label="Last used"
+            class="cell-date"
+          >
             {{ formatDate(token.last_used_at, 'Never') }}
           </td>
           <td>

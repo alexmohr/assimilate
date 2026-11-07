@@ -4,7 +4,7 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 -->
 
 <script setup lang="ts">
-import { ref, reactive, onMounted } from 'vue'
+import { computed, ref, reactive, onMounted } from 'vue'
 import {
   exportConfig as apiExportConfig,
   getSshPublicKey,
@@ -24,6 +24,7 @@ import { badgeClass } from '../utils/badge'
 import AgentChannelKey from '../components/AgentChannelKey.vue'
 import BaseSpinner from '../components/BaseSpinner.vue'
 import MetricsSettingsPanel from '../components/MetricsSettingsPanel.vue'
+import SettingsRail, { type SettingsSections } from '../components/SettingsRail.vue'
 import TimezoneSelect from '../components/TimezoneSelect.vue'
 import type {
   ImportResultResponse,
@@ -237,6 +238,29 @@ async function resetSystem(): Promise<void> {
     resetting.value = false
   }
 }
+
+type SystemSection =
+  | 'version'
+  | 'ssh'
+  | 'channel'
+  | 'settings'
+  | 'deployment'
+  | 'metrics'
+  | 'config'
+  | 'danger'
+
+/** Deployment is listed only once the server has said how it was started. */
+const sections = computed<SettingsSections<SystemSection>>(() => [
+  { id: 'version', label: 'Version' },
+  { id: 'ssh', label: 'SSH public key' },
+  { id: 'channel', label: 'Agent channel key' },
+  { id: 'settings', label: 'Settings' },
+  ...(secureCookies.value !== null ? [{ id: 'deployment', label: 'Deployment' } as const] : []),
+  { id: 'metrics', label: 'Prometheus metrics' },
+  { id: 'config', label: 'Configuration export / import' },
+  { id: 'danger', label: 'Danger zone', danger: true },
+])
+const section = ref<SystemSection>('version')
 </script>
 
 <template>
@@ -245,12 +269,14 @@ async function resetSystem(): Promise<void> {
       <h1 class="page-title">System</h1>
     </div>
 
-    <div class="panel-stack">
-      <div class="panel">
-        <div class="panel-header">
-          <h2 class="panel-title">Version</h2>
-        </div>
-
+    <SettingsRail
+      v-slot="{ section: current }"
+      :sections="sections"
+      :section="section"
+      label="System settings sections"
+      @update:section="section = $event"
+    >
+      <template v-if="current === 'version'">
         <BaseSpinner
           v-if="versionLoading"
           size="lg"
@@ -274,11 +300,10 @@ async function resetSystem(): Promise<void> {
             <dd class="mono">{{ versionInfo.agent_version }}</dd>
           </template>
         </dl>
-      </div>
+      </template>
 
-      <div class="panel">
-        <div class="panel-header">
-          <h2 class="panel-title">SSH public key</h2>
+      <template v-else-if="current === 'ssh'">
+        <div class="pane-head pane-head--end">
           <button
             class="btn btn-sm btn-ghost btn-danger-text"
             @click="showRegenConfirm = true"
@@ -312,25 +337,18 @@ async function resetSystem(): Promise<void> {
             {{ copied ? 'Copied!' : 'Copy' }}
           </button>
         </div>
-      </div>
+      </template>
 
-      <div class="panel">
-        <div class="panel-header">
-          <h2 class="panel-title">Agent channel key</h2>
-        </div>
+      <template v-else-if="current === 'channel'">
         <p class="pane-lede">
           Every agent connection is encrypted end to end, and an agent only talks to a server that
           proves it holds this key. The key is derived from <code>ASSIMILATE_SECRET_KEY</code>, so
           it changes only if that does.
         </p>
         <AgentChannelKey />
-      </div>
+      </template>
 
-      <div class="panel">
-        <div class="panel-header">
-          <h2 class="panel-title">Settings</h2>
-        </div>
-
+      <template v-else-if="current === 'settings'">
         <BaseSpinner
           v-if="settingsLoading"
           size="lg"
@@ -583,15 +601,9 @@ async function resetSystem(): Promise<void> {
             </div>
           </form>
         </template>
-      </div>
+      </template>
 
-      <div
-        v-if="secureCookies !== null"
-        class="panel"
-      >
-        <div class="panel-header">
-          <h2 class="panel-title">Deployment</h2>
-        </div>
+      <template v-else-if="current === 'deployment'">
         <p class="pane-lede">
           Set through environment variables when the server starts. To change one, update your
           deployment and restart the server.
@@ -616,14 +628,14 @@ async function resetSystem(): Promise<void> {
             </span>
           </dd>
         </dl>
-      </div>
+      </template>
 
-      <MetricsSettingsPanel />
+      <MetricsSettingsPanel
+        v-else-if="current === 'metrics'"
+        embedded
+      />
 
-      <div class="panel">
-        <div class="panel-header">
-          <h2 class="panel-title">Configuration export / import</h2>
-        </div>
+      <template v-else-if="current === 'config'">
         <p class="pane-lede">
           Export host and schedule configuration as JSON for backup or migration. Importing restores
           hosts and schedules by name; repositories must exist before importing.
@@ -715,12 +727,9 @@ async function resetSystem(): Promise<void> {
             </ul>
           </div>
         </div>
-      </div>
+      </template>
 
-      <div class="panel danger-zone">
-        <div class="panel-header">
-          <h2 class="panel-title">Danger zone</h2>
-        </div>
+      <template v-else-if="current === 'danger'">
         <p class="pane-lede">
           Emergency actions to bring the system back to a safe state. Use when backups are stuck or
           the system is in an inconsistent state.
@@ -749,8 +758,8 @@ async function resetSystem(): Promise<void> {
           <span>Cancelled backups: {{ resetResult.cancelled_backups }}</span>
           <span>Agents notified: {{ resetResult.notified_agents }}</span>
         </div>
-      </div>
-    </div>
+      </template>
+    </SettingsRail>
 
     <!-- Regenerate Confirmation -->
     <BaseModal
@@ -829,7 +838,6 @@ async function resetSystem(): Promise<void> {
 
 <style scoped>
 .page {
-  max-width: 800px;
 }
 
 .warning-text {
@@ -865,8 +873,10 @@ async function resetSystem(): Promise<void> {
 }
 
 .config-io-controls {
+  flex: 1;
   display: flex;
   align-items: center;
+  justify-content: flex-end;
   gap: var(--space-5);
   flex-wrap: wrap;
 }
@@ -898,10 +908,8 @@ async function resetSystem(): Promise<void> {
 
 .import-result {
   margin-top: var(--space-4);
-  padding: var(--space-5) var(--space-6);
-  background: var(--bg-base);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
+  padding: var(--space-5) 0 0;
+  border-top: 1px solid var(--border);
   font-size: var(--fs-base);
 }
 
@@ -923,10 +931,8 @@ async function resetSystem(): Promise<void> {
   display: flex;
   gap: var(--space-7);
   margin-top: var(--space-6);
-  padding: var(--space-5) var(--space-6);
-  background: var(--bg-base);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
+  padding: var(--space-5) 0 0;
+  border-top: 1px solid var(--border);
   font-size: var(--fs-base);
   color: var(--text-secondary);
   flex-wrap: wrap;

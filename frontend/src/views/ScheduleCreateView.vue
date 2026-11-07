@@ -31,6 +31,7 @@ import ScheduleAdvancedTab from '../components/ScheduleAdvancedTab.vue'
 import SchedulePowerTab from '../components/SchedulePowerTab.vue'
 import ScheduleRepoTargets from '../components/ScheduleRepoTargets.vue'
 import ToggleSwitch from '../components/ToggleSwitch.vue'
+import PaneRow from '../components/PaneRow.vue'
 import { DEFAULT_SCHEDULE_FORM_STATE } from '../types/scheduleForm'
 import type { ScheduleAgentOverrides, ScheduleFormState } from '../types/scheduleForm'
 import type { AgentRow } from '../types/agent'
@@ -324,6 +325,9 @@ async function submit(): Promise<void> {
           </span>
         </button>
       </nav>
+      <p class="wizard-caption">
+        Step {{ stepIndex + 1 }} of {{ steps.length }} · {{ currentStep.label }}
+      </p>
 
       <section class="wizard-pane">
         <template v-if="currentStep.id === 'basics'">
@@ -365,13 +369,17 @@ async function submit(): Promise<void> {
               Backup creates archives; Check validates repo integrity; Verify tests extractability.
             </span>
           </div>
-          <div class="field field-inline">
-            <label class="field-label">Enabled</label>
-            <ToggleSwitch v-model="form.enabled" />
+          <div class="pane-rows">
+            <PaneRow
+              title="Enabled"
+              hint="Leave this off to create the schedule paused and run it by hand first."
+            >
+              <ToggleSwitch
+                v-model="form.enabled"
+                label="Enabled"
+              />
+            </PaneRow>
           </div>
-          <span class="field-hint">
-            Leave this off to create the schedule paused and run it by hand first.
-          </span>
         </template>
 
         <template v-else-if="currentStep.id === 'sources'">
@@ -829,8 +837,12 @@ async function submit(): Promise<void> {
   flex-direction: column;
   gap: var(--space-1);
   padding: var(--space-6) var(--space-5);
-  background: var(--bg-sidebar);
   border-right: 1px solid var(--border);
+}
+
+/* Only on a phone, where the rail shows numbers alone. */
+.wizard-caption {
+  display: none;
 }
 
 .wizard-step {
@@ -918,7 +930,6 @@ async function submit(): Promise<void> {
   gap: var(--space-6);
   padding: var(--space-6) var(--space-8);
   border-top: 1px solid var(--border);
-  background: var(--bg-elevated);
 }
 
 .wizard-status {
@@ -936,6 +947,7 @@ async function submit(): Promise<void> {
 .wizard-actions {
   display: flex;
   gap: var(--space-4);
+  margin-left: auto;
 }
 
 .wizard-note {
@@ -946,7 +958,6 @@ async function submit(): Promise<void> {
   padding: var(--space-5) var(--space-6);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  background: var(--bg-input);
   font-size: var(--fs-sm);
   color: var(--text-secondary);
 }
@@ -961,20 +972,23 @@ async function submit(): Promise<void> {
   background: var(--success-subtle);
 }
 
+/* The review is one list split by hairlines, not a grid of boxes. */
 .review-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
-  gap: var(--space-6);
+  display: flex;
+  flex-direction: column;
 }
 
 .review-block {
   display: flex;
   flex-direction: column;
   gap: var(--space-4);
-  padding: var(--space-6);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: var(--bg-input);
+  padding: var(--space-6) 0;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.review-block:first-child {
+  border-top: none;
+  padding-top: 0;
 }
 
 .review-head {
@@ -989,15 +1003,34 @@ async function submit(): Promise<void> {
     grid-template-columns: minmax(0, 1fr);
   }
 
+  /* A row of numbered dots spread across the width; the current step's
+     name is the caption under it. */
   .wizard-rail {
     flex-direction: row;
-    overflow-x: auto;
+    justify-content: space-between;
+    padding: var(--space-5);
     border-right: none;
-    border-bottom: 1px solid var(--border);
   }
 
-  .wizard-step-sub {
+  .wizard-step {
+    display: flex;
+    justify-content: center;
+    width: auto;
+    padding: var(--space-2);
+  }
+
+  .wizard-step-text {
     display: none;
+  }
+
+  .wizard-caption {
+    display: block;
+    margin: 0;
+    padding: 0 var(--space-6) var(--space-5);
+    border-bottom: 1px solid var(--border);
+    font-size: var(--fs-sm);
+    font-weight: 600;
+    color: var(--text-secondary);
   }
 
   .wizard-pane {

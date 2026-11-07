@@ -203,6 +203,9 @@ onUnmounted(() => {
 
 .modal-dialog {
   background: var(--bg-elevated);
+  /* Teleported to <body>: set the text colour here rather than relying on
+     what the page around it inherits. */
+  color: var(--text-primary);
   border: 1px solid var(--border);
   border-radius: var(--radius);
   width: 100%;

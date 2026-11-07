@@ -194,7 +194,6 @@ onMounted(loadData)
   gap: var(--space-5);
   padding: var(--space-5) var(--space-7);
   border-top: 1px solid var(--border-subtle);
-  background: var(--bg-base);
 }
 
 .pattern-warnings {

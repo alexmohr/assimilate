@@ -50,82 +50,87 @@ const emit = defineEmits<{
 </script>
 
 <template>
-  <!-- With no lede and no label the Edit button is the row's only child, and
-       a lone child of a space-between row sits at the leading edge. -->
-  <div
-    v-if="label"
-    class="pane-section-head"
-  >
-    <p class="group-label group-label--lg">{{ label }}</p>
-    <HelpHint
-      v-if="lede"
-      :label="ledeLabel ?? 'this section'"
-    >
-      {{ lede }}
-    </HelpHint>
-    <button
-      v-if="canEdit && !editing"
-      class="btn btn-sm btn-ghost"
-      type="button"
-      @click="emit('edit')"
-    >
-      Edit
-    </button>
-  </div>
-  <div
-    v-else-if="lede || (canEdit && !editing)"
-    class="pane-head"
-    :class="{ 'pane-head--end': !lede }"
-  >
-    <HelpHint
-      v-if="lede"
-      :label="ledeLabel ?? 'this section'"
-    >
-      {{ lede }}
-    </HelpHint>
-    <button
-      v-if="canEdit && !editing"
-      class="btn btn-sm btn-ghost"
-      type="button"
-      @click="emit('edit')"
-    >
-      Edit
-    </button>
-  </div>
-  <template v-if="!editing">
-    <slot name="view" />
-    <HelpHint
-      v-if="$slots.hint"
-      :label="hintLabel ?? 'this section'"
-    >
-      <slot name="hint" />
-    </HelpHint>
-  </template>
-  <template v-else>
-    <slot name="edit" />
+  <section class="edit-block">
+    <!-- With no lede and no label the Edit button is the row's only child, and
+         a lone child of a space-between row sits at the leading edge. -->
     <div
-      v-if="error"
-      class="form-error"
+      v-if="label"
+      class="pane-section-head"
     >
-      {{ error }}
-    </div>
-    <div class="info-actions">
+      <p class="group-label group-label--lg">{{ label }}</p>
+      <HelpHint
+        v-if="lede"
+        :label="ledeLabel ?? 'this section'"
+      >
+        {{ lede }}
+      </HelpHint>
       <button
+        v-if="canEdit && !editing"
         class="btn btn-sm btn-ghost"
         type="button"
-        :disabled="saving"
-        @click="emit('cancel')"
+        @click="emit('edit')"
       >
-        Cancel
-      </button>
-      <button
-        class="btn btn-sm btn-primary"
-        type="button"
-        :disabled="saving"
-        @click="emit('save')"
-      >
-        {{ saving ? 'Saving...' : 'Save' }}
+        Edit
       </button>
     </div>
-  </template>
+    <div
+      v-else-if="lede || (canEdit && !editing)"
+      class="pane-head"
+      :class="{ 'pane-head--end': !lede }"
+    >
+      <!-- Said in words, not behind a lone "?": that icon on a row of its own
+           was the first thing every opened settings section showed. -->
+      <p
+        v-if="lede"
+        class="pane-lede"
+      >
+        {{ lede }}
+      </p>
+      <button
+        v-if="canEdit && !editing"
+        class="btn btn-sm btn-ghost"
+        type="button"
+        @click="emit('edit')"
+      >
+        Edit
+      </button>
+    </div>
+    <template v-if="!editing">
+      <slot name="view" />
+      <!-- A footnote in words, not a "?" alone on the last line. -->
+      <p
+        v-if="$slots.hint"
+        class="field-hint"
+      >
+        <slot name="hint" />
+      </p>
+    </template>
+    <template v-else>
+      <slot name="edit" />
+      <div
+        v-if="error"
+        class="form-error"
+      >
+        {{ error }}
+      </div>
+      <div class="info-actions">
+        <button
+          class="btn btn-sm btn-ghost"
+          type="button"
+          :disabled="saving"
+          @click="emit('cancel')"
+        >
+          Cancel
+        </button>
+        <button
+          class="btn btn-sm btn-primary"
+          type="button"
+          :disabled="saving"
+          @click="emit('save')"
+        >
+          {{ saving ? 'Saving...' : 'Save' }}
+        </button>
+      </div>
+    </template>
+  </section>
 </template>

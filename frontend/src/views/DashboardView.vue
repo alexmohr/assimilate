@@ -477,7 +477,7 @@ async function fetchOverview(): Promise<void> {
     </template>
 
     <template v-else>
-      <section class="status-banner">
+      <section class="tiles status-banner">
         <div
           class="tile tile--lg tile--link"
           @click="router.push({ name: 'agents', query: { status: 'offline' } })"
@@ -529,11 +529,15 @@ async function fetchOverview(): Promise<void> {
         >
           <span class="stat-label">Next backup</span>
           <span class="stat-value stat-value--lg">
-            <template v-if="activeBackups.length > 0">Active</template>
-            <template v-else>
-              {{ summary?.next_backup_at ? relativeTime(summary.next_backup_at) : '\u2014' }}
-            </template>
+            {{ summary?.next_backup_at ? relativeTime(summary.next_backup_at) : '\u2014' }}
           </span>
+          <!-- A running backup used to replace the time with "Active", which
+               answered a different question; it is a line of its own now. -->
+          <span
+            v-if="activeBackups.length > 0"
+            class="stat-sub"
+            >{{ activeBackups.length }} running now</span
+          >
         </div>
         <div class="tile tile--lg">
           <span class="stat-label">Total storage</span>
@@ -703,14 +707,16 @@ async function fetchOverview(): Promise<void> {
             @dismissed="fetchOverview().catch(logger.error)"
           />
           <BackupCalendar :repos="repoOptions" />
-          <RepositoryCapacity :repositories="overview?.repository_capacity ?? []" />
         </div>
+        <!-- Capacity sits under Recent activity so the two columns end at
+             about the same height instead of leaving a hole on the right. -->
         <div class="dashboard-column">
           <UpcomingWork
             :operations="overview?.running_operations ?? []"
             :schedules="overview?.upcoming_schedules ?? []"
           />
           <RecentActivityWidget />
+          <RepositoryCapacity :repositories="overview?.repository_capacity ?? []" />
         </div>
       </div>
 
@@ -919,9 +925,7 @@ async function fetchOverview(): Promise<void> {
 
 /* Section 1: Status Banner */
 .status-banner {
-  display: grid;
   grid-template-columns: repeat(4, 1fr);
-  gap: var(--space-5);
 }
 
 @media (max-width: 640px) {
@@ -1024,7 +1028,7 @@ async function fetchOverview(): Promise<void> {
 /* Trends Row */
 .trends-row {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap: var(--space-8);
   align-items: start;
 }

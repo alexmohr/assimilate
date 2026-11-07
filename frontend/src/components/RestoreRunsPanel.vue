@@ -10,7 +10,6 @@ import { cancelRestoreRun, getRestoreRun, listRestoreRuns } from '../api/restore
 import { useToast } from '../composables/useToast'
 import { useWebSocket } from '../composables/useWebSocket'
 import type { RestoreRun } from '../types/generated'
-import { badgeClass } from '../utils/badge'
 import { extractError } from '../utils/error'
 import { formatDate, formatDateShort } from '../utils/format'
 import { logger } from '../utils/logger'
@@ -141,24 +140,6 @@ onMounted(() => {
       :expanded="expandedId === run.id"
       @toggle="toggle(run)"
     >
-      <template
-        v-if="run.status !== 'success'"
-        #badges
-      >
-        <span
-          class="badge"
-          :class="[
-            badgeClass(restoreStatusTone(run.status)),
-            { 'badge--pulse': run.status === 'running' },
-          ]"
-        >
-          <span
-            v-if="run.status === 'running'"
-            class="badge-dot"
-          />
-          {{ restoreStatusLabel(run.status) }}
-        </span>
-      </template>
       <template
         v-if="run.status === 'pending'"
         #actions

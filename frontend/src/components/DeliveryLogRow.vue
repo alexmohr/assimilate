@@ -5,7 +5,6 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 <script setup lang="ts">
 import LogRow from './LogRow.vue'
-import { badgeClass } from '../utils/badge'
 import { formatDate, formatDateShort } from '../utils/format'
 import { deliveryTone, shortError } from '../utils/notificationChannels'
 import type {
@@ -61,16 +60,6 @@ function formatPayload(payload: NotificationEvent): string {
     :expanded="expanded"
     @toggle="emit('toggle')"
   >
-    <template
-      v-if="delivery.status !== 'sent'"
-      #badges
-    >
-      <span
-        class="badge"
-        :class="badgeClass(deliveryTone(delivery.status))"
-        >{{ statusLabel(delivery.status) }}</span
-      >
-    </template>
     <template #detail>
       <dl class="info-grid">
         <dt>Time</dt>

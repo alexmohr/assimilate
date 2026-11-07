@@ -56,14 +56,7 @@ import { extractError } from '../utils/error'
 import { normalizeBackupStatus } from '../utils/backupStatus'
 import { scheduleLabel } from '../utils/machine'
 import type { ReportRow } from '../types/report'
-import {
-  backupStatusBadgeClass,
-  backupStatusTone,
-  badgeClass,
-  logLevelTone,
-  systemEventTone,
-  type BadgeTone,
-} from '../utils/badge'
+import { backupStatusTone, logLevelTone, systemEventTone } from '../utils/badge'
 import type { SegmentedOption } from '../components/BaseSegmented.vue'
 import { useAuthStore } from '../stores/auth'
 import type { AcknowledgedFilter } from '../types/generated'
@@ -592,10 +585,6 @@ const unifiedRows = computed<UnifiedRow[]>(() => {
   )
 })
 
-function statusClass(status: string): string {
-  return backupStatusBadgeClass(status)
-}
-
 /** Only a warning or a failure needs acknowledging - a clean run has nothing to mute. */
 function isAckable(entry: ActivityEntry): boolean {
   const status = normalizeBackupStatus(entry.status)
@@ -733,11 +722,6 @@ function systemEventPreClass(event: SystemEventEntry): string {
     default:
       return 'detail-pre'
   }
-}
-
-/** Only an error or a warning earns a log row a badge; the dot covers the rest. */
-function isNotableTone(tone: BadgeTone): boolean {
-  return tone === 'danger' || tone === 'warning'
 }
 
 /** The open log entry, by its position in the shown list. */
@@ -1076,16 +1060,6 @@ function filterByRun(runId: string): void {
           :expanded="expandedLogIndex === i"
           @toggle="toggleLogRow(i)"
         >
-          <template
-            v-if="isNotableTone(logLevelTone(entry.level))"
-            #badges
-          >
-            <span
-              class="badge"
-              :class="badgeClass(logLevelTone(entry.level))"
-              >{{ entry.level }}</span
-            >
-          </template>
           <template #detail>
             <dl class="info-grid">
               <dt>Time</dt>
@@ -1146,12 +1120,6 @@ function filterByRun(runId: string): void {
               v-if="backupStatusTone(row.backup.status) !== 'success' || row.backup.acknowledged"
               #badges
             >
-              <span
-                v-if="backupStatusTone(row.backup.status) !== 'success'"
-                class="badge"
-                :class="statusClass(row.backup.status)"
-                >{{ row.backup.status }}</span
-              >
               <span
                 v-if="row.backup.acknowledged"
                 class="badge badge--neutral"

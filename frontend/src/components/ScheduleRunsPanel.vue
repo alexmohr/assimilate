@@ -266,7 +266,8 @@ function rowMeta(list: readonly ScheduleRun[]): string {
 }
 
 .runs-detail {
-  padding: var(--space-5) var(--space-6);
+  /* The host rows bring their own side padding, like every log row. */
+  padding: var(--space-5) 0 0;
 }
 
 .runs-row-text {
@@ -304,6 +305,8 @@ function rowMeta(list: readonly ScheduleRun[]): string {
 .run-pill {
   flex: 1 1 0;
   min-width: 4px;
+  /* The same small cell however wide the row is, phone or desktop. */
+  max-width: 14px;
   height: 16px;
   padding: 0;
   border: none;

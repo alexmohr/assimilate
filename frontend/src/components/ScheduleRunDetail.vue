@@ -79,12 +79,10 @@ const target = computed(() => reportToOpen(props.run))
   display: flex;
   flex-direction: column;
   gap: var(--space-5);
-  margin-top: var(--space-6);
-  padding-top: var(--space-6);
-  border-top: 1px solid var(--border);
 }
 
 .run-detail-head {
+  padding-inline: var(--space-6);
   display: flex;
   flex-wrap: wrap;
   align-items: center;

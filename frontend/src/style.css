@@ -3174,6 +3174,15 @@
     margin-right: var(--space-2);
   }
 
+  /* In a settings row the sort buttons start at the left edge and wrap, the
+     same on a phone and on desktop. */
+  .pane-row-control > .sort-controls {
+    margin-left: 0;
+    flex-wrap: wrap;
+    overflow: visible;
+    flex-shrink: 1;
+  }
+
   .sort-controls .btn.active {
     background: var(--bg-hover);
     color: var(--text-primary);

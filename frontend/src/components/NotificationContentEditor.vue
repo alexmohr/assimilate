@@ -156,6 +156,13 @@ function placeholderToken(key: string): string {
   return `{{${key}}}`
 }
 
+/** Drop the unsaved edits and go back to what the channel has saved. */
+function cancel(): void {
+  title.value = savedTitle.value
+  body.value = savedBody.value
+  error.value = ''
+}
+
 function resetToDefault(): void {
   title.value = DEFAULT_TITLE_TEMPLATE
   body.value = defaultBody.value
@@ -315,6 +322,14 @@ defineExpose({ expanded })
       </div>
 
       <div class="content-actions">
+        <button
+          class="btn btn-sm btn-ghost"
+          type="button"
+          :disabled="saving || !dirty"
+          @click="cancel"
+        >
+          Cancel
+        </button>
         <button
           class="btn btn-sm btn-primary"
           :disabled="saving || !dirty || isBlank"
@@ -519,5 +534,6 @@ defineExpose({ expanded })
 .content-actions {
   display: flex;
   justify-content: flex-end;
+  gap: var(--space-4);
 }
 </style>

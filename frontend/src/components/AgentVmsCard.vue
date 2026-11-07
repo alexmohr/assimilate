@@ -624,7 +624,8 @@ onMounted(load)
               </td>
               <td data-label="Staged size">
                 <div class="cell-size">
-                  {{ formatBytes(vm.staged_bytes) }} of {{ limitLabel(vm) }}
+                  {{ formatBytes(vm.staged_bytes)
+                  }}{{ vm.effective_limit_bytes === 0 ? '' : ` of ${limitLabel(vm)}` }}
                 </div>
                 <div
                   v-if="vm.effective_limit_bytes > 0"
@@ -645,12 +646,9 @@ onMounted(load)
                   :value="limitInput(vm)"
                   :disabled="!canEdit || rowSaving === vm.name || snapshotting === vm.name"
                   :aria-label="`Limit for ${vm.name} in GiB`"
-                  placeholder="Default"
+                  placeholder="Host default"
                   @change="onLimitChange(vm, $event)"
                 />
-                <div class="cell-muted">
-                  {{ vm.limit_bytes === null ? 'Host default' : 'Overridden' }}
-                </div>
               </td>
               <td data-label="Backed up">
                 <ToggleSwitch

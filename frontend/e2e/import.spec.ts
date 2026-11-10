@@ -3,7 +3,7 @@
 
 import { execSync } from 'node:child_process'
 
-import { expandAllArchiveGroups, expect, loginAsAdmin, test } from './fixtures'
+import { expandAllArchiveGroups, expect, loginAsAdmin, showEveryAgent, test } from './fixtures'
 import type { Page } from '@playwright/test'
 
 /** Find the running demo server container by its compose service label. */
@@ -103,8 +103,7 @@ test('database-hourly shows unmatched-banner for legacy-db-prod archives', async
 async function openAgentsList(page: Page): Promise<void> {
   await page.goto('/agents')
   await expect(page.locator('.list-row').first()).toBeVisible({ timeout: 270_000 })
-  const more = page.locator('.list-more', { hasText: /^Show \d+ more/ })
-  if ((await more.count()) > 0) await more.first().click()
+  await showEveryAgent(page)
 }
 
 test('agents page shows imported placeholder agents', async ({ page }) => {

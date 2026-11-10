@@ -7,18 +7,9 @@ import {
   loginAsAdmin,
   mockRunningBackupOperation,
   mockScheduleOneHealth,
+  showEveryAgent,
   test,
 } from './fixtures'
-
-/**
- * The Agents list folds its Offline group after five rows. Opens it, so a
- * test looking for a particular offline host finds it wherever the demo's
- * data puts it.
- */
-async function showEveryAgent(page: Page): Promise<void> {
-  const more = page.locator('.list-more', { hasText: /^Show \d+ more/ })
-  if ((await more.count()) > 0) await more.first().click()
-}
 
 /** The Agents list row for `hostname`. */
 function agentRow(page: Page, hostname: string): ReturnType<Page['locator']> {

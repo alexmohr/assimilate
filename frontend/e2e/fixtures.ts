@@ -349,6 +349,25 @@ export async function expandAllArchiveGroups(page: Page): Promise<void> {
   }
 }
 
+/**
+ * The Agents list folds its Offline group after five rows. Opens it, so a
+ * test looking for a particular offline host finds it wherever the demo's
+ * data puts it.
+ *
+ * The "Show N more" button exists only while more than five hosts are offline,
+ * and agents connect and drop while the list is open, so the button can be
+ * removed between finding it and clicking it. A plain click then waits for a
+ * button that never comes back until the whole test times out. Each attempt
+ * therefore gives the click a few seconds and looks again: once the button is
+ * gone there is nothing left to open.
+ */
+export async function showEveryAgent(page: Page): Promise<void> {
+  const more = page.locator('.list-more', { hasText: /^Show \d+ more/ })
+  await expect(async () => {
+    if ((await more.count()) > 0) await more.first().click({ timeout: 3_000 })
+  }).toPass({ timeout: 30_000 })
+}
+
 /** What a spec built on [`mockNotificationsApi`] actually cares about. */
 export interface NotificationApiMocks {
   channels: object[]

@@ -720,6 +720,72 @@ mod tests {
     use super::*;
     use crate::test_support::{build_test_state, insert_auth_user, test_channel_key};
 
+    /// The reset cancels every in-flight report and announces each backup the
+    /// UI still shows as running as stopped, so no progress card is left
+    /// behind.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn reset_cancels_running_backups_and_clears_their_cards(pool: PgPool) {
+        let admin = insert_auth_user(&pool, "reset-admin").await;
+        let state = build_test_state(pool.clone(), b"system-reset-test");
+        let agent = db::insert_agent(&pool, "reset-host", None, "hash", None, None)
+            .await
+            .unwrap();
+        let repo_id = db::insert_repo(
+            &pool,
+            &db::InsertRepoParams {
+                name: "reset-repo",
+                repo_path: "/backups/reset",
+                ssh_user: "user",
+                ssh_host: "host.local",
+                ssh_port: 22,
+                passphrase_encrypted: b"not-a-real-ciphertext",
+                compression: "lz4",
+                encryption: "repokey",
+                owner_id: None,
+                sync_schedule: None,
+            },
+        )
+        .await
+        .unwrap()
+        .id;
+        db::insert_backup_started(
+            &pool,
+            agent.id,
+            repo_id,
+            None,
+            chrono::Utc::now(),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        state
+            .ui_broadcast
+            .set_active_backup(crate::ws::ui_broadcast::ActiveBackupSnapshot {
+                hostname: "reset-host".to_owned(),
+                target_name: "reset-repo".to_owned(),
+                archive_name: None,
+                schedule_id: None,
+                repo_id,
+                progress_line: None,
+                started_at: chrono::Utc::now(),
+            });
+        let mut ui = state.ui_broadcast.subscribe();
+
+        let Json(response) = reset_system(RequireAdmin(admin), State(state.clone()))
+            .await
+            .unwrap();
+
+        assert_eq!(response.cancelled_backups, 1);
+        assert!(state.ui_broadcast.current_active_backups().is_empty());
+        let events: Vec<ServerToUi> = std::iter::from_fn(|| ui.try_recv().ok()).collect();
+        assert!(events.iter().any(|e| matches!(
+            e,
+            ServerToUi::BackupStopped { repo_id: r, .. } if *r == repo_id
+        )));
+    }
+
     /// Any signed-in user can read the key, and it is the one the server's
     /// agent channel is pinned to, in the form agents are configured with.
     #[ignore = "requires DATABASE_URL"]

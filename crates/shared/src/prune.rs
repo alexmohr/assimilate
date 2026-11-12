@@ -5,6 +5,52 @@
 //! which prunes after each backup, and the server, which prunes append-only
 //! repositories on their maintenance schedule.
 
+/// How many archives of each age bucket `borg prune` keeps.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Retention {
+    /// Hourly archives to keep.
+    pub hourly: u32,
+    /// Daily archives to keep.
+    pub daily: u32,
+    /// Weekly archives to keep.
+    pub weekly: u32,
+    /// Monthly archives to keep.
+    pub monthly: u32,
+    /// Yearly archives to keep.
+    pub yearly: u32,
+}
+
+impl Retention {
+    #[must_use]
+    pub fn is_unset(self) -> bool {
+        self == Self::default()
+    }
+
+    /// The bucket-wise maximum: keeps everything either side would keep.
+    #[must_use]
+    pub fn union(self, other: Self) -> Self {
+        Self {
+            hourly: self.hourly.max(other.hourly),
+            daily: self.daily.max(other.daily),
+            weekly: self.weekly.max(other.weekly),
+            monthly: self.monthly.max(other.monthly),
+            yearly: self.yearly.max(other.yearly),
+        }
+    }
+
+    /// The `--keep-*` arguments for the counts above zero; see [`keep_args`].
+    #[must_use]
+    pub fn keep_args(self) -> Vec<String> {
+        keep_args(
+            self.hourly,
+            self.daily,
+            self.weekly,
+            self.monthly,
+            self.yearly,
+        )
+    }
+}
+
 /// The `--keep-*` arguments for the counts above zero, in borg's order. Empty
 /// when no count is above zero: pruning with nothing to keep would remove
 /// every archive that matches, so callers skip the prune instead.
@@ -40,6 +86,34 @@ mod tests {
                 "1"
             ]
         );
+    }
+
+    #[test]
+    fn a_union_keeps_the_most_either_side_keeps() {
+        let a = Retention {
+            daily: 7,
+            monthly: 3,
+            ..Retention::default()
+        };
+        let b = Retention {
+            hourly: 24,
+            daily: 2,
+            weekly: 4,
+            yearly: 1,
+            ..Retention::default()
+        };
+        assert_eq!(
+            a.union(b),
+            Retention {
+                hourly: 24,
+                daily: 7,
+                weekly: 4,
+                monthly: 3,
+                yearly: 1
+            }
+        );
+        assert!(Retention::default().is_unset());
+        assert!(!a.is_unset());
     }
 
     #[test]

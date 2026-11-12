@@ -20,7 +20,7 @@ use shared::{
     append_only::MaintenanceOutcome,
     archive_names::{legacy_glob, schedule_glob},
     protocol::RepoOpKind,
-    prune::keep_args,
+    prune::Retention,
 };
 
 use crate::{
@@ -93,34 +93,18 @@ pub fn vanished_names<S: std::hash::BuildHasher>(
 /// The most each age bucket keeps over `rows`, so archives whose schedule is
 /// unknown are never kept for less than any schedule would keep them.
 #[must_use]
-pub fn legacy_retention<'a>(
-    rows: impl IntoIterator<Item = &'a RetentionRow>,
-) -> Option<RetentionRow> {
-    rows.into_iter().cloned().reduce(|a, b| RetentionRow {
-        schedule_id: a.schedule_id,
-        hostname: a.hostname,
-        keep_hourly: a.keep_hourly.max(b.keep_hourly),
-        keep_daily: a.keep_daily.max(b.keep_daily),
-        keep_weekly: a.keep_weekly.max(b.keep_weekly),
-        keep_monthly: a.keep_monthly.max(b.keep_monthly),
-        keep_yearly: a.keep_yearly.max(b.keep_yearly),
-    })
+pub fn legacy_retention<'a>(rows: impl IntoIterator<Item = &'a RetentionRow>) -> Option<Retention> {
+    rows.into_iter()
+        .map(RetentionRow::retention)
+        .reduce(Retention::union)
 }
 
 /// The `borg prune` arguments for the archives matching `glob`, or `None`
 /// when `retention` keeps nothing - which would prune every one of them, so
 /// the agent skips it too.
 #[must_use]
-pub fn prune_args(retention: &RetentionRow, glob: &str, borg_repo: &str) -> Option<Vec<String>> {
-    // A negative count keeps nothing, like zero.
-    let count = |keep: i32| u32::try_from(keep).unwrap_or(0);
-    let keeps = keep_args(
-        count(retention.keep_hourly),
-        count(retention.keep_daily),
-        count(retention.keep_weekly),
-        count(retention.keep_monthly),
-        count(retention.keep_yearly),
-    );
+pub fn prune_args(retention: Retention, glob: &str, borg_repo: &str) -> Option<Vec<String>> {
+    let keeps = retention.keep_args();
     if keeps.is_empty() {
         return None;
     }
@@ -545,15 +529,14 @@ async fn execute(state: &AppState, repo_id: i64) -> Result<Finished, ApiError> {
         .iter()
         .filter_map(|row| {
             let glob = schedule_glob(&row.hostname, row.schedule_id);
-            prune_args(row, &glob, &repo.url).map(|args| (row.hostname.clone(), args))
+            prune_args(row.retention(), &glob, &repo.url).map(|args| (row.hostname.clone(), args))
         })
         .collect();
     let hostnames: std::collections::BTreeSet<&str> =
         retention.iter().map(|row| row.hostname.as_str()).collect();
     for hostname in hostnames {
         let union = legacy_retention(retention.iter().filter(|row| row.hostname == hostname));
-        if let Some(args) =
-            union.and_then(|row| prune_args(&row, &legacy_glob(hostname), &repo.url))
+        if let Some(args) = union.and_then(|row| prune_args(row, &legacy_glob(hostname), &repo.url))
         {
             prunes.push((hostname.to_owned(), args));
         }
@@ -741,7 +724,12 @@ mod tests {
     #[test]
     fn prune_args_name_the_agents_archives_and_each_nonzero_keep() {
         let row = retention("web-1", [0, 7, 0, 3, 0]);
-        let args = prune_args(&row, &schedule_glob("web-1", 3), "ssh://b@h:22/srv/r").unwrap();
+        let args = prune_args(
+            row.retention(),
+            &schedule_glob("web-1", 3),
+            "ssh://b@h:22/srv/r",
+        )
+        .unwrap();
         assert_eq!(
             args,
             [
@@ -766,11 +754,11 @@ mod tests {
         let union = legacy_retention([&a, &b]).unwrap();
         assert_eq!(
             [
-                union.keep_hourly,
-                union.keep_daily,
-                union.keep_weekly,
-                union.keep_monthly,
-                union.keep_yearly
+                union.hourly,
+                union.daily,
+                union.weekly,
+                union.monthly,
+                union.yearly
             ],
             [24, 7, 4, 3, 1]
         );
@@ -779,7 +767,8 @@ mod tests {
 
     #[test]
     fn prune_args_keep_every_period_that_is_set() {
-        let args = prune_args(&retention("h", [24, 7, 4, 6, 1]), "*h-s3-*", "r").unwrap();
+        let args =
+            prune_args(retention("h", [24, 7, 4, 6, 1]).retention(), "*h-s3-*", "r").unwrap();
         for flag in [
             "--keep-hourly",
             "--keep-daily",
@@ -796,8 +785,8 @@ mod tests {
 
     #[test]
     fn no_retention_means_no_prune_rather_than_pruning_everything() {
-        assert!(prune_args(&retention("h", [0, 0, 0, 0, 0]), "*h-s3-*", "r").is_none());
-        assert!(prune_args(&retention("h", [-1, 0, 0, 0, 0]), "*h-s3-*", "r").is_none());
+        assert!(prune_args(retention("h", [0, 0, 0, 0, 0]).retention(), "*h-s3-*", "r").is_none());
+        assert!(prune_args(retention("h", [-1, 0, 0, 0, 0]).retention(), "*h-s3-*", "r").is_none());
     }
 
     #[test]

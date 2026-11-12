@@ -6,7 +6,7 @@
 //! deletions waiting for maintenance.
 
 use chrono::{DateTime, Utc};
-use shared::append_only::MaintenanceOutcome;
+use shared::{append_only::MaintenanceOutcome, prune::Retention};
 use sqlx::PgPool;
 
 use crate::error::ApiError;
@@ -727,6 +727,21 @@ pub struct RetentionRow {
     pub keep_monthly: i32,
     /// Yearly archives to keep.
     pub keep_yearly: i32,
+}
+
+impl RetentionRow {
+    /// The keep counts, a negative one keeping nothing like zero.
+    #[must_use]
+    pub fn retention(&self) -> Retention {
+        let count = |keep: i32| u32::try_from(keep).unwrap_or(0);
+        Retention {
+            hourly: count(self.keep_hourly),
+            daily: count(self.keep_daily),
+            weekly: count(self.keep_weekly),
+            monthly: count(self.keep_monthly),
+            yearly: count(self.keep_yearly),
+        }
+    }
 }
 
 /// The retention every enabled backup schedule writing to the repository asks

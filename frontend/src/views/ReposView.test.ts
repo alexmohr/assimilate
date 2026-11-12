@@ -70,7 +70,12 @@ interface RepoWithStats {
     critical_action: string
     enabled: boolean
   } | null
-  repo_host: { id: number; intermittent: boolean }
+  repo_host: {
+    id: number
+    intermittent: boolean
+    last_check_reachable?: boolean | null
+    last_checked_at?: string | null
+  }
 }
 
 const baseRepo = {
@@ -93,7 +98,7 @@ const baseRepo = {
   agent_count: 1,
   unmatched_count: 0,
   quota: null,
-  repo_host: { id: 1, intermittent: false },
+  repo_host: { id: 1, intermittent: false, last_check_reachable: null, last_checked_at: null },
 }
 
 const mockRepos: RepoWithStats[] = [
@@ -184,6 +189,16 @@ function rowFor(wrapper: VueWrapper<ComponentPublicInstance>, name: string) {
   return wrapper.findAll('a.list-row').find((r) => r.find('.list-row-name').text() === name)
 }
 
+/** The host line's facts as a wide screen shows them, for the `index`th host. */
+function wideNote(wrapper: VueWrapper<ComponentPublicInstance>, index = 0): string {
+  return wrapper.findAll('.pool-note')[index]!.find('.list-wide-only').text()
+}
+
+/** The same facts as a phone shows them, with the host's total. */
+function narrowNote(wrapper: VueWrapper<ComponentPublicInstance>, index = 0): string {
+  return wrapper.findAll('.pool-note')[index]!.find('.list-narrow-only').text()
+}
+
 function clickQuotaSort(wrapper: VueWrapper<ComponentPublicInstance>): Promise<void> {
   return clickButton(wrapper, (text) => text.startsWith('Quota'))
 }
@@ -205,28 +220,21 @@ describe('ReposView', () => {
     expect(wrapper.text()).toContain('media-weekly')
   })
 
-  it('displays compression and encryption metadata pills', async () => {
-    setupApiSuccess()
-    const wrapper = renderWithPlugins(ReposView, {
-      storeState: { auth: { user: { role: 'admin' } } },
-    })
-    await flushPromises()
-
-    const text = wrapper.text()
-    expect(text).toContain('lz4')
-    expect(text).toContain('zstd')
-    expect(text).toContain('repokey-blake2')
-  })
-
-  it('shows one status per row: Healthy for an enabled repo, Disabled for a disabled one', async () => {
+  it('shows one status per row: a green dot alone for an enabled repo, Disabled named for a disabled one', async () => {
     setupApiSuccess()
     const wrapper = await mountAsAdmin()
 
     const enabledRow = rowFor(wrapper, 'server-daily')!
     const disabledRow = rowFor(wrapper, 'media-weekly')!
 
-    expect(enabledRow.findAll('.badge').map((b) => b.text())).toEqual(['Healthy'])
-    expect(disabledRow.findAll('.badge').map((b) => b.text())).toEqual(['Disabled'])
+    expect(enabledRow.findAll('.status-dot')).toHaveLength(1)
+    expect(enabledRow.find('.status-dot').classes()).toContain('status-dot--success')
+    expect(enabledRow.text()).not.toContain('Healthy')
+    expect(enabledRow.find('.repo-row-facts > span').text()).toBe('30 archives')
+
+    expect(disabledRow.findAll('.status-dot')).toHaveLength(1)
+    expect(disabledRow.find('.status-dot').classes()).toEqual(['status-dot'])
+    expect(disabledRow.find('.repo-row-facts > span').text()).toBe('Disabled')
   })
 
   it('leads a repo with unmatched archives to its Archives tab', async () => {
@@ -245,7 +253,9 @@ describe('ReposView', () => {
     await flushPromises()
 
     const row = rowFor(wrapper, 'unmatched-repo')!
-    expect(row.find('.badge.badge--warning').text()).toBe('2 unmatched')
+    expect(row.find('.repo-row-facts > span').text()).toBe('2 unmatched')
+    // Unmatched archives are not a backup at risk: the dot stays green.
+    expect(row.find('.status-dot').classes()).toContain('status-dot--success')
 
     expect(row.attributes('href')).toBe('/repos/4?tab=archives')
   })
@@ -341,14 +351,15 @@ describe('ReposView', () => {
     expect(text).toMatch(/\d+[mh] ago|Just now/)
   })
 
-  it('shows "Never" for repos with no backup', async () => {
+  it('says "no backup yet" for repos with no backup', async () => {
     setupApiSuccess()
     const wrapper = renderWithPlugins(ReposView, {
       storeState: { auth: { user: { role: 'viewer' } } },
     })
     await flushPromises()
 
-    expect(wrapper.text()).toContain('Never')
+    expect(rowFor(wrapper, 'media-weekly')!.text()).toContain('no backup yet')
+    expect(rowFor(wrapper, 'server-daily')!.text()).not.toContain('no backup yet')
   })
 
   it('shows "Importing…" badge when repo is importing without progress', async () => {
@@ -759,7 +770,7 @@ describe('ReposView quota filter chips', () => {
 
     const overWarnRow = rowFor(wrapper, 'over-warn')!
     expect(overWarnRow.find('.progress-track').exists()).toBe(true)
-    expect(overWarnRow.find('.badge').text()).toBe('Near quota')
+    expect(overWarnRow.find('.repo-row-facts > span').text()).toBe('Near quota')
     expect(overWarnRow.find('.repo-row-size').text()).toContain(' of ')
 
     const unconfiguredRow = rowFor(wrapper, 'unconfigured')!
@@ -790,7 +801,9 @@ describe('ReposView group by host', () => {
     const headers = wrapper.findAll('.pool-header')
     expect(headers).toHaveLength(1)
     expect(headers[0]!.text()).toContain('backup.example.com')
-    expect(headers[0]!.text()).toContain('3 repos')
+    // The repositories are listed right below, so the header does not count them.
+    expect(headers[0]!.text()).not.toContain('3 repos')
+    expect(wrapper.findAll('.list-group')[0]!.findAll('a.list-row')).toHaveLength(3)
 
     expect(wrapper.text()).toContain('server-daily')
     expect(wrapper.text()).toContain('database-hourly')
@@ -875,7 +888,9 @@ describe('ReposView group by host', () => {
     // ...but only the one that doesn't match the filter is dimmed.
     expect(rowFor(wrapper, 'healthy-repo')!.classes()).toContain('repo-row--dim')
     expect(rowFor(wrapper, 'at-risk-repo')!.classes()).not.toContain('repo-row--dim')
-    expect(wrapper.find('.pool-note').text()).toBe('Showing 1 of 2 repos')
+    expect(wideNote(wrapper)).toBe('Showing 1 of 2 repos')
+    // A phone also carries the host's total in the same line.
+    expect(narrowNote(wrapper)).toBe('Showing 1 of 2 repos · 700.0 B')
   })
 
   it('sorts multiple host groups alphabetically by ssh_host', async () => {
@@ -902,7 +917,7 @@ describe('ReposView group by host', () => {
     expect(hosts).toEqual(['a.example.com', 'z.example.com'])
   })
 
-  it('links each host to its page and flags one that is not always online', async () => {
+  it('links each host to its page and names one that is not always online', async () => {
     const repos: RepoWithStats[] = [
       {
         ...baseRepo,
@@ -924,11 +939,27 @@ describe('ReposView group by host', () => {
     setupApiSuccess(repos)
     const wrapper = await mountAsAdmin()
 
-    const headers = wrapper.findAll('.pool-host')
+    const headers = wrapper.findAll('.pool-header')
     expect(headers[0]!.find('a[href="/repo-hosts/4"]').exists()).toBe(true)
-    expect(headers[0]!.text()).toContain('Not always online')
+    expect(wideNote(wrapper, 0)).toBe('Intermittent')
+    expect(headers[0]!.find('.pool-note').attributes('title')).toContain(
+      'Missed backups run once it is back.',
+    )
     expect(headers[1]!.find('a[href="/repo-hosts/9"]').exists()).toBe(true)
-    expect(headers[1]!.text()).not.toContain('Not always online')
+    expect(headers[1]!.text()).not.toContain('Intermittent')
+    expect(headers[1]!.find('.pool-note').attributes('title')).toBeUndefined()
+  })
+
+  it('names the host without a link for a non-admin', async () => {
+    setupApiSuccess()
+    const wrapper = renderWithPlugins(ReposView, {
+      storeState: { auth: { user: { role: 'viewer' } } },
+    })
+    await flushPromises()
+
+    const title = wrapper.find('.pool-host .list-group-title')
+    expect(title.text()).toBe('backup.example.com')
+    expect(title.find('a').exists()).toBe(false)
   })
 
   it('still loads the repo list when the server-quotas request fails for an admin', async () => {
@@ -981,7 +1012,8 @@ describe('ReposView group by host', () => {
     await flushPromises()
 
     expect(wrapper.find('.pool-header').classes()).toContain('pool-header-empty')
-    expect(wrapper.find('.pool-note').text()).toBe('No matching repos')
+    expect(wideNote(wrapper)).toBe('No matching repos')
+    expect(narrowNote(wrapper)).toBe('No matching repos · 10.0 GB')
     expect(wrapper.find('.list-cols').exists()).toBe(false)
     expect(wrapper.findAll('.list-row')).toHaveLength(0)
   })
@@ -1023,7 +1055,13 @@ describe('ReposView group by host', () => {
     expect(track.exists()).toBe(true)
     expect(wrapper.findAll('.pool-seg')).toHaveLength(3)
     expect(wrapper.find('.pool-mark').exists()).toBe(true)
-    expect(wrapper.find('.pool-note').text()).toContain('below warn')
+    expect(wideNote(wrapper)).toBe('10.0 GB below warning')
+    // The bar already shows the headroom, so a phone leaves it out of the line.
+    expect(narrowNote(wrapper)).toBe('10.0 GB / 30.0 GB')
+    // Below its warning mark the pool keeps the accent colour.
+    expect(track.classes()).not.toContain('pool-track--warning')
+    expect(track.classes()).not.toContain('pool-track--danger')
+    expect(wrapper.find('.pool-total').text()).toBe('10.0 GB / 30.0 GB')
   })
 
   it('shows the critical action in the pool note when combined usage breaches the server quota', async () => {
@@ -1037,19 +1075,67 @@ describe('ReposView group by host', () => {
     )
     const wrapper = await mountAsAdmin()
 
-    const note = wrapper.find('.pool-note').text()
-    expect(note).toContain('over critical')
-    expect(note).toContain('Block backups')
+    expect(wideNote(wrapper)).toBe('Over critical · Block backups')
+    expect(narrowNote(wrapper)).toBe('Over critical · Block backups · 10.0 GB / 8.0 GB')
+    expect(wrapper.find('.pool-track').classes()).toContain('pool-track--danger')
   })
 
-  it('shows a plain healthy pool note and no warn mark when no warn threshold is set', async () => {
+  it('tones the pool bar and names the warn action once combined usage passes the warning mark', async () => {
+    // Combined mock repo usage is 10 GB; warn at 5 GB, critical at 20 GB.
+    setupApiSuccessWithServerQuota(
+      serverQuota({
+        warn_bytes: 5_368_709_120,
+        critical_bytes: 21_474_836_480,
+        warn_action: 'notify_only',
+      }),
+    )
+    const wrapper = await mountAsAdmin()
+
+    expect(wideNote(wrapper)).toBe('Over warning · Notify only')
+    expect(wrapper.find('.pool-track').classes()).toContain('pool-track--warning')
+  })
+
+  it('says nothing about the pool of a host whose quota is not configured', async () => {
+    setupApiSuccessWithServerQuota(serverQuota({ configured: false }))
+    const wrapper = await mountAsAdmin()
+
+    expect(wideNote(wrapper)).toBe('')
+    expect(narrowNote(wrapper)).toBe('10.0 GB')
+    expect(wrapper.find('.pool-track').exists()).toBe(false)
+  })
+
+  it('adds no pool note and no warn mark for a healthy pool with no warn threshold', async () => {
     setupApiSuccessWithServerQuota(
       serverQuota({ warn_bytes: null, critical_bytes: 32_212_254_720 }),
     )
     const wrapper = await mountAsAdmin()
 
-    expect(wrapper.find('.pool-note').text()).toContain('healthy')
+    expect(wideNote(wrapper)).toBe('')
+    expect(narrowNote(wrapper)).toBe('10.0 GB / 30.0 GB')
     expect(wrapper.find('.pool-mark').exists()).toBe(false)
+    expect(wrapper.find('.pool-track').classes()).not.toContain('pool-track--warning')
+  })
+
+  it('combines Intermittent with the pool note on one line', async () => {
+    vi.mocked(apiClient.get).mockImplementation((url: string) => {
+      if (url === '/repos/stats') {
+        return Promise.resolve({
+          data: mockRepos.map((r) => ({ ...r, repo_host: { id: 1, intermittent: true } })),
+        })
+      }
+      if (url === '/server-quotas') {
+        return Promise.resolve({
+          data: [serverQuota({ warn_bytes: 5_368_709_120, critical_bytes: 8_589_934_592 })],
+        })
+      }
+      return Promise.resolve({ data: [] })
+    })
+    const wrapper = await mountAsAdmin()
+
+    expect(wideNote(wrapper)).toBe('Intermittent · Over critical · Notify only')
+    expect(narrowNote(wrapper)).toBe(
+      'Intermittent · Over critical · Notify only · 10.0 GB / 8.0 GB',
+    )
   })
 })
 
@@ -1255,6 +1341,135 @@ describe('ReposView quota sort', () => {
 
       expect(apiClient.get).toHaveBeenCalled()
     })
+  })
+})
+
+describe('ReposView host state', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  type HostRef = RepoWithStats['repo_host']
+
+  async function mountWithHost(repoHost: Partial<HostRef>): Promise<VueWrapper> {
+    setupApiSuccess(
+      mockRepos.map((r) => ({ ...r, repo_host: { ...baseRepo.repo_host, ...repoHost } })),
+    )
+    return mountAsAdmin()
+  }
+
+  function hostDot(wrapper: VueWrapper): ReturnType<VueWrapper['find']> {
+    return wrapper.find('.pool-host .status-dot')
+  }
+
+  const CHECKED = new Date(Date.now() - 5 * 60_000).toISOString()
+
+  it('leaves the dot grey before the host is first checked', async () => {
+    const wrapper = await mountWithHost({ last_check_reachable: null, last_checked_at: null })
+    expect(hostDot(wrapper).classes()).toEqual(['status-dot'])
+    expect(hostDot(wrapper).attributes('aria-label')).toBe('Not checked yet')
+    expect(hostDot(wrapper).attributes('title')).toBe('Not checked yet')
+    expect(hostDot(wrapper).attributes('role')).toBe('img')
+  })
+
+  it('shows a green dot for a host that answered, with when it was checked', async () => {
+    const wrapper = await mountWithHost({ last_check_reachable: true, last_checked_at: CHECKED })
+    expect(hostDot(wrapper).classes()).toContain('status-dot--success')
+    expect(hostDot(wrapper).attributes('aria-label')).toBe('Online · checked 5m ago')
+  })
+
+  it('leaves out when it was checked if the server did not say', async () => {
+    const wrapper = await mountWithHost({ last_check_reachable: true, last_checked_at: null })
+    expect(hostDot(wrapper).attributes('aria-label')).toBe('Online')
+  })
+
+  it('shows a hollow dot for an intermittent host that is away, as expected', async () => {
+    const wrapper = await mountWithHost({
+      intermittent: true,
+      last_check_reachable: false,
+      last_checked_at: CHECKED,
+    })
+    expect(hostDot(wrapper).classes()).toContain('status-dot--hollow')
+    expect(hostDot(wrapper).classes()).not.toContain('status-dot--danger')
+    expect(hostDot(wrapper).attributes('aria-label')).toBe('Offline · checked 5m ago')
+  })
+
+  it('shows a red dot for an always-online host that does not answer', async () => {
+    const wrapper = await mountWithHost({
+      intermittent: false,
+      last_check_reachable: false,
+      last_checked_at: CHECKED,
+    })
+    expect(hostDot(wrapper).classes()).toContain('status-dot--danger')
+    expect(hostDot(wrapper).attributes('aria-label')).toBe('Not answering · checked 5m ago')
+  })
+
+  it('takes the host state from its repositories, one dot per host', async () => {
+    setupApiSuccess([
+      {
+        ...mockRepos[0]!,
+        ssh_host: 'a.example.com',
+        repo_host: { id: 1, intermittent: false, last_check_reachable: true },
+      },
+      {
+        ...mockRepos[1]!,
+        ssh_host: 'b.example.com',
+        repo_host: { id: 2, intermittent: false, last_check_reachable: false },
+      },
+    ])
+    const wrapper = await mountAsAdmin()
+    const dots = wrapper.findAll('.pool-host .status-dot')
+    expect(dots).toHaveLength(2)
+    expect(dots[0]!.classes()).toContain('status-dot--success')
+    expect(dots[1]!.classes()).toContain('status-dot--danger')
+  })
+
+  it("gives an imported repository its host's state when the host is already listed", async () => {
+    const wrapper = await mountWithHost({
+      intermittent: true,
+      last_check_reachable: false,
+      last_checked_at: CHECKED,
+    })
+    const dialog = wrapper.findComponent({ name: 'RepoCreateDialog' })
+    await dialog.vm.$emit('imported', {
+      id: 99,
+      name: 'freshly-imported',
+      repo_path: '/backup/repos/fresh',
+      ssh_user: 'borg',
+      ssh_host: 'other.example.com',
+      ssh_port: 22,
+      enabled: true,
+      repo_host_id: 1,
+      machine_id: 20,
+    })
+    await flushPromises()
+
+    const headers = wrapper.findAll('.pool-header')
+    expect(headers).toHaveLength(2)
+    const fresh = headers.find((h) => h.text().includes('other.example.com'))!
+    expect(fresh.find('.status-dot').classes()).toContain('status-dot--hollow')
+    expect(fresh.find('.pool-note .list-wide-only').text()).toBe('Intermittent')
+  })
+
+  it('reads an imported repository on an unknown host as always online and unchecked', async () => {
+    const wrapper = await mountWithHost({ intermittent: true, last_check_reachable: true })
+    const dialog = wrapper.findComponent({ name: 'RepoCreateDialog' })
+    await dialog.vm.$emit('imported', {
+      id: 99,
+      name: 'freshly-imported',
+      repo_path: '/backup/repos/fresh',
+      ssh_user: 'borg',
+      ssh_host: 'new.example.com',
+      ssh_port: 22,
+      enabled: true,
+      repo_host_id: 42,
+      machine_id: 21,
+    })
+    await flushPromises()
+
+    const fresh = wrapper.findAll('.pool-header').find((h) => h.text().includes('new.example.com'))!
+    expect(fresh.find('.status-dot').attributes('aria-label')).toBe('Not checked yet')
+    expect(fresh.text()).not.toContain('Intermittent')
   })
 })
 

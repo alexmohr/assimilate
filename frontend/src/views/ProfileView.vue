@@ -22,18 +22,19 @@ import { validatePassword } from '../utils/validation'
 import { extractError } from '../utils/error'
 import { Trash2, Monitor, Sun, Moon, KeyRound } from '@lucide/vue'
 import ApiTokenTable from '../components/ApiTokenTable.vue'
+import TokenExpiryField from '../components/TokenExpiryField.vue'
 import BaseSpinner from '../components/BaseSpinner.vue'
 import EmptyState from '../components/EmptyState.vue'
 import type { SessionResponse, TotpSetupResponse } from '../types/generated'
 import BaseModal from '../components/BaseModal.vue'
-import BaseTabs, { type TabOption } from '../components/BaseTabs.vue'
+import SettingsRail, { type SettingsSections } from '../components/SettingsRail.vue'
 
 type TabId = 'password' | 'tokens' | 'totp' | 'sessions' | 'appearance'
 
 const authStore = useAuthStore()
 const systemMode = useSystemModeStore()
 const { theme, setTheme, loadFromBackend } = useTheme()
-const allTabs: TabOption<TabId>[] = [
+const allTabs: SettingsSections<TabId> = [
   { id: 'password', label: 'Change password' },
   { id: 'tokens', label: 'API tokens' },
   { id: 'totp', label: 'Two-factor auth' },
@@ -55,6 +56,10 @@ const {
   loadError: tokensLoadError,
   showCreateModal,
   createName,
+  createExpiry,
+  createExpiryDate,
+  createReady,
+  newTokenExpiresAt,
   createError,
   createSubmitting,
   newTokenPlaintext,
@@ -90,7 +95,13 @@ const totpShowRecoveryCodes = ref(false)
 // enrollment there. The tab stays for an account that already has TOTP on,
 // so it can still be turned off.
 const offersTotp = computed(() => !systemMode.isDesktop || totpEnabled.value)
-const tabs = computed(() => allTabs.filter((tab) => tab.id !== 'totp' || offersTotp.value))
+// Change password always stays, so the filtered list is never empty.
+const tabs = computed(
+  () =>
+    allTabs.filter(
+      (tab) => tab.id !== 'totp' || offersTotp.value,
+    ) as unknown as SettingsSections<TabId>,
+)
 
 // Sessions state
 const sessions = ref<SessionResponse[]>([])
@@ -240,7 +251,7 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div class="profile-view">
+  <div>
     <div class="page-header">
       <h1 class="page-title">Profile</h1>
     </div>
@@ -248,401 +259,391 @@ onMounted(async () => {
       {{ authStore.user?.username }}
     </p>
 
-    <BaseTabs
-      v-model="activeTab"
-      :tabs="tabs"
+    <!-- Collapsible section cards like every other settings page: a row of
+         five tabs ran off the side of a phone. -->
+    <SettingsRail
+      v-slot="{ section: current }"
+      :sections="tabs"
+      :section="activeTab"
       label="Profile sections"
-    />
-
-    <!-- Password Tab -->
-    <div
-      v-if="activeTab === 'password'"
-      class="tab-content fade-in"
+      @update:section="activeTab = $event"
     >
-      <form
-        class="password-form"
-        @submit.prevent="handlePasswordSubmit"
-      >
-        <div class="field">
-          <label
-            class="field-label"
-            for="profile-new-pw"
-            >New password</label
-          >
-          <input
-            id="profile-new-pw"
-            v-model="newPassword"
-            type="password"
-            class="input"
-            autocomplete="new-password"
-            placeholder="Minimum 8 characters"
-            :disabled="passwordSubmitting"
-          />
-        </div>
-
-        <div class="field">
-          <label
-            class="field-label"
-            for="profile-confirm-pw"
-            >Confirm password</label
-          >
-          <input
-            id="profile-confirm-pw"
-            v-model="confirmPassword"
-            type="password"
-            class="input"
-            autocomplete="new-password"
-            :disabled="passwordSubmitting"
-          />
-        </div>
-
-        <div
-          v-if="passwordError"
-          class="form-error"
+      <!-- Password Tab -->
+      <template v-if="current === 'password'">
+        <form
+          class="password-form"
+          @submit.prevent="handlePasswordSubmit"
         >
-          {{ passwordError }}
-        </div>
-        <div
-          v-if="passwordSuccess"
-          class="form-success"
-        >
-          {{ passwordSuccess }}
-        </div>
-
-        <button
-          type="submit"
-          class="btn btn-primary"
-          :disabled="passwordSubmitting"
-        >
-          {{ passwordSubmitting ? 'Saving...' : 'Update Password' }}
-        </button>
-      </form>
-    </div>
-
-    <!-- Tokens Tab -->
-    <div
-      v-if="activeTab === 'tokens'"
-      class="tab-content fade-in"
-    >
-      <div class="tokens-header">
-        <p class="tokens-desc">
-          API tokens allow external tools to authenticate without your password.
-        </p>
-        <button
-          class="btn btn-primary btn-sm"
-          @click="openCreateToken"
-        >
-          New token
-        </button>
-      </div>
-
-      <BaseSpinner
-        v-if="tokensLoading"
-        size="lg"
-      />
-
-      <div
-        v-else-if="tokensLoadError"
-        class="error-banner"
-      >
-        {{ tokensLoadError }}
-      </div>
-
-      <ApiTokenTable
-        v-else-if="tokens.length"
-        :tokens="tokens"
-        @delete="openDeleteToken"
-      />
-
-      <EmptyState
-        v-else
-        :icon="KeyRound"
-        title="No API tokens yet"
-        description="Create a token to let an external tool authenticate without your password."
-        action="New token"
-        @action="openCreateToken"
-      />
-    </div>
-
-    <!-- Two-Factor Auth Tab -->
-    <div
-      v-if="activeTab === 'totp' && offersTotp"
-      class="tab-content fade-in"
-    >
-      <div v-if="totpShowRecoveryCodes">
-        <div class="recovery-codes-section">
-          <h3 class="totp-heading">Recovery codes</h3>
-          <p class="recovery-codes-warning">
-            Save these recovery codes in a secure place. They can be used to access your account if
-            you lose your authenticator device. Each code can only be used once.
-          </p>
-          <div class="recovery-codes-list">
-            <code
-              v-for="(code, i) in totpRecoveryCodes"
-              :key="i"
-              class="recovery-code"
-              >{{ code }}</code
+          <div class="field">
+            <label
+              class="field-label"
+              for="profile-new-pw"
+              >New password</label
             >
-          </div>
-          <button
-            class="btn btn-primary"
-            @click="totpShowRecoveryCodes = false"
-          >
-            I have saved these codes
-          </button>
-        </div>
-      </div>
-
-      <div v-else-if="totpSetupData">
-        <div class="totp-setup-section">
-          <h3 class="totp-heading">Set up two-factor authentication</h3>
-          <p class="totp-setup-desc">
-            Scan the QR code below with your authenticator app (e.g., Google Authenticator, Authy).
-          </p>
-          <div class="qr-container">
-            <img
-              :src="totpSetupData.qr_uri"
-              alt="TOTP QR Code"
-              class="qr-code"
+            <input
+              id="profile-new-pw"
+              v-model="newPassword"
+              type="password"
+              class="input"
+              autocomplete="new-password"
+              placeholder="Minimum 8 characters"
+              :disabled="passwordSubmitting"
             />
           </div>
-          <p class="totp-secret-text">
-            Or enter this key manually:
-            <code class="totp-secret">{{ totpSetupData.secret }}</code>
-          </p>
 
           <div class="field">
-            <label class="field-label">Verify the code from your authenticator app</label>
+            <label
+              class="field-label"
+              for="profile-confirm-pw"
+              >Confirm password</label
+            >
             <input
-              v-model="totpVerifyCode"
-              type="text"
-              inputmode="numeric"
-              maxlength="6"
-              placeholder="000000"
+              id="profile-confirm-pw"
+              v-model="confirmPassword"
+              type="password"
               class="input"
-              :disabled="totpVerifying"
+              autocomplete="new-password"
+              :disabled="passwordSubmitting"
             />
           </div>
+
           <div
-            v-if="totpVerifyError"
+            v-if="passwordError"
             class="form-error"
           >
-            {{ totpVerifyError }}
+            {{ passwordError }}
           </div>
-          <div class="totp-actions">
+          <div
+            v-if="passwordSuccess"
+            class="form-success"
+          >
+            {{ passwordSuccess }}
+          </div>
+
+          <button
+            type="submit"
+            class="btn btn-primary"
+            :disabled="passwordSubmitting"
+          >
+            {{ passwordSubmitting ? 'Saving...' : 'Update Password' }}
+          </button>
+        </form>
+      </template>
+
+      <!-- Tokens Tab -->
+      <template v-if="current === 'tokens'">
+        <div class="tokens-header">
+          <p class="tokens-desc">
+            API tokens allow external tools to authenticate without your password.
+          </p>
+          <button
+            class="btn btn-primary btn-sm"
+            @click="openCreateToken"
+          >
+            New token
+          </button>
+        </div>
+
+        <BaseSpinner
+          v-if="tokensLoading"
+          size="lg"
+        />
+
+        <div
+          v-else-if="tokensLoadError"
+          class="error-banner"
+        >
+          {{ tokensLoadError }}
+        </div>
+
+        <ApiTokenTable
+          v-else-if="tokens.length"
+          :tokens="tokens"
+          @delete="openDeleteToken"
+        />
+
+        <EmptyState
+          v-else
+          :icon="KeyRound"
+          title="No API tokens yet"
+          description="Create a token to let an external tool authenticate without your password."
+          action="New token"
+          @action="openCreateToken"
+        />
+      </template>
+
+      <!-- Two-Factor Auth Tab -->
+      <template v-if="current === 'totp' && offersTotp">
+        <div v-if="totpShowRecoveryCodes">
+          <div class="recovery-codes-section">
+            <h3 class="totp-heading">Recovery codes</h3>
+            <p class="recovery-codes-warning">
+              Save these recovery codes in a secure place. They can be used to access your account
+              if you lose your authenticator device. Each code can only be used once.
+            </p>
+            <div class="recovery-codes-list">
+              <code
+                v-for="(code, i) in totpRecoveryCodes"
+                :key="i"
+                class="recovery-code"
+                >{{ code }}</code
+              >
+            </div>
             <button
               class="btn btn-primary"
-              :disabled="totpVerifying || totpVerifyCode.length !== 6"
-              @click="verifyTotpSetup"
+              @click="totpShowRecoveryCodes = false"
             >
-              {{ totpVerifying ? 'Verifying...' : 'Verify & Enable' }}
-            </button>
-            <button
-              class="btn btn-ghost"
-              @click="cancelTotpSetup"
-            >
-              Cancel
+              I have saved these codes
             </button>
           </div>
         </div>
-      </div>
 
-      <div v-else>
-        <div
-          v-if="totpEnabled"
-          class="totp-status-section"
-        >
-          <div class="totp-status-badge totp-enabled">Two-factor authentication is enabled</div>
+        <div v-else-if="totpSetupData">
+          <div class="totp-setup-section">
+            <h3 class="totp-heading">Set up two-factor authentication</h3>
+            <p class="totp-setup-desc">
+              Scan the QR code below with your authenticator app (e.g., Google Authenticator,
+              Authy).
+            </p>
+            <div class="qr-container">
+              <img
+                :src="totpSetupData.qr_uri"
+                alt="TOTP QR Code"
+                class="qr-code"
+              />
+            </div>
+            <p class="totp-secret-text">
+              Or enter this key manually:
+              <code class="totp-secret">{{ totpSetupData.secret }}</code>
+            </p>
 
-          <div class="field">
-            <label class="field-label">Enter your password to disable 2FA</label>
-            <input
-              v-model="totpDisablePassword"
-              type="password"
-              autocomplete="current-password"
-              class="input"
-              placeholder="Current password"
-              :disabled="totpDisabling"
-            />
+            <div class="field">
+              <label class="field-label">Verify the code from your authenticator app</label>
+              <input
+                v-model="totpVerifyCode"
+                type="text"
+                inputmode="numeric"
+                maxlength="6"
+                placeholder="000000"
+                class="input"
+                :disabled="totpVerifying"
+              />
+            </div>
+            <div
+              v-if="totpVerifyError"
+              class="form-error"
+            >
+              {{ totpVerifyError }}
+            </div>
+            <div class="totp-actions">
+              <button
+                class="btn btn-primary"
+                :disabled="totpVerifying || totpVerifyCode.length !== 6"
+                @click="verifyTotpSetup"
+              >
+                {{ totpVerifying ? 'Verifying...' : 'Verify & Enable' }}
+              </button>
+              <button
+                class="btn btn-ghost"
+                @click="cancelTotpSetup"
+              >
+                Cancel
+              </button>
+            </div>
           </div>
+        </div>
+
+        <div v-else>
           <div
-            v-if="totpDisableError"
-            class="form-error"
+            v-if="totpEnabled"
+            class="totp-status-section"
           >
-            {{ totpDisableError }}
+            <div class="totp-status-badge totp-enabled">Two-factor authentication is enabled</div>
+
+            <div class="field">
+              <label class="field-label">Enter your password to disable 2FA</label>
+              <input
+                v-model="totpDisablePassword"
+                type="password"
+                autocomplete="current-password"
+                class="input"
+                placeholder="Current password"
+                :disabled="totpDisabling"
+              />
+            </div>
+            <div
+              v-if="totpDisableError"
+              class="form-error"
+            >
+              {{ totpDisableError }}
+            </div>
+            <button
+              class="btn btn-danger"
+              :disabled="totpDisabling || !totpDisablePassword"
+              @click="disableTotp"
+            >
+              {{ totpDisabling ? 'Disabling...' : 'Disable two-factor auth' }}
+            </button>
           </div>
-          <button
-            class="btn btn-danger"
-            :disabled="totpDisabling || !totpDisablePassword"
-            @click="disableTotp"
+
+          <div
+            v-else
+            class="totp-status-section"
           >
-            {{ totpDisabling ? 'Disabling...' : 'Disable two-factor auth' }}
-          </button>
+            <div class="totp-status-badge totp-disabled">
+              Two-factor authentication is not enabled
+            </div>
+            <p class="totp-desc">
+              Two-factor authentication adds an extra layer of security by requiring a code from
+              your authenticator app in addition to your password when signing in.
+            </p>
+            <button
+              class="btn btn-primary"
+              :disabled="totpLoading"
+              @click="setupTotp"
+            >
+              {{ totpLoading ? 'Setting up...' : 'Set up two-factor auth' }}
+            </button>
+            <div
+              v-if="totpError"
+              class="form-error"
+            >
+              {{ totpError }}
+            </div>
+          </div>
+        </div>
+      </template>
+
+      <!-- Sessions Tab -->
+      <template v-if="current === 'sessions'">
+        <p class="sessions-desc">
+          Active sessions for your account. You can revoke any session except your current one.
+        </p>
+
+        <BaseSpinner
+          v-if="sessionsLoading"
+          size="lg"
+        />
+
+        <div
+          v-else-if="sessionsError"
+          class="form-error"
+        >
+          {{ sessionsError }}
+        </div>
+
+        <div
+          v-else-if="sessions.length"
+          class="table-wrap table-wrap--framed"
+        >
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Created</th>
+                <th>Last active</th>
+                <th>Expires</th>
+                <th>Type</th>
+                <th>Status</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr
+                v-for="session in sessions"
+                :key="session.id"
+              >
+                <td class="cell-date">
+                  {{ formatDate(session.created_at) }}
+                </td>
+                <td class="cell-date">
+                  {{ formatDate(session.last_seen_at) }}
+                </td>
+                <td class="cell-date">
+                  {{ formatDate(session.expires_at) }}
+                </td>
+                <td class="cell-type">
+                  {{ session.remember_me ? 'Remember Me' : 'Session' }}
+                </td>
+                <td>
+                  <span
+                    v-if="session.current"
+                    class="badge badge--success"
+                    >Current</span
+                  >
+                  <span
+                    v-else
+                    class="badge badge--neutral"
+                    >Active</span
+                  >
+                </td>
+                <td>
+                  <button
+                    v-if="!session.current"
+                    class="btn btn-sm btn-ghost btn-danger-text"
+                    title="Revoke session"
+                    @click="confirmRevokeSession(session.id)"
+                  >
+                    <Trash2 :size="14" />
+                  </button>
+                </td>
+              </tr>
+            </tbody>
+          </table>
         </div>
 
         <div
           v-else
-          class="totp-status-section"
+          class="state-msg"
         >
-          <div class="totp-status-badge totp-disabled">
-            Two-factor authentication is not enabled
-          </div>
-          <p class="totp-desc">
-            Two-factor authentication adds an extra layer of security by requiring a code from your
-            authenticator app in addition to your password when signing in.
-          </p>
-          <button
-            class="btn btn-primary"
-            :disabled="totpLoading"
-            @click="setupTotp"
-          >
-            {{ totpLoading ? 'Setting up...' : 'Set up two-factor auth' }}
-          </button>
-          <div
-            v-if="totpError"
-            class="form-error"
-          >
-            {{ totpError }}
-          </div>
+          No active sessions.
         </div>
-      </div>
-    </div>
+      </template>
 
-    <!-- Sessions Tab -->
-    <div
-      v-if="activeTab === 'sessions'"
-      class="tab-content fade-in"
-    >
-      <p class="sessions-desc">
-        Active sessions for your account. You can revoke any session except your current one.
-      </p>
-
-      <BaseSpinner
-        v-if="sessionsLoading"
-        size="lg"
-      />
-
-      <div
-        v-else-if="sessionsError"
-        class="form-error"
-      >
-        {{ sessionsError }}
-      </div>
-
-      <div
-        v-else-if="sessions.length"
-        class="table-wrap table-wrap--framed"
-      >
-        <table class="data-table">
-          <thead>
-            <tr>
-              <th>Created</th>
-              <th>Last active</th>
-              <th>Expires</th>
-              <th>Type</th>
-              <th>Status</th>
-              <th>Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr
-              v-for="session in sessions"
-              :key="session.id"
+      <!-- Appearance Tab -->
+      <template v-if="current === 'appearance'">
+        <div class="setting-row">
+          <div class="setting-info">
+            <span class="setting-label">Theme</span>
+            <span class="setting-desc">Choose your preferred theme or follow system settings</span>
+          </div>
+          <div class="theme-options">
+            <button
+              class="theme-option"
+              :class="{ active: theme === 'auto' }"
+              @click="setTheme('auto')"
             >
-              <td class="cell-date">
-                {{ formatDate(session.created_at) }}
-              </td>
-              <td class="cell-date">
-                {{ formatDate(session.last_seen_at) }}
-              </td>
-              <td class="cell-date">
-                {{ formatDate(session.expires_at) }}
-              </td>
-              <td class="cell-type">
-                {{ session.remember_me ? 'Remember Me' : 'Session' }}
-              </td>
-              <td>
-                <span
-                  v-if="session.current"
-                  class="badge badge--success"
-                  >Current</span
-                >
-                <span
-                  v-else
-                  class="badge badge--neutral"
-                  >Active</span
-                >
-              </td>
-              <td>
-                <button
-                  v-if="!session.current"
-                  class="btn btn-sm btn-ghost btn-danger-text"
-                  title="Revoke session"
-                  @click="confirmRevokeSession(session.id)"
-                >
-                  <Trash2 :size="14" />
-                </button>
-              </td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-
-      <div
-        v-else
-        class="state-msg"
-      >
-        No active sessions.
-      </div>
-    </div>
-
-    <!-- Appearance Tab -->
-    <div
-      v-if="activeTab === 'appearance'"
-      class="tab-content fade-in"
-    >
-      <div class="setting-row">
-        <div class="setting-info">
-          <span class="setting-label">Theme</span>
-          <span class="setting-desc">Choose your preferred theme or follow system settings</span>
+              <Monitor
+                class="theme-icon"
+                :size="16"
+              />
+              Auto
+            </button>
+            <button
+              class="theme-option"
+              :class="{ active: theme === 'light' }"
+              @click="setTheme('light')"
+            >
+              <Sun
+                class="theme-icon"
+                :size="16"
+              />
+              Light
+            </button>
+            <button
+              class="theme-option"
+              :class="{ active: theme === 'dark' }"
+              @click="setTheme('dark')"
+            >
+              <Moon
+                class="theme-icon"
+                :size="16"
+              />
+              Dark
+            </button>
+          </div>
         </div>
-        <div class="theme-options">
-          <button
-            class="theme-option"
-            :class="{ active: theme === 'auto' }"
-            @click="setTheme('auto')"
-          >
-            <Monitor
-              class="theme-icon"
-              :size="16"
-            />
-            Auto
-          </button>
-          <button
-            class="theme-option"
-            :class="{ active: theme === 'light' }"
-            @click="setTheme('light')"
-          >
-            <Sun
-              class="theme-icon"
-              :size="16"
-            />
-            Light
-          </button>
-          <button
-            class="theme-option"
-            :class="{ active: theme === 'dark' }"
-            @click="setTheme('dark')"
-          >
-            <Moon
-              class="theme-icon"
-              :size="16"
-            />
-            Dark
-          </button>
-        </div>
-      </div>
-    </div>
+      </template>
+    </SettingsRail>
 
     <!-- Create Token Modal -->
     <BaseModal
@@ -661,6 +662,11 @@ onMounted(async () => {
             @keydown.enter.prevent="submitCreateToken"
           />
         </div>
+        <TokenExpiryField
+          v-model="createExpiry"
+          v-model:date="createExpiryDate"
+          id-prefix="profile-token"
+        />
         <div
           v-if="createError"
           class="form-error"
@@ -673,6 +679,13 @@ onMounted(async () => {
         class="token-notice"
       >
         <p class="token-warning">Copy this token now. It will not be shown again.</p>
+        <p class="field-hint">
+          {{
+            newTokenExpiresAt
+              ? `It stops working on ${formatDate(newTokenExpiresAt)}.`
+              : 'It works until it is deleted.'
+          }}
+        </p>
         <div class="token-box">
           <code class="token-text">{{ newTokenPlaintext }}</code>
           <button
@@ -694,7 +707,7 @@ onMounted(async () => {
         <button
           v-if="!newTokenPlaintext"
           class="btn btn-primary"
-          :disabled="createSubmitting || !createName.trim()"
+          :disabled="createSubmitting || !createReady"
           @click="submitCreateToken"
         >
           {{ createSubmitting ? 'Creating...' : 'Create' }}
@@ -770,12 +783,8 @@ onMounted(async () => {
 </template>
 
 <style scoped>
-.profile-view {
-  max-width: 700px;
-}
-
 .password-form {
-  max-width: 380px;
+  max-width: 480px;
 }
 
 .tokens-header {
@@ -799,13 +808,10 @@ onMounted(async () => {
 
 .setting-row {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
-  gap: var(--space-9);
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: var(--space-7) var(--space-8);
+  gap: var(--space-5) var(--space-9);
 }
 
 .setting-info {
@@ -862,28 +868,37 @@ onMounted(async () => {
 }
 
 /* TOTP Styles */
+/* The two-factor blocks sit in their section's card, so they draw none of
+   their own; their buttons keep their own width at the bottom right. */
+
+.totp-status-section > .btn,
+.totp-setup-section > .btn,
+.recovery-codes-section > .btn {
+  align-self: flex-end;
+}
+
 .totp-status-section {
   display: flex;
   flex-direction: column;
   gap: var(--space-6);
 }
 
+/* A status pill, not a tinted box inside the card. */
 .totp-status-badge {
-  padding: var(--space-5) var(--space-6);
-  border-radius: var(--radius-sm);
+  align-self: flex-start;
+  padding: var(--space-2) var(--space-5);
+  border-radius: var(--radius-pill);
   font-weight: 600;
-  font-size: var(--fs-md);
+  font-size: var(--fs-xs);
 }
 
 .totp-enabled {
   background: var(--success-subtle);
-  border: 1px solid var(--success);
   color: var(--success);
 }
 
 .totp-disabled {
-  background: var(--bg-card);
-  border: 1px solid var(--border);
+  background: var(--bg-hover);
   color: var(--text-muted);
 }
 
@@ -943,6 +958,7 @@ onMounted(async () => {
 
 .totp-actions {
   display: flex;
+  justify-content: flex-end;
   gap: var(--space-5);
 }
 

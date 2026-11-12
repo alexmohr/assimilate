@@ -1,15 +1,15 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
-import { expect, loginAsAdmin, makeFailedReport, test } from './fixtures'
+import { expect, loginAsAdmin, makeFailedReport, openSettingsSection, test } from './fixtures'
 import type { Page } from '@playwright/test'
 
 /**
  * The agent detail page: a persistent header, then Overview / Schedules /
- * Backups / Logs / Settings. Backups is the archive browser; Logs is the
- * flat run history (any status, expandable warnings/errors) that used to
- * live under Backups. Configuration lives behind the Settings tab so the
- * landing tab can answer the operational question instead.
+ * Backups / Sources / Settings. Backups is the archive browser; the run
+ * history the Logs tab used to hold is the Activity log, filtered to the
+ * agent. Configuration lives behind the Settings tab so the landing tab can
+ * answer the operational question instead.
  */
 
 async function openAgent(page: Page, hostname = 'web-server-01'): Promise<void> {
@@ -56,17 +56,20 @@ test.describe('Agent detail', () => {
     await expect(page.locator('.verdict')).toBeVisible()
     await expect(page.locator('.fact .stat-label')).toHaveText(['Last backup', 'Next run'])
 
-    // One row per repository, each with its own outcome strip rather than
-    // one strip mixing every repository's runs.
+    // One row per repository, each with its own state rather than one
+    // summary mixing every repository's runs.
     const repoRow = page.locator('.repo-row').first()
     await expect(repoRow).toBeVisible()
-    await expect(repoRow.locator('.run-cell').first()).toBeVisible()
+    await expect(repoRow.locator('.repo-dot')).toBeVisible()
+    await expect(repoRow.locator('.repo-meta')).not.toBeEmpty()
   })
 
   test('a repository row opens that repository', async ({ page }) => {
     await openAgent(page)
 
-    await page.locator('.repo-row').first().click()
+    // The name's link covers the row; a failed run's pill would open the run
+    // instead, so the click goes to the name.
+    await page.locator('.repo-row .repo-row-link').first().click()
 
     await expect(page).toHaveURL(/\/repos\/\d+/)
   })
@@ -86,7 +89,7 @@ test.describe('Agent detail', () => {
     await openAgent(page)
 
     await expect(page.locator('.overflow-menu-item')).toHaveCount(0)
-    await page.locator('.overflow-toggle').click()
+    await page.getByRole('button', { name: 'More agent actions' }).click()
 
     await expect(page.locator('.overflow-menu-item', { hasText: 'Edit identity' })).toBeVisible()
     await expect(page.locator('.overflow-menu-item', { hasText: 'Regenerate token' })).toBeVisible()
@@ -123,7 +126,7 @@ test.describe('Agent detail', () => {
       },
     )
 
-    await page.locator('.overflow-toggle').click()
+    await page.getByRole('button', { name: 'More agent actions' }).click()
     const redeployItem = page.locator('.overflow-menu-item', { hasText: 'Redeploy agent' })
     await expect(redeployItem).toBeVisible()
     await redeployItem.click()
@@ -137,53 +140,62 @@ test.describe('Agent detail', () => {
     expect(deployBody).toMatchObject({ force: true, ssh_host: '10.0.0.9' })
   })
 
-  test('logs are one line per run and expand their failure output', async ({ page }) => {
+  // The agent page has no Logs tab of its own: its run history is the
+  // Activity log, narrowed to the agent, one line per run that opens on its
+  // output.
+  test("the agent's runs are one line each in the Activity log and open their output", async ({
+    page,
+  }) => {
     await openAgent(page)
-    await page.getByRole('tab', { name: /Logs/ }).click()
-    await page.waitForLoadState('networkidle')
+    await page.getByRole('button', { name: 'More agent actions' }).click()
+    await page.getByRole('menuitem', { name: 'Activity log' }).click()
 
-    const rows = page.locator('[id^="report-"]')
-    await expect(rows.first()).toBeVisible()
-
-    // The status filter doubles as a summary of the whole history.
-    const failed = page.locator('.segmented-option', { hasText: /^Failed/ })
-    await expect(failed).toBeVisible()
-    await failed.click()
-
-    const detailToggle = page.locator('button', { hasText: 'Show detail' }).first()
-    if (await detailToggle.isVisible()) {
-      await detailToggle.click()
-      await expect(page.locator('.detail-output')).toBeVisible()
+    await expect(page).toHaveURL(/\/activity\?.*hostname=web-server-01/)
+    const rows = page.getByTestId('activity-entries').locator('.log-row')
+    await expect(rows.first()).toBeVisible({ timeout: 15_000 })
+    // Narrowed to the agent: every row is one of its runs.
+    for (const title of await rows.locator('.log-row-title').allInnerTexts()) {
+      expect(title.trim()).toBe('web-server-01')
     }
-  })
 
-  // A warned run still reached the archive step, so it should be reachable
-  // from the agent view like a successful one - not stuck behind "Show
-  // detail" with no way out to the archive browser.
-  test('a warned run still links through to its archive', async ({ page }) => {
-    await openAgent(page)
-    await page.getByRole('tab', { name: /Logs/ }).click()
-    await page.waitForLoadState('networkidle')
-
-    const warning = page.locator('.segmented-option', { hasText: /^Warning/ })
-    await expect(warning).toBeVisible()
-    await warning.click()
-
-    const openLink = page.locator('button.agent-row-name').first()
-    await expect(openLink).toBeVisible()
-    await openLink.click()
-
-    await expect(page).toHaveURL(/\/repos\/\d+\?.*tab=archives/)
-    await expect(page.locator('.archive-file-browser')).toBeVisible()
+    await rows.first().locator('.log-row-summary').click()
+    await expect(rows.first().locator('.log-row-detail')).toBeVisible()
   })
 
   // A failed run on the Overview carries no output, so the verdict would be a
-  // dead end without this: the jump lands on the row that does render the
-  // error, already expanded.
+  // dead end without this: the jump lands on the Activity log's row for the
+  // run, which renders the error, already expanded.
   test("the overview verdict jumps to a failed run's error", async ({ page }) => {
     await loginAsAdmin(page)
     // The seed's own failures age out of the preview as the demo date moves,
     // so the run this asserts on is guaranteed here instead.
+    const failed = makeFailedReport(9996) as Record<string, unknown>
+    await page.route(
+      (url) => url.pathname === '/api/stats/activity',
+      (route) =>
+        route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify([
+            {
+              id: 9996,
+              hostname: 'web-server-01',
+              target_name: 'server-daily',
+              started_at: failed.started_at,
+              finished_at: failed.finished_at,
+              status: 'failed',
+              duration_secs: failed.duration_secs,
+              repo_id: 1,
+              archive_name: null,
+              error_message: 'connection refused',
+              schedule_id: null,
+              schedule_name: null,
+              run_id: null,
+              acknowledged: false,
+            },
+          ]),
+        }),
+    )
     await page.route('**/api/agents/web-server-01/reports**', (route) =>
       route.fulfill({
         status: 200,
@@ -205,9 +217,10 @@ test.describe('Agent detail', () => {
 
     await page.getByRole('button', { name: 'View error' }).first().click()
 
-    await expect(page).toHaveURL(/\/agents\/web-server-01\?.*tab=logs.*report=9996/)
-    await expect(page.locator('#report-9996.agent-row--highlighted')).toBeVisible()
-    await expect(page.locator('.detail-output--danger')).toContainText('connection refused')
+    await expect(page).toHaveURL(/\/activity\?.*hostname=web-server-01.*report=9996/)
+    const run = page.getByTestId('activity-entries').locator('.log-row--open')
+    await expect(run).toHaveCount(1)
+    await expect(run.locator('.error-pre')).toContainText('connection refused')
   })
 
   // The Backups tab used to be this same run log; it's the archive browser
@@ -219,7 +232,7 @@ test.describe('Agent detail', () => {
 
     await expect(page.locator('[id^="report-"]')).toHaveCount(0)
     await expect(page.getByText('server-daily').first()).toBeVisible()
-    await expect(page.locator('.archive-row').first()).toBeVisible()
+    await expect(page.getByTestId('archive-row').first()).toBeVisible()
   })
 
   // db-server-01 also writes into server-daily via the multi-host schedule
@@ -232,39 +245,48 @@ test.describe('Agent detail', () => {
     await page.getByRole('tab', { name: /^Backups/ }).click()
     await page.waitForLoadState('networkidle')
 
-    await expect(page.locator('.archives-panel')).toHaveCount(1)
-    const filter = page.locator('.archive-repo-filter')
+    const list = page.locator('.archives-panel')
+    await expect(list).toHaveCount(1)
+    const filter = list.getByRole('group', { name: 'Repository' })
     await expect(filter).toBeVisible({ timeout: 30_000 })
     await expect(filter).toContainText('database-hourly')
     await expect(filter).toContainText('server-daily')
 
-    // Narrowed to one repository, every row is that repository's.
-    await filter.locator('.segmented-option', { hasText: 'server-daily' }).click()
-    const tags = page.locator('.archive-row .archive-repo')
-    await expect(tags.first()).toBeVisible()
-    for (const tag of await tags.allTextContents()) expect(tag).toBe('server-daily')
+    // Under All, each row names its repository.
+    const rows = list.getByTestId('archive-row')
+    await expect(rows.filter({ hasText: 'database-hourly' }).first()).toBeVisible()
+
+    // Narrowed to one repository, the list holds exactly that repository's
+    // archives: as many rows as its pill counts.
+    const serverDaily = filter.getByRole('button', { name: /server-daily/ })
+    const count = Number(/(\d+)\s*$/.exec((await serverDaily.innerText()).trim())?.[1])
+    expect(count).toBeGreaterThan(0)
+    await serverDaily.click()
+    await expect(serverDaily).toHaveAttribute('aria-pressed', 'true')
+    await expect(rows).toHaveCount(count)
+    await expect(rows.filter({ hasText: 'database-hourly' })).toHaveCount(0)
   })
 
-  test('logs tab offers to load more once there are more runs than the first page', async ({
-    page,
-  }) => {
+  test("the agent's run history offers to load more past the first page", async ({ page }) => {
     // seed-demo.sh backfills db-server-01's hourly history well past 50 runs,
-    // the one host guaranteed to exceed the Logs tab's first page.
+    // the one host guaranteed to exceed the Activity log's first page.
     await openAgent(page, 'db-server-01')
-    await page.getByRole('tab', { name: /Logs/ }).click()
-    await page.waitForLoadState('networkidle')
+    await page.getByRole('button', { name: 'More agent actions' }).click()
+    await page.getByRole('menuitem', { name: 'Activity log' }).click()
+    await expect(page).toHaveURL(/\/activity\?.*hostname=db-server-01/)
 
-    const loadMore = page.getByRole('button', { name: /^Load \d+ more$/ })
+    const rows = page.getByTestId('activity-entries').locator('.log-row')
+    await expect(rows.first()).toBeVisible({ timeout: 15_000 })
+    const loadMore = page.getByRole('button', { name: 'Load more' })
     await expect(loadMore).toBeVisible()
-    const before = await page.locator('[id^="report-"]').count()
+    const before = await rows.count()
 
     await loadMore.click()
-    await page.waitForLoadState('networkidle')
 
-    await expect.poll(async () => page.locator('[id^="report-"]').count()).toBeGreaterThan(before)
+    await expect.poll(async () => rows.count()).toBeGreaterThan(before)
   })
 
-  test('settings is a fifth tab with its own sub-nav', async ({ page }) => {
+  test('settings is a tab of collapsible sections', async ({ page }) => {
     await openAgent(page)
     await page.getByRole('tab', { name: 'Settings' }).click()
 
@@ -272,24 +294,20 @@ test.describe('Agent detail', () => {
     await expect(page).toHaveURL(/\/agents\/web-server-01\?.*tab=settings/)
     await expect(page.locator('.detail-name')).toHaveText('web-server-01')
 
-    await expect(page.locator('.settings-nav-item')).toHaveText([
+    // Virtual machines and databases moved to the Sources tab, tags to the header.
+    await expect(page.locator('.accordion-head')).toHaveText([
       'Identity',
       'Backup defaults',
       'Power & dependencies',
-      'Virtual machines',
-      'Databases',
-      'Tags',
     ])
 
     // The four defaults cards became one card with five sections and one save.
-    await page.locator('.settings-nav-item', { hasText: 'Backup defaults' }).click()
+    const defaults = await openSettingsSection(page, 'Backup defaults')
     await expect(page).toHaveURL(/section=defaults/)
-    await expect(
-      page
-        .locator('.settings-pane')
-        .getByRole('button', { name: 'Help: default paths, patterns and commands' }),
-    ).toBeVisible()
-    await expect(page.locator('.group-label')).toHaveText([
+    await expect(defaults).toContainText(
+      'What a schedule uses for this host when it does not set its own paths',
+    )
+    await expect(defaults.locator('.group-label')).toHaveText([
       'Backup paths',
       'Exclude patterns',
       'File change patterns',
@@ -298,10 +316,19 @@ test.describe('Agent detail', () => {
     ])
 
     // Required dependencies live with the machine's power settings now.
-    await page.locator('.settings-nav-item', { hasText: 'Power & dependencies' }).click()
-    await expect(
-      page.locator('.settings-pane .group-label', { hasText: 'Required dependencies' }),
-    ).toBeVisible()
+    const power = await openSettingsSection(page, 'Power & dependencies')
+    await expect(power.locator('.group-label', { hasText: 'Required dependencies' })).toBeVisible()
+  })
+
+  test('virtual machines and databases are the Sources tab', async ({ page }) => {
+    await openAgent(page, 'db-server-01')
+    await page.getByRole('tab', { name: 'Sources' }).click()
+
+    await expect(page).toHaveURL(/\/agents\/db-server-01\?.*tab=sources/)
+    await expect(page.locator('.accordion-head')).toHaveText(['Virtual machines', 'Databases'])
+    const databases = await openSettingsSection(page, 'Databases')
+    await expect(page).toHaveURL(/section=databases/)
+    await expect(databases).toContainText('shop/orders-db')
   })
 
   // A hook command is a whole script. Rendered inline the browser collapses
@@ -312,9 +339,9 @@ test.describe('Agent detail', () => {
   }) => {
     await openAgent(page, 'media-store-01')
     await page.getByRole('tab', { name: 'Settings' }).click()
-    await page.locator('.settings-nav-item', { hasText: 'Backup defaults' }).click()
+    const defaults = await openSettingsSection(page, 'Backup defaults')
 
-    const script = page.locator('.detail-pre').first()
+    const script = defaults.locator('.detail-pre').first()
     await expect(script).toBeVisible()
     await expect(script).toContainText('mountpoint -q /mnt/media')
     expect(await script.textContent()).toContain('\n')
@@ -324,8 +351,8 @@ test.describe('Agent detail', () => {
 
     // A command with its own timeout says so; one without says what it
     // inherits instead, so an empty value never reads as "no timeout".
-    await expect(page.getByText('Timeout: 7200s')).toBeVisible()
-    await expect(page.getByText("Timeout: the schedule's hook command timeout")).toBeVisible()
+    await expect(defaults.getByText('Timeout: 7200s')).toBeVisible()
+    await expect(defaults.getByText("Timeout: the schedule's hook command timeout")).toBeVisible()
   })
 
   test('an imported host keeps every tab and explains the empty one', async ({ page }) => {
@@ -407,7 +434,7 @@ test.describe('Agent detail', () => {
     await page.reload()
     await countLoaded
 
-    await page.locator('.overflow-toggle').click()
+    await page.getByRole('button', { name: 'More agent actions' }).click()
     // getByRole's accessible name is whitespace-normalized; a plain
     // `.overflow-menu-item` locator with a `hasText` regex tests the raw
     // (unnormalized) textContent instead, so the template's leading space

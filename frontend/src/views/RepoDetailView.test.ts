@@ -91,6 +91,8 @@ vi.mock('../composables/useArchiveBrowser', () => ({
     selectArchive: vi.fn(),
     loadContents: vi.fn(),
     navigateTo: vi.fn(),
+    browserFilters: ref({}),
+    browserEntries: ref([]),
     entryName: vi.fn((e: { path: string }) => e.path.split('/').pop() ?? ''),
     downloadEntry: vi.fn(),
     deleteArchive: vi.fn(),
@@ -428,21 +430,23 @@ describe('RepoDetailView', () => {
     await schedulesTab!.trigger('click')
     await flushPromises()
 
-    // Scoped by title, not text: the always-rendered Borg Console section
-    // (v-if="isAdmin", not tab-gated) also has a button labeled plain 'Run'.
-    const runBtn = wrapper.find('button[title="Run backup now"]')
+    // The schedule row's play button, named for the schedule it runs.
+    const runBtn = wrapper.find('.sched-run')
     expect(runBtn.exists()).toBe(true)
+    expect(runBtn.attributes('title')).toBe('Run now')
     await runBtn.trigger('click')
     await flushPromises()
 
     // Toast container is teleported so verify via the apiClient call and the
-    // loading state clearing back to 'Run', matching this file's other
-    // toast-triggering tests (e.g. 'shows error toast when sync request fails').
+    // loading state clearing, matching this file's other toast-triggering
+    // tests (e.g. 'shows error toast when sync request fails').
     expect(vi.mocked(apiClient.post)).toHaveBeenCalledWith(
       `/schedules/${mockRepoSchedule.id}/run`,
       {},
     )
-    expect(wrapper.find('button[title="Run backup now"]').text()).toBe('Run')
+    expect(wrapper.find('.sched-run').attributes('disabled')).toBeUndefined()
+    // Running does not open the schedule.
+    expect(wrapper.vm.$router.currentRoute.value.path).not.toContain('/schedules/')
   })
 
   it('shows an error toast when running a schedule now fails', async () => {
@@ -455,7 +459,7 @@ describe('RepoDetailView', () => {
     await schedulesTab!.trigger('click')
     await flushPromises()
 
-    const runBtn = wrapper.find('button[title="Run backup now"]')
+    const runBtn = wrapper.find('.sched-run')
     expect(runBtn.exists()).toBe(true)
     await runBtn.trigger('click')
     await flushPromises()
@@ -464,11 +468,11 @@ describe('RepoDetailView', () => {
       `/schedules/${mockRepoSchedule.id}/run`,
       {},
     )
-    // Loading state clears even on failure -- button returns to 'Run'.
-    expect(wrapper.find('button[title="Run backup now"]').text()).toBe('Run')
+    // Loading state clears even on failure -- the button is usable again.
+    expect(wrapper.find('.sched-run').attributes('disabled')).toBeUndefined()
   })
 
-  it('shows a Disabled pill and tints the card for a disabled schedule', async () => {
+  it('says Disabled and greys the dot for a disabled schedule', async () => {
     setupApiSuccess(mockRepo, refreshedHostKey, [{ ...mockRepoSchedule, enabled: false }])
     const wrapper = await renderRepoDetail()
 
@@ -476,11 +480,13 @@ describe('RepoDetailView', () => {
     await schedulesTab!.trigger('click')
     await flushPromises()
 
-    expect(wrapper.find('.entity-status-pill').text()).toBe('Disabled')
-    expect(wrapper.find('.entity-card').classes()).toContain('entity-card--notable')
+    const row = wrapper.find(`[data-schedule-id="${mockRepoSchedule.id}"]`)
+    expect(row.find('.sched-next').text()).toBe('Disabled')
+    expect(row.find('.sched-dot').classes()).toContain('sched-dot--idle')
+    expect(row.find('.sched-run').attributes('disabled')).toBeDefined()
   })
 
-  it("shows a Failed chip that navigates to the schedule's filtered activity log", async () => {
+  it("shows a Failed outcome that navigates to the schedule's filtered activity log", async () => {
     setupApiSuccess(
       mockRepo,
       refreshedHostKey,
@@ -505,10 +511,11 @@ describe('RepoDetailView', () => {
     await schedulesTab!.trigger('click')
     await flushPromises()
 
-    const failedChip = wrapper.find('.entity-issue-chip.sev-danger')
-    expect(failedChip.exists()).toBe(true)
-    expect(failedChip.attributes('title')).toBe('Repository lock could not be acquired')
-    await failedChip.trigger('click')
+    const failed = wrapper.find('.sched-error.sched-error--failed')
+    expect(failed.exists()).toBe(true)
+    expect(failed.attributes('title')).toBe('Repository lock could not be acquired')
+    expect(wrapper.find('.sched-dot').classes()).toContain('sched-dot--danger')
+    await failed.trigger('click')
     await flushPromises()
 
     expect(wrapper.vm.$router.currentRoute.value.path).toBe('/activity')
@@ -519,20 +526,92 @@ describe('RepoDetailView', () => {
     })
   })
 
-  /** Picks one option of the selector's grouped/flat segmented control. */
-  async function selectGroupMode(
+  /** Opens the archive list's menu, which holds the grouping and the sort. */
+  async function openListMenu(
+    wrapper: Awaited<ReturnType<typeof renderRepoDetail>>,
+  ): Promise<void> {
+    const toggle = wrapper.find('button[aria-label="List options"]')
+    expect(toggle.exists()).toBe(true)
+    await toggle.trigger('click')
+    await flushPromises()
+  }
+
+  /** Picks one grouping or sort from the archive list's menu. */
+  async function chooseListOption(
     wrapper: Awaited<ReturnType<typeof renderRepoDetail>>,
     label: string,
   ): Promise<void> {
-    const option = wrapper
-      .findAll('.archive-group-toggle .segmented-option')
-      .find((b) => b.text() === label)
+    await openListMenu(wrapper)
+    const option = wrapper.findAll('[role="menuitemradio"]').find((b) => b.text().trim() === label)
     expect(option).toBeDefined()
     await option!.trigger('click')
     await flushPromises()
   }
 
-  it('shows archive list mode options when archives exist', async () => {
+  async function openArchivesTab(
+    wrapper: Awaited<ReturnType<typeof renderRepoDetail>>,
+  ): Promise<void> {
+    const archivesTab = wrapper.findAll('.tab').find((b) => b.text() === 'Archives')
+    expect(archivesTab).toBeDefined()
+    await archivesTab!.trigger('click')
+    await flushPromises()
+  }
+
+  /** The list rows, one per archive. */
+  function archiveRows(
+    wrapper: Awaited<ReturnType<typeof renderRepoDetail>>,
+  ): ReturnType<Awaited<ReturnType<typeof renderRepoDetail>>['findAll']> {
+    return wrapper.findAll('[data-testid="archive-row"]')
+  }
+
+  function archiveRow(
+    wrapper: Awaited<ReturnType<typeof renderRepoDetail>>,
+    name: string,
+  ): ReturnType<Awaited<ReturnType<typeof renderRepoDetail>>['find']> {
+    return wrapper.find(`[data-testid="archive-row"][aria-label="Open archive ${name}"]`)
+  }
+
+  /** Opens an archive from the list into the card beside it. */
+  async function openArchive(
+    wrapper: Awaited<ReturnType<typeof renderRepoDetail>>,
+    name: string,
+  ): Promise<void> {
+    const row = archiveRow(wrapper, name)
+    expect(row.exists()).toBe(true)
+    await row.trigger('click')
+    await flushPromises()
+  }
+
+  /** The open archive's menu entry that deletes it, however it is labelled right now. */
+  async function deleteMenuItem(
+    wrapper: Awaited<ReturnType<typeof renderRepoDetail>>,
+  ): Promise<ReturnType<Awaited<ReturnType<typeof renderRepoDetail>>['find']>> {
+    const toggle = wrapper.find('button[aria-label="Archive actions"]')
+    expect(toggle.exists()).toBe(true)
+    if (toggle.attributes('aria-expanded') !== 'true') {
+      await toggle.trigger('click')
+      await flushPromises()
+    }
+    const item = wrapper
+      .findAll('.overflow-menu-item')
+      .find((i) => i.text().trim().startsWith('Delet'))
+    expect(item).toBeDefined()
+    return item!
+  }
+
+  /** Opens `name` and asks to delete it from its card's menu. */
+  async function requestDelete(
+    wrapper: Awaited<ReturnType<typeof renderRepoDetail>>,
+    name: string,
+  ): Promise<void> {
+    await openArchive(wrapper, name)
+    const item = await deleteMenuItem(wrapper)
+    expect(item.text().trim()).toBe('Delete archive...')
+    await item.trigger('click')
+    await flushPromises()
+  }
+
+  it('offers the groupings and sorts in the archive list menu', async () => {
     // Two hosts: host grouping is only offered when there is more than one.
     mockBrowserArchives.value = ['web-server-01', 'db-server-01'].map((hostname) => ({
       name: `${hostname}-2026-06-08T01:00:00`,
@@ -548,26 +627,31 @@ describe('RepoDetailView', () => {
     setupApiSuccess()
 
     const wrapper = await renderRepoDetail()
+    await openArchivesTab(wrapper)
+    await openListMenu(wrapper)
 
-    const archivesTab = wrapper.findAll('.tab').find((b) => b.text() === 'Archives')
-    expect(archivesTab).toBeDefined()
-    await archivesTab!.trigger('click')
-    await flushPromises()
-
-    const select = wrapper.find('.archive-sort-select')
-    expect(select.exists()).toBe(true)
-    expect(select.text()).toContain('Date newest first')
-    expect(select.text()).toContain('Size largest first')
-    expect(select.text()).toContain('Dedup smallest first')
-
-    const groupToggle = wrapper.find('.archive-group-toggle')
-    expect(groupToggle.exists()).toBe(true)
-    expect(groupToggle.text()).toContain('By host')
-    expect(groupToggle.text()).toContain('Flat')
+    const options = wrapper.findAll('[role="menuitemradio"]').map((b) => b.text().trim())
+    expect(options).toEqual([
+      'By day',
+      'By host',
+      'Flat list',
+      'Date newest first',
+      'Date oldest first',
+      'Size largest first',
+      'Size smallest first',
+      'Dedup largest first',
+      'Dedup smallest first',
+    ])
+    // A repository several hosts write into starts grouped by host, newest first.
+    const checked = wrapper
+      .findAll('[role="menuitemradio"]')
+      .filter((b) => b.attributes('aria-checked') === 'true')
+      .map((b) => b.text().trim())
+    expect(checked).toEqual(['By host', 'Date newest first'])
   })
 
   it('collapses host groups by default and expands on click', async () => {
-    // Past four hosts the list is something to navigate rather than read, so
+    // Past three hosts the list is something to navigate rather than read, so
     // the groups start closed; below that they start open.
     mockBrowserArchives.value = Array.from({ length: 4 }, (_, i) => ({
       name: `host-${i}-2026-06-08T01:00:00`,
@@ -582,131 +666,115 @@ describe('RepoDetailView', () => {
     mockSortedArchives.value = [...mockBrowserArchives.value]
     setupApiSuccess()
 
-    const wrapper = renderWithPlugins(RepoDetailView, {
-      props: { id: '1' },
-      storeState: { auth: { user: { role: 'admin' } } },
-    })
-    await flushPromises()
-
-    const archivesTab = wrapper.findAll('.tab').find((b) => b.text() === 'Archives')
-    await archivesTab!.trigger('click')
-    await flushPromises()
+    const wrapper = await renderRepoDetail()
+    await openArchivesTab(wrapper)
 
     const groupHeader = wrapper.find('.group-header')
     expect(groupHeader.exists()).toBe(true)
+    expect(wrapper.findAll('.group-header')).toHaveLength(4)
     expect(groupHeader.classes()).toContain('collapsed')
-    expect(wrapper.find('.group-archives').attributes('style')).toContain('display: none')
+    expect(wrapper.find('.group-toggle').attributes('aria-expanded')).toBe('false')
+    expect(archiveRows(wrapper)).toHaveLength(0)
 
     // The header itself is no longer the button - it holds a link to the agent,
-    // so the toggle is a separate control stretched across it.
+    // so the toggle is a separate control inside it.
     await wrapper.find('.group-toggle').trigger('click')
     await flushPromises()
 
     expect(wrapper.find('.group-header').classes()).not.toContain('collapsed')
-    expect(wrapper.find('.group-archives').attributes('style') ?? '').not.toContain('display: none')
+    expect(wrapper.find('.group-toggle').attributes('aria-expanded')).toBe('true')
+    expect(archiveRows(wrapper)).toHaveLength(1)
+    expect(archiveRows(wrapper)[0]!.attributes('aria-label')).toBe(
+      'Open archive host-0-2026-06-08T01:00:00',
+    )
 
     await wrapper.find('.group-toggle').trigger('click')
     await flushPromises()
 
     expect(wrapper.find('.group-header').classes()).toContain('collapsed')
-    expect(wrapper.find('.group-archives').attributes('style')).toContain('display: none')
+    expect(archiveRows(wrapper)).toHaveLength(0)
   })
 
   describe('archive list interactions', () => {
     beforeEach(setupArchivesAB)
 
-    async function goToArchivesTab(
-      wrapper: Awaited<ReturnType<typeof renderRepoDetail>>,
-    ): Promise<void> {
-      const archivesTab = wrapper.findAll('.tab').find((b) => b.text() === 'Archives')
-      await archivesTab!.trigger('click')
-      await flushPromises()
-    }
-
     it('toggles between grouped and flat archive list views', async () => {
       const wrapper = await renderRepoDetail()
-      await goToArchivesTab(wrapper)
+      await openArchivesTab(wrapper)
 
-      expect(wrapper.find('.archive-groups').exists()).toBe(true)
-      expect(wrapper.find('.archive-flat-list').exists()).toBe(false)
+      expect(wrapper.findAll('.group-header')).toHaveLength(2)
+      expect(archiveRows(wrapper)).toHaveLength(2)
 
-      await selectGroupMode(wrapper, 'Flat')
+      await chooseListOption(wrapper, 'Flat list')
 
-      expect(wrapper.find('.archive-flat-list').exists()).toBe(true)
-      expect(wrapper.find('.archive-groups').exists()).toBe(false)
+      expect(wrapper.find('.group-header').exists()).toBe(false)
+      expect(wrapper.text()).toContain('All archives')
+      expect(archiveRows(wrapper)).toHaveLength(2)
     })
 
-    it('filters the archive list by typing in the filter input', async () => {
+    it('filters the archive list by typing in the search box', async () => {
       const wrapper = await renderRepoDetail()
-      await goToArchivesTab(wrapper)
-      await selectGroupMode(wrapper, 'Flat')
+      await openArchivesTab(wrapper)
+      await chooseListOption(wrapper, 'Flat list')
 
-      const filterInput = wrapper.find('.archive-controls input')
+      const filterInput = wrapper.find('input[aria-label="Search archives"]')
       await filterInput.setValue('db-server')
       await flushPromises()
 
-      const rows = wrapper.findAll('.archive-row-detailed')
+      const rows = archiveRows(wrapper)
       expect(rows.length).toBe(1)
       expect(rows[0]!.text()).toContain('db-server-01')
+      expect(wrapper.find('.archives-count').text()).toBe('1 of 2')
     })
 
-    it('sorts the archive list using the sort select', async () => {
+    it('sorts the archive list from the list menu', async () => {
       const wrapper = await renderRepoDetail()
-      await goToArchivesTab(wrapper)
-      await selectGroupMode(wrapper, 'Flat')
+      await openArchivesTab(wrapper)
+      await chooseListOption(wrapper, 'Flat list')
 
-      const select = wrapper.find('.archive-sort-select')
-      await select.setValue('size-asc')
-      await flushPromises()
+      // Newest first by default: B started an hour after A.
+      expect(archiveRows(wrapper).map((r) => r.attributes('aria-label'))).toEqual([
+        `Open archive ${archiveB.name}`,
+        `Open archive ${archiveA.name}`,
+      ])
 
-      const rows = wrapper.findAll('.archive-row-detailed')
+      await chooseListOption(wrapper, 'Size smallest first')
+
+      const rows = archiveRows(wrapper)
       expect(rows[0]!.text()).toContain('web-server-01-backup')
       expect(rows[1]!.text()).toContain('db-server-01-backup')
     })
 
-    it('selects an archive from a grouped row and opens the delete dialog from it', async () => {
+    it('opens an archive from a grouped row and asks to delete it from its menu', async () => {
       const wrapper = await renderRepoDetail()
-      await goToArchivesTab(wrapper)
+      await openArchivesTab(wrapper)
 
       // Two hosts is under the collapse threshold, so both groups render open.
-      const row = wrapper.findAll('.archive-row').find((r) => r.text().includes(archiveA.name))
-      expect(row).toBeDefined()
-      await row!.find('.archive-row-select').trigger('click')
-      await flushPromises()
+      await requestDelete(wrapper, archiveA.name)
 
-      expect(wrapper.find('.browser-title').text()).toContain(archiveA.name)
-
-      const deleteBtn = row!.find('.archive-row-delete')
-      expect(deleteBtn.exists()).toBe(true)
-      await deleteBtn.trigger('click')
-      await flushPromises()
+      expect(wrapper.find('.archive-head-name').text()).toBe(archiveA.name)
+      expect(archiveRow(wrapper, archiveA.name).attributes('aria-current')).toBe('true')
 
       // BaseModal teleports to document.body, outside the mounted wrapper's tree.
       expect(document.body.querySelector('.archive-delete-message')?.textContent).toContain(
         archiveA.name,
       )
+      expect(mockRequestArchiveDelete).not.toHaveBeenCalled()
 
       // Unmount so the still-open dialog's teleported content doesn't leak
       // into document.body for the next test in this file.
       wrapper.unmount()
     })
 
-    it('selects and deletes an archive from the flat list, clearing the selection', async () => {
+    it('opens and deletes an archive from the flat list, clearing the selection', async () => {
       const wrapper = await renderRepoDetail()
-      await goToArchivesTab(wrapper)
-      await selectGroupMode(wrapper, 'Flat')
+      await openArchivesTab(wrapper)
+      await chooseListOption(wrapper, 'Flat list')
 
-      expect(wrapper.find('.browser-placeholder').text()).toContain('Select an archive')
+      expect(wrapper.text()).toContain('Pick an archive')
 
-      const rows = wrapper.findAll('.archive-row-detailed')
-      const targetRow = rows.find((r) => r.text().includes(archiveA.name))!
-      await targetRow.find('.archive-row-select').trigger('click')
-      await flushPromises()
-
-      expect(wrapper.find('.browser-title').text()).toContain(archiveA.name)
-
-      await targetRow.find('.archive-row-delete').trigger('click')
-      await flushPromises()
+      await requestDelete(wrapper, archiveA.name)
+      expect(wrapper.find('.archive-head-name').text()).toBe(archiveA.name)
 
       // BaseModal teleports to document.body, outside the mounted wrapper's tree.
       const confirmBtn = Array.from(document.body.querySelectorAll('button')).find(
@@ -716,7 +784,9 @@ describe('RepoDetailView', () => {
       confirmBtn!.click()
       await flushPromises()
 
-      expect(wrapper.find('.browser-placeholder').text()).toContain('Select an archive')
+      expect(mockRequestArchiveDelete).toHaveBeenCalledWith(1, archiveA.name)
+      expect(wrapper.find('.archive-head-name').exists()).toBe(false)
+      expect(wrapper.text()).toContain('Pick an archive')
     })
   })
 
@@ -997,7 +1067,7 @@ describe('RepoDetailView', () => {
       await archivesTab!.trigger('click')
       await flushPromises()
 
-      expect(wrapper.findAll('.archive-row').length).toBe(2)
+      expect(archiveRows(wrapper).length).toBe(2)
     })
 
     it('AC-U2: archive filter computed returns the archive name when ?archive=<name> is present', async () => {
@@ -1018,7 +1088,7 @@ describe('RepoDetailView', () => {
       })
       await flushPromises()
 
-      expect(wrapper.findAll('.archive-row').length).toBe(0)
+      expect(archiveRows(wrapper).length).toBe(0)
       expect(wrapper.find('.archive-controls').exists()).toBe(false)
       expect(wrapper.find('.archive-filter-banner').text()).toContain(
         `Showing only ${archiveA.name}`,
@@ -1041,7 +1111,7 @@ describe('RepoDetailView', () => {
       await flushPromises()
 
       expect(wrapper.find('.archive-filter-banner').exists()).toBe(false)
-      expect(wrapper.findAll('.archive-row').length).toBe(2)
+      expect(archiveRows(wrapper).length).toBe(2)
     })
 
     it('AC-U5: archive filter with non-existent name shows only the filter banner', async () => {
@@ -1052,7 +1122,7 @@ describe('RepoDetailView', () => {
       })
       await flushPromises()
 
-      expect(wrapper.findAll('.archive-row').length).toBe(0)
+      expect(archiveRows(wrapper).length).toBe(0)
       expect(wrapper.find('.archive-controls').exists()).toBe(false)
       expect(wrapper.find('.archive-filter-banner').exists()).toBe(true)
       expect(wrapper.find('.archive-filter-banner').text()).toContain(
@@ -1060,7 +1130,7 @@ describe('RepoDetailView', () => {
       )
     })
 
-    it('AC-U6: sort mode has no effect while an archive filter hides the browser', async () => {
+    it('AC-U6: offers no sort or grouping while an archive filter hides the browser', async () => {
       const wrapper = await renderRepoDetail()
 
       await wrapper.vm.$router.replace({
@@ -1068,22 +1138,21 @@ describe('RepoDetailView', () => {
       })
       await flushPromises()
 
-      const sortModes = [
-        'date-desc',
-        'date-asc',
-        'size-desc',
-        'size-asc',
-        'dedup-desc',
-        'dedup-asc',
-      ] as const
+      // The list menu, which holds the sort, is not there to change it.
+      expect(wrapper.find('button[aria-label="List options"]').exists()).toBe(false)
+      expect(archiveRows(wrapper).length).toBe(0)
+      expect(wrapper.find('.archive-filter-banner').exists()).toBe(true)
+    })
 
-      for (const mode of sortModes) {
-        wrapper.vm.archiveSortMode = mode
-        await flushPromises()
+    it('AC-U8: opens the filtered archive in the card beside the banner', async () => {
+      const wrapper = await renderRepoDetail()
 
-        expect(wrapper.findAll('.archive-row').length).toBe(0)
-        expect(wrapper.find('.archive-filter-banner').exists()).toBe(true)
-      }
+      await wrapper.vm.$router.replace({
+        query: { tab: 'archives', archive: archiveA.name },
+      })
+      await flushPromises()
+
+      expect(wrapper.find('.archive-head-name').text()).toBe(archiveA.name)
     })
 
     it('AC-U7: clear archive filter via function call', async () => {
@@ -1119,14 +1188,6 @@ describe('RepoDetailView', () => {
       setupApiSuccess()
     })
 
-    async function openArchivesTab(
-      wrapper: Awaited<ReturnType<typeof renderRepoDetail>>,
-    ): Promise<void> {
-      const archivesTab = wrapper.findAll('.tab').find((b) => b.text() === 'Archives')
-      await archivesTab!.trigger('click')
-      await flushPromises()
-    }
-
     // BaseModal renders its footer via <Teleport to="body">, which lands
     // outside the wrapper's element tree, so it can't be reached with
     // wrapper.find(); go through the real DOM instead, matching this file's
@@ -1141,23 +1202,44 @@ describe('RepoDetailView', () => {
       await flushPromises()
     }
 
-    it('disables the delete button and blocks re-triggering once a delete is confirmed', async () => {
+    /** Opens the archive, asks to delete it from its menu and confirms. */
+    async function deleteAndConfirm(
+      wrapper: Awaited<ReturnType<typeof renderRepoDetail>>,
+      name: string = deletingArchive.name,
+    ): Promise<void> {
+      await requestDelete(wrapper, name)
+      await clickModalConfirm()
+    }
+
+    /** Whether the list row says its archive is being deleted. */
+    function markedDeleting(
+      wrapper: Awaited<ReturnType<typeof renderRepoDetail>>,
+      name: string = deletingArchive.name,
+    ): boolean {
+      const row = archiveRow(wrapper, name)
+      expect(row.exists()).toBe(true)
+      return row.find('.archive-row-deleting').exists()
+    }
+
+    it('disables the delete action and blocks re-triggering once a delete is confirmed', async () => {
       const wrapper = await renderRepoDetail()
       await openArchivesTab(wrapper)
 
-      const deleteBtn = wrapper.find('button[title="Delete archive"]')
-      expect(deleteBtn.exists()).toBe(true)
-      await deleteBtn.trigger('click')
-      await flushPromises()
-
-      await clickModalConfirm()
+      await deleteAndConfirm(wrapper)
 
       expect(mockRequestArchiveDelete).toHaveBeenCalledWith(1, deletingArchive.name)
-      // The modal closed and the row's button now reflects the in-flight delete.
-      expect(wrapper.find('button[title="Delete archive"]').exists()).toBe(false)
-      const pendingBtn = wrapper.find('button[title="Deletion in progress"]')
-      expect(pendingBtn.exists()).toBe(true)
-      expect(pendingBtn.attributes('disabled')).toBeDefined()
+      // The modal closed and the row reflects the in-flight delete.
+      expect(document.body.querySelector('.archive-delete-message')).toBeNull()
+      expect(markedDeleting(wrapper)).toBe(true)
+
+      // Opening the archive again shows the delete in flight and its menu
+      // entry disabled.
+      await openArchive(wrapper, deletingArchive.name)
+      expect(wrapper.find('.archive-head-deleting').exists()).toBe(true)
+      const item = await deleteMenuItem(wrapper)
+      expect(item.text().trim()).toBe('Deleting...')
+      expect(item.attributes('title')).toBe('Deletion in progress')
+      expect(item.attributes('disabled')).toBeDefined()
 
       // Re-requesting deletion for the same archive while it's still pending
       // must not reopen the confirmation modal (the actual guard being tested).
@@ -1184,11 +1266,10 @@ describe('RepoDetailView', () => {
       const wrapper = await renderRepoDetail()
       await openArchivesTab(wrapper)
 
-      await wrapper.find('button[title="Delete archive"]').trigger('click')
-      await flushPromises()
-      await clickModalConfirm()
+      await deleteAndConfirm(wrapper)
 
-      expect(wrapper.find('button[title="Deletion in progress"]').exists()).toBe(true)
+      expect(markedDeleting(wrapper)).toBe(true)
+      expect(wrapper.find('.archive-head-deleting').exists()).toBe(true)
 
       resolveDelete?.()
       await flushPromises()
@@ -1200,15 +1281,17 @@ describe('RepoDetailView', () => {
       const wrapper = await renderRepoDetail()
       await openArchivesTab(wrapper)
 
-      await wrapper.find('button[title="Delete archive"]').trigger('click')
-      await flushPromises()
-      await clickModalConfirm()
+      await deleteAndConfirm(wrapper)
 
-      // The failed request must not leave the row stuck disabled forever -
-      // the optimistic "deleting" marker set before the request went out
-      // has to be rolled back once it's clear the delete never happened.
-      expect(wrapper.find('button[title="Deletion in progress"]').exists()).toBe(false)
-      expect(wrapper.find('button[title="Delete archive"]').exists()).toBe(true)
+      // The failed request must not leave the archive stuck as deleting
+      // forever - the optimistic "deleting" marker set before the request
+      // went out has to be rolled back once it's clear the delete never
+      // happened.
+      expect(markedDeleting(wrapper)).toBe(false)
+      expect(wrapper.find('.archive-head-deleting').exists()).toBe(false)
+      const item = await deleteMenuItem(wrapper)
+      expect(item.text().trim()).toBe('Delete archive...')
+      expect(item.attributes('disabled')).toBeUndefined()
 
       // A failed delete leaves the confirmation modal open (its own,
       // pre-existing behavior, unchanged here) - its teleported content
@@ -1218,48 +1301,42 @@ describe('RepoDetailView', () => {
     })
 
     it('clears the in-progress state once the archive disappears from a DataChanged refresh', async () => {
+      mockBrowserArchives.value = [deletingArchive, archiveB]
+      mockSortedArchives.value = [deletingArchive, archiveB]
       const wrapper = await renderRepoDetail()
       await openArchivesTab(wrapper)
 
-      await wrapper.find('button[title="Delete archive"]').trigger('click')
-      await flushPromises()
-      await clickModalConfirm()
+      await deleteAndConfirm(wrapper)
 
-      expect(wrapper.find('button[title="Deletion in progress"]').exists()).toBe(true)
+      expect(markedDeleting(wrapper)).toBe(true)
 
       // Simulate the server finishing the borg delete: the archive is gone
       // from the reloaded list, then a DataChanged event notifies the UI.
-      mockBrowserArchives.value = []
-      mockSortedArchives.value = []
+      mockBrowserArchives.value = [archiveB]
+      mockSortedArchives.value = [archiveB]
       wsHandlers.DataChanged({})
       await flushPromises()
 
-      expect(wrapper.find('button[title="Deletion in progress"]').exists()).toBe(false)
+      expect(archiveRow(wrapper, deletingArchive.name).exists()).toBe(false)
+      expect(wrapper.find('.archive-row-deleting').exists()).toBe(false)
+      expect(wrapper.findComponent(RepoArchivesTab).vm.archivePendingDeletion).toBeNull()
     })
 
     it('removes the row and clears its in-progress state directly on ArchiveDeleted, without a DataChanged refresh', async () => {
       const wrapper = await renderRepoDetail()
       await openArchivesTab(wrapper)
 
-      const row = wrapper
-        .findAll('.archive-row')
-        .find((r) => r.text().includes(deletingArchive.name))
-      expect(row).toBeDefined()
+      await deleteAndConfirm(wrapper)
 
-      await row!.find('button[title="Delete archive"]').trigger('click')
-      await flushPromises()
-      await clickModalConfirm()
+      expect(markedDeleting(wrapper)).toBe(true)
 
-      expect(wrapper.find('button[title="Deletion in progress"]').exists()).toBe(true)
-
-      // Row selection isn't disabled while a delete is in flight - re-select
+      // Row selection isn't disabled while a delete is in flight - re-open
       // the still-listed (locally not-yet-pruned) archive to reproduce a
       // user re-opening its file browser mid-delete. ArchiveDeleted must
       // clear that too, not just the one confirmArchiveDeletion's own
       // success path already handles when nothing was re-selected since.
-      await row!.find('.archive-row-select').trigger('click')
-      await flushPromises()
-      expect(wrapper.find('.browser-title').text()).toContain(deletingArchive.name)
+      await openArchive(wrapper, deletingArchive.name)
+      expect(wrapper.find('.archive-head-name').text()).toBe(deletingArchive.name)
 
       // No further loadArchives call and no DataChanged - ArchiveDeleted
       // alone must be enough to drop the row. sortedArchives is mocked as
@@ -1272,37 +1349,33 @@ describe('RepoDetailView', () => {
 
       expect(mockLoadArchives.mock.calls.length).toBe(callsBefore)
       expect(mockBrowserArchives.value.some((a) => a.name === deletingArchive.name)).toBe(false)
-      expect(wrapper.find('button[title="Deletion in progress"]').exists()).toBe(false)
-      expect(wrapper.find('.browser-title').exists()).toBe(false)
-      expect(wrapper.text()).toContain('Select an archive to browse its contents.')
+      expect(markedDeleting(wrapper)).toBe(false)
+      expect(wrapper.find('.archive-head-name').exists()).toBe(false)
+      expect(wrapper.text()).toContain('Pick an archive')
     })
 
     it('ignores ArchiveDeleted events for a different repository', async () => {
       const wrapper = await renderRepoDetail()
       await openArchivesTab(wrapper)
 
-      await wrapper.find('button[title="Delete archive"]').trigger('click')
-      await flushPromises()
-      await clickModalConfirm()
+      await deleteAndConfirm(wrapper)
 
-      expect(wrapper.find('button[title="Deletion in progress"]').exists()).toBe(true)
+      expect(markedDeleting(wrapper)).toBe(true)
 
       wsHandlers.ArchiveDeleted({ repo_id: mockRepo.id + 1, archive_name: deletingArchive.name })
       await flushPromises()
 
       expect(mockBrowserArchives.value.some((a) => a.name === deletingArchive.name)).toBe(true)
-      expect(wrapper.find('button[title="Deletion in progress"]').exists()).toBe(true)
+      expect(markedDeleting(wrapper)).toBe(true)
     })
 
     it('clears stale in-progress state once RepoOpChanged reports the repo is no longer deleting', async () => {
       const wrapper = await renderRepoDetail()
       await openArchivesTab(wrapper)
 
-      await wrapper.find('button[title="Delete archive"]').trigger('click')
-      await flushPromises()
-      await clickModalConfirm()
+      await deleteAndConfirm(wrapper)
 
-      expect(wrapper.find('button[title="Deletion in progress"]').exists()).toBe(true)
+      expect(markedDeleting(wrapper)).toBe(true)
 
       // The archive is still in the list (e.g. the borg delete itself
       // failed), but the repo's delete queue has fully drained - the stale
@@ -1310,8 +1383,11 @@ describe('RepoDetailView', () => {
       wsHandlers.RepoOpChanged({ repo_id: mockRepo.id, op: null })
       await flushPromises()
 
-      expect(wrapper.find('button[title="Delete archive"]').exists()).toBe(true)
-      expect(wrapper.find('button[title="Deletion in progress"]').exists()).toBe(false)
+      expect(markedDeleting(wrapper)).toBe(false)
+      await openArchive(wrapper, deletingArchive.name)
+      const item = await deleteMenuItem(wrapper)
+      expect(item.text().trim()).toBe('Delete archive...')
+      expect(item.attributes('disabled')).toBeUndefined()
     })
 
     it('refetches before clearing on RepoOpChanged, not racing a DataChanged refresh already in flight', async () => {
@@ -1325,11 +1401,9 @@ describe('RepoDetailView', () => {
       const wrapper = await renderRepoDetail()
       await openArchivesTab(wrapper)
 
-      await wrapper.find('button[title="Delete archive"]').trigger('click')
-      await flushPromises()
-      await clickModalConfirm()
+      await deleteAndConfirm(wrapper)
 
-      expect(wrapper.find('button[title="Deletion in progress"]').exists()).toBe(true)
+      expect(markedDeleting(wrapper)).toBe(true)
 
       // RepoOpChanged reports the queue idle while its own refetch is still
       // outstanding - the marker must survive until that refetch resolves,
@@ -1337,12 +1411,12 @@ describe('RepoDetailView', () => {
       wsHandlers.RepoOpChanged({ repo_id: mockRepo.id, op: null })
       await flushPromises()
 
-      expect(wrapper.find('button[title="Deletion in progress"]').exists()).toBe(true)
+      expect(markedDeleting(wrapper)).toBe(true)
 
       resolveLoadArchives()
       await flushPromises()
 
-      expect(wrapper.find('button[title="Deletion in progress"]').exists()).toBe(false)
+      expect(markedDeleting(wrapper)).toBe(false)
     })
 
     it('does not sweep a different archive whose delete starts while the RepoOpChanged refetch is in flight', async () => {
@@ -1363,16 +1437,9 @@ describe('RepoDetailView', () => {
       const wrapper = await renderRepoDetail()
       await openArchivesTab(wrapper)
 
-      const rowFor = (name: string) =>
-        wrapper.findAll('.archive-row').find((r) => r.text().includes(name))!
+      await deleteAndConfirm(wrapper, deletingArchive.name)
 
-      await rowFor(deletingArchive.name).find('button[title="Delete archive"]').trigger('click')
-      await flushPromises()
-      await clickModalConfirm()
-
-      expect(
-        rowFor(deletingArchive.name).find('button[title="Deletion in progress"]').exists(),
-      ).toBe(true)
+      expect(markedDeleting(wrapper, deletingArchive.name)).toBe(true)
 
       // The queue drains for deletingArchive's completed delete - the
       // handler snapshots it as the name to sweep and starts its own
@@ -1386,37 +1453,30 @@ describe('RepoDetailView', () => {
       const archivesTab = wrapper.findComponent(RepoArchivesTab).vm
       archivesTab.requestArchiveDeletion(otherArchive)
       await archivesTab.confirmArchiveDeletion()
+      await flushPromises()
 
-      expect(rowFor(otherArchive.name).find('button[title="Deletion in progress"]').exists()).toBe(
-        true,
-      )
+      expect(markedDeleting(wrapper, otherArchive.name)).toBe(true)
 
       resolveLoadArchives()
       await flushPromises()
 
       // Only the snapshotted (already-resolved) delete is swept...
-      expect(
-        rowFor(deletingArchive.name).find('button[title="Deletion in progress"]').exists(),
-      ).toBe(false)
+      expect(markedDeleting(wrapper, deletingArchive.name)).toBe(false)
       // ...the unrelated, still-in-flight delete must survive the sweep.
-      expect(rowFor(otherArchive.name).find('button[title="Deletion in progress"]').exists()).toBe(
-        true,
-      )
+      expect(markedDeleting(wrapper, otherArchive.name)).toBe(true)
     })
 
     it('keeps the in-progress state while the automatic post-delete compact is running', async () => {
       const wrapper = await renderRepoDetail()
       await openArchivesTab(wrapper)
 
-      await wrapper.find('button[title="Delete archive"]').trigger('click')
-      await flushPromises()
-      await clickModalConfirm()
+      await deleteAndConfirm(wrapper)
 
-      expect(wrapper.find('button[title="Deletion in progress"]').exists()).toBe(true)
+      expect(markedDeleting(wrapper)).toBe(true)
 
       // The delete itself finished (the tracked op moved on to the compact
       // that automatically follows it) but the archive hasn't disappeared
-      // from the list yet - the row must stay disabled through the compact,
+      // from the list yet - the row must stay marked through the compact,
       // not just through the delete.
       wsHandlers.RepoOpChanged({
         repo_id: mockRepo.id,
@@ -1424,7 +1484,7 @@ describe('RepoDetailView', () => {
       })
       await flushPromises()
 
-      expect(wrapper.find('button[title="Deletion in progress"]').exists()).toBe(true)
+      expect(markedDeleting(wrapper)).toBe(true)
     })
 
     it('shows the in-progress state immediately on confirm, before the delete request resolves', async () => {
@@ -1439,13 +1499,15 @@ describe('RepoDetailView', () => {
       const wrapper = await renderRepoDetail()
       await openArchivesTab(wrapper)
 
-      await wrapper.find('button[title="Delete archive"]').trigger('click')
-      await flushPromises()
-      await clickModalConfirm()
+      await deleteAndConfirm(wrapper)
 
-      // The row must flip to "in flight" the moment the user confirms, not
-      // once the (still in-flight) delete request comes back.
-      expect(wrapper.find('button[title="Deletion in progress"]').exists()).toBe(true)
+      // The archive must flip to "in flight" the moment the user confirms,
+      // not once the (still in-flight) delete request comes back - on its row
+      // and in its still-open card, whose delete entry is disabled.
+      expect(markedDeleting(wrapper)).toBe(true)
+      expect(archiveRow(wrapper, deletingArchive.name).classes()).toContain('browser-row--dim')
+      const item = await deleteMenuItem(wrapper)
+      expect(item.attributes('disabled')).toBeDefined()
 
       resolveDelete?.(true)
       await flushPromises()
@@ -1457,14 +1519,13 @@ describe('RepoDetailView', () => {
       const wrapper = await renderRepoDetail()
       await openArchivesTab(wrapper)
 
-      await wrapper.find('button[title="Delete archive"]').trigger('click')
-      await flushPromises()
-      await clickModalConfirm()
+      await deleteAndConfirm(wrapper)
 
       // The delete never actually got queued, so the optimistic "in flight"
-      // marker must not stick around and leave the row permanently disabled.
-      expect(wrapper.find('button[title="Deletion in progress"]').exists()).toBe(false)
-      expect(wrapper.find('button[title="Delete archive"]').exists()).toBe(true)
+      // marker must not stick around and leave the archive undeletable.
+      expect(markedDeleting(wrapper)).toBe(false)
+      const item = await deleteMenuItem(wrapper)
+      expect(item.attributes('disabled')).toBeUndefined()
 
       // A failed delete leaves the confirmation modal open (its own,
       // pre-existing behavior, unchanged here) - its teleported content
@@ -1570,12 +1631,15 @@ describe('RepoDetailView', () => {
       const wrapper = await renderRepoDetail()
       await openSettings(wrapper, 'repository')
 
-      const quota = wrapper.findAll('.settings-nav-item').find((b) => b.text() === 'Storage quota')
+      const quota = wrapper.findAll('.accordion-head').find((b) => b.text() === 'Storage quota')
       expect(quota).toBeDefined()
+      expect(quota!.attributes('aria-expanded')).toBe('false')
 
       await quota!.trigger('click')
       await flushPromises()
 
+      expect(quota!.attributes('aria-expanded')).toBe('true')
+      expect(wrapper.find('[data-testid="quota-panel"]').exists()).toBe(true)
       expect(wrapper.vm.$route.query.section).toBe('quota')
       // The tab it belongs to is kept, so the link round-trips.
       expect(wrapper.vm.$route.query.tab).toBe('settings')
@@ -1605,8 +1669,10 @@ describe('RepoDetailView', () => {
       const wrapper = await renderRepoDetail()
       await openSettings(wrapper, 'not-a-section')
 
-      const current = wrapper.find('.settings-nav-item[aria-current="true"]')
-      expect(current.text()).toBe('Repository')
+      const open = wrapper
+        .findAll('.accordion-head')
+        .filter((h) => h.attributes('aria-expanded') === 'true')
+      expect(open.map((h) => h.text())).toEqual(['Repository'])
     })
   })
 })

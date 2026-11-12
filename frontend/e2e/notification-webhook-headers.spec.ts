@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
-import { expect, loginAsAdmin, mockNotificationsApi, test } from './fixtures'
+import { expect, loginAsAdmin, mockNotificationsApi, openSettingsSection, test } from './fixtures'
 import type { Page } from '@playwright/test'
 
 // Against the real demo server: the seeded webhook channel has a saved
@@ -37,6 +37,7 @@ const WEBHOOK_CHANNEL = {
   webhook_headers: [{ name: 'Authorization', has_value: true }],
   enabled: true,
   scope: {},
+  link: { target: 'automatic', url: null },
   created_at: '2026-01-01T00:00:00Z',
   updated_at: '2026-01-01T00:00:00Z',
 }
@@ -61,27 +62,29 @@ test('editing a webhook channel keeps its saved header value when left blank', a
 
   await page.goto('/notifications')
   await page.waitForLoadState('networkidle')
-  // A channel row opens its editor when clicked.
-  const row = page.locator('.channel-row').filter({ hasText: 'Ops Webhook' })
+  // A channel row opens the channel's own page.
+  const row = page.locator('.list-row[data-channel="Ops Webhook"]')
   await expect(row).toBeVisible({ timeout: 10_000 })
-  await row.locator('.list-row-name').click()
+  await row.click()
 
-  const dialog = page.locator('.modal-dialog')
-  await expect(dialog.getByTestId('webhook-header-name')).toHaveValue('Authorization')
-  const value = dialog.getByTestId('webhook-header-value')
+  // The channel's page opens on its delivery settings, edited behind Edit.
+  const settings = await openSettingsSection(page, 'Delivery')
+  await settings.getByRole('button', { name: 'Edit' }).click()
+  await expect(settings.getByTestId('webhook-header-name')).toHaveValue('Authorization')
+  const value = settings.getByTestId('webhook-header-value')
   await expect(value).toHaveValue('')
   await expect(value).toHaveAttribute('placeholder', /leave blank to keep it/)
 
   // Pointing the URL at another host asks for the saved value again...
-  const url = dialog.getByPlaceholder('https://hooks.example.com/notify')
+  const url = settings.getByPlaceholder('https://hooks.example.com/notify')
   await url.fill('https://hooks.attacker.example/notify')
-  await expect(dialog.getByTestId('webhook-header-reentry')).toContainText('Authorization')
+  await expect(settings.getByTestId('webhook-header-reentry')).toContainText('Authorization')
   // ...and going back to the saved host does not.
   await url.fill('https://hooks.example.com/notify')
-  await expect(dialog.getByTestId('webhook-header-reentry')).toBeHidden()
+  await expect(settings.getByTestId('webhook-header-reentry')).toBeHidden()
 
-  await dialog.getByRole('button', { name: 'Save' }).click()
-  await expect(dialog).toBeHidden()
+  await settings.getByRole('button', { name: 'Save', exact: true }).click()
+  await expect(settings.getByRole('button', { name: 'Edit' })).toBeVisible()
 
   expect(savedBody?.config).toMatchObject({
     url: 'https://hooks.example.com/notify',

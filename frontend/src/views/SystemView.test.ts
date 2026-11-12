@@ -108,6 +108,35 @@ function setupSuccessMocks(): void {
   })
 }
 
+/**
+ * Mounts the page and opens every section: they are collapsible cards now,
+ * with only the first one open to begin with.
+ */
+async function mountAll(): Promise<VueWrapper> {
+  const wrapper = renderWithPlugins(SystemView)
+  await flushPromises()
+  const expand = wrapper.findAll('button').find((b) => b.text() === 'Expand all')
+  if (!expand) throw new Error('no Expand all button')
+  await expand.trigger('click')
+  await flushPromises()
+  return wrapper
+}
+
+/** The input a row label of the Keep for or Timeouts table is bound to. */
+function inputFor(wrapper: VueWrapper, label: string) {
+  const match = wrapper.findAll('table label').find((l) => l.text() === label)
+  if (!match) throw new Error(`no table row labelled "${label}"`)
+  return wrapper.find<HTMLInputElement>(`#${match.attributes('for')}`)
+}
+
+/** A table's row labels, in order. */
+function tableLabels(wrapper: VueWrapper, labelledBy: string): string[] {
+  return wrapper
+    .find(`table[aria-labelledby="${labelledBy}"]`)
+    .findAll('label')
+    .map((l) => l.text())
+}
+
 describe('SystemView', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -115,36 +144,31 @@ describe('SystemView', () => {
 
   it('renders page title', async () => {
     setupSuccessMocks()
-    const wrapper = renderWithPlugins(SystemView)
-    await flushPromises()
+    const wrapper = await mountAll()
     expect(wrapper.text()).toContain('System')
   })
 
   it('renders SSH Public Key section heading', async () => {
     setupSuccessMocks()
-    const wrapper = renderWithPlugins(SystemView)
-    await flushPromises()
+    const wrapper = await mountAll()
     expect(wrapper.text()).toContain('SSH public key')
   })
 
   it('displays the SSH public key after loading', async () => {
     setupSuccessMocks()
-    const wrapper = renderWithPlugins(SystemView)
-    await flushPromises()
+    const wrapper = await mountAll()
     expect(wrapper.text()).toContain(SSH_KEY)
   })
 
   it('renders Copy button for the key', async () => {
     setupSuccessMocks()
-    const wrapper = renderWithPlugins(SystemView)
-    await flushPromises()
+    const wrapper = await mountAll()
     expect(wrapper.text()).toContain('Copy')
   })
 
   it('copies the public key to the clipboard on Copy click', async () => {
     setupSuccessMocks()
-    const wrapper = renderWithPlugins(SystemView)
-    await flushPromises()
+    const wrapper = await mountAll()
     await wrapper
       .findAll('button')
       .find((b) => b.text() === 'Copy')!
@@ -154,112 +178,205 @@ describe('SystemView', () => {
 
   it('renders Regenerate button', async () => {
     setupSuccessMocks()
-    const wrapper = renderWithPlugins(SystemView)
-    await flushPromises()
+    const wrapper = await mountAll()
     expect(wrapper.text()).toContain('Regenerate')
   })
 
   it('renders Settings section heading', async () => {
     setupSuccessMocks()
-    const wrapper = renderWithPlugins(SystemView)
-    await flushPromises()
+    const wrapper = await mountAll()
     expect(wrapper.text()).toContain('Settings')
   })
 
-  it('renders Retention Days input', async () => {
+  it('opens only the first section to begin with, and every section on Expand all', async () => {
     setupSuccessMocks()
     const wrapper = renderWithPlugins(SystemView)
     await flushPromises()
-    expect(wrapper.find('#settings-retention').exists()).toBe(true)
+
+    const heads = wrapper.findAll('.accordion-head')
+    expect(heads.map((h) => h.text())).toEqual([
+      'Version',
+      'SSH public key',
+      'Agent channel key',
+      'Settings',
+      'Deployment',
+      'Prometheus metrics',
+      'Configuration export / import',
+      'Danger zone',
+    ])
+    expect(heads.map((h) => h.attributes('aria-expanded'))).toEqual([
+      'true',
+      'false',
+      'false',
+      'false',
+      'false',
+      'false',
+      'false',
+      'false',
+    ])
+    expect(wrapper.text()).toContain('0.1.0')
+    expect(wrapper.text()).not.toContain(SSH_KEY)
+
+    const expanded = await mountAll()
+    expect(
+      expanded.findAll('.accordion-head').every((h) => h.attributes('aria-expanded') === 'true'),
+    ).toBe(true)
+    expect(expanded.text()).toContain(SSH_KEY)
   })
 
-  it('populates retention days from API response', async () => {
+  it('opens a single section from its heading', async () => {
     setupSuccessMocks()
     const wrapper = renderWithPlugins(SystemView)
     await flushPromises()
-    const input = wrapper.find<HTMLInputElement>('#settings-retention')
-    expect(input.element.value).toBe('30')
+    await wrapper
+      .findAll('.accordion-head')
+      .find((h) => h.text() === 'SSH public key')!
+      .trigger('click')
+    expect(wrapper.text()).toContain(SSH_KEY)
+    expect(wrapper.find('form.form-stack').exists()).toBe(false)
+  })
+
+  it('tones the Danger zone heading as destructive', async () => {
+    setupSuccessMocks()
+    const wrapper = renderWithPlugins(SystemView)
+    await flushPromises()
+    const danger = wrapper.findAll('.accordion-title').find((t) => t.text() === 'Danger zone')!
+    expect(danger.classes()).toContain('accordion-title--danger')
+  })
+
+  it('lists every retention setting in one Keep for table, without the legacy catch-all', async () => {
+    setupSuccessMocks()
+    const wrapper = await mountAll()
+    expect(wrapper.find('#settings-retention-label').text()).toBe('Keep for')
+    expect(tableLabels(wrapper, 'settings-retention-label')).toEqual([
+      'Reports',
+      'Failed reports',
+      'System events',
+      'Notification deliveries',
+      'Run timelines',
+      'Archive browse indexes',
+    ])
+    // The old retention_days box changed nothing once every setting is saved.
+    expect(wrapper.find('#settings-retention').exists()).toBe(false)
+    expect(wrapper.find('#settings-retention_days').exists()).toBe(false)
+    expect(wrapper.text()).toContain('0 keeps it forever.')
+  })
+
+  it('gives every Keep for row a day box and a hint on its label', async () => {
+    setupSuccessMocks()
+    const wrapper = await mountAll()
+    const rows = wrapper.find('table[aria-labelledby="settings-retention-label"]').findAll('tr')
+    expect(rows).toHaveLength(6)
+    for (const row of rows) {
+      expect(row.find('.retention-unit').text()).toBe('days')
+      const input = row.find('input')
+      expect(input.attributes('type')).toBe('number')
+      expect(input.attributes('min')).toBe('0')
+      expect(row.find('label').attributes('title')).toBeTruthy()
+      expect(row.find('label').attributes('for')).toBe(input.attributes('id'))
+    }
+  })
+
+  it('populates run timeline retention from API response', async () => {
+    setupSuccessMocks()
+    const wrapper = await mountAll()
+    expect(inputFor(wrapper, 'Run timelines').element.value).toBe('90')
+  })
+
+  it('lists the two timeouts in a table of their own, each with its unit', async () => {
+    setupSuccessMocks()
+    const wrapper = await mountAll()
+    expect(wrapper.find('#settings-timeouts-label').text()).toBe('Timeouts')
+    expect(tableLabels(wrapper, 'settings-timeouts-label')).toEqual([
+      'Borg queries',
+      'Idle session',
+    ])
+    const units = wrapper
+      .find('table[aria-labelledby="settings-timeouts-label"]')
+      .findAll('.retention-unit')
+      .map((u) => u.text())
+    expect(units).toEqual(['seconds', 'minutes'])
+    expect(inputFor(wrapper, 'Borg queries').attributes('id')).toBe('settings-borg-timeout')
+    expect(inputFor(wrapper, 'Idle session').attributes('id')).toBe('settings-idle-timeout')
+    expect(inputFor(wrapper, 'Idle session').attributes('min')).toBe('1')
+    expect(wrapper.text()).toContain('Defaults: 300 seconds, 480 minutes.')
+  })
+
+  it('explains the idle session timeout on its label', async () => {
+    setupSuccessMocks()
+    const wrapper = await mountAll()
+    const label = wrapper.findAll('table label').find((l) => l.text() === 'Idle session')!
+    expect(label.attributes('title')).toContain('Does not apply to Remember me sessions.')
   })
 
   it('renders Report Retention input', async () => {
     setupSuccessMocks()
-    const wrapper = renderWithPlugins(SystemView)
-    await flushPromises()
-    expect(wrapper.find('#settings-report-retention').exists()).toBe(true)
+    const wrapper = await mountAll()
+    expect(inputFor(wrapper, 'Reports').exists()).toBe(true)
   })
 
   it('populates report retention from API response', async () => {
     setupSuccessMocks()
-    const wrapper = renderWithPlugins(SystemView)
-    await flushPromises()
-    const input = wrapper.find<HTMLInputElement>('#settings-report-retention')
+    const wrapper = await mountAll()
+    const input = inputFor(wrapper, 'Reports')
     expect(input.element.value).toBe('365')
   })
 
   it('renders Failed Report Retention input', async () => {
     setupSuccessMocks()
-    const wrapper = renderWithPlugins(SystemView)
-    await flushPromises()
-    expect(wrapper.find('#settings-failed-retention').exists()).toBe(true)
+    const wrapper = await mountAll()
+    expect(inputFor(wrapper, 'Failed reports').exists()).toBe(true)
   })
 
   it('populates failed report retention from API response', async () => {
     setupSuccessMocks()
-    const wrapper = renderWithPlugins(SystemView)
-    await flushPromises()
-    const input = wrapper.find<HTMLInputElement>('#settings-failed-retention')
+    const wrapper = await mountAll()
+    const input = inputFor(wrapper, 'Failed reports')
     expect(input.element.value).toBe('365')
   })
 
   it('renders System Event Retention input', async () => {
     setupSuccessMocks()
-    const wrapper = renderWithPlugins(SystemView)
-    await flushPromises()
-    expect(wrapper.find('#settings-event-retention').exists()).toBe(true)
+    const wrapper = await mountAll()
+    expect(inputFor(wrapper, 'System events').exists()).toBe(true)
   })
 
   it('populates system event retention from API response', async () => {
     setupSuccessMocks()
-    const wrapper = renderWithPlugins(SystemView)
-    await flushPromises()
-    const input = wrapper.find<HTMLInputElement>('#settings-event-retention')
+    const wrapper = await mountAll()
+    const input = inputFor(wrapper, 'System events')
     expect(input.element.value).toBe('90')
   })
 
   it('renders Notification Delivery Retention input', async () => {
     setupSuccessMocks()
-    const wrapper = renderWithPlugins(SystemView)
-    await flushPromises()
-    expect(wrapper.find('#settings-notification-delivery-retention').exists()).toBe(true)
+    const wrapper = await mountAll()
+    expect(inputFor(wrapper, 'Notification deliveries').exists()).toBe(true)
   })
 
   it('populates notification delivery retention from API response', async () => {
     setupSuccessMocks()
-    const wrapper = renderWithPlugins(SystemView)
-    await flushPromises()
-    const input = wrapper.find<HTMLInputElement>('#settings-notification-delivery-retention')
+    const wrapper = await mountAll()
+    const input = inputFor(wrapper, 'Notification deliveries')
     expect(input.element.value).toBe('30')
   })
 
   it('renders Borg Timeout input', async () => {
     setupSuccessMocks()
-    const wrapper = renderWithPlugins(SystemView)
-    await flushPromises()
+    const wrapper = await mountAll()
     expect(wrapper.find('#settings-borg-timeout').exists()).toBe(true)
   })
 
   it('populates borg timeout from API response', async () => {
     setupSuccessMocks()
-    const wrapper = renderWithPlugins(SystemView)
-    await flushPromises()
+    const wrapper = await mountAll()
     const input = wrapper.find<HTMLInputElement>('#settings-borg-timeout')
     expect(input.element.value).toBe('600')
   })
 
   it('renders Session Idle Timeout input', async () => {
     setupSuccessMocks()
-    const wrapper = renderWithPlugins(SystemView)
-    await flushPromises()
+    const wrapper = await mountAll()
     const input = wrapper.find('#settings-idle-timeout')
     expect(input.exists()).toBe(true)
     expect((input.element as HTMLInputElement).value).toBe('480')
@@ -267,19 +384,19 @@ describe('SystemView', () => {
 
   it('populates session idle timeout from API response', async () => {
     setupSuccessMocks()
-    const wrapper = renderWithPlugins(SystemView)
-    await flushPromises()
+    const wrapper = await mountAll()
     const input = wrapper.find('#settings-idle-timeout')
     expect((input.element as HTMLInputElement).value).toBe('480')
   })
 
   it('shows the archive index retention, keeping indexes forever by default', async () => {
     setupSuccessMocks()
-    const wrapper = renderWithPlugins(SystemView)
-    await flushPromises()
-    const input = wrapper.find<HTMLInputElement>('#settings-archive-index-retention')
+    const wrapper = await mountAll()
+    const input = inputFor(wrapper, 'Archive browse indexes')
     expect(input.element.value).toBe('0')
-    expect(wrapper.text()).toContain('The next browse rebuilds it. 0 = keep forever.')
+    const label = wrapper.findAll('table label').find((l) => l.text() === 'Archive browse indexes')!
+    expect(label.attributes('title')).toContain('The next browse rebuilds it.')
+    expect(wrapper.text()).toContain('0 keeps it forever.')
   })
 
   it('updates session idle timeout and persists it via save', async () => {
@@ -297,8 +414,7 @@ describe('SystemView', () => {
         session_idle_timeout_minutes: 120,
       },
     })
-    const wrapper = renderWithPlugins(SystemView)
-    await flushPromises()
+    const wrapper = await mountAll()
     const input = wrapper.find<HTMLInputElement>('#settings-idle-timeout')
     await input.setValue('120')
     await wrapper.find('form.form-stack').trigger('submit')
@@ -320,8 +436,7 @@ describe('SystemView', () => {
       return res
     })
     mockPut.mockResolvedValue({ data: { public_url: 'https://backups.example.com' } })
-    const wrapper = renderWithPlugins(SystemView)
-    await flushPromises()
+    const wrapper = await mountAll()
 
     const input = wrapper.find<HTMLInputElement>('#settings-public-url')
     expect(input.element.value).toBe('https://old.example.com')
@@ -339,8 +454,7 @@ describe('SystemView', () => {
   it('clears the public URL when its field is emptied', async () => {
     setupSuccessMocks()
     mockPut.mockResolvedValue({ data: { public_url: null } })
-    const wrapper = renderWithPlugins(SystemView)
-    await flushPromises()
+    const wrapper = await mountAll()
 
     const input = wrapper.find<HTMLInputElement>('#settings-public-url')
     expect(input.element.value).toBe('')
@@ -372,27 +486,21 @@ describe('SystemView', () => {
         session_idle_timeout_minutes: 60,
       },
     })
-    const wrapper = renderWithPlugins(SystemView)
-    await flushPromises()
+    const wrapper = await mountAll()
 
     const edits: [string, string, string, number][] = [
-      ['#settings-retention', '14', 'retention_days', 14],
-      ['#settings-report-retention', '180', 'report_retention_days', 180],
-      ['#settings-failed-retention', '200', 'failed_report_retention_days', 200],
-      ['#settings-event-retention', '45', 'system_event_retention_days', 45],
-      [
-        '#settings-notification-delivery-retention',
-        '15',
-        'notification_delivery_retention_days',
-        15,
-      ],
-      ['#settings-run-event-retention', '60', 'run_event_retention_days', 60],
-      ['#settings-archive-index-retention', '30', 'archive_index_retention_days', 30],
-      ['#settings-borg-timeout', '900', 'borg_query_timeout_secs', 900],
+      ['Reports', '180', 'report_retention_days', 180],
+      ['Failed reports', '200', 'failed_report_retention_days', 200],
+      ['System events', '45', 'system_event_retention_days', 45],
+      ['Notification deliveries', '15', 'notification_delivery_retention_days', 15],
+      ['Run timelines', '60', 'run_event_retention_days', 60],
+      ['Archive browse indexes', '30', 'archive_index_retention_days', 30],
+      ['Borg queries', '900', 'borg_query_timeout_secs', 900],
+      ['Idle session', '60', 'session_idle_timeout_minutes', 60],
     ]
 
-    for (const [selector, typed] of edits) {
-      await wrapper.find<HTMLInputElement>(selector).setValue(typed)
+    for (const [label, typed] of edits) {
+      await inputFor(wrapper, label).setValue(typed)
     }
 
     // The timezone is a component rather than an input, so it writes back
@@ -407,6 +515,8 @@ describe('SystemView', () => {
       '/system/settings',
       expect.objectContaining({
         ...Object.fromEntries(edits.map(([, , key, value]) => [key, value])),
+        // The legacy catch-all has no box, so the loaded value goes back as it was.
+        retention_days: 30,
         timezone: 'Europe/Berlin',
       }),
     )
@@ -426,8 +536,7 @@ describe('SystemView', () => {
   it('shows secure cookies as on, read-only, when the server reports them on', async () => {
     setupSuccessMocks()
     withSettings({ secure_cookies: true })
-    const wrapper = renderWithPlugins(SystemView)
-    await flushPromises()
+    const wrapper = await mountAll()
 
     const badge = wrapper.find('#deployment-secure-cookies')
     expect(badge.text()).toBe('On')
@@ -440,8 +549,7 @@ describe('SystemView', () => {
   it('warns when secure cookies are off', async () => {
     setupSuccessMocks()
     withSettings({ secure_cookies: false })
-    const wrapper = renderWithPlugins(SystemView)
-    await flushPromises()
+    const wrapper = await mountAll()
 
     const badge = wrapper.find('#deployment-secure-cookies')
     expect(badge.text()).toBe('Off')
@@ -453,8 +561,7 @@ describe('SystemView', () => {
     setupSuccessMocks()
     withSettings({ secure_cookies: false })
     mockPut.mockResolvedValue({ data: { secure_cookies: false } })
-    const wrapper = renderWithPlugins(SystemView)
-    await flushPromises()
+    const wrapper = await mountAll()
 
     await wrapper.find('form.form-stack').trigger('submit')
     await flushPromises()
@@ -474,28 +581,27 @@ describe('SystemView', () => {
       }
       return settingsGet?.(url)
     })
-    const wrapper = renderWithPlugins(SystemView)
-    await flushPromises()
+    const wrapper = await mountAll()
 
     expect(wrapper.find('#deployment-secure-cookies').exists()).toBe(false)
     expect(wrapper.text()).toContain('Failed to load settings')
+    expect(wrapper.findAll('.accordion-head').map((h) => h.text())).not.toContain('Deployment')
   })
 
   it('bounds the borg timeout input to a week', async () => {
     setupSuccessMocks()
-    const wrapper = renderWithPlugins(SystemView)
-    await flushPromises()
+    const wrapper = await mountAll()
 
     const input = wrapper.find<HTMLInputElement>('#settings-borg-timeout')
     expect(input.attributes('min')).toBe('1')
     expect(input.attributes('max')).toBe('604800')
-    expect(wrapper.text()).toContain('no restart needed')
+    const label = wrapper.findAll('table label').find((l) => l.text() === 'Borg queries')!
+    expect(label.attributes('title')).toContain('no restart needed')
   })
 
   it('renders Save button for settings', async () => {
     setupSuccessMocks()
-    const wrapper = renderWithPlugins(SystemView)
-    await flushPromises()
+    const wrapper = await mountAll()
     const buttons = wrapper.findAll('button')
     const saveBtn = buttons.find((b) => b.text() === 'Save')
     expect(saveBtn).toBeDefined()
@@ -503,8 +609,7 @@ describe('SystemView', () => {
 
   it('leaves database storage to its own page', async () => {
     setupSuccessMocks()
-    const wrapper = renderWithPlugins(SystemView)
-    await flushPromises()
+    const wrapper = await mountAll()
 
     expect(wrapper.text()).not.toContain('Database storage')
     expect(mockGet).not.toHaveBeenCalledWith('/system/database-storage')
@@ -544,15 +649,13 @@ describe('SystemView', () => {
       }
       return Promise.reject(new Error(`Unexpected GET ${url}`))
     })
-    const wrapper = renderWithPlugins(SystemView)
-    await flushPromises()
+    const wrapper = await mountAll()
     expect(wrapper.text()).toContain('Failed to load SSH public key')
   })
 
   it('opens regenerate confirmation dialog on button click', async () => {
     setupSuccessMocks()
-    const wrapper = renderWithPlugins(SystemView)
-    await flushPromises()
+    const wrapper = await mountAll()
     const regenBtn = wrapper.findAll('button').find((b) => b.text() === 'Regenerate')
     expect(regenBtn).toBeDefined()
     await regenBtn!.trigger('click')
@@ -563,8 +666,7 @@ describe('SystemView', () => {
   it('regenerates the SSH key and shows the new public key', async () => {
     setupSuccessMocks()
     mockPost.mockResolvedValue({ data: { public_key: 'ssh-ed25519 AAAA-new' } })
-    const wrapper = renderWithPlugins(SystemView)
-    await flushPromises()
+    const wrapper = await mountAll()
 
     await wrapper
       .findAll('button')
@@ -592,8 +694,7 @@ describe('SystemView', () => {
     global.URL.createObjectURL = vi.fn().mockReturnValue('blob:test')
     global.URL.revokeObjectURL = vi.fn()
 
-    const wrapper = renderWithPlugins(SystemView)
-    await flushPromises()
+    const wrapper = await mountAll()
 
     await wrapper
       .findAll('button')
@@ -609,8 +710,7 @@ describe('SystemView', () => {
   it('resets the system state', async () => {
     setupSuccessMocks()
     mockPost.mockResolvedValue({ data: { cancelled_backups: 2, notified_agents: 1 } })
-    const wrapper = renderWithPlugins(SystemView)
-    await flushPromises()
+    const wrapper = await mountAll()
 
     await wrapper
       .findAll('button')
@@ -642,8 +742,7 @@ describe('SystemView', () => {
         session_idle_timeout_minutes: 480,
       },
     })
-    const wrapper = renderWithPlugins(SystemView)
-    await flushPromises()
+    const wrapper = await mountAll()
     await wrapper.find('form.form-stack').trigger('submit')
     await flushPromises()
     expect(mockPut).toHaveBeenCalledWith('/system/settings', {
@@ -674,14 +773,21 @@ describe('SystemView', () => {
         borg_query_timeout_secs: 120,
       },
     })
-    const wrapper = renderWithPlugins(SystemView)
-    await flushPromises()
+    const wrapper = await mountAll()
     await wrapper.find('form.form-stack').trigger('submit')
     await flushPromises()
-    const retentionInput = wrapper.find<HTMLInputElement>('#settings-retention')
-    expect(retentionInput.element.value).toBe('14')
-    const reportInput = wrapper.find<HTMLInputElement>('#settings-report-retention')
+    const reportInput = inputFor(wrapper, 'Reports')
     expect(reportInput.element.value).toBe('0')
+    expect(inputFor(wrapper, 'Borg queries').element.value).toBe('120')
+
+    // The legacy retention_days from the response is what the next save sends.
+    mockPut.mockClear()
+    await wrapper.find('form.form-stack').trigger('submit')
+    await flushPromises()
+    expect(mockPut).toHaveBeenCalledWith(
+      '/system/settings',
+      expect.objectContaining({ retention_days: 14 }),
+    )
   })
 
   describe('config import', () => {
@@ -705,24 +811,22 @@ describe('SystemView', () => {
       await flushPromises()
     }
 
-    it('renders No file chosen initially', () => {
+    it('renders No file chosen initially', async () => {
       setupSuccessMocks()
-      const wrapper = renderWithPlugins(SystemView)
+      const wrapper = await mountAll()
       expect(wrapper.text()).toContain('No file chosen')
     })
 
     it('shows filename after file selection', async () => {
       setupSuccessMocks()
-      const wrapper = renderWithPlugins(SystemView)
-      await flushPromises()
+      const wrapper = await mountAll()
       await selectFile(wrapper, '{}', 'my-config.json')
       expect(wrapper.text()).toContain('my-config.json')
     })
 
     it('disables Import button when no file is selected', async () => {
       setupSuccessMocks()
-      const wrapper = renderWithPlugins(SystemView)
-      await flushPromises()
+      const wrapper = await mountAll()
       const importBtn = wrapper.findAll('button').find((b) => b.text() === 'Import')!
       expect((importBtn.element as HTMLButtonElement).disabled).toBe(true)
     })
@@ -740,8 +844,7 @@ describe('SystemView', () => {
     it('calls API and shows result on successful import', async () => {
       setupSuccessMocks()
       mockPost.mockResolvedValue({ data: MOCK_IMPORT_RESULT })
-      const wrapper = renderWithPlugins(SystemView)
-      await flushPromises()
+      const wrapper = await mountAll()
       await selectAndImport(wrapper)
       await flushPromises()
       expect(mockPost).toHaveBeenCalledWith('/config/import', {
@@ -761,8 +864,7 @@ describe('SystemView', () => {
       mockPost.mockResolvedValue({
         data: { ...MOCK_IMPORT_RESULT, warnings: ['schedule "nightly" already exists, skipped'] },
       })
-      const wrapper = renderWithPlugins(SystemView)
-      await flushPromises()
+      const wrapper = await mountAll()
       await selectAndImport(wrapper)
       await flushPromises()
       expect(wrapper.text()).toContain('schedule "nightly" already exists, skipped')
@@ -771,8 +873,7 @@ describe('SystemView', () => {
     it('shows error when import API fails', async () => {
       setupSuccessMocks()
       mockPost.mockRejectedValue(new Error('Network error'))
-      const wrapper = renderWithPlugins(SystemView)
-      await flushPromises()
+      const wrapper = await mountAll()
       await selectAndImport(wrapper)
       await flushPromises()
       expect(wrapper.text()).toContain('Import failed')
@@ -780,13 +881,11 @@ describe('SystemView', () => {
   })
 
   describe('destructive confirmations', () => {
-    async function render() {
-      const wrapper = renderWithPlugins(SystemView)
-      await flushPromises()
-      return wrapper
+    async function render(): Promise<VueWrapper> {
+      return mountAll()
     }
 
-    function button(wrapper: ReturnType<typeof renderWithPlugins>, label: string) {
+    function button(wrapper: VueWrapper, label: string) {
       const match = wrapper.findAll('button').find((b) => b.text().trim() === label)
       if (!match) throw new Error(`no button labelled "${label}"`)
       return match

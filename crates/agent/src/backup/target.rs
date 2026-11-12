@@ -87,6 +87,10 @@ pub struct BackupTarget {
     pub canary_enabled: bool,
     pub accept_relocation: bool,
     pub file_change_patterns: Vec<FileChangePattern>,
+    /// What the schedule asked for that this host will not do (virtual
+    /// machines or databases it has switched off), added to the run's report
+    /// as warnings so the Activity log says so, not only the agent's own log.
+    pub setup_warnings: Vec<String>,
 }
 
 impl Default for BackupTarget {
@@ -127,6 +131,7 @@ impl Default for BackupTarget {
             canary_enabled: false,
             accept_relocation: false,
             file_change_patterns: Vec::new(),
+            setup_warnings: Vec::new(),
         }
     }
 }

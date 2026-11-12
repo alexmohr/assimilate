@@ -6,17 +6,13 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { formatDate } from '../utils/format'
-import { domainParams } from '../utils/agent'
-import EntityTags from './EntityTags.vue'
 import HelpHint from './HelpHint.vue'
 import SettingsRail, { type SettingsSections } from './SettingsRail.vue'
 import AgentDefaultsCard from './AgentDefaultsCard.vue'
 import AgentDependenciesCard from './AgentDependenciesCard.vue'
 import AgentHostnameAliases from './AgentHostnameAliases.vue'
 import AgentProcessCard from './AgentProcessCard.vue'
-import AgentVmsCard from './AgentVmsCard.vue'
 import MachinePane from './MachinePane.vue'
-import AgentDatabasesCard from './AgentDatabasesCard.vue'
 import type { AgentRow } from '../types/agent'
 import type { SettingsSection } from '../utils/agentSettings'
 import { useSystemModeStore } from '../stores/systemMode'
@@ -68,14 +64,7 @@ const offersTokenRegeneration = computed(() => !isImported.value && !systemMode.
 const sections = computed<SettingsSections<SettingsSection>>(() => [
   { id: 'identity', label: 'Identity' },
   { id: 'defaults', label: 'Backup defaults' },
-  ...(props.isAdmin
-    ? [
-        { id: 'power', label: 'Power & dependencies' } as const,
-        { id: 'vms', label: 'Virtual machines' } as const,
-        { id: 'databases', label: 'Databases' } as const,
-        { id: 'tags', label: 'Tags' } as const,
-      ]
-    : []),
+  ...(props.isAdmin ? [{ id: 'power', label: 'Power & dependencies' } as const] : []),
 ])
 </script>
 
@@ -88,39 +77,39 @@ const sections = computed<SettingsSections<SettingsSection>>(() => [
     @update:section="emit('update:section', $event)"
   >
     <template v-if="currentSection === 'identity'">
-      <div class="pane-head">
-        <HelpHint label="host naming">
-          How this host names itself, and what the server knows about it.
-        </HelpHint>
-        <button
-          v-if="!isImported"
-          class="btn btn-sm"
-          type="button"
-          @click="emit('editIdentity')"
-        >
-          Edit
-        </button>
-      </div>
-      <dl class="info-grid">
-        <dt>Hostname</dt>
-        <dd class="mono">{{ agent.hostname }}</dd>
-        <dt>Domain</dt>
-        <dd class="mono">{{ agent.domain ?? 'Not set' }}</dd>
-        <dt>Display name</dt>
-        <dd>{{ agent.display_name ?? 'Not set' }}</dd>
-        <template v-if="!isImported">
-          <dt>Agent version</dt>
-          <dd class="mono">{{ agent.agent_version ?? 'Unknown' }}</dd>
-          <dt>Revision</dt>
-          <dd class="mono">{{ agent.agent_git_sha ?? 'Unknown' }}</dd>
-          <dt>Built</dt>
-          <dd class="mono">{{ agent.agent_build_time ?? 'Unknown' }}</dd>
-        </template>
-        <dt>Registered</dt>
-        <dd>{{ formatDate(agent.created_at ?? null, 'Never') }}</dd>
-        <dt>Last seen</dt>
-        <dd>{{ formatDate(agent.last_seen_at ?? null, 'Never') }}</dd>
-      </dl>
+      <section class="pane-section">
+        <div class="pane-head">
+          <p class="pane-lede">How this host names itself, and what the server knows about it.</p>
+          <button
+            v-if="!isImported"
+            class="btn btn-sm"
+            type="button"
+            @click="emit('editIdentity')"
+          >
+            Edit
+          </button>
+        </div>
+        <dl class="info-grid">
+          <dt>Hostname</dt>
+          <dd class="mono">{{ agent.hostname }}</dd>
+          <dt>Domain</dt>
+          <dd class="mono">{{ agent.domain ?? 'Not set' }}</dd>
+          <dt>Display name</dt>
+          <dd>{{ agent.display_name ?? 'Not set' }}</dd>
+          <template v-if="!isImported">
+            <dt>Agent version</dt>
+            <dd class="mono">{{ agent.agent_version ?? 'Unknown' }}</dd>
+            <dt>Revision</dt>
+            <dd class="mono">{{ agent.agent_git_sha ?? 'Unknown' }}</dd>
+            <dt>Built</dt>
+            <dd class="mono">{{ agent.agent_build_time ?? 'Unknown' }}</dd>
+          </template>
+          <dt>Registered</dt>
+          <dd>{{ formatDate(agent.created_at ?? null, 'Never') }}</dd>
+          <dt>Last seen</dt>
+          <dd>{{ formatDate(agent.last_seen_at ?? null, 'Never') }}</dd>
+        </dl>
+      </section>
 
       <section
         v-if="offersTokenRegeneration"
@@ -177,24 +166,5 @@ const sections = computed<SettingsSections<SettingsSection>>(() => [
         :can-edit="!isImported && isAdmin"
       />
     </MachinePane>
-
-    <AgentVmsCard
-      v-else-if="currentSection === 'vms'"
-      :agent="agent"
-      :can-edit="!isImported"
-    />
-
-    <AgentDatabasesCard
-      v-else-if="currentSection === 'databases'"
-      :agent="agent"
-      :can-edit="!isImported"
-    />
-
-    <EntityTags
-      v-else-if="currentSection === 'tags'"
-      scope="host"
-      :entity-path="`/agents/${agent.hostname}`"
-      :entity-params="domainParams(agent.domain)"
-    />
   </SettingsRail>
 </template>

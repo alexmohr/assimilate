@@ -665,6 +665,60 @@ pub struct NotificationEvent {
     pub activity_url: Option<String>,
 }
 
+/// Where a notification from a channel takes whoever opens it: the click on
+/// a push notification, the link in an email, a webhook payload's
+/// `activity_url`.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    Default,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    TS,
+    ToSchema,
+    strum_macros::Display,
+    strum_macros::EnumString,
+)]
+#[ts(export)]
+#[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case")]
+pub enum NotificationLinkTarget {
+    /// The place the event is about: a failed or warned backup's run in the
+    /// Activity Log, otherwise its schedule, agent or repository.
+    #[default]
+    Automatic,
+    /// The Activity Log, filtered to the event.
+    Activity,
+    /// The page of the agent the event is about.
+    Agent,
+    /// The page of the schedule the event is about.
+    Schedule,
+    /// The page of the repository the event is about.
+    Repository,
+    /// The dashboard.
+    Dashboard,
+    /// A fixed address of the operator's own.
+    Custom,
+    /// No link at all.
+    None,
+}
+
+/// A channel's link setting: where its notifications lead, and the address
+/// for a [`NotificationLinkTarget::Custom`] one.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS, ToSchema)]
+#[ts(export)]
+pub struct NotificationLink {
+    /// Where the notification leads.
+    pub target: NotificationLinkTarget,
+    /// The address, for `custom` only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub url: Option<String>,
+}
+
 /// A configured destination that notification events are delivered to.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS, ToSchema)]
 #[ts(export)]
@@ -687,6 +741,9 @@ pub struct NotificationChannelResponse {
     pub enabled: bool,
     /// Which repositories, agents and schedules trigger this channel.
     pub scope: ChannelScope,
+    /// Where this channel's notifications link to.
+    #[serde(default)]
+    pub link: NotificationLink,
     /// When the channel was created.
     pub created_at: DateTime<Utc>,
     /// When the channel was last updated.
@@ -755,6 +812,11 @@ pub struct CreateChannelRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub scope: Option<ChannelScope>,
+    /// Where the channel's notifications link to; defaults to where the event
+    /// happened.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub link: Option<NotificationLink>,
 }
 
 /// Request body for partially updating a notification channel. Omitted fields
@@ -780,6 +842,9 @@ pub struct UpdateChannelRequest {
     /// New scope.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub scope: Option<ChannelScope>,
+    /// New link setting.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub link: Option<NotificationLink>,
 }
 
 /// [`UpdateChannelRequest`] as it arrives, before `channel_type` and `config`
@@ -796,6 +861,8 @@ struct UpdateChannelRequestWire {
     enabled: Option<bool>,
     #[serde(default)]
     scope: Option<ChannelScope>,
+    #[serde(default)]
+    link: Option<NotificationLink>,
 }
 
 impl TryFrom<UpdateChannelRequestWire> for UpdateChannelRequest {
@@ -814,6 +881,7 @@ impl TryFrom<UpdateChannelRequestWire> for UpdateChannelRequest {
             config,
             enabled: wire.enabled,
             scope: wire.scope,
+            link: wire.link,
         })
     }
 }
@@ -899,6 +967,9 @@ pub mod ts_shapes {
         /// New scope.
         #[ts(optional)]
         pub scope: Option<ChannelScope>,
+        /// New link setting.
+        #[ts(optional)]
+        pub link: Option<crate::notifications::NotificationLink>,
         /// Replacement configuration, or none.
         #[ts(flatten)]
         pub config: ConfigChange,
@@ -956,6 +1027,7 @@ mod tests {
             webhook_headers: Vec::new(),
             enabled: true,
             scope: ChannelScope::default(),
+            link: NotificationLink::default(),
             created_at: DateTime::UNIX_EPOCH,
             updated_at: DateTime::UNIX_EPOCH,
         };
@@ -1256,6 +1328,29 @@ mod tests {
     }
 
     #[test]
+    fn a_link_reads_its_target_and_defaults_to_where_the_event_happened() {
+        let link: NotificationLink =
+            serde_json::from_value(json!({ "target": "custom", "url": "https://status.example" }))
+                .unwrap();
+        assert_eq!(link.target, NotificationLinkTarget::Custom);
+        assert_eq!(link.url.as_deref(), Some("https://status.example"));
+        assert_eq!(
+            NotificationLink::default().target,
+            NotificationLinkTarget::Automatic
+        );
+        assert_eq!(
+            "repository".parse::<NotificationLinkTarget>().unwrap(),
+            NotificationLinkTarget::Repository
+        );
+        let req: UpdateChannelRequest =
+            serde_json::from_value(json!({ "link": { "target": "dashboard" } })).unwrap();
+        assert_eq!(
+            req.link.map(|l| l.target),
+            Some(NotificationLinkTarget::Dashboard)
+        );
+    }
+
+    #[test]
     fn update_request_round_trips_through_its_own_serialization() {
         let req = UpdateChannelRequest {
             name: Some("Ops".to_owned()),
@@ -1265,6 +1360,7 @@ mod tests {
                 repo_ids: Some(vec![1]),
                 ..ChannelScope::default()
             }),
+            link: None,
         };
         let value = serde_json::to_value(&req).unwrap();
         assert_eq!(

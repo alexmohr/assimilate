@@ -14,8 +14,8 @@ async function gotoBackupsTab(page: Awaited<ReturnType<typeof test.info>['page']
 async function clickFirstArchiveRow(
   page: Awaited<ReturnType<typeof test.info>['page']>,
 ): Promise<boolean> {
-  // The row, not the focus-only button inside it, is what takes the pointer.
-  const archiveRow = page.locator('.archive-row').first()
+  // Each archive row is a button of its own.
+  const archiveRow = page.getByTestId('archive-row').first()
   const rowVisible = await archiveRow.isVisible({ timeout: 5_000 }).catch(() => false)
   if (!rowVisible) return false
   await archiveRow.click()
@@ -81,9 +81,7 @@ test.describe('Schedule backups tab - archive browser', () => {
 
     // The file browser should show with breadcrumb
     await expect(page.locator('.path-crumbs')).toBeVisible()
-    await expect(
-      page.locator('.path-crumbs').getByText('~').or(page.locator('.path-crumbs').getByText('/')),
-    ).toBeVisible()
+    await expect(page.locator('.path-crumbs .crumb-root')).toHaveText('/')
   })
 
   test('download buttons present in file browser when archive selected', async ({ page }) => {
@@ -93,14 +91,11 @@ test.describe('Schedule backups tab - archive browser', () => {
       test.skip()
       return
     }
-    await page.waitForTimeout(1000)
 
-    // Check for download buttons in the file browser
-    const downloadButton = page.locator('.archive-file-browser button[title*="Download"]').first()
-    const buttonVisible = await downloadButton.isVisible({ timeout: 10_000 }).catch(() => false)
-    if (buttonVisible) {
-      await expect(downloadButton).toBeVisible()
-    }
+    // Downloading the whole archive is in the open archive's menu.
+    const browser = page.locator('.archive-file-browser')
+    await browser.getByRole('button', { name: 'Archive actions' }).click()
+    await expect(browser.getByRole('menuitem', { name: 'Download' })).toBeVisible()
   })
 
   // The schedule tab used to render its own four-column table: no grouping, no
@@ -111,7 +106,7 @@ test.describe('Schedule backups tab - archive browser', () => {
 
     if (
       !(await page
-        .locator('.archive-row')
+        .getByTestId('archive-row')
         .first()
         .isVisible()
         .catch(() => false))
@@ -120,37 +115,39 @@ test.describe('Schedule backups tab - archive browser', () => {
       return
     }
 
-    await expect(page.locator('.archive-controls input')).toBeVisible()
-    await expect(page.locator('.archive-sort-select')).toBeVisible()
+    const list = page.locator('.archives-panel')
+    await expect(list.locator('.archive-controls input')).toBeVisible()
+    // Grouping and sort are in the list's menu.
+    await list.getByRole('button', { name: 'List options' }).click()
+    await expect(list.getByRole('menuitemradio', { name: 'Date newest first' })).toBeVisible()
     // Schedule 1 backs up one machine, so its archives are listed by day and
     // host grouping is not on offer: one group holding everything says nothing.
     // repo-archives-group-by-host.spec.ts covers the host groups and their
     // agent links on a repository several hosts share.
-    const groupToggle = page.locator('.archive-group-toggle')
-    await expect(groupToggle).toBeVisible()
-    await expect(groupToggle.getByRole('radio', { name: 'By day' })).toBeVisible()
-    await expect(groupToggle.getByRole('radio', { name: 'By host' })).toHaveCount(0)
-    await expect(page.locator('.archive-day-label').first()).toBeVisible()
-    await expect(page.locator('.archive-group .group-hostname')).toHaveCount(0)
+    await expect(list.getByRole('menuitemradio', { name: 'By day' })).toHaveAttribute(
+      'aria-checked',
+      'true',
+    )
+    await expect(list.getByRole('menuitemradio', { name: 'By host' })).toHaveCount(0)
+    await list.getByRole('button', { name: 'List options' }).click()
+    await expect(list.locator('.row-group-label').first()).toBeVisible()
+    await expect(list.locator('.group-hostname')).toHaveCount(0)
   })
 
   test('an admin can reach archive deletion from the backups tab', async ({ page }) => {
     await gotoBackupsTab(page)
 
-    if (
-      !(await page
-        .locator('.archive-row')
-        .first()
-        .isVisible()
-        .catch(() => false))
-    ) {
+    if (!(await clickFirstArchiveRow(page))) {
       test.skip()
       return
     }
 
     // Open the confirmation and cancel it: the point is that the control is
-    // there and wired up, not that this run deletes a seeded archive.
-    await page.locator('.archive-row button[title="Delete archive"]').first().click()
+    // there and wired up, not that this run deletes a seeded archive. It is in
+    // the open archive's menu.
+    const browser = page.locator('.archive-file-browser')
+    await browser.getByRole('button', { name: 'Archive actions' }).click()
+    await browser.getByRole('menuitem', { name: 'Delete archive...' }).click()
     await expect(page.locator('.archive-delete-message')).toBeVisible()
     await page.locator('.modal-footer').getByRole('button', { name: 'Cancel' }).click()
     await expect(page.locator('.archive-delete-message')).not.toBeVisible()
@@ -158,41 +155,45 @@ test.describe('Schedule backups tab - archive browser', () => {
 
   test('file rows keep their actions inside the file browser panel', async ({ page }) => {
     // Beside the 380px archive list, a 1280px desktop leaves the file pane
-    // narrower than the table's old fixed 40rem floor: the table scrolled
-    // sideways and each row's restore button sat past the panel's edge. 1100
-    // is the narrow-desktop band where the pane drops to the compact columns,
-    // and 375 is a phone, where the panes stack.
+    // narrow: the old file table scrolled sideways and each row's restore
+    // button sat past the panel's edge. 1100 is the narrow-desktop band, and
+    // 375 is a phone, where the open archive replaces the list. Restoring is
+    // the selection bar's, so one entry is ticked to bring it up.
     await gotoBackupsTab(page)
     if (!(await clickFirstArchiveRow(page))) {
       test.skip()
       return
     }
+    const firstRow = page.locator('.archive-file-browser').getByTestId('browser-entry').first()
+    await expect(firstRow).toBeVisible({ timeout: 30_000 })
+    await firstRow.getByTestId('pick-entry').check()
+    await expect(page.getByTestId('browser-selection')).toBeVisible()
 
     for (const width of [1280, 1100, 375]) {
       await page.setViewportSize({ width, height: 800 })
-      const firstRow = page.locator('.archive-file-browser tbody tr').first()
       await expect(firstRow).toBeVisible({ timeout: 10_000 })
 
       const layout = await page.locator('.browser-panel').evaluate((panel) => {
         const box = panel.getBoundingClientRect()
-        const table = panel.querySelector('.browser-table')
-        const scroller = table?.parentElement
+        const rows = panel.querySelector('.archive-rows')
         return {
-          overflow: scroller ? scroller.scrollWidth - scroller.clientWidth : 0,
-          buttons: [...panel.querySelectorAll('tbody tr button, .browser-actions button')].map(
-            (button) => {
-              const b = button.getBoundingClientRect()
-              return {
-                title: button.getAttribute('title') ?? '',
-                left: b.left - box.left,
-                right: box.right - b.right,
-              }
-            },
-          ),
+          overflow: rows ? rows.scrollWidth - rows.clientWidth : 0,
+          buttons: [
+            ...panel.querySelectorAll(
+              '[data-testid="browser-entry"] button, .selection-bar button, .archive-head button',
+            ),
+          ].map((button) => {
+            const b = button.getBoundingClientRect()
+            return {
+              title: (button.getAttribute('aria-label') ?? button.textContent ?? '').trim(),
+              left: b.left - box.left,
+              right: box.right - b.right,
+            }
+          }),
         }
       })
 
-      expect(layout.overflow, `file table scrolls sideways at ${width}px`).toBeLessThanOrEqual(1)
+      expect(layout.overflow, `file rows scroll sideways at ${width}px`).toBeLessThanOrEqual(1)
       expect(layout.buttons.some((b) => b.title.startsWith('Restore'))).toBe(true)
       for (const button of layout.buttons) {
         expect(button.left, `"${button.title}" is clipped at ${width}px`).toBeGreaterThanOrEqual(-1)
@@ -216,7 +217,7 @@ test.describe('Schedule backups tab - archive browser', () => {
     await expect(breadcrumb).toBeVisible()
 
     // Try navigating into a directory if one exists
-    const dirEntry = page.locator('.archive-file-browser tr.clickable').first()
+    const dirEntry = page.locator('.archive-file-browser .browser-open').first()
     const dirVisible = await dirEntry.isVisible({ timeout: 5_000 }).catch(() => false)
     if (!dirVisible) {
       test.skip()

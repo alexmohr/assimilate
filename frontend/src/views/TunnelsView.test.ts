@@ -170,7 +170,7 @@ describe('TunnelsView', () => {
     expect(disabledRow.text()).toContain('Disabled')
     expect(disabledRow.get('.status-dot').classes()).not.toContain('status-dot--danger')
     expect(wrapper.get('.page-description').text()).toBe(
-      'Reverse SSH tunnels that let an agent reach a repository host it cannot connect to directly.',
+      'Reverse SSH tunnels that let an agent reach this server when it cannot connect to it directly.',
     )
   })
 
@@ -297,10 +297,17 @@ describe('TunnelsView', () => {
     const wrapper = renderWithPlugins(TunnelsView)
     await flushPromises()
 
+    expect(rowOf(wrapper, 'media-store-01').get('.status-dot').classes()).not.toContain(
+      'status-dot--success',
+    )
+
     wsHandlers.get('TunnelStatusChanged')!({ agent_id: 3, status: 'connected' })
     await flushPromises()
 
-    expect(rowOf(wrapper, 'media-store-01').get('.tunnel-status .badge').text()).toBe('Connected')
+    // A connected tunnel is said by its green dot alone; no state is named.
+    const row = rowOf(wrapper, 'media-store-01')
+    expect(row.get('.status-dot').classes()).toContain('status-dot--success')
+    expect(row.get('.tunnel-status').text()).toBe('')
   })
 
   it('still lists the tunnels when the agents cannot be loaded', async () => {
@@ -527,9 +534,8 @@ describe('TunnelsView', () => {
     const wrapper = renderWithPlugins(TunnelsView)
     await flushPromises()
 
-    expect(wrapper.find('.badge--danger').exists()).toBe(true)
-    expect(wrapper.text()).toContain('Error')
-    // The error itself is on the row, under the badge.
+    expect(wrapper.get('.tunnel-status-text--danger').text()).toBe('Error')
+    // The error itself is on the row, under the state.
     expect(wrapper.get('[data-testid="tunnel-error"]').text()).toBe('handshake failed')
     expect(wrapper.get('.tunnel-row .status-dot').classes()).toContain('status-dot--danger')
   })

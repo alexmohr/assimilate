@@ -29,9 +29,9 @@ test.describe('archive filter via ?archive= query parameter', () => {
     const repoId = await goToServerDailyArchives(page)
 
     // Read the first archive name from the list
-    const firstArchiveName = page.locator('.archive-row .archive-name').first()
+    const firstArchiveName = page.getByTestId('archive-row').locator('.browser-row-title').first()
     await expect(firstArchiveName).toBeVisible()
-    const archiveName = (await firstArchiveName.textContent()) ?? ''
+    const archiveName = ((await firstArchiveName.textContent()) ?? '').trim()
     expect(archiveName).toBeTruthy()
 
     // Navigate to the same repo with archive filter query param
@@ -46,9 +46,9 @@ test.describe('archive filter via ?archive= query parameter', () => {
     // The archive browser and its controls are hidden while filtered to a
     // single archive - only the banner and the matching archive's file
     // browser are shown.
-    await expect(page.locator('.archive-row')).toHaveCount(0)
+    await expect(page.getByTestId('archive-row')).toHaveCount(0)
     await expect(page.locator('.archive-controls')).not.toBeVisible()
-    await expect(page.locator('.browser-title')).toContainText(archiveName)
+    await expect(page.locator('.archive-head-name')).toContainText(archiveName)
   })
 
   test('AC-E2: clicking "Show all archives" restores the full archive list', async ({ page }) => {
@@ -57,13 +57,13 @@ test.describe('archive filter via ?archive= query parameter', () => {
     const repoId = await goToServerDailyArchives(page)
 
     // Get the first archive name
-    const firstArchiveName = page.locator('.archive-row .archive-name').first()
+    const firstArchiveName = page.getByTestId('archive-row').locator('.browser-row-title').first()
     await expect(firstArchiveName).toBeVisible()
-    const archiveName = (await firstArchiveName.textContent()) ?? ''
+    const archiveName = ((await firstArchiveName.textContent()) ?? '').trim()
     expect(archiveName).toBeTruthy()
 
     // Get the total number of archive rows (should be >1 for server-daily)
-    const totalArchiveRows = page.locator('.archive-row')
+    const totalArchiveRows = page.getByTestId('archive-row')
     const totalCount = await totalArchiveRows.count()
     expect(totalCount).toBeGreaterThan(1)
 
@@ -73,7 +73,7 @@ test.describe('archive filter via ?archive= query parameter', () => {
 
     // Verify the banner is visible and the archive browser is hidden
     await expect(page.locator('.archive-filter-banner')).toBeVisible()
-    await expect(page.locator('.archive-row')).toHaveCount(0)
+    await expect(page.getByTestId('archive-row')).toHaveCount(0)
 
     // Click "Show all archives"
     await page.getByRole('button', { name: 'Show all archives' }).click()
@@ -83,7 +83,7 @@ test.describe('archive filter via ?archive= query parameter', () => {
     await expect(page.locator('.archive-filter-banner')).not.toBeVisible()
 
     // Multiple archive rows should be visible again
-    const restoredCount = await page.locator('.archive-row').count()
+    const restoredCount = await page.getByTestId('archive-row').count()
     expect(restoredCount).toBeGreaterThan(1)
 
     // URL should no longer contain ?archive=

@@ -938,6 +938,9 @@ pub struct ActivityFeedFilters<'a> {
     pub run_id: Option<&'a str>,
     /// Which acknowledgment state to return.
     pub acknowledged: AcknowledgedFilter,
+    /// Only this one report: how a link to a single run is looked up, in the
+    /// same shape and with the same hidden and imported agents left out.
+    pub report_id: Option<i64>,
 }
 
 /// # Errors
@@ -958,13 +961,15 @@ pub async fn get_activity_feed(
          false AND COALESCE(a.display_name, '') NOT ILIKE '%(imported)%' AND ($1::bigint IS NULL \
          OR br.repo_id = $1) AND ($2::text IS NULL OR a.hostname = $2) AND ($3::bigint IS NULL OR \
          br.schedule_id = $3) AND ($4::text IS NULL OR br.run_id = $4) AND ($5::bool IS NULL OR \
-         br.acknowledged = $5) ORDER BY br.started_at DESC LIMIT $6",
+         br.acknowledged = $5) AND ($7::bigint IS NULL OR br.id = $7) ORDER BY br.started_at DESC \
+         LIMIT $6",
         filters.repo_id,
         filters.hostname,
         filters.schedule_id,
         filters.run_id,
         filters.acknowledged.as_sql_predicate(),
         limit,
+        filters.report_id,
     )
     .fetch_all(pool)
     .await

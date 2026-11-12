@@ -28,7 +28,8 @@ macro_rules! query_agent_rows {
              agent_token_hash, is_hidden, last_ssh_user, domain, wake_enabled, wake_mac_address, \
              wake_broadcast_address, wake_timeout_seconds, shutdown_after_backup, \
              start_agent_enabled, stop_agent_after_backup, ssh_host, ssh_port, \
-             agent_service_name, a.machine_id FROM agents a JOIN machines m ON m.id = \
+             agent_service_name, a.machine_id, a.database_backup_enabled FROM agents a JOIN \
+             machines m ON m.id = \
              a.machine_id "
                 + $tail
             $(, $arg)*
@@ -273,6 +274,9 @@ pub struct AgentRow {
     /// The machine this agent runs on, which holds the wake and availability
     /// settings above.
     pub machine_id: i64,
+    /// Whether the host allows database dumps at all; a schedule asking for
+    /// them gets none while this is off.
+    pub database_backup_enabled: bool,
 }
 
 /// Looks up an agent by hostname, optionally narrowed to a specific

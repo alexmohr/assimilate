@@ -3614,6 +3614,69 @@ async fn activity_feed_filters_on_acknowledgment_state(pool: PgPool) {
     assert!(days_hidden.is_empty());
 }
 
+/// The feed narrowed to one report, as a link to a single run asks for it.
+fn by_report(id: i64) -> ActivityFeedFilters<'static> {
+    ActivityFeedFilters {
+        report_id: Some(id),
+        ..Default::default()
+    }
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn activity_entry_finds_one_run_whatever_its_acknowledgment(pool: PgPool) {
+    let agent = db::insert_agent(&pool, "entry-host", None, "hash", None, None)
+        .await
+        .unwrap();
+    let repo = create_test_repo(&pool).await;
+    insert_report_with_status(
+        &pool,
+        agent.id,
+        repo.id,
+        shared::types::BackupStatus::Failed,
+    )
+    .await;
+    let report_id = db::get_activity_feed(&pool, 10, ActivityFeedFilters::default())
+        .await
+        .unwrap()
+        .first()
+        .unwrap()
+        .id;
+    db::set_backup_report_acknowledged(&pool, report_id, true)
+        .await
+        .unwrap();
+
+    let found = db::get_activity_feed(&pool, 1, by_report(report_id))
+        .await
+        .unwrap();
+    assert_eq!(found.len(), 1, "an acknowledged run is still found by id");
+    assert_eq!(found.first().map(|r| r.id), Some(report_id));
+    assert_eq!(
+        found.first().map(|r| r.hostname.as_str()),
+        Some("entry-host")
+    );
+
+    // The windowed feed takes the same filters, so it narrows to the run too.
+    let days = db::get_activity_feed_days(&pool, 7, None, by_report(report_id))
+        .await
+        .unwrap();
+    assert_eq!(days.iter().map(|r| r.id).collect::<Vec<_>>(), [report_id]);
+
+    let unknown = db::get_activity_feed(&pool, 1, by_report(i64::MAX))
+        .await
+        .unwrap();
+    assert_eq!(unknown.len(), 0, "an unknown id finds nothing");
+
+    db::set_agent_hidden(&pool, agent.id, true).await.unwrap();
+    let hidden = db::get_activity_feed(&pool, 1, by_report(report_id))
+        .await
+        .unwrap();
+    assert_eq!(
+        hidden.len(),
+        0,
+        "a hidden agent's run stays out, as it does from the feed"
+    );
+}
+
 #[sqlx::test(migrations = "./migrations")]
 async fn acknowledge_backup_reports_in_repos_only_touches_listed_repos(pool: PgPool) {
     let agent = db::insert_agent(&pool, "bulk-ack-host", None, "hash", None, None)
@@ -6272,6 +6335,97 @@ async fn api_token_crud(pool: PgPool) {
     db::delete_api_token(&pool, token.id).await.unwrap();
     let tokens = db::list_api_tokens_for_user(&pool, user.id).await.unwrap();
     assert_eq!(tokens.len(), 0);
+}
+
+/// The agent record says whether the host allows database dumps, so a list
+/// of agents can flag a schedule asking for dumps a host will not make.
+#[sqlx::test(migrations = "./migrations")]
+async fn an_agent_row_carries_its_database_dump_setting(pool: PgPool) {
+    let agent = db::insert_agent(&pool, "dumps-host", None, "hash-dumps", None, None)
+        .await
+        .unwrap();
+    assert!(!agent.database_backup_enabled);
+    sqlx::query!(
+        "UPDATE agents SET database_backup_enabled = true WHERE id = $1",
+        agent.id
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    assert!(
+        db::get_agent_by_id(&pool, agent.id)
+            .await
+            .unwrap()
+            .database_backup_enabled
+    );
+}
+
+/// Both token lookups (the API's and `/metrics`') refuse a token past its
+/// expiry and accept one still in date; both stay listed with their date.
+/// `test_an_expired_token_is_refused_over_http` covers the HTTP side.
+#[sqlx::test(migrations = "./migrations")]
+async fn an_expired_api_token_is_refused(pool: PgPool) {
+    use shared::types::ApiTokenScope;
+
+    let user = db::insert_user(&pool, "expiring", "hash").await.unwrap();
+    let past = Utc::now().checked_sub_signed(Duration::hours(1)).unwrap();
+    let future = Utc::now().checked_add_signed(Duration::days(30)).unwrap();
+
+    let stale = db::insert_api_token_expiring(
+        &pool,
+        user.id,
+        "stale",
+        "hash-stale",
+        ApiTokenScope::Full,
+        Some(past),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        stale.expires_at.map(|t| t.timestamp_micros()),
+        Some(past.timestamp_micros())
+    );
+    db::insert_api_token_expiring(
+        &pool,
+        user.id,
+        "fresh",
+        "hash-fresh",
+        ApiTokenScope::Full,
+        Some(future),
+    )
+    .await
+    .unwrap();
+    db::insert_api_token_expiring(
+        &pool,
+        user.id,
+        "stale-metrics",
+        "hash-stale-metrics",
+        ApiTokenScope::Monitoring,
+        Some(past),
+    )
+    .await
+    .unwrap();
+
+    assert!(
+        db::get_user_by_token_hash(&pool, "hash-stale")
+            .await
+            .is_err()
+    );
+    assert_eq!(
+        db::get_user_by_token_hash(&pool, "hash-fresh")
+            .await
+            .unwrap()
+            .user_id,
+        user.id
+    );
+    assert!(
+        !db::touch_monitoring_token(&pool, "hash-stale-metrics")
+            .await
+            .unwrap()
+    );
+    let listed = db::list_api_tokens_for_user(&pool, user.id).await.unwrap();
+    assert_eq!(listed.len(), 3);
+    assert!(listed.iter().all(|t| t.expires_at.is_some()));
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -14291,6 +14445,33 @@ async fn host_settings_apply_to_every_repository_on_it(pool: PgPool) {
     let stats = db::get_repo_with_stats(&pool, second.id).await.unwrap();
     assert!(stats.host_intermittent);
     assert_eq!(stats.repo_host_id, first.repo_host_id);
+}
+
+/// The repositories list shows what its host's last reachability check found,
+/// and nothing before the host was ever checked.
+#[sqlx::test(migrations = "./migrations")]
+async fn repo_stats_carry_the_hosts_last_check(pool: PgPool) {
+    let repo = create_test_repo(&pool).await;
+    let before = db::get_repo_with_stats(&pool, repo.id).await.unwrap();
+    assert_eq!(before.host_last_check_reachable, None);
+    assert_eq!(before.host_last_checked_at, None);
+
+    let at = Utc::now()
+        .checked_sub_signed(Duration::minutes(12))
+        .unwrap();
+    db::machines::record_machine_check(&pool, before.host_machine_id, false, at)
+        .await
+        .unwrap();
+
+    let after = db::get_repo_with_stats(&pool, repo.id).await.unwrap();
+    assert_eq!(after.host_last_check_reachable, Some(false));
+    assert_eq!(
+        after.host_last_checked_at.map(|t| t.timestamp_micros()),
+        Some(at.timestamp_micros()),
+    );
+    let listed = db::list_repos_with_stats(&pool).await.unwrap();
+    let row = listed.iter().find(|r| r.id == repo.id).unwrap();
+    assert_eq!(row.host_last_check_reachable, Some(false));
 }
 
 /// Accepting a key for one repository pins it on the host, and so for every

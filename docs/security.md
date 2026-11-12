@@ -127,7 +127,7 @@ Permissions are managed by admins under **Settings → Access Control**.
 
 ## Session Idle Timeout
 
-An idle timeout can be configured under **System Settings**. Sessions that have no API activity for longer than the configured duration are automatically revoked on the next request.
+An idle timeout can be configured as **Idle session** under **Timeouts** in **System → Settings**. Sessions that have no API activity for longer than the configured duration are automatically revoked on the next request.
 
 - **Default:** 480 minutes (8 hours).
 - When idle timeout is exceeded, the session is deleted from the database and the user receives a `401 Unauthorized` response with the message "session expired due to inactivity".
@@ -155,7 +155,7 @@ Security properties:
 
 ## Session Management
 
-Users can view and manage their active sessions from the **Sessions** tab in their Profile page.
+Users can view and manage their active sessions from the **Sessions** section of their Profile page.
 
 - Each session displays creation time, expiration, last activity, and the "Remember Me" flag.
 - Users can revoke any session **except** their current one.

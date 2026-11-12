@@ -39,10 +39,14 @@ vi.mock('../components/BaseSpinner.vue', () => ({
   default: { template: '<div class="base-spinner" />' },
 }))
 
+// The open archive's file tree; deleting the archive lives in its menu, so the
+// stub carries that one action for an admin.
 vi.mock('../components/ArchiveFileBrowser.vue', () => ({
   default: {
-    props: ['repoId', 'archive', 'isAdmin'],
-    template: '<div class="archive-file-browser-stub" />',
+    props: ['repoId', 'archive', 'isAdmin', 'deleting'],
+    emits: ['delete-archive'],
+    template:
+      '<div class="archive-file-browser-stub"><button v-if="isAdmin" type="button" class="stub-delete-archive" :disabled="deleting" @click="$emit(\'delete-archive\')">Delete archive...</button></div>',
   },
 }))
 
@@ -237,16 +241,19 @@ async function goToSettings(wrapper: ReturnType<typeof renderWithPlugins>): Prom
   await flushPromises()
 }
 
-/** Switches to a settings sub-nav section; assumes the Settings tab is already active. */
+/**
+ * Opens a collapsible settings section; assumes the Settings tab is already
+ * active. A section that is already open is left open - clicking its head
+ * again would fold it away.
+ */
 async function goToSection(
   wrapper: ReturnType<typeof renderWithPlugins>,
   label: string,
 ): Promise<void> {
-  await wrapper
-    .findAll('.settings-nav-item')
-    .find((b) => b.text() === label)!
-    .trigger('click')
+  const head = wrapper.findAll('.accordion-head').find((b) => b.text() === label)!
+  if (head.attributes('aria-expanded') !== 'true') await head.trigger('click')
   await flushPromises()
+  expect(head.attributes('aria-expanded')).toBe('true')
 }
 
 /** Reads a `dt`/`dd` pair out of the Overview tab's info-grid by its label. */
@@ -370,7 +377,7 @@ describe('ScheduleDetailView - edit mode', () => {
     const wrapper = await createEditWrapper()
     await goToSettings(wrapper)
 
-    const sections = wrapper.findAll('.settings-nav-item').map((b) => b.text())
+    const sections = wrapper.findAll('.accordion-head').map((b) => b.text())
     expect(sections).toContain('Advanced')
   })
 
@@ -380,7 +387,7 @@ describe('ScheduleDetailView - edit mode', () => {
     await flushPromises()
     await goToSettings(wrapper)
 
-    const sections = wrapper.findAll('.settings-nav-item').map((b) => b.text())
+    const sections = wrapper.findAll('.accordion-head').map((b) => b.text())
     expect(sections).not.toContain('Advanced')
   })
 
@@ -643,6 +650,56 @@ describe('ScheduleDetailView - edit mode', () => {
     await flushPromises()
 
     expect(wrapper.find('.error-inline').exists()).toBe(true)
+  })
+
+  describe('hosts with database dumps turned off', () => {
+    /**
+     * A dump-enabled schedule on three targets: Web Server has dumps off on
+     * the host, db-server-01 allows them, and agent 99 is not in the agent
+     * list at all (deleted, or not visible to this user).
+     */
+    async function renderWithDumpTargets(
+      databaseBackupEnabled: boolean,
+    ): Promise<ReturnType<typeof renderWithPlugins>> {
+      const schedule = { ...mockSchedule, database_backup_enabled: databaseBackupEnabled }
+      setupEditMode(schedule)
+      const fallback = mockApiClient.get.getMockImplementation()!
+      mockApiClient.get.mockImplementation((url: string) => {
+        if (url === '/schedules/1/targets')
+          return Promise.resolve({
+            data: [
+              { agent_id: 10, execution_order: 0 },
+              { agent_id: 11, execution_order: 1 },
+              { agent_id: 99, execution_order: 2 },
+            ],
+          })
+        if (url === '/agents')
+          return Promise.resolve({
+            data: [
+              { ...mockAgents[0], database_backup_enabled: false },
+              { ...mockAgents[1], database_backup_enabled: true },
+            ],
+          })
+        return fallback(url)
+      })
+      const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })
+      await flushPromises()
+      return wrapper
+    }
+
+    it('names only the known targets whose host turned dumps off', async () => {
+      const wrapper = await renderWithDumpTargets(true)
+
+      const notice = wrapper.get('[data-testid="database-dump-mismatch"]')
+      expect(notice.text()).toContain('No databases will be dumped on 1 host')
+      expect(notice.findAll('.dump-mismatch-host').map((a) => a.text())).toEqual(['Web Server'])
+    })
+
+    it('says nothing when the schedule itself does not ask for dumps', async () => {
+      const wrapper = await renderWithDumpTargets(false)
+
+      expect(wrapper.find('[data-testid="database-dump-mismatch"]').exists()).toBe(false)
+    })
   })
 
   it('shows Run now and no Cancel backup button when nothing is running', async () => {
@@ -979,7 +1036,7 @@ describe('ScheduleDetailView - edit mode', () => {
     expect(mockApiClient.post).toHaveBeenCalledWith('/schedules/1/cancel')
   })
 
-  it('switches to the Logs tab from the Overview preview\'s "View all" link', async () => {
+  it('opens the schedule\'s run history in the Activity log from the Overview\'s "View all" link', async () => {
     setupEditModeWithReport({
       id: 1,
       status: 'success',
@@ -997,115 +1054,33 @@ describe('ScheduleDetailView - edit mode', () => {
         .find((t) => t.attributes('aria-selected') === 'true')!
         .text(),
     ).toBe('Overview')
+    // There is no Logs tab any more: the Activity log, filtered, replaces it.
+    expect(wrapper.findAll('.tab').map((t) => t.text())).toEqual([
+      'Overview',
+      'Backups',
+      'Settings',
+    ])
 
-    await wrapper.find('.section-link').trigger('click')
+    const link = wrapper.find('.section-link')
+    expect(link.text()).toBe('View all in Activity log')
+    await link.trigger('click')
     await flushPromises()
 
-    expect(
-      wrapper
-        .findAll('.tab')
-        .find((t) => t.attributes('aria-selected') === 'true')!
-        .text(),
-    ).toBe('Logs 1')
-  })
-
-  // The Logs tab's own toggle/open/load-more, as opposed to the Overview
-  // preview's openArchive path covered above - RunLogTab is the real
-  // component here, not a stub, so these exercise ScheduleDetailView's own
-  // wiring end to end.
-  it('wires the Logs tab toggle, open, sort and filter through to RunLogTab', async () => {
-    mockApiClient.get.mockImplementation((url: string) => {
-      if (url === '/schedules/1') return Promise.resolve({ data: mockSchedule })
-      if (url === '/schedules/1/targets')
-        return Promise.resolve({ data: [{ agent_id: mockSchedule.agent_id, execution_order: 0 }] })
-      if (url === '/schedules/1/sources')
-        return Promise.resolve({
-          data: { backup_sources: ['/data'], backup_sources_per_agent: [] },
-        })
-      if (url === '/schedules/1/reports') {
-        return Promise.resolve({
-          data: {
-            reports: [
-              {
-                id: 3,
-                agent_id: 10,
-                repo_id: 20,
-                repo_name: 'server-daily',
-                schedule_id: 1,
-                schedule_name: null,
-                status: 'success',
-                started_at: '2026-06-01T01:50:00Z',
-                finished_at: '2026-06-01T02:00:00Z',
-                duration_secs: 10,
-                original_size: 100,
-                compressed_size: 50,
-                deduplicated_size: 50,
-                files_processed: 5,
-                error_message: null,
-                warnings: [],
-                borg_version: null,
-                archive_name: 'web-server-01-2026-06-01',
-                borg_command: null,
-                run_id: 'run-3',
-              },
-            ],
-            total: 2,
-          },
-        })
-      }
-      if (url === '/schedules/1/reports/failed/count')
-        return Promise.resolve({ data: { count: 0 } })
-      if (url === '/agents') return Promise.resolve({ data: mockAgents })
-      if (url === '/repos') return Promise.resolve({ data: mockRepos })
-      if (String(url).endsWith('/catch-up'))
-        return Promise.resolve({ data: { hosts: [], repository_hosts: [] } })
-      return Promise.resolve({ data: [] })
-    })
-    const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })
-    await flushPromises()
-    await wrapper.find('.section-link').trigger('click')
-    await flushPromises()
-
-    // toggle: the row's own "Show detail" is only offered when there's a
-    // run_id/warnings/error to expand into - this report has a run_id.
-    const row = wrapper.find('.agent-row')
-    const toggleBtn = row.findAll('button').find((b) => b.text() === 'Show detail')
-    await toggleBtn!.trigger('click')
-    await flushPromises()
-    expect(row.find('button[aria-expanded="true"]').exists()).toBe(true)
-
-    // sort: v-model:sort-ascending, driven by RunLogTab's own toggle button.
-    const sortBtn = wrapper.findAll('button').find((b) => b.text() === 'Newest first')
-    await sortBtn!.trigger('click')
-    await flushPromises()
-    expect(wrapper.findAll('button').some((b) => b.text() === 'Oldest first')).toBe(true)
-
-    // filter: v-model:filter, driven by the status segmented control.
-    const successFilter = wrapper.findAll('button').find((b) => b.text().startsWith('Success'))
-    await successFilter!.trigger('click')
-    await flushPromises()
-    expect(wrapper.find('.agent-row').exists()).toBe(true)
-
-    // open: jumps to the archive on its own repository, not this schedule's
-    // Backups tab (that's openArchive, covered elsewhere) - navigates away,
-    // so this runs last.
-    await wrapper.find('.agent-row').find('button.agent-row-name').trigger('click')
-    await flushPromises()
     const router = (wrapper.vm as { $router: { currentRoute: { value: { fullPath: string } } } })
       .$router
-    expect(router.currentRoute.value.fullPath).toBe(
-      '/repos/20?tab=archives&archive=web-server-01-2026-06-01',
-    )
+    expect(router.currentRoute.value.fullPath).toBe('/activity?category=backup&schedule_id=1')
   })
 
-  it('loads the next page of the Logs tab on Load more', async () => {
+  it('loads the next page of runs on the Backups tab on Load more', async () => {
     setupEditModeWithReport({
       id: 1,
       status: 'success',
       finished_at: '2026-06-01T02:00:00Z',
       agent_id: 10,
+      started_at: '2026-06-01T01:55:00Z',
       original_size: 100,
       duration_secs: 10,
+      archive_name: 'web-server-01-2026-06-01',
     })
     // Override just the reports fetch to report more rows than were loaded.
     const baseImpl = mockApiClient.get.getMockImplementation()!
@@ -1119,12 +1094,16 @@ describe('ScheduleDetailView - edit mode', () => {
     })
     const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })
     await flushPromises()
-    await wrapper.find('.section-link').trigger('click')
+    await wrapper
+      .findAll('.tab')
+      .find((t) => t.text() === 'Backups')!
+      .trigger('click')
     await flushPromises()
     mockApiClient.get.mockClear()
 
-    const loadMoreBtn = wrapper.findAll('button').find((b) => b.text().startsWith('Load'))
-    await loadMoreBtn!.trigger('click')
+    const loadMoreBtn = wrapper.find('.pager-load-more button')
+    expect(loadMoreBtn.text()).toContain('more runs')
+    await loadMoreBtn.trigger('click')
     await flushPromises()
 
     expect(mockApiClient.get).toHaveBeenCalledWith(
@@ -1134,61 +1113,20 @@ describe('ScheduleDetailView - edit mode', () => {
   })
 
   // Regression test: the activeTab watcher used to call loadReports()
-  // unconditionally on every switch to the Backups/Logs tab, which is a full
-  // reportsPager.load() - a first-page reset. Leaving the Logs tab (e.g. to
+  // unconditionally on every switch to a tab that lists runs, which is a full
+  // reportsPager.load() - a first-page reset. Leaving the tab (e.g. to
   // Overview) and coming back used to silently throw away whatever "Load
   // more" progress the user had made, with nothing on screen to explain why
   // their report count dropped back down.
-  it('keeps Load more progress on the Logs tab across a tab switch away and back', async () => {
+  it('keeps Load more progress on the Backups tab across a tab switch away and back', async () => {
     setupEditModeWithReport({
       id: 1,
       status: 'success',
       finished_at: '2026-06-01T02:00:00Z',
       agent_id: 10,
+      started_at: '2026-06-01T01:55:00Z',
       original_size: 100,
       duration_secs: 10,
-    })
-    const baseImpl = mockApiClient.get.getMockImplementation()!
-    mockApiClient.get.mockImplementation((url: string) => {
-      if (url === '/schedules/1/reports') {
-        return baseImpl(url).then((res: { data: { reports: unknown[]; total: number } }) => ({
-          data: { ...res.data, total: 5 },
-        }))
-      }
-      return baseImpl(url)
-    })
-    const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })
-    await flushPromises()
-    await wrapper.find('.section-link').trigger('click')
-    await flushPromises()
-
-    const loadMoreBtn = wrapper.findAll('button').find((b) => b.text().startsWith('Load'))
-    await loadMoreBtn!.trigger('click')
-    await flushPromises()
-    expect(wrapper.findAll('[id^="report-"]')).toHaveLength(2)
-
-    await wrapper
-      .findAll('.tab')
-      .find((t) => t.text() === 'Overview')!
-      .trigger('click')
-    await flushPromises()
-    await wrapper
-      .findAll('.tab')
-      .find((t) => t.text().startsWith('Logs'))!
-      .trigger('click')
-    await flushPromises()
-
-    expect(wrapper.findAll('[id^="report-"]')).toHaveLength(2)
-  })
-
-  // Logs tab coverage for loadMoreReports()/openReport() - the Backups tab's
-  // own pager (tested above via .section-link) exercises a different
-  // reload/loadMore pair, not RunLogTab's.
-  it('loads more runs and opens a run to its archive from the Logs tab', async () => {
-    setupEditModeWithReport({
-      id: 1,
-      status: 'success',
-      finished_at: '2026-06-01T02:00:00Z',
       archive_name: 'web-server-01-2026-06-01',
     })
     const baseImpl = mockApiClient.get.getMockImplementation()!
@@ -1200,38 +1138,31 @@ describe('ScheduleDetailView - edit mode', () => {
       }
       return baseImpl(url)
     })
-
     const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })
     await flushPromises()
-    await wrapper
-      .findAll('.tab')
-      .find((t) => t.text().startsWith('Logs'))!
-      .trigger('click')
+    const tab = (label: string) => wrapper.findAll('.tab').find((t) => t.text() === label)!
+
+    await tab('Backups').trigger('click')
     await flushPromises()
+    await wrapper.find('.pager-load-more button').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('.pager-load-more').text()).toContain('2 most recent runs (of 5)')
+
     mockApiClient.get.mockClear()
-
-    const loadMoreBtn = wrapper.findAll('button').find((b) => b.text().startsWith('Load'))
-    await loadMoreBtn!.trigger('click')
+    await tab('Overview').trigger('click')
     await flushPromises()
-    expect(mockApiClient.get).toHaveBeenCalledWith(
-      '/schedules/1/reports',
-      expect.objectContaining({ params: expect.objectContaining({ offset: 1 }) }),
-    )
-
-    await wrapper.find('.agent-row-name').trigger('click')
+    await tab('Backups').trigger('click')
     await flushPromises()
 
-    const router = (wrapper.vm as { $router: { currentRoute: { value: { fullPath: string } } } })
-      .$router
-    expect(router.currentRoute.value.fullPath).toBe(
-      '/repos/20?tab=archives&archive=web-server-01-2026-06-01',
-    )
+    // No first-page reload on the way back, and the progress is still shown.
+    expect(mockApiClient.get).not.toHaveBeenCalledWith('/schedules/1/reports', expect.anything())
+    expect(wrapper.find('.pager-load-more').text()).toContain('2 most recent runs (of 5)')
   })
 
   // A failed run wrote no archive, so this schedule's Backups tab has nothing
-  // to show for it - the run detail's Open in Logs hands it to the host that
-  // produced it, which renders its output in place.
-  it('sends a failed run to its output on the host from the run detail', async () => {
+  // to show for it - the run detail's Open in Activity log hands it to the
+  // log, filtered to its host and schedule and opened on that run.
+  it('sends a failed run to its output in the Activity log from the run detail', async () => {
     setupEditModeWithReport({
       id: 7,
       status: 'failed',
@@ -1247,19 +1178,21 @@ describe('ScheduleDetailView - edit mode', () => {
     const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })
     await flushPromises()
 
-    const open = wrapper.findAll('button').find((b) => b.text() === 'Open in Logs')
+    const open = wrapper.findAll('button').find((b) => b.text() === 'Open in Activity log')
     expect(open).toBeDefined()
     await open!.trigger('click')
     await flushPromises()
 
     const router = (wrapper.vm as { $router: { currentRoute: { value: { fullPath: string } } } })
       .$router
-    expect(router.currentRoute.value.fullPath).toBe('/agents/web-server-01?tab=logs&report=7')
+    expect(router.currentRoute.value.fullPath).toBe(
+      '/activity?category=backup&hostname=web-server-01&schedule_id=1&report=7',
+    )
   })
 
   // The host a run belongs to is resolved at click time - so a run whose host
   // cannot be named (an agent since deleted, no hostname on the report either)
-  // has to stay put rather than route to `/agents/`.
+  // has to stay put rather than open the log on a host it cannot name.
   it('stays put when a run names no host to open', async () => {
     setupEditModeWithReport({
       id: 8,
@@ -1276,16 +1209,18 @@ describe('ScheduleDetailView - edit mode', () => {
     })
     const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })
     await flushPromises()
+    const router = (wrapper.vm as { $router: { currentRoute: { value: { path: string } } } })
+      .$router
+    const before = router.currentRoute.value.path
 
     await wrapper
       .findAll('button')
-      .find((b) => b.text() === 'Open in Logs')!
+      .find((b) => b.text() === 'Open in Activity log')!
       .trigger('click')
     await flushPromises()
 
-    const router = (wrapper.vm as { $router: { currentRoute: { value: { path: string } } } })
-      .$router
-    expect(router.currentRoute.value.path).not.toContain('/agents/')
+    expect(router.currentRoute.value.path).toBe(before)
+    expect(router.currentRoute.value.path).not.toContain('/activity')
     expect(logger.error).toHaveBeenCalledWith('cannot open a run whose host is unknown', 8)
   })
 
@@ -1381,7 +1316,8 @@ describe('ScheduleDetailView - edit mode', () => {
     await goToSettings(wrapper)
     await goToSection(wrapper, 'Targets')
 
-    const selects = wrapper.findAll('select')
+    // General stays open above Targets, so the selects are read inside Targets.
+    const selects = wrapper.get('#acc-body-targets').findAll('select')
     await selects[0].setValue('21')
     await selects[1].setValue('continue')
 
@@ -1894,6 +1830,37 @@ describe('ScheduleDetailView - Backups tab', () => {
     await flushPromises()
   }
 
+  type Wrapper = ReturnType<typeof renderWithPlugins>
+
+  /** The archive list's row for `name`, if listed. */
+  function archiveRow(wrapper: Wrapper, name: string) {
+    return wrapper
+      .findAll('[data-testid="archive-row"]')
+      .find((r) => r.get('.browser-row-title').text() === name)
+  }
+
+  /** Whether a row carries the "Deleting" marker of a queued borg delete. */
+  function markedDeleting(wrapper: Wrapper, name: string): boolean {
+    return archiveRow(wrapper, name)!.find('.archive-row-deleting').exists()
+  }
+
+  /**
+   * Deletes an archive the way a reader does: opens it from the list, picks
+   * Delete from the open archive's menu, and confirms.
+   */
+  async function deleteArchive(wrapper: Wrapper, name: string): Promise<void> {
+    await archiveRow(wrapper, name)!.trigger('click')
+    await flushPromises()
+    await wrapper.get('.stub-delete-archive').trigger('click')
+    await flushPromises()
+    const confirm = document.body.querySelector<HTMLButtonElement>(
+      '.modal-dialog button.btn-danger',
+    )
+    expect(confirm).not.toBeNull()
+    confirm!.click()
+    await flushPromises()
+  }
+
   it('shows Backups tab button for backup-type schedule in edit mode', async () => {
     const wrapper = await createBackupsWrapper([])
 
@@ -2001,11 +1968,16 @@ describe('ScheduleDetailView - Backups tab', () => {
 
     await goToBackups(wrapper)
 
-    await wrapper.find('.archive-row-select').trigger('click')
+    const browser = () => wrapper.findComponent('.archive-file-browser-stub')
+    expect(browser().props('archive')).toBeNull()
+    await archiveRow(wrapper, 'test-archive-2026-06-01')!.trigger('click')
     await flushPromises()
 
-    expect(wrapper.find('.archive-row').classes()).toContain('selected')
-    expect(wrapper.find('.archive-file-browser-stub').exists()).toBe(true)
+    const row = archiveRow(wrapper, 'test-archive-2026-06-01')!
+    expect(row.attributes('aria-current')).toBe('true')
+    expect(row.classes()).toContain('browser-row--selected')
+    expect((browser().props('archive') as { name: string }).name).toBe('test-archive-2026-06-01')
+    expect(browser().props('repoId')).toBe(20)
   })
 
   it('releases a row whose borg delete failed, once the repo queue goes idle', async () => {
@@ -2037,24 +2009,17 @@ describe('ScheduleDetailView - Backups tab', () => {
     await flushPromises()
     await goToBackups(wrapper)
 
-    await wrapper.find('button[title="Delete archive"]').trigger('click')
-    await flushPromises()
-    const confirm = document.body.querySelector<HTMLButtonElement>(
-      '.modal-dialog button.btn-danger',
-    )
-    expect(confirm).not.toBeNull()
-    confirm!.click()
-    await flushPromises()
-
-    expect(wrapper.find('button[title="Deletion in progress"]').exists()).toBe(true)
+    await deleteArchive(wrapper, 'test-archive-2026-06-01')
+    expect(mockApiClient.delete).toHaveBeenCalled()
+    expect(markedDeleting(wrapper, 'test-archive-2026-06-01')).toBe(true)
 
     // borg failed, so the archive is still listed - but the repository's
     // operation queue has drained, which means the delete is over either way.
     wsHandlers['RepoOpChanged']?.({ repo_id: 20, op: null })
     await flushPromises()
 
-    expect(wrapper.find('button[title="Deletion in progress"]').exists()).toBe(false)
-    expect(wrapper.find('button[title="Delete archive"]').exists()).toBe(true)
+    expect(markedDeleting(wrapper, 'test-archive-2026-06-01')).toBe(false)
+    expect(wrapper.find('.archive-row-deleting').exists()).toBe(false)
   })
 
   // The same failed-delete recovery, but against a secondary target. The view
@@ -2127,27 +2092,18 @@ describe('ScheduleDetailView - Backups tab', () => {
     await goToBackups(wrapper)
 
     // Both targets' archives are one list; the offsite copy is its own row.
-    const offsiteRow = () =>
-      wrapper.findAll('.archive-row').find((r) => r.find('.archive-name').text() === 'on-offsite')
-    expect(offsiteRow()).toBeDefined()
+    expect(archiveRow(wrapper, 'on-offsite')).toBeDefined()
+    expect(archiveRow(wrapper, 'on-primary')).toBeDefined()
 
-    await offsiteRow()!.find('button[title="Delete archive"]').trigger('click')
-    await flushPromises()
-    const confirm = document.body.querySelector<HTMLButtonElement>(
-      '.modal-dialog button.btn-danger',
-    )
-    expect(confirm).not.toBeNull()
-    confirm!.click()
-    await flushPromises()
-
-    expect(offsiteRow()!.find('button[title="Deletion in progress"]').exists()).toBe(true)
+    await deleteArchive(wrapper, 'on-offsite')
+    expect(markedDeleting(wrapper, 'on-offsite')).toBe(true)
 
     // The queue drained for the secondary target, not for the primary.
     wsHandlers['RepoOpChanged']?.({ repo_id: 21, op: null })
     await flushPromises()
 
-    expect(wrapper.find('button[title="Deletion in progress"]').exists()).toBe(false)
-    expect(offsiteRow()!.find('button[title="Delete archive"]').exists()).toBe(true)
+    expect(markedDeleting(wrapper, 'on-offsite')).toBe(false)
+    expect(wrapper.find('.archive-row-deleting').exists()).toBe(false)
   })
 
   // The target list is fetched separately from the schedule itself, so it is
@@ -2183,22 +2139,13 @@ describe('ScheduleDetailView - Backups tab', () => {
     await flushPromises()
     await goToBackups(wrapper)
 
-    await wrapper.find('button[title="Delete archive"]').trigger('click')
-    await flushPromises()
-    const confirm = document.body.querySelector<HTMLButtonElement>(
-      '.modal-dialog button.btn-danger',
-    )
-    expect(confirm).not.toBeNull()
-    confirm!.click()
-    await flushPromises()
-
-    expect(wrapper.find('button[title="Deletion in progress"]').exists()).toBe(true)
+    await deleteArchive(wrapper, 'test-archive-2026-06-01')
+    expect(markedDeleting(wrapper, 'test-archive-2026-06-01')).toBe(true)
 
     wsHandlers['RepoOpChanged']?.({ repo_id: mockSchedule.repo_id, op: null })
     await flushPromises()
 
-    expect(wrapper.find('button[title="Deletion in progress"]').exists()).toBe(false)
-    expect(wrapper.find('button[title="Delete archive"]').exists()).toBe(true)
+    expect(markedDeleting(wrapper, 'test-archive-2026-06-01')).toBe(false)
   })
 
   it('refetches the schedule reports when the server reports data changed', async () => {
@@ -2233,9 +2180,9 @@ describe('ScheduleDetailView - Backups tab', () => {
   // Regression test: a run dispatched elsewhere (a cron firing, another
   // session's Run now) never touches this page directly - the server's
   // DataChanged broadcast (sent on every backup start and completion) is the
-  // only signal it gets, and it must reach the Logs tab too, not just the
-  // Backups/Archives tab this describe block otherwise exercises.
-  it('picks up a new report on the Logs tab from a DataChanged event without user action', async () => {
+  // only signal it gets, and it must reach the Overview's Recent runs too, not
+  // just the Backups tab this describe block otherwise exercises.
+  it("picks up a new run on the Overview's Recent runs from a DataChanged event without user action", async () => {
     const report = {
       id: 1,
       status: 'success',
@@ -2247,12 +2194,7 @@ describe('ScheduleDetailView - Backups tab', () => {
       hostname: 'web-server-01',
     }
     const wrapper = await createBackupsWrapper([report])
-    await wrapper
-      .findAll('.tab')
-      .find((t) => t.text().startsWith('Logs'))!
-      .trigger('click')
-    await flushPromises()
-    expect(wrapper.findAll('[id^="report-"]')).toHaveLength(1)
+    expect(wrapper.findAll('.run-pill')).toHaveLength(1)
 
     const withNewReport = [
       report,
@@ -2268,7 +2210,7 @@ describe('ScheduleDetailView - Backups tab', () => {
     wsHandlers['DataChanged']?.({})
     await flushPromises()
 
-    expect(wrapper.findAll('[id^="report-"]')).toHaveLength(2)
+    expect(wrapper.findAll('.run-pill')).toHaveLength(2)
   })
 
   // The count backs a menu badge, not the page itself - a failure fetching
@@ -2337,19 +2279,15 @@ describe('ScheduleDetailView - Backups tab', () => {
     await flushPromises()
     await goToBackups(wrapper)
 
-    await wrapper.find('button[title="Delete archive"]').trigger('click')
-    await flushPromises()
-    document.body.querySelector<HTMLButtonElement>('.modal-dialog button.btn-danger')!.click()
-    await flushPromises()
-
-    expect(wrapper.find('button[title="Deletion in progress"]').exists()).toBe(true)
+    await deleteArchive(wrapper, 'test-archive-2026-06-01')
+    expect(markedDeleting(wrapper, 'test-archive-2026-06-01')).toBe(true)
 
     // The server names exactly which archive finished, so the marker goes
     // without waiting for a refetch to notice the row is gone.
     wsHandlers['ArchiveDeleted']?.({ repo_id: 20, archive_name: 'test-archive-2026-06-01' })
     await flushPromises()
 
-    expect(wrapper.find('button[title="Deletion in progress"]').exists()).toBe(false)
+    expect(wrapper.find('.archive-row-deleting').exists()).toBe(false)
   })
 
   it('hides save bar on Backups tab', async () => {
@@ -2417,14 +2355,14 @@ describe('ScheduleDetailView - header actions', () => {
     expect(wrapper.text()).toContain('This action cannot be undone.')
   })
 
-  it('has no Logs item in the overflow menu - Logs is a tab now', async () => {
+  it('has no Logs item in the overflow menu - the run history is in the Activity log', async () => {
     const wrapper = await createEditWrapper()
     await openMenu(wrapper)
 
     expect(wrapper.findAll('.overflow-menu-item').some((i) => i.text() === 'Logs')).toBe(false)
   })
 
-  it('renders the run log on the Logs tab', async () => {
+  it("shows a failed run in the Overview's run detail", async () => {
     setupEditModeWithReport({
       id: 1,
       status: 'failed',
@@ -2435,13 +2373,12 @@ describe('ScheduleDetailView - header actions', () => {
     const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })
     await flushPromises()
 
-    const logsTab = wrapper.findAll('button.tab').find((t) => t.text().startsWith('Logs'))
-    expect(logsTab).toBeDefined()
-    await logsTab!.trigger('click')
-    await flushPromises()
-
-    expect(wrapper.find('[id^="report-"]').exists()).toBe(true)
-    expect(wrapper.find('.agent-row-stripe--danger').exists()).toBe(true)
+    // No Logs tab: the run is read from the Overview, its output in the Activity log.
+    expect(wrapper.findAll('button.tab').some((t) => t.text().startsWith('Logs'))).toBe(false)
+    const row = wrapper.find('.run-detail .log-row')
+    expect(row.exists()).toBe(true)
+    expect(row.find('.log-row-dot').classes()).toContain('status-dot--danger')
+    expect(row.text()).toContain('Connection refused')
   })
 })
 
@@ -3452,68 +3389,6 @@ describe('ScheduleDetailView - load ordering', () => {
 
     expect(wrapper.text()).not.toContain('stale-run-from-schedule-one')
   })
-
-  // Regression: filterStatus/sortAscending/expandedReportId are the same
-  // category of new Logs-tab UI state as reports/total, added by this PR -
-  // but clearScheduleState() only reset reports/total. Without resetting
-  // these too, a sort/filter left on schedule A's Logs tab silently carried
-  // over onto schedule B after an in-app navigation reusing this component
-  // instance, with nothing on screen explaining why the tab looked
-  // differently sorted or filtered.
-  it('resets the Logs tab sort order when switching to a different schedule', async () => {
-    mockApiClient.get.mockImplementation((url: string) => {
-      if (url === '/schedules/1') return Promise.resolve({ data: mockSchedule })
-      if (url === '/schedules/4') return Promise.resolve({ data: { ...mockSchedule, id: 4 } })
-      if (url.startsWith('/schedules/') && url.endsWith('/repos'))
-        return Promise.resolve({ data: [{ repo_id: 20, execution_order: 0, required: true }] })
-      if (url.endsWith('/targets'))
-        return Promise.resolve({ data: [{ agent_id: 10, execution_order: 0 }] })
-      if (url.endsWith('/sources'))
-        return Promise.resolve({
-          data: { backup_sources: ['/data'], backup_sources_per_agent: [] },
-        })
-      if (url === '/agents') return Promise.resolve({ data: mockAgents })
-      if (url === '/repos') return Promise.resolve({ data: mockRepos })
-      if (String(url).endsWith('/reports'))
-        return Promise.resolve({ data: { reports: [], total: 0 } })
-      if (String(url).endsWith('/catch-up'))
-        return Promise.resolve({ data: { hosts: [], repository_hosts: [] } })
-      return Promise.resolve({ data: [] })
-    })
-
-    const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })
-    await flushPromises()
-    await wrapper
-      .findAll('.tab')
-      .find((t) => t.text().startsWith('Logs'))!
-      .trigger('click')
-    await flushPromises()
-
-    const sortBtn = wrapper.findAll('button').find((b) => b.text().includes('first'))!
-    expect(sortBtn.text()).toBe('Newest first')
-    await sortBtn.trigger('click')
-    expect(
-      wrapper
-        .findAll('button')
-        .find((b) => b.text().includes('first'))!
-        .text(),
-    ).toBe('Oldest first')
-
-    await wrapper.setProps({ id: '4' })
-    await flushPromises()
-    await wrapper
-      .findAll('.tab')
-      .find((t) => t.text().startsWith('Logs'))!
-      .trigger('click')
-    await flushPromises()
-
-    expect(
-      wrapper
-        .findAll('button')
-        .find((b) => b.text().includes('first'))!
-        .text(),
-    ).toBe('Newest first')
-  })
 })
 
 describe('ScheduleDetailView - dependencies', () => {
@@ -3657,7 +3532,7 @@ describe('ScheduleDetailView - dependencies', () => {
     await goToSettings(wrapper)
     await goToSection(wrapper, 'Power & dependencies')
 
-    expect(wrapper.find('.settings-nav-item[aria-current="true"]').text()).toBe(
+    expect(wrapper.find('.accordion-head[aria-controls="acc-body-power"]').text()).toBe(
       'Power & dependencies',
     )
     expect(wrapper.text()).toContain('No dependencies yet.')
@@ -3706,14 +3581,16 @@ describe('ScheduleDetailView - dependencies', () => {
     await flushPromises()
     await goToSettings(wrapper)
     await goToSection(wrapper, 'Power & dependencies')
+    // General stays open above it, so everything here is read inside the section.
+    const power = wrapper.get('#acc-body-power')
 
-    await wrapper
+    await power
       .findAll('button')
       .find((b) => b.text() === 'Edit')!
       .trigger('click')
-    await wrapper.find('[role="group"] input[type="checkbox"]').setValue(true)
+    await power.find('[role="group"] input[type="checkbox"]').setValue(true)
     mockApiClient.get.mockClear()
-    await wrapper
+    await power
       .findAll('button')
       .find((b) => b.text() === 'Save')!
       .trigger('click')
@@ -3724,7 +3601,7 @@ describe('ScheduleDetailView - dependencies', () => {
     })
     // The page's own copy (header badge, Overview) is refreshed from the server.
     expect(mockApiClient.get).toHaveBeenCalledWith('/schedules/1/dependencies')
-    expect(wrapper.findAll('[role="group"]')).toHaveLength(0)
+    expect(power.findAll('[role="group"]')).toHaveLength(0)
   })
 })
 

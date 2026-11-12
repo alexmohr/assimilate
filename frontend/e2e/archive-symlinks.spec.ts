@@ -21,18 +21,18 @@ test.describe('Symbolic links in the archive browser', () => {
     // deletes the newest archive here, and media-weekly also holds
     // web-server-01's dual-target copies, which have no media folder.
     await page
-      .locator('.archive-row')
+      .locator('.archives-panel')
+      .getByTestId('archive-row')
       .filter({ hasText: /media-store-01-backup-/ })
       .last()
-      .locator('.archive-name')
       .click()
 
     const browserPanel = page.locator('.browser-panel').last()
     const crumbs = browserPanel.locator('.path-crumbs .crumb')
     const open = async (name: RegExp | string): Promise<void> => {
-      const entry = browserPanel.locator('.name-text').filter({
-        hasText: typeof name === 'string' ? new RegExp(`^${name}$`) : name,
-      })
+      const entry = browserPanel
+        .getByTestId('browser-entry')
+        .getByRole('button', { name, exact: typeof name === 'string' })
       await expect(entry).toBeVisible({ timeout: 120_000 })
       const depth = await crumbs.count()
       await entry.click()
@@ -45,8 +45,8 @@ test.describe('Symbolic links in the archive browser', () => {
     await open('media')
 
     const row = (name: string) =>
-      browserPanel.locator('tbody tr').filter({
-        has: page.locator('.name-text', { hasText: new RegExp(`^${name}$`) }),
+      browserPanel.getByTestId('browser-entry').filter({
+        has: page.locator('.browser-row-title').getByText(name, { exact: true }),
       })
 
     const nas = row('nas')
@@ -55,9 +55,9 @@ test.describe('Symbolic links in the archive browser', () => {
     await expect(nas.locator('button[data-testid="link-target"]')).toHaveCount(0)
 
     const latest = row('latest')
-    await expect(latest.getByTestId('entry-link')).toContainText('Link')
+    await expect(latest.getByTestId('entry-link')).toContainText('link')
     await expect(latest.getByRole('button', { name: 'Open link target photos' })).toBeVisible()
-    await expect(latest.locator('.td-name')).toHaveAttribute(
+    await expect(latest.locator('.browser-open')).toHaveAttribute(
       'title',
       /Symbolic link: .*latest → photos/,
     )

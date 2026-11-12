@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
-import { expect, loginAsAdmin, test } from './fixtures'
+import { expect, loginAsAdmin, openSettingsSection, test } from './fixtures'
 import type { Locator, Page } from '@playwright/test'
 
 /**
@@ -21,7 +21,7 @@ test.describe('catch-up on the host', () => {
     await page.locator('a.list-row').filter({ hasText: name }).first().click()
     await page.waitForLoadState('networkidle')
     await page.getByRole('tab', { name: 'Settings' }).click()
-    await page.locator('.settings-nav-item', { hasText: 'Power' }).click()
+    await openSettingsSection(page, 'Power & dependencies')
     await page.waitForLoadState('networkidle')
   }
 

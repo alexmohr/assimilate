@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
-import { expect, loginAsAdmin, test } from './fixtures'
+import { expect, loginAsAdmin, openSettingsSection, test } from './fixtures'
 
 test.describe('Settings journey', () => {
   test('global excludes page loads with common patterns', async ({ page }) => {
@@ -10,17 +10,16 @@ test.describe('Settings journey', () => {
     await page.waitForLoadState('networkidle')
 
     await expect(page.getByRole('heading', { name: 'Global Excludes' })).toBeVisible()
-    const patterns = page.getByRole('textbox')
-    await expect(patterns).toBeVisible()
+    // The patterns read as a list, one per row; editing is behind Edit.
+    const patterns = page.getByRole('list', { name: 'Global exclude patterns' })
+    await expect(patterns).toBeVisible({ timeout: 15_000 })
+    await expect(patterns).toContainText('node_modules')
+    await expect(patterns).toContainText('__pycache__')
+    await expect(page.getByRole('textbox')).toHaveCount(0)
 
-    // The textarea renders as soon as loading flips false, which can happen a
-    // moment before the fetched raw_text is actually applied to it - poll
-    // instead of reading the value once.
-    await expect(async () => {
-      const value = await patterns.inputValue()
-      expect(value).toContain('node_modules')
-      expect(value).toContain('__pycache__')
-    }).toPass({ timeout: 15_000 })
+    // The pattern reference opens from inside the card.
+    await page.getByRole('button', { name: 'Pattern reference' }).click()
+    await expect(page.getByRole('button', { name: 'Close pattern reference' })).toBeVisible()
   })
 
   test('global excludes warns about a pattern anchored at the backup root', async ({ page }) => {
@@ -28,7 +27,12 @@ test.describe('Settings journey', () => {
     await page.goto('/excludes')
     await page.waitForLoadState('networkidle')
 
-    const patterns = page.getByRole('textbox')
+    await expect(page.getByRole('list', { name: 'Global exclude patterns' })).toContainText(
+      'node_modules',
+      { timeout: 15_000 },
+    )
+    await page.getByRole('button', { name: 'Edit' }).click()
+    const patterns = page.getByRole('textbox', { name: 'Global exclude patterns' })
     await expect(async () => {
       expect(await patterns.inputValue()).toContain('node_modules')
     }).toPass({ timeout: 15_000 })
@@ -42,6 +46,10 @@ test.describe('Settings journey', () => {
     await expect(warnings).toContainText('Line 1')
     await expect(warnings).toContainText('"*/.cache"')
     await expect(warnings.getByRole('listitem')).toHaveCount(1)
+
+    // Not saved: the seeded patterns stay as they are.
+    await page.getByRole('button', { name: 'Cancel' }).click()
+    await expect(patterns).toHaveCount(0)
   })
 
   // The demo seeds agent tokens, not personal API tokens, so this page is
@@ -52,9 +60,9 @@ test.describe('Settings journey', () => {
     await page.goto('/profile')
     await page.waitForLoadState('networkidle')
 
-    await page.getByRole('tab', { name: 'API tokens' }).click()
+    const tokens = await openSettingsSection(page, 'API tokens')
 
-    const empty = page.locator('.empty-state')
+    const empty = tokens.locator('.empty-state')
     await expect(empty.locator('.empty-title')).toHaveText('No API tokens yet')
     await expect(empty.locator('.empty-description')).toContainText(
       'authenticate without your password',
@@ -64,14 +72,59 @@ test.describe('Settings journey', () => {
     await expect(page.locator('.modal-title')).toHaveText('New API token')
   })
 
+  // Runs after the empty-list test above (CI runs one worker, a file's tests
+  // in order) and removes what it creates, so that list is empty again.
+  test('an API token can be given an expiry, which its row shows', async ({ page }) => {
+    await loginAsAdmin(page)
+    await page.goto('/profile')
+    await page.waitForLoadState('networkidle')
+    const tokens = await openSettingsSection(page, 'API tokens')
+
+    const name = `e2e-expiring-${Date.now()}`
+    await tokens.getByRole('button', { name: 'New token' }).first().click()
+    const dialog = page.getByRole('dialog', { name: 'New API token' })
+    await dialog.getByPlaceholder('e.g. CI pipeline').fill(name)
+    // Never is the default; a preset length says when that is before it is made.
+    const expiry = dialog.getByLabel('Expires')
+    await expect(expiry).toHaveValue('never')
+    await expect(dialog).toContainText('Works until it is deleted.')
+    await expiry.selectOption('90d')
+    await expect(dialog).toContainText('Stops working on')
+
+    const [created] = await Promise.all([
+      page.waitForResponse(
+        (resp) => resp.url().endsWith('/api/tokens') && resp.request().method() === 'POST',
+      ),
+      dialog.getByRole('button', { name: 'Create' }).click(),
+    ])
+    expect(created.ok()).toBe(true)
+    const body = (await created.json()) as { token: { id: number; expires_at: string | null } }
+    try {
+      expect(body.token.expires_at).not.toBeNull()
+      // The created token's notice repeats when it stops working.
+      const done = page.getByRole('dialog', { name: 'Token created' })
+      await expect(done).toContainText('It stops working on')
+      await done.getByRole('button', { name: 'Done' }).click()
+
+      const row = tokens.locator('tbody tr').filter({ hasText: name })
+      await expect(row).toBeVisible()
+      const expires = row.locator('td[data-label="Expires"]')
+      await expect(expires).not.toHaveText('Never')
+      await expect(expires).not.toBeEmpty()
+    } finally {
+      const removed = await page.request.delete(`/api/tokens/${body.token.id}`)
+      expect(removed.ok()).toBe(true)
+    }
+  })
+
   test('notifications page shows configured channels', async ({ page }) => {
     await loginAsAdmin(page)
     await page.goto('/notifications')
     await page.waitForLoadState('networkidle')
 
     await expect(page.getByRole('heading', { name: 'Notifications' })).toBeVisible()
-    // Each channel is a row naming its type and whether it is switched on;
-    // the on/off switch itself lives in the row's menu (Pause/Resume).
+    // Each channel is a row naming its type, and Paused when it is switched
+    // off; pausing and resuming live on the channel's own page.
     const webhook = page.locator('.list-row').filter({
       has: page.locator('.list-row-name', { hasText: 'Ops Webhook' }),
     })
@@ -82,7 +135,8 @@ test.describe('Settings journey', () => {
     await expect(email).toBeVisible()
     await expect(webhook.locator('.list-row-sub')).toContainText('Webhook')
     await expect(email.locator('.list-row-sub')).toContainText('Email')
-    await expect(webhook.locator('.badge', { hasText: 'On' })).toBeVisible()
+    // A channel that is on says nothing more; only a paused one is named.
+    await expect(webhook).not.toContainText('Paused')
   })
 
   test('tunnels page shows configured tunnel connection details', async ({ page }) => {
@@ -100,8 +154,12 @@ test.describe('Settings journey', () => {
     await expect(row).toBeVisible({ timeout: 15_000 })
     await expect(row.locator('.tunnel-target')).toContainText('borg@127.0.0.1')
     // The demo's loopback tunnel dials a real SSH session on container
-    // startup; give the status badge its own room to reach Connected.
-    await expect(row.locator('.tunnel-status .badge')).toHaveText('Connected', { timeout: 15_000 })
+    // startup; give it its own room to reach Connected, which the row's dot
+    // says (a state other than connected is named in words).
+    await expect(row.locator('.status-dot')).toHaveClass(/status-dot--success/, {
+      timeout: 15_000,
+    })
+    await expect(row.locator('.tunnel-status')).not.toContainText('Disconnected')
   })
 
   // A tunnel row is a link to the tunnel's own page, which holds what the

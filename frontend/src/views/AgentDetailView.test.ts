@@ -186,12 +186,6 @@ function setupApi(reports = mockReports, repos: unknown[] = [], schedules: unkno
   })
 }
 
-async function openLogsTab(wrapper: VueWrapper<ComponentPublicInstance>): Promise<void> {
-  const router = (wrapper.vm as { $router: { push: (loc: unknown) => Promise<void> } }).$router
-  await router.push({ query: { tab: 'logs' } })
-  await flushPromises()
-}
-
 async function openSchedulesTab(wrapper: VueWrapper<ComponentPublicInstance>): Promise<void> {
   const router = (wrapper.vm as { $router: { push: (loc: unknown) => Promise<void> } }).$router
   await router.push({ query: { tab: 'schedules' } })
@@ -204,181 +198,9 @@ async function openBackupsArchivesTab(wrapper: VueWrapper<ComponentPublicInstanc
   await flushPromises()
 }
 
-describe('AgentDetailView — logs tab', () => {
+describe('AgentDetailView — live run updates', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-  })
-
-  it('shows filter buttons on the backups tab', async () => {
-    setupApi()
-    const wrapper = renderWithPlugins(AgentDetailView, {
-      props: { hostname: 'test-host' },
-      storeState: { auth: { user: { role: 'admin' } } },
-    })
-    await flushPromises()
-    await openLogsTab(wrapper)
-
-    const labels = wrapper.findAll('.segmented-option').map((b) => b.text())
-    expect(labels).toEqual(['All 3', 'Success 1', 'Warning 1', 'Failed 1'])
-  })
-
-  it('shows sort toggle button on the backups tab', async () => {
-    setupApi()
-    const wrapper = renderWithPlugins(AgentDetailView, {
-      props: { hostname: 'test-host' },
-      storeState: { auth: { user: { role: 'admin' } } },
-    })
-    await flushPromises()
-    await openLogsTab(wrapper)
-
-    expect(wrapper.text()).toMatch(/Newest|Oldest/)
-  })
-
-  it('renders all reports by default', async () => {
-    setupApi()
-    const wrapper = renderWithPlugins(AgentDetailView, {
-      props: { hostname: 'test-host' },
-      storeState: { auth: { user: { role: 'admin' } } },
-    })
-    await flushPromises()
-    await openLogsTab(wrapper)
-
-    expect(wrapper.findAll('[id^="report-"]')).toHaveLength(3)
-  })
-
-  it('shows the repo and schedule name on each report so a failure can be traced', async () => {
-    setupApi()
-    const wrapper = renderWithPlugins(AgentDetailView, {
-      props: { hostname: 'test-host' },
-      storeState: { auth: { user: { role: 'admin' } } },
-    })
-    await flushPromises()
-    await openLogsTab(wrapper)
-
-    const card = wrapper.findAll('[id^="report-"]')[0]
-    expect(card.text()).toContain('server-daily')
-    expect(card.text()).toContain('Nightly Server Backup')
-    const scheduleLink = card.find('a.row-schedule-link')
-    expect(scheduleLink.exists()).toBe(true)
-    expect(scheduleLink.attributes('href')).toBe('/schedules/100')
-  })
-
-  it('omits the schedule link when a report has no schedule_id', async () => {
-    setupApi([{ ...mockReports[0], schedule_id: null, schedule_name: null }])
-    const wrapper = renderWithPlugins(AgentDetailView, {
-      props: { hostname: 'test-host' },
-      storeState: { auth: { user: { role: 'admin' } } },
-    })
-    await flushPromises()
-    await openLogsTab(wrapper)
-
-    const card = wrapper.findAll('[id^="report-"]')[0]
-    expect(card.find('a.row-schedule-link').exists()).toBe(false)
-    expect(card.text()).toContain('server-daily')
-  })
-
-  it('filters to only warning reports when Warning is clicked', async () => {
-    setupApi()
-    const wrapper = renderWithPlugins(AgentDetailView, {
-      props: { hostname: 'test-host' },
-      storeState: { auth: { user: { role: 'admin' } } },
-    })
-    await flushPromises()
-    await openLogsTab(wrapper)
-
-    const warningBtn = wrapper.findAll('button').find((b) => b.text().startsWith('Warning'))
-    await warningBtn!.trigger('click')
-
-    const rows = wrapper.findAll('[id^="report-"]')
-    expect(rows).toHaveLength(1)
-    expect(rows[0].find('.agent-row-stripe--warning').exists()).toBe(true)
-  })
-
-  it('shows the Warnings box but not a duplicate Error box for a warning-only report', async () => {
-    setupApi()
-    const wrapper = renderWithPlugins(AgentDetailView, {
-      props: { hostname: 'test-host' },
-      storeState: { auth: { user: { role: 'admin' } } },
-    })
-    await flushPromises()
-    await openLogsTab(wrapper)
-
-    const warningRow = wrapper
-      .findAll('[id^="report-"]')
-      .find((c) => c.find('.agent-row-stripe--warning').exists())
-    expect(warningRow).toBeDefined()
-    await warningRow!.find('button[aria-expanded]').trigger('click')
-
-    expect(wrapper.find('.group-label--warning').exists()).toBe(true)
-    expect(wrapper.find('.group-label--danger').exists()).toBe(false)
-  })
-
-  it('filters to only failed reports when Failed is clicked', async () => {
-    setupApi()
-    const wrapper = renderWithPlugins(AgentDetailView, {
-      props: { hostname: 'test-host' },
-      storeState: { auth: { user: { role: 'admin' } } },
-    })
-    await flushPromises()
-    await openLogsTab(wrapper)
-
-    const failedBtn = wrapper.findAll('button').find((b) => b.text().startsWith('Failed'))
-    await failedBtn!.trigger('click')
-
-    const rows = wrapper.findAll('[id^="report-"]')
-    expect(rows).toHaveLength(1)
-    expect(rows[0].find('.agent-row-stripe--danger').exists()).toBe(true)
-  })
-
-  it('restores all reports when All is clicked after filtering', async () => {
-    setupApi()
-    const wrapper = renderWithPlugins(AgentDetailView, {
-      props: { hostname: 'test-host' },
-      storeState: { auth: { user: { role: 'admin' } } },
-    })
-    await flushPromises()
-    await openLogsTab(wrapper)
-
-    await wrapper
-      .findAll('button')
-      .find((b) => b.text().startsWith('Warning'))!
-      .trigger('click')
-    expect(wrapper.findAll('[id^="report-"]')).toHaveLength(1)
-
-    await wrapper
-      .findAll('button')
-      .find((b) => b.text().startsWith('All'))!
-      .trigger('click')
-    expect(wrapper.findAll('[id^="report-"]')).toHaveLength(3)
-  })
-
-  it('shows empty filter message when no reports match the filter', async () => {
-    setupApi([mockReports[0]])
-    const wrapper = renderWithPlugins(AgentDetailView, {
-      props: { hostname: 'test-host' },
-      storeState: { auth: { user: { role: 'admin' } } },
-    })
-    await flushPromises()
-    await openLogsTab(wrapper)
-
-    await wrapper
-      .findAll('button')
-      .find((b) => b.text().startsWith('Failed'))!
-      .trigger('click')
-
-    expect(wrapper.text()).toContain('No backups match the current filter.')
-  })
-
-  it('shows empty state when no reports exist', async () => {
-    setupApi([])
-    const wrapper = renderWithPlugins(AgentDetailView, {
-      props: { hostname: 'test-host' },
-      storeState: { auth: { user: { role: 'admin' } } },
-    })
-    await flushPromises()
-    await openLogsTab(wrapper)
-
-    expect(wrapper.text()).toContain('No backup reports available.')
   })
 
   // Regression test: a run dispatched elsewhere (a cron firing, another
@@ -386,173 +208,23 @@ describe('AgentDetailView — logs tab', () => {
   // DataChanged broadcast (sent on every backup start and completion, see
   // run_dispatch.rs/ws/handler.rs) is the only signal it gets. DataChanged
   // routes through fetchAgent() -> loadTabData() -> reportsPager.load(), so a
-  // fourth report appearing server-side must show up here without any user
-  // action, not just on the next full page load.
+  // report appearing server-side must reach the Overview's verdict without
+  // any user action, not just on the next full page load.
   it('picks up a new report from a DataChanged event without user action', async () => {
-    setupApi()
+    setupApi([mockReports[0]])
     const wrapper = renderWithPlugins(AgentDetailView, {
       props: { hostname: 'test-host' },
       storeState: { auth: { user: { role: 'admin' } } },
     })
     await flushPromises()
-    await openLogsTab(wrapper)
-    expect(wrapper.findAll('[id^="report-"]')).toHaveLength(3)
+    expect(wrapper.get('.verdict').text()).toContain('All 1 recent runs were clean.')
 
-    const withNewReport = [
-      ...mockReports,
-      { ...mockReports[0], id: 4, archive_name: 'test-host-2026-06-04T10:00:00' },
-    ]
-    setupApi(withNewReport)
+    setupApi([mockReports[0], { ...mockReports[0], id: 4, finished_at: '2026-06-04T10:00:00Z' }])
 
     wsHandlers['DataChanged']?.({})
     await flushPromises()
 
-    expect(wrapper.findAll('[id^="report-"]')).toHaveLength(4)
-  })
-
-  it('highlights the report matching the archive query param', async () => {
-    setupApi()
-    const wrapper = renderWithPlugins(AgentDetailView, {
-      props: { hostname: 'test-host' },
-      storeState: { auth: { user: { role: 'admin' } } },
-    })
-    await flushPromises()
-
-    // Navigate to backups tab with archive query param via the router
-    const router = (wrapper.vm as { $router: { push: (loc: unknown) => Promise<void> } }).$router
-    await router.push({ query: { tab: 'logs', archive: 'test-host-2026-06-02T10:00:00' } })
-    await flushPromises()
-
-    const highlighted = wrapper.find('.agent-row--highlighted')
-    expect(highlighted.exists()).toBe(true)
-    expect(highlighted.find('.agent-row-stripe--warning').exists()).toBe(true)
-  })
-
-  it('auto-expands the report matching the archive query param', async () => {
-    setupApi()
-    const wrapper = renderWithPlugins(AgentDetailView, {
-      props: { hostname: 'test-host' },
-      storeState: { auth: { user: { role: 'admin' } } },
-    })
-    await flushPromises()
-
-    const router = (wrapper.vm as { $router: { push: (loc: unknown) => Promise<void> } }).$router
-    await router.push({ query: { tab: 'logs', archive: 'test-host-2026-06-02T10:00:00' } })
-    await flushPromises()
-
-    expect(wrapper.text()).toContain('some file changed during backup')
-  })
-
-  async function mountLogsWithStatus(
-    reports: unknown[],
-    status: string,
-  ): Promise<VueWrapper<ComponentPublicInstance>> {
-    setupApi(reports)
-    const wrapper = renderWithPlugins(AgentDetailView, {
-      props: { hostname: 'test-host' },
-      storeState: { auth: { user: { role: 'admin' } } },
-    })
-    await flushPromises()
-
-    const router = (wrapper.vm as { $router: { push: (loc: unknown) => Promise<void> } }).$router
-    await router.push({ query: { tab: 'logs', status } })
-    await flushPromises()
-    return wrapper
-  }
-
-  it('pins, expands and highlights the newest report matching the status query param', async () => {
-    const wrapper = await mountLogsWithStatus(mockReports, 'failed')
-
-    const highlighted = wrapper.find('.agent-row--highlighted')
-    expect(highlighted.exists()).toBe(true)
-    expect(highlighted.find('.agent-row-stripe--danger').exists()).toBe(true)
-    expect(wrapper.text()).toContain('Connection refused')
-  })
-
-  it('pins the newest report when several share the status query param', async () => {
-    const olderFailed = { ...mockReports[2], id: 4, finished_at: '2026-06-02T10:00:00Z' }
-    const newerFailed = { ...mockReports[2], id: 5, finished_at: '2026-06-04T10:00:00Z' }
-    const wrapper = await mountLogsWithStatus([olderFailed, newerFailed], 'failed')
-
-    const highlighted = wrapper.find('.agent-row--highlighted')
-    expect(highlighted.exists()).toBe(true)
-    expect(highlighted.attributes('id')).toBe('report-5')
-  })
-
-  it('re-pins the matching report when the status query param changes on an already-mounted page', async () => {
-    const wrapper = await mountLogsWithStatus(mockReports, 'failed')
-
-    let highlighted = wrapper.find('.agent-row--highlighted')
-    expect(highlighted.attributes('id')).toBe('report-3')
-
-    const router = (wrapper.vm as { $router: { push: (loc: unknown) => Promise<void> } }).$router
-    await router.push({ query: { tab: 'logs', status: 'warning' } })
-    await flushPromises()
-
-    highlighted = wrapper.find('.agent-row--highlighted')
-    expect(highlighted.exists()).toBe(true)
-    expect(highlighted.attributes('id')).toBe('report-2')
-  })
-
-  it('clears the pinned highlight and auto-expand when the status query param is removed', async () => {
-    const wrapper = await mountLogsWithStatus(mockReports, 'failed')
-
-    expect(wrapper.find('.agent-row--highlighted').exists()).toBe(true)
-    expect(wrapper.text()).toContain('Hide detail')
-
-    const router = (wrapper.vm as { $router: { push: (loc: unknown) => Promise<void> } }).$router
-    await router.push({ query: { tab: 'logs' } })
-    await flushPromises()
-
-    expect(wrapper.find('.agent-row--highlighted').exists()).toBe(false)
-    expect(wrapper.text()).not.toContain('Hide detail')
-  })
-
-  it('fetches the next page and appends it when Load more is clicked', async () => {
-    vi.mocked(apiClient.get).mockImplementation((url: string) => {
-      if (url === '/agents') return Promise.resolve({ data: [mockAgent] })
-      if (url === '/agents/test-host/reports') {
-        return Promise.resolve({ data: { reports: mockReports, total: 5 } })
-      }
-      if (url === '/agents/test-host/reports/failed/count')
-        return Promise.resolve({ data: { count: 0 } })
-      if (String(url).includes('/tags')) return Promise.resolve({ data: [] })
-      if (String(url).includes('/hostname-patterns')) return Promise.resolve({ data: [] })
-      return Promise.resolve({ data: [] })
-    })
-    const wrapper = renderWithPlugins(AgentDetailView, {
-      props: { hostname: 'test-host' },
-      storeState: { auth: { user: { role: 'admin' } } },
-    })
-    await flushPromises()
-    await openLogsTab(wrapper)
-
-    expect(wrapper.text()).toContain('Showing 3 of 5 runs')
-    const loadMoreBtn = wrapper.findAll('button').find((b) => b.text().startsWith('Load'))
-    expect(loadMoreBtn).toBeDefined()
-
-    vi.mocked(apiClient.get).mockImplementation((url: string) => {
-      if (url === '/agents') return Promise.resolve({ data: [mockAgent] })
-      if (url === '/agents/test-host/reports') {
-        return Promise.resolve({
-          data: { reports: [{ ...mockReports[0], id: 99 }], total: 5 },
-        })
-      }
-      if (url === '/agents/test-host/reports/failed/count')
-        return Promise.resolve({ data: { count: 0 } })
-      if (String(url).includes('/tags')) return Promise.resolve({ data: [] })
-      if (String(url).includes('/hostname-patterns')) return Promise.resolve({ data: [] })
-      return Promise.resolve({ data: [] })
-    })
-    await loadMoreBtn!.trigger('click')
-    await flushPromises()
-
-    expect(vi.mocked(apiClient.get)).toHaveBeenCalledWith(
-      '/agents/test-host/reports',
-      expect.objectContaining({ params: expect.objectContaining({ limit: 50, offset: 3 }) }),
-    )
-    expect(wrapper.findAll('[id^="report-"]')).toHaveLength(4)
-    expect(wrapper.text()).toContain('Showing 4 of 5 runs')
+    expect(wrapper.get('.verdict').text()).toContain('All 2 recent runs were clean.')
   })
 })
 
@@ -642,7 +314,7 @@ describe('AgentDetailView — schedules tab', () => {
     ])
 
     expect(wrapper.text()).toContain('Nightly Backup')
-    expect(wrapper.findAll('.rows .agent-row')).toHaveLength(1)
+    expect(wrapper.findAll('.sched-row[data-schedule-id]')).toHaveLength(1)
     expect(wrapper.text()).not.toContain('Disabled')
     expect(wrapper.text()).not.toContain('Sequential')
   })
@@ -660,7 +332,8 @@ describe('AgentDetailView — schedules tab', () => {
     expect(wrapper.find('.empty-title').text()).toBe('No schedules yet')
   })
 
-  it('opens the schedule when its name is clicked', async () => {
+  // The row itself is the link to the schedule.
+  it('opens the schedule when its row is clicked', async () => {
     const wrapper = await mountSchedulesTab([
       {
         id: 42,
@@ -674,7 +347,7 @@ describe('AgentDetailView — schedules tab', () => {
       },
     ])
 
-    await wrapper.find('.agent-row-name').trigger('click')
+    await wrapper.get('.sched-row[data-schedule-id="42"]').trigger('click')
     await flushPromises()
 
     const router = (wrapper.vm as { $router: { currentRoute: { value: { fullPath: string } } } })
@@ -682,7 +355,8 @@ describe('AgentDetailView — schedules tab', () => {
     expect(router.currentRoute.value.fullPath).toBe('/schedules/42')
   })
 
-  it('shows a Disabled badge and a muted stripe for a disabled schedule', async () => {
+  // The pill and stripe became the row's status dot and its Next run column.
+  it('says a disabled schedule is disabled, with an idle dot and no Run now', async () => {
     const wrapper = await mountSchedulesTab([
       {
         id: 1,
@@ -696,8 +370,10 @@ describe('AgentDetailView — schedules tab', () => {
       },
     ])
 
-    expect(wrapper.find('.entity-status-pill').text()).toBe('Disabled')
-    expect(wrapper.find('.agent-row-stripe--muted').exists()).toBe(true)
+    const row = wrapper.get('.sched-row[data-schedule-id="1"]')
+    expect(row.get('.sched-next').text()).toBe('Disabled')
+    expect(row.get('.sched-dot').classes()).toContain('sched-dot--idle')
+    expect(row.get('button[title="Run now"]').attributes('disabled')).toBeDefined()
   })
 
   function setupApiWithHealth(
@@ -756,20 +432,22 @@ describe('AgentDetailView — schedules tab', () => {
     })
   }
 
-  it('shows an Overdue issue chip on a schedule with no recent run', async () => {
+  // The Overdue chip became the row's amber dot; it counts as failing.
+  it('marks a schedule with no recent run amber, without highlighting it', async () => {
     const wrapper = renderWithHealth()
     await flushPromises()
     await openSchedulesTab(wrapper)
 
-    const chip = wrapper.find('.entity-issue-chip.sev-warning')
-    expect(chip.text()).toBe('Overdue')
-    expect(wrapper.find('.rows .agent-row').classes()).not.toContain('agent-row--highlighted')
+    const row = wrapper.get('.sched-row[data-schedule-id="1"]')
+    expect(row.get('.sched-dot').classes()).toContain('sched-dot--warning')
+    expect(row.classes()).not.toContain('sched-row--highlighted')
+    expect(wrapper.findAll('.filter-pill').map((p) => p.text())).toContain('Failing · 1')
   })
 
-  // The chips are links into the filtered activity log, not decoration. An
-  // earlier revision of the row rendered plain badges and silently dropped
-  // that; only the e2e suite noticed.
-  it('navigates to the filtered activity log from a Failed chip', async () => {
+  // A failing schedule's error line is a link into the filtered activity log,
+  // not decoration. An earlier revision of the row rendered plain badges and
+  // silently dropped that; only the e2e suite noticed.
+  it('navigates to the filtered activity log from a failed schedule', async () => {
     setupApiWithHealth(overdueSchedule, [
       { ...overdueHealth[0], is_overdue: false, last_status: 'failed' },
     ])
@@ -780,9 +458,9 @@ describe('AgentDetailView — schedules tab', () => {
     await flushPromises()
     await openSchedulesTab(wrapper)
 
-    const chip = wrapper.find('.entity-issue-chip.sev-danger')
-    expect(chip.text()).toBe('Failed')
-    await chip.trigger('click')
+    const failed = wrapper.get('.sched-row[data-schedule-id="1"] .sched-error--failed')
+    expect(failed.get('.sched-error-label').text()).toMatch(/^Failed/)
+    await failed.trigger('click')
     await flushPromises()
 
     const router = (wrapper.vm as { $router: { currentRoute: { value: { fullPath: string } } } })
@@ -800,7 +478,9 @@ describe('AgentDetailView — schedules tab', () => {
     await router.push({ query: { tab: 'schedules', health: 'overdue' } })
     await flushPromises()
 
-    expect(wrapper.find('.rows .agent-row').classes()).toContain('agent-row--highlighted')
+    expect(wrapper.get('.sched-row[data-schedule-id="1"]').classes()).toContain(
+      'sched-row--highlighted',
+    )
   })
 })
 
@@ -1578,39 +1258,65 @@ describe('AgentDetailView - tab bar and list controls', () => {
     })
     await flushPromises()
 
-    const logsTab = wrapper.findAll('button.tab').find((t) => t.text().includes('Logs'))
-    expect(logsTab).toBeDefined()
-    await logsTab!.trigger('click')
+    const schedulesTab = wrapper.findAll('button.tab').find((t) => t.text().includes('Schedules'))
+    expect(schedulesTab).toBeDefined()
+    await schedulesTab!.trigger('click')
     await flushPromises()
 
-    expect(logsTab!.classes()).toContain('active')
-    expect(wrapper.findAll('.segmented-option').some((b) => b.text().startsWith('Warning'))).toBe(
-      true,
-    )
+    expect(schedulesTab!.classes()).toContain('active')
+    expect(schedulesTab!.attributes('aria-selected')).toBe('true')
+    expect(wrapper.get('.empty-title').text()).toBe('No schedules yet')
+    const router = (
+      wrapper.vm as { $router: { currentRoute: { value: { query: Record<string, string> } } } }
+    ).$router
+    expect(router.currentRoute.value.query.tab).toBe('schedules')
+  })
+})
+
+describe('AgentDetailView - links to places that moved', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
   })
 
-  // Newest first is the default; the toggle is what an operator uses to walk
-  // a failure back to when it started.
-  it('reverses the backup list order from the sort toggle', async () => {
+  type RouterLike = {
+    push: (loc: unknown) => Promise<void>
+    currentRoute: { value: { path: string; query: Record<string, string> } }
+  }
+
+  async function openWith(query: Record<string, string>): Promise<RouterLike> {
     setupApi()
     const wrapper = renderWithPlugins(AgentDetailView, {
       props: { hostname: 'test-host' },
       storeState: { auth: { user: { role: 'admin' } } },
     })
     await flushPromises()
-    await openLogsTab(wrapper)
-
-    const reports = (): string[] =>
-      wrapper.findAll('[id^="report-"]').map((r) => r.attributes('id') ?? '')
-    const before = reports()
-    expect(before.length).toBeGreaterThan(1)
-
-    const sortBtn = wrapper.findAll('button').find((b) => /Newest|Oldest/.test(b.text()))
-    expect(sortBtn).toBeDefined()
-    await sortBtn!.trigger('click')
+    const router = (wrapper.vm as unknown as { $router: RouterLike }).$router
+    await router.push({ query })
     await flushPromises()
+    return router
+  }
 
-    expect(reports()).toEqual([...before].reverse())
+  it("sends an old Logs tab link to this agent's runs in the Activity log", async () => {
+    const router = await openWith({ tab: 'logs', status: 'failed' })
+
+    expect(router.currentRoute.value.path).toBe('/activity')
+    expect(router.currentRoute.value.query).toEqual({
+      category: 'backup',
+      hostname: 'test-host',
+      status: 'failed',
+    })
+  })
+
+  it('moves an old VM settings link to the Sources tab, section kept', async () => {
+    const router = await openWith({ tab: 'settings', section: 'vms' })
+
+    expect(router.currentRoute.value.query).toEqual({ tab: 'sources', section: 'vms' })
+  })
+
+  it('leaves a current link where it is', async () => {
+    const router = await openWith({ tab: 'schedules' })
+
+    expect(router.currentRoute.value.query).toEqual({ tab: 'schedules' })
   })
 })
 
@@ -1661,6 +1367,15 @@ describe('AgentDetailView - tab structure and settings', () => {
     return wrapper.findAll('button.tab').map((t) => t.text().replace(/\s+/g, ' ').trim())
   }
 
+  /** The settings sections whose body is showing. */
+  function openSections(wrapper: VueWrapper<ComponentPublicInstance>): string[] {
+    return wrapper.findAll('.accordion-head[aria-expanded="true"]').map((h) => h.text())
+  }
+
+  function sectionTitles(wrapper: VueWrapper<ComponentPublicInstance>): string[] {
+    return wrapper.findAll('.accordion-title').map((t) => t.text())
+  }
+
   async function goTo(
     wrapper: VueWrapper<ComponentPublicInstance>,
     query: Record<string, string>,
@@ -1670,12 +1385,56 @@ describe('AgentDetailView - tab structure and settings', () => {
     await flushPromises()
   }
 
-  // Settings is a fourth tab rather than a header link: it costs no new route,
-  // it matches the ?tab= convention the other detail views use, and it keeps
-  // the header's action row at navigation plus an overflow.
-  it('offers settings as a fourth tab', async () => {
+  // Settings is a tab rather than a header link: it costs no new route, it
+  // matches the ?tab= convention the other detail views use, and it keeps
+  // the header's action row at navigation plus an overflow. The Logs tab is
+  // gone (the Activity log is the one log view), and virtual machines and
+  // databases moved from Settings to a Sources tab of their own.
+  it('offers settings as the last tab, after sources', async () => {
     const wrapper = await render()
-    expect(tabLabels(wrapper)).toEqual(['Overview', 'Schedules 1', 'Backups', 'Logs 3', 'Settings'])
+    expect(tabLabels(wrapper)).toEqual([
+      'Overview',
+      'Schedules 1',
+      'Backups',
+      'Sources',
+      'Settings',
+    ])
+  })
+
+  it('lists virtual machines and databases on the sources tab', async () => {
+    const wrapper = await render()
+    await goTo(wrapper, { tab: 'sources' })
+
+    expect(sectionTitles(wrapper)).toEqual(['Virtual machines', 'Databases'])
+    expect(openSections(wrapper)).toEqual(['Virtual machines'])
+    expect(wrapper.findComponent({ name: 'AgentVmsCard' }).exists()).toBe(true)
+  })
+
+  it('deep-links to the databases on the sources tab, handing it the schedules', async () => {
+    const wrapper = await render()
+    await goTo(wrapper, { tab: 'sources', section: 'databases' })
+
+    expect(openSections(wrapper)).toEqual(['Databases'])
+    const card = wrapper.findComponent({ name: 'AgentDatabasesCard' })
+    expect(card.exists()).toBe(true)
+    expect((card.props('schedules') as { id: number }[]).map((x) => x.id)).toEqual([1])
+  })
+
+  it('records the chosen sources section in the URL, keeping the tab', async () => {
+    const wrapper = await render()
+    await goTo(wrapper, { tab: 'sources' })
+
+    await wrapper
+      .findAll('.accordion-head')
+      .find((b) => b.text() === 'Databases')!
+      .trigger('click')
+    await flushPromises()
+
+    const router = (
+      wrapper.vm as { $router: { currentRoute: { value: { query: Record<string, string> } } } }
+    ).$router
+    expect(router.currentRoute.value.query).toMatchObject({ tab: 'sources', section: 'databases' })
+    expect(openSections(wrapper)).toEqual(['Virtual machines', 'Databases'])
   })
 
   it('opens the settings tab in place, without leaving the route', async () => {
@@ -1687,17 +1446,14 @@ describe('AgentDetailView - tab structure and settings', () => {
     const router = (wrapper.vm as { $router: { currentRoute: { value: { path: string } } } })
       .$router
     expect(router.currentRoute.value.path).toBe('/')
-    expect(wrapper.find('.settings-nav').exists()).toBe(true)
+    expect(wrapper.find('[role="group"][aria-label="Agent settings sections"]').exists()).toBe(true)
   })
 
   it('deep-links to a settings section', async () => {
     const wrapper = await render()
     await goTo(wrapper, { tab: 'settings', section: 'defaults' })
 
-    const current = wrapper
-      .findAll('.settings-nav-item')
-      .find((b) => b.attributes('aria-current') === 'true')
-    expect(current!.text()).toBe('Backup defaults')
+    expect(openSections(wrapper)).toEqual(['Backup defaults'])
   })
 
   // Hostname aliases used to be a section of their own; an old link to it
@@ -1706,10 +1462,7 @@ describe('AgentDetailView - tab structure and settings', () => {
     const wrapper = await render()
     await goTo(wrapper, { tab: 'settings', section: 'aliases' })
 
-    const current = wrapper
-      .findAll('.settings-nav-item')
-      .find((b) => b.attributes('aria-current') === 'true')
-    expect(current!.text()).toBe('Identity')
+    expect(openSections(wrapper)).toEqual(['Identity'])
     expect(wrapper.findComponent({ name: 'AgentHostnameAliases' }).exists()).toBe(true)
   })
 
@@ -1718,15 +1471,15 @@ describe('AgentDetailView - tab structure and settings', () => {
     await goTo(wrapper, { tab: 'settings' })
 
     await wrapper
-      .findAll('.settings-nav-item')
-      .find((b) => b.text() === 'Tags')!
+      .findAll('.accordion-head')
+      .find((b) => b.text() === 'Backup defaults')!
       .trigger('click')
     await flushPromises()
 
     const router = (
       wrapper.vm as { $router: { currentRoute: { value: { query: Record<string, string> } } } }
     ).$router
-    expect(router.currentRoute.value.query.section).toBe('tags')
+    expect(router.currentRoute.value.query.section).toBe('defaults')
   })
 
   // Configuration used to stack up under the agent's status on the landing
@@ -1744,7 +1497,13 @@ describe('AgentDetailView - tab structure and settings', () => {
   // depending on which host was opened.
   it('keeps every tab for an imported host', async () => {
     const wrapper = await render({ is_imported: true })
-    expect(tabLabels(wrapper)).toEqual(['Overview', 'Schedules 1', 'Backups', 'Logs 3', 'Settings'])
+    expect(tabLabels(wrapper)).toEqual([
+      'Overview',
+      'Schedules 1',
+      'Backups',
+      'Sources',
+      'Settings',
+    ])
   })
 
   it('offers no agent-only settings for an imported host', async () => {
@@ -1771,10 +1530,9 @@ describe('AgentDetailView - tab structure and settings', () => {
     await flushPromises()
     await goTo(wrapper, { tab: 'settings' })
 
-    expect(wrapper.findAll('.settings-nav-item').map((b) => b.text())).toEqual([
-      'Identity',
-      'Backup defaults',
-    ])
+    expect(sectionTitles(wrapper)).toEqual(['Identity', 'Backup defaults'])
+    // Sources holds only admin settings, so the tab is absent too.
+    expect(tabLabels(wrapper)).toEqual(['Overview', 'Schedules 0', 'Backups', 'Settings'])
   })
 
   // Removing the host used to be a Settings section of its own; it now sits
@@ -1796,19 +1554,14 @@ describe('AgentDetailView - tab structure and settings', () => {
     it('drops the danger zone from the settings sub-nav', async () => {
       const wrapper = await render()
       await goTo(wrapper, { tab: 'settings' })
-      expect(wrapper.findAll('.settings-nav-item').map((b) => b.text())).not.toContain(
-        'Danger zone',
-      )
+      expect(sectionTitles(wrapper)).not.toContain('Danger zone')
     })
 
     it('opens a stale danger zone link on Identity', async () => {
       const wrapper = await render()
       await goTo(wrapper, { tab: 'settings', section: 'danger' })
 
-      const current = wrapper
-        .findAll('.settings-nav-item')
-        .find((b) => b.attributes('aria-current') === 'true')
-      expect(current!.text()).toBe('Identity')
+      expect(openSections(wrapper)).toEqual(['Identity'])
     })
 
     it('deletes the agent from the overflow menu after confirming', async () => {
@@ -1885,26 +1638,8 @@ describe('AgentDetailView - tab structure and settings', () => {
     expect(wrapper.find('input[placeholder="hostname"]').exists()).toBe(true)
   })
 
-  // A successful run is a link to what it produced.
-  it('opens the archive list for a successful backup', async () => {
-    const wrapper = await render()
-    await goTo(wrapper, { tab: 'logs' })
-
-    const successRow = wrapper
-      .findAll('[id^="report-"]')
-      .find((r) => r.find('button.agent-row-name').exists())
-    await successRow!.find('button.agent-row-name').trigger('click')
-    await flushPromises()
-
-    const router = (wrapper.vm as { $router: { currentRoute: { value: { fullPath: string } } } })
-      .$router
-    expect(router.currentRoute.value.fullPath).toContain('/repos/10')
-    expect(router.currentRoute.value.fullPath).toContain('tab=archives')
-    expect(router.currentRoute.value.fullPath).toContain('archive=')
-  })
-
-  // The other half: a failed run produced no archive, so the preview points
-  // at the only place its output is rendered - its own row, one tab over.
+  // A failed run produced no archive, so the preview points at the one place
+  // its output is rendered: its own run in the Activity log, already open.
   it('carries a failed preview run through to its output', async () => {
     const wrapper = await render()
 
@@ -1914,24 +1649,25 @@ describe('AgentDetailView - tab structure and settings', () => {
     await flushPromises()
 
     const router = (
-      wrapper.vm as { $router: { currentRoute: { value: { query: Record<string, string> } } } }
+      wrapper.vm as {
+        $router: { currentRoute: { value: { path: string; query: Record<string, string> } } }
+      }
     ).$router
-    expect(router.currentRoute.value.query.tab).toBe('logs')
-    expect(router.currentRoute.value.query.report).toBe('3')
-
-    const highlighted = wrapper.find('.agent-row--highlighted')
-    expect(highlighted.attributes('id')).toBe('report-3')
-    expect(wrapper.text()).toContain('Connection refused')
+    expect(router.currentRoute.value.path).toBe('/activity')
+    expect(router.currentRoute.value.query).toEqual({
+      category: 'backup',
+      hostname: 'test-host',
+      schedule_id: '100',
+      report: '3',
+    })
   })
 
-  // The pin the row asked for wins over one the route was already carrying,
-  // rather than the two selecting different runs on the same tab.
+  // The run the row asked for wins over a status the route was already
+  // carrying, rather than the log opening on a different run.
   it('drops a status pin when a preview row names its own run', async () => {
     const wrapper = await render()
-    await goTo(wrapper, { tab: 'logs', status: 'warning' })
-    expect(wrapper.find('.agent-row--highlighted').attributes('id')).toBe('report-2')
+    await goTo(wrapper, { tab: 'overview', status: 'warning' })
 
-    await goTo(wrapper, { tab: 'overview' })
     await wrapper
       .findAll('button')
       .find((b) => b.text() === 'View error')!
@@ -1942,18 +1678,7 @@ describe('AgentDetailView - tab structure and settings', () => {
       wrapper.vm as { $router: { currentRoute: { value: { query: Record<string, string> } } } }
     ).$router
     expect(router.currentRoute.value.query.status).toBeUndefined()
-    expect(wrapper.findAll('.agent-row--highlighted')).toHaveLength(1)
-    expect(wrapper.find('.agent-row--highlighted').attributes('id')).toBe('report-3')
-  })
-
-  // A link to a run that has since been cleaned up still has to render the
-  // tab, just without a pin.
-  it('ignores a report query param that matches no run', async () => {
-    const wrapper = await render()
-    await goTo(wrapper, { tab: 'logs', report: '9999' })
-
-    expect(wrapper.find('.agent-row--highlighted').exists()).toBe(false)
-    expect(wrapper.findAll('[id^="report-"]').length).toBeGreaterThan(0)
+    expect(router.currentRoute.value.query.report).toBe('3')
   })
 
   it('opens the deploy dialog from the header', async () => {
@@ -2512,13 +2237,10 @@ describe('AgentDetailView - adoption, restart and live updates', () => {
     expect(wrapper.find('.detail-breadcrumb .muted').exists()).toBe(false)
   })
 
-  // Regression test: the Logs tab reads `reports`/`reportsPager.total`
-  // directly and, unlike the Backups tab, doesn't gate its render on `agent`
-  // being resolved. Without clearing them up front in loadAgent(), switching
-  // to a different agent without a full remount (the route has no `:key`,
-  // so a real hostname navigation reuses this instance) left the previous
-  // agent's report rows on screen until the new agent's own
-  // reportsPager.load() resolved.
+  // Regression test: switching to a different agent without a full remount
+  // (the route has no `:key`, so a real hostname navigation reuses this
+  // instance) must not leave the previous agent's runs behind - loadAgent()
+  // clears `reports` up front, so host-b's Overview judges host-b alone.
   it('clears stale report rows when switching to a different agent without a remount', async () => {
     const agentA = { ...mockAgent, hostname: 'host-a' }
     const agentB = { ...mockAgent, hostname: 'host-b' }
@@ -2537,8 +2259,7 @@ describe('AgentDetailView - adoption, restart and live updates', () => {
       storeState: { auth: { user: { role: 'admin' } } },
     })
     await flushPromises()
-    await openLogsTab(wrapper)
-    expect(wrapper.findAll('[id^="report-"]')).toHaveLength(mockReports.length)
+    expect(wrapper.get('.verdict').text()).toContain('1 of the last 3 runs failed.')
 
     vi.mocked(apiClient.get).mockImplementation((url: string) => {
       if (url === '/agents') return Promise.resolve({ data: [agentB] })
@@ -2549,19 +2270,18 @@ describe('AgentDetailView - adoption, restart and live updates', () => {
       return Promise.resolve({ data: [] })
     })
     // Only settles the reactive update the watcher runs on - deliberately
-    // not flushPromises() yet, so this catches the rows still being on
+    // not flushPromises() yet, so this catches host-a's runs still being on
     // screen while host-b's own reportsPager.load() is still in flight.
     await wrapper.setProps({ hostname: 'host-b' })
     await nextTick()
-    expect(wrapper.findAll('[id^="report-"]')).toHaveLength(0)
+    expect(wrapper.text()).not.toContain('of the last 3 runs')
 
     await flushPromises()
-    expect(wrapper.findAll('[id^="report-"]')).toHaveLength(0)
+    expect(wrapper.get('.verdict-title').text()).toBe('No backups yet')
+    expect(wrapper.text()).not.toContain('of the last 3 runs')
   })
 })
 
-// Two agents can share an OS hostname if they're in different domains; the
-// page must not silently show one when the caller didn't say which.
 describe('AgentDetailView — duplicate hostnames', () => {
   const AGENT_A = { ...mockAgent, id: 1, domain: 'a.example.com', display_name: 'Host A' }
   const AGENT_B = { ...mockAgent, id: 2, domain: 'b.example.com', display_name: 'Host B' }

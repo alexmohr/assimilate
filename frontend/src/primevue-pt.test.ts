@@ -6,6 +6,8 @@ import { mount } from '@vue/test-utils'
 import PrimeVueConfig from 'primevue/config'
 import DataTable from 'primevue/datatable'
 import Column from 'primevue/column'
+import Select from 'primevue/select'
+import Paginator from 'primevue/paginator'
 import { globalPrimeVuePT } from './primevue-pt'
 
 describe('globalPrimeVuePT datatable.column', () => {
@@ -40,5 +42,34 @@ describe('globalPrimeVuePT datatable.column', () => {
     // preflight knocks the sort icon onto its own line below the title.
     const content = sortableHeader.find('[data-pc-section="columnheadercontent"]')
     expect(content.classes()).toContain('flex')
+  })
+})
+
+describe('globalPrimeVuePT select and paginator', () => {
+  const global = { plugins: [[PrimeVueConfig, { unstyled: true, pt: globalPrimeVuePT }]] }
+
+  it('styles a Select root as the app input box', () => {
+    const wrapper = mount(Select, {
+      props: { options: ['a', 'b'], modelValue: 'a' },
+      global: global as never,
+    })
+    const root = wrapper.find('[data-pc-name="select"]')
+    expect(root.classes()).toContain('bg-[var(--bg-input)]')
+    expect(root.classes()).toContain('w-full')
+  })
+
+  it('styles paginator page buttons as bordered controls', () => {
+    const wrapper = mount(Paginator, {
+      props: { rows: 10, totalRecords: 30, first: 10 },
+      global: global as never,
+    })
+    const pages = wrapper.findAll('[data-pc-section="page"]')
+    expect(pages).toHaveLength(3)
+    for (const page of pages) {
+      expect(page.classes()).toContain('min-w-8')
+      expect(page.classes()).toContain('border-[var(--border)]')
+    }
+    const prev = wrapper.find('[data-pc-section="prev"]')
+    expect(prev.classes()).toContain('disabled:opacity-50')
   })
 })

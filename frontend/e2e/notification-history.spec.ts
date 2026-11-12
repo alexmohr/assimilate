@@ -23,6 +23,9 @@ async function mockFailedWebPushDelivery(page: Page): Promise<void> {
         config: { user_id: 1 },
         enabled: true,
         scope: {},
+        link: { target: 'automatic', url: null },
+        has_password: false,
+        webhook_headers: [],
         created_at: '2026-01-01T00:00:00Z',
         updated_at: '2026-01-01T00:00:00Z',
       },
@@ -57,22 +60,22 @@ test('expands a delivery row and shows the full error and payload', async ({
   await mockFailedWebPushDelivery(page)
 
   const deliveryRow = await openNotificationHistory(page)
-  await expect(page.locator('.detail-row')).toHaveCount(0)
+  await expect(page.locator('.log-row-detail')).toHaveCount(0)
 
-  await deliveryRow.first().click()
+  await deliveryRow.first().locator('.log-row-summary').click()
 
-  const detailPanel = page.locator('.detail-panel')
+  const detailPanel = deliveryRow.first().locator('.log-row-detail')
   await expect(detailPanel).toBeVisible({ timeout: 10_000 })
   await expect(detailPanel).toContainText('Network is unreachable')
   await expect(detailPanel).toContainText('web-server-01')
   await expect(detailPanel).toContainText('daily-backup')
 
   // Collapses again on a second click.
-  await deliveryRow.first().click()
-  await expect(page.locator('.detail-row')).toHaveCount(0)
+  await deliveryRow.first().locator('.log-row-summary').click()
+  await expect(page.locator('.log-row-detail')).toHaveCount(0)
 })
 
-test('history table switches to a stacked card layout on narrow viewports', async ({
+test('history list fits a narrow viewport without scrolling sideways', async ({
   page,
 }: {
   page: Page

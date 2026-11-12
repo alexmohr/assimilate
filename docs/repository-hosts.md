@@ -20,7 +20,7 @@ Open a host from either of these:
 
 - The **Host** row of a repository's **Settings → Repository** pane.
 - The **Host quota** tile on a repository's **Overview** tab (admins only), which opens the **Storage quota** section.
-- The host header of the grouped [Repositories](repositories.md#quota-by-host) list. A host marked as not always online carries a **Not always online** badge there. Grouped by tag or not grouped, each repository row on such a host reads **host sleeps** under its name instead.
+- The host header of the grouped [Repositories](repositories.md#quota-by-host) list. A host marked as not always online reads **Intermittent** there, after a dot for what its last reachability check found.
 
 The page has five sections:
 

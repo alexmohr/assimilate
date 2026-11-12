@@ -54,42 +54,66 @@ describe('ArchiveTreeSearch', () => {
     expect(vi.mocked(searchArchiveTree).mock.calls[0]?.[2]).toMatchObject({ query: 'NGINX' })
     const hits = wrapper.findAll('[data-testid="search-hit"]')
     expect(hits).toHaveLength(2)
-    expect(hits[1]!.findAll('mark').map((m) => m.text())).toEqual(['nginx', 'nginx'])
+    // The match is marked in the name; the folder beside it is plain.
+    expect(hits[0]!.findAll('mark').map((m) => m.text())).toEqual(['nginx'])
+    expect(hits[1]!.findAll('mark').map((m) => m.text())).toEqual(['nginx'])
+    expect(hits[1]!.find('.browser-row-title').text()).toBe('nginx.conf')
+    expect(hits[1]!.get('[data-testid="reveal-hit"]').text()).toBe('/etc/nginx')
     expect(hits[1]!.text()).toContain('2.0 KB')
+    expect(wrapper.text()).toContain('2 matches in this archive')
+    expect(wrapper.text()).not.toContain('The first')
   })
 
-  it('narrows the search with filters, sizes in MiB', async () => {
+  it('narrows the search with filter pills, sizes in MiB', async () => {
+    vi.setSystemTime(new Date('2026-02-15T12:00:00Z'))
     const wrapper = mountSearch()
-    await wrapper.get('[data-testid="tree-search-filters"]').trigger('click')
+    const pill = (group: string, label: string) =>
+      wrapper
+        .get(`[role="group"][aria-label="${group}"]`)
+        .findAll('button')
+        .find((b) => b.text() === label)!
 
-    await wrapper
-      .findAll('.segmented-option')
-      .find((b) => b.text() === 'Files')!
-      .trigger('click')
-    await wrapper.get('[data-testid="tree-search-min-size"]').setValue('1.5')
-    await wrapper.get('[data-testid="tree-search-max-size"]').setValue('4')
-    await wrapper.get('[data-testid="tree-search-from"]').setValue('2026-01-01')
-    await wrapper.get('[data-testid="tree-search-to"]').setValue('2026-01-31')
+    await pill('Type', 'Files').trigger('click')
+    await pill('Size', 'Over 10 MB').trigger('click')
+    await pill('Modified', 'Last 30 days').trigger('click')
+    expect(wrapper.emitted('update:active')).toEqual([[true]])
     await settle()
 
+    expect(searchArchiveTree).toHaveBeenCalledTimes(1)
     expect(vi.mocked(searchArchiveTree).mock.calls.at(-1)?.[2]).toEqual({
       query: undefined,
       kind: 'file',
-      minSize: 1572864,
-      maxSize: 4194304,
-      modifiedFrom: '2026-01-01',
-      modifiedTo: '2026-01-31',
+      minSize: 10 * 1024 * 1024,
+      modifiedFrom: '2026-01-16',
       limit: 200,
     })
-    expect(wrapper.find('.filter-badge').exists()).toBe(true)
+    expect(pill('Type', 'Files').attributes('aria-pressed')).toBe('true')
+    expect(pill('Type', 'Any').attributes('aria-pressed')).toBe('false')
 
-    await wrapper
-      .findAll('button')
-      .find((b) => b.text() === 'Reset filters')!
-      .trigger('click')
+    await pill('Size', 'Over 1 GB').trigger('click')
+    await settle()
+    expect(vi.mocked(searchArchiveTree).mock.calls.at(-1)?.[2]).toMatchObject({
+      minSize: 1024 * 1024 * 1024,
+    })
+
+    // Back to every pill's "Any", there is no search and the folder returns.
+    await pill('Type', 'Any').trigger('click')
+    await pill('Size', 'Any').trigger('click')
+    await pill('Modified', 'Any time').trigger('click')
     await settle()
     expect(wrapper.emitted('update:active')?.at(-1)).toEqual([false])
     expect(wrapper.find('[data-testid="tree-search-results"]').exists()).toBe(false)
+  })
+
+  it('searches folders only through the Type pills', async () => {
+    const wrapper = mountSearch()
+    await wrapper
+      .get('[role="group"][aria-label="Type"]')
+      .findAll('button')
+      .find((b) => b.text() === 'Folders')!
+      .trigger('click')
+    await settle()
+    expect(vi.mocked(searchArchiveTree).mock.calls.at(-1)?.[2]).toMatchObject({ kind: 'dir' })
   })
 
   it('shows how the selection ticks each match and reports a click on one', async () => {
@@ -116,6 +140,61 @@ describe('ArchiveTreeSearch', () => {
 
     expect(wrapper.emitted('open')).toEqual([['etc/nginx'], ['etc/nginx']])
     expect(wrapper.get<HTMLInputElement>('[data-testid="tree-search"]').element.value).toBe('')
+  })
+
+  it('a click on a row ticks a file match, opens a folder match, and ticks nothing when disabled', async () => {
+    const wrapper = mountSearch()
+    await wrapper.get('[data-testid="tree-search"]').setValue('nginx')
+    await settle()
+
+    let hits = wrapper.findAll('[data-testid="search-hit"]')
+    await hits[1]!.trigger('click')
+    expect(wrapper.emitted('toggle')).toEqual([[HITS[1]]])
+    expect(wrapper.emitted('open')).toBeUndefined()
+
+    await wrapper.setProps({ disabled: true })
+    hits = wrapper.findAll('[data-testid="search-hit"]')
+    await hits[1]!.trigger('click')
+    expect(wrapper.emitted('toggle')).toHaveLength(1)
+
+    // A folder still opens while picking is disabled, and the search clears.
+    await hits[0]!.trigger('click')
+    expect(wrapper.emitted('open')).toEqual([['etc/nginx']])
+    expect(wrapper.get<HTMLInputElement>('[data-testid="tree-search"]').element.value).toBe('')
+  })
+
+  it('closing mid-search drops the pending search and gives the folder back', async () => {
+    const onActive = vi.fn()
+    const wrapper = mount(ArchiveTreeSearch, {
+      props: {
+        repoId: 5,
+        archiveName: 'nightly',
+        tickState: () => 'unchecked',
+        'onUpdate:active': onActive,
+      },
+    })
+    await wrapper.get('[data-testid="tree-search"]').setValue('nginx')
+    expect(onActive.mock.calls).toEqual([[true]])
+
+    wrapper.unmount()
+    await settle()
+
+    expect(searchArchiveTree).not.toHaveBeenCalled()
+    expect(onActive.mock.calls).toEqual([[true], [false]])
+  })
+
+  it('closing with no search entered reports nothing', () => {
+    const onActive = vi.fn()
+    const wrapper = mount(ArchiveTreeSearch, {
+      props: {
+        repoId: 5,
+        archiveName: 'nightly',
+        tickState: () => 'unchecked',
+        'onUpdate:active': onActive,
+      },
+    })
+    wrapper.unmount()
+    expect(onActive).not.toHaveBeenCalled()
   })
 
   it('says when nothing matches, the archive is not indexed, or the search failed', async () => {
@@ -157,7 +236,7 @@ describe('ArchiveTreeSearch', () => {
     await wrapper.get('[data-testid="tree-search"]').setValue('nginx')
     await settle()
 
-    expect(wrapper.text()).toContain('Showing the first 2 matches.')
+    expect(wrapper.text()).toContain('The first 2 matches in this archive')
   })
 
   it('starts empty again when another archive opens', async () => {

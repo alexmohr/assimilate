@@ -95,13 +95,14 @@ const routes: Array<{ path: string; label: string; waitForApi: string | string[]
     waitForApi: '/api/system/database-storage',
   },
   { path: '/admin/roles', label: 'admin: roles management', waitForApi: '/api/roles' },
-  // NotificationsView's onMounted fires four independent, uncoordinated
-  // loaders with no shared loading flag: channels+rules, deliveries,
-  // push/vapid-key, and repos+agents+schedules (for scope pickers) - list
-  // every endpoint they hit so all of them are awaited, not just the first.
-  // loadChannels itself is sequential (channels, then rules only after
-  // channels resolves), so both need listing or waitForResponse can
-  // resolve on the channels response alone.
+  // NotificationsView's onMounted fires three independent, uncoordinated
+  // loaders with no shared loading flag: channels+rules, deliveries and
+  // push/vapid-key - list every endpoint they hit so all of them are awaited,
+  // not just the first. loadChannels itself is sequential (channels, then
+  // rules only after channels resolves), so both need listing or
+  // waitForResponse can resolve on the channels response alone. Scope pickers
+  // live on the channel page and the wizard now, so repos, agents and
+  // schedules are not loaded here.
   {
     path: '/notifications',
     label: 'admin: notifications config',
@@ -110,9 +111,6 @@ const routes: Array<{ path: string; label: string; waitForApi: string | string[]
       '/api/notifications/rules',
       '/api/notifications/deliveries',
       '/api/notifications/push/vapid-key',
-      '/api/repos',
-      '/api/agents',
-      '/api/schedules',
     ],
   },
   { path: '/audit-log', label: 'admin: audit log', waitForApi: '/api/audit-log' },

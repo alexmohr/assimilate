@@ -6,7 +6,6 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 <script setup lang="ts">
 import { computed } from 'vue'
 import BaseSegmented, { type SegmentedOption } from './BaseSegmented.vue'
-import HelpHint from './HelpHint.vue'
 import PaneRow from './PaneRow.vue'
 import MachineEffectList, { type MachineEffectRow } from './MachineEffectList.vue'
 import ScheduleMachinesCard from './ScheduleMachinesCard.vue'
@@ -174,14 +173,11 @@ const effects = computed<MachineEffectRow[]>(() => {
 </script>
 
 <template>
-  <div class="pane-head pane-head--end">
-    <HelpHint
-      label="waking hosts"
-      align="end"
-    >
+  <div class="pane-head">
+    <p class="pane-lede">
       Whether this job wakes the hosts it needs before it runs. Shutting a host down afterwards
       follows from it, since only a host this run woke is ever powered off.
-    </HelpHint>
+    </p>
   </div>
 
   <div class="pane-rows">

@@ -123,6 +123,7 @@ struct PatternAgentJoinRow {
     pub ssh_port: i32,
     pub agent_service_name: String,
     pub machine_id: i64,
+    pub database_backup_enabled: bool,
 }
 
 /// Looks up an agent whose registered hostname pattern glob-matches the
@@ -147,8 +148,9 @@ pub async fn find_agent_by_pattern(
          a.agent_token_hash, a.is_hidden, a.last_ssh_user, a.domain, am.wake_enabled, \
          am.wake_mac_address, am.wake_broadcast_address, am.wake_timeout_seconds, \
          am.shutdown_after_backup, a.start_agent_enabled, a.stop_agent_after_backup, a.ssh_host, \
-         a.ssh_port, a.agent_service_name, a.machine_id FROM agent_hostname_patterns p JOIN \
-         agents a ON a.id = p.agent_id JOIN machines am ON am.id = a.machine_id ORDER BY p.pattern",
+         a.ssh_port, a.agent_service_name, a.machine_id, a.database_backup_enabled FROM \
+         agent_hostname_patterns p JOIN agents a ON a.id = p.agent_id JOIN machines am ON am.id = \
+         a.machine_id ORDER BY p.pattern",
     )
     .fetch_all(pool)
     .await
@@ -190,5 +192,6 @@ pub async fn find_agent_by_pattern(
         ssh_port: row.ssh_port,
         agent_service_name: row.agent_service_name.clone(),
         machine_id: row.machine_id,
+        database_backup_enabled: row.database_backup_enabled,
     }))
 }

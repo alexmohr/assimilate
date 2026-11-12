@@ -184,7 +184,7 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
                 <a class="more" href="docs/power-management/">Power management &rarr;</a>
               </div>
               <div class="frame">
-                <div class="frame-bar"><span>backup.example.lan/agents/media-store-01</span></div>
+                <div class="frame-bar"><span>backup.example.lan/schedules/4</span></div>
                 <img src="docs/assets/screenshots/run-timeline.png" width="2560" height="1600" loading="lazy" alt="Run timeline listing reachability checks, Wake-on-LAN packets and the hosts coming online" />
               </div>
             </article>
@@ -210,7 +210,7 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
               </div>
               <div class="frame-stack">
                 <div class="frame">
-                  <div class="frame-bar"><span>backup.example.lan/agents/media-store-01?tab=logs</span></div>
+                  <div class="frame-bar"><span>backup.example.lan/schedules/6</span></div>
                   <img src="assets/shots/dependency-skip.png" width="2560" height="1600" loading="lazy" alt="A skipped backup run: the nas-media dependency was checked, sent a Wake-on-LAN packet, did not answer on port 445, and the run was skipped with that reason" />
                 </div>
                 <div class="frame">
@@ -254,7 +254,7 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
                   <li><span><b>Per-repository permissions:</b> view, back up, edit schedules, extract, delete</span></li>
                   <li><span><b>TOTP two-factor login</b> with single-use recovery codes</span></li>
                   <li><span><b>Lockout on repeated failures</b>, per address and per account</span></li>
-                  <li><span><b>Audit log</b> of every change, with filters and export</span></li>
+                  <li><span><b>Audit log</b> of every change, with filters</span></li>
                   <li><span><b>AES-256-GCM at rest</b> for passphrases, TOTP secrets and notification credentials</span></li>
                 </ul>
                 <a class="more" href="docs/security/">Security model &rarr;</a>
@@ -318,7 +318,7 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
             </div>
             <div>
               <h3>Compare two points in time</h3>
-              <p>Diff any two archives, or follow one file through every backup and compare it with the file on the host right now.</p>
+              <p>Diff an archive against any other of the same machine, images included, or follow one file through every backup and compare it with the file on the host right now.</p>
             </div>
             <div>
               <h3>Download or restore</h3>

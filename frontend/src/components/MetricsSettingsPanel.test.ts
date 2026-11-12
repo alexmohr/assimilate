@@ -36,7 +36,9 @@ describe('MetricsSettingsPanel', () => {
     await flushPromises()
 
     expect(mockGet).toHaveBeenCalledWith('/system/metrics')
-    expect(wrapper.find<HTMLInputElement>('#metrics-enabled').element.checked).toBe(true)
+    expect(
+      wrapper.find('[role="switch"][aria-label="Serve /metrics"]').attributes('aria-checked'),
+    ).toBe('true')
     expect(wrapper.find<HTMLTextAreaElement>('#metrics-networks').element.value).toBe(
       '10.0.0.0/8\n192.0.2.1/32',
     )
@@ -51,7 +53,9 @@ describe('MetricsSettingsPanel', () => {
 
     const wrapper = renderWithPlugins(MetricsSettingsPanel)
     await flushPromises()
-    await wrapper.find('#metrics-enabled').setValue(true)
+    const toggle = wrapper.find('[role="switch"][aria-label="Serve /metrics"]')
+    expect(toggle.attributes('aria-checked')).toBe('false')
+    await toggle.trigger('click')
     await wrapper.find('#metrics-networks').setValue('10.0.0.0/8\n 127.0.0.1 \n')
     await wrapper.find('form').trigger('submit')
     await flushPromises()

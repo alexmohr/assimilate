@@ -38,6 +38,8 @@ const props = defineProps<{
   archives: readonly ArchiveEntryResponse[]
   /** The file's path within the archive. */
   path: string
+  /** The archive to compare with first, e.g. the one the Changes tab compares against. */
+  initialAgainst?: string | null
 }>()
 
 const emit = defineEmits<{ close: [] }>()
@@ -109,7 +111,9 @@ watch(
   () => [props.open, props.path, props.archive.name] as const,
   ([open]) => {
     if (!open) return
-    againstName.value = defaultComparison(props.archives, props.archive)?.name ?? ''
+    const preferred = choices.value.find((a) => a.name === props.initialAgainst)
+    againstName.value =
+      preferred?.name ?? defaultComparison(props.archives, props.archive)?.name ?? ''
     wholeFile.value = false
     layout.value = window.matchMedia(WIDE_ENOUGH_FOR_SPLIT).matches ? 'split' : 'inline'
     result.value = null

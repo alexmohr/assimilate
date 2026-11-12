@@ -9,6 +9,8 @@ import { useApiTokens } from '../composables/useApiTokens'
 import { useAuthStore } from '../stores/auth'
 import { Plus, Key } from '@lucide/vue'
 import ApiTokenTable from '../components/ApiTokenTable.vue'
+import TokenExpiryField from '../components/TokenExpiryField.vue'
+import { formatDate } from '../utils/format'
 import AsyncSection from '../components/AsyncSection.vue'
 import EmptyState from '../components/EmptyState.vue'
 import ModalFormActions from '../components/ModalFormActions.vue'
@@ -22,6 +24,10 @@ const {
   showCreateModal,
   createName,
   createScope,
+  createExpiry,
+  createExpiryDate,
+  createReady,
+  newTokenExpiresAt,
   newTokenScope,
   createError,
   createSubmitting,
@@ -132,6 +138,11 @@ onMounted(fetchTokens)
             }}
           </span>
         </div>
+        <TokenExpiryField
+          v-model="createExpiry"
+          v-model:date="createExpiryDate"
+          id-prefix="admin-token"
+        />
         <div
           v-if="createError"
           class="form-error"
@@ -144,6 +155,13 @@ onMounted(fetchTokens)
         class="token-notice"
       >
         <p class="token-warning">Copy this token now. It will not be shown again.</p>
+        <p class="field-hint">
+          {{
+            newTokenExpiresAt
+              ? `It stops working on ${formatDate(newTokenExpiresAt)}.`
+              : 'It works until it is deleted.'
+          }}
+        </p>
         <p
           v-if="newTokenScope === 'monitoring'"
           class="field-hint"
@@ -166,7 +184,7 @@ onMounted(fetchTokens)
         <ModalFormActions
           v-if="!newTokenPlaintext"
           :submitting="createSubmitting"
-          :disabled="!createName.trim()"
+          :disabled="!createReady"
           submit-label="Create"
           submitting-label="Creating..."
           @cancel="closeCreateModal"
@@ -198,6 +216,5 @@ onMounted(fetchTokens)
 
 <style scoped>
 .tokens-page {
-  max-width: 900px;
 }
 </style>

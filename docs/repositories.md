@@ -24,7 +24,7 @@ For append-only access, use a `command=` restriction in `authorized_keys`:
 command="borg serve --append-only --restrict-to-path /backup/repos",restrict ssh-ed25519 AAAA...
 ```
 
-Once the key is in place, use the **Test Connection** button in the repository form to verify SSH connectivity and confirm that `borg` is installed on the remote host.
+Once the key is in place, use the **Test Connection** button in the new or import repository dialog to verify SSH connectivity and confirm that `borg` is installed on the remote host.
 
 On the first successful borg connection, Assimilate records the repository host's SSH key against the repository and pins it to a dedicated, per-repository `known_hosts` file for all server-side borg operations. If the repository host's key later changes, syncs fail with a host-identification-changed error until an admin reviews the new key's fingerprint and accepts it from the repository's page.
 
@@ -39,27 +39,25 @@ There are two paths for adding a repository:
 | **Init new** | The remote path does not yet exist — Assimilate runs `borg init` |
 | **Import existing** | A borg repository already exists at the path — register it without reinitializing |
 
-Both paths are available from **Repositories → New Repository** in the UI.
+Both are buttons in the Repositories page header, for admins: **New** opens the **Create Repository** dialog and **Import** the **Import Repository** dialog.
 
 ![Repositories](assets/screenshots/repositories.png)
 
 The Repositories list page shows all registered repositories with:
 
 - **Text filter** — search by repository name
-- **Tag filter** — filter by one or more tags
+- **Tags** — a drop-down list to filter by one or more tags, once a repository tag exists
 - **Quota filter pills** — narrow the list to **At risk** repositories (at or above their own warning threshold) or repositories with **No quota** configured; the **All** pill always shows the total count
 - **Group by** — **Host** (the default) puts the repositories that share an SSH host in one panel under that host's storage pool (see [Quota by Host](#quota-by-host) below), **Tag** puts them in one panel per tag, and **None** lists every repository in a single panel. **Tag** appears once a repository tag exists
 - **Sort buttons** — sort by Name, Size, Last Backup, or Quota (utilization of each repository's own quota; repositories with no quota sort last). Sorting applies when grouped by tag or not grouped — while grouped by host, each host orders its own repositories by size instead
 
-Each panel lists its repositories as rows under one line of column heads: **Repository**, **Status**, **Archives**, **Last backup** and **Size of quota**. Click a row to open the repository.
+Each panel lists its repositories as rows. Click a row to open the repository.
 
-- **Repository** — the name, over the SSH target (`user@host:path`), the encryption type and the compression algorithm. Outside the host grouping, a repository on a host that is not always online also reads **host sleeps** here.
-- **Status** — one badge naming what most needs attention, in this order: **Import failed**, **Importing** (with progress), **Disabled**, **Over quota** (at the critical threshold), **Near quota** (at the warning threshold), **N unmatched** (imported archives no schedule claims yet), or **Healthy**. Hover a quota badge to see the action its threshold takes. A row whose status is **N unmatched** opens the repository on its Archives tab.
-- **Archives** — the archive count.
-- **Last backup** — how long ago the newest archive was written, or **Never**.
-- **Size of quota** — with its own [storage quota](quotas.md) configured, a usage bar on the quota's scale and the size against the ceiling, for example `6.8 MB of 15 GB`. Without one, the deduplicated size alone.
+- **Dot** — the repository's status at a glance: green when nothing needs doing, yellow near its quota or while importing, red over its quota or when an import failed, grey when disabled.
+- **Name and facts** — the name, over a line of facts: the status when it is anything but healthy, then the archive count and how long ago the last backup finished (**no backup yet** before the first). The status names what most needs attention, in this order: **Import failed**, **Importing** (with progress), **Disabled**, **Over quota** (at the critical threshold), **Near quota** (at the warning threshold) or **N unmatched** (imported archives no schedule claims yet). It takes the dot's colour when it is a risk. **N unmatched** stays muted and the dot green: those archives are old data to sort out, not a backup at risk. Hover a quota status to see the action its threshold takes. A row whose status is **N unmatched** opens the repository on its Archives tab.
+- **Size** — at the right: with its own [storage quota](quotas.md) configured, a usage bar on the quota's scale and the size against the ceiling, for example `6.8 MB of 15 GB`. Without one, the deduplicated size alone.
 
-On a phone each row stacks into three lines: the name with the last backup at the right, then the archive count and size, then the status in its colour.
+On a phone the size moves under the facts, and the tag filter, grouping, sorting and quota pills sit behind the filter button.
 
 ![Repository Detail](assets/screenshots/repo-detail.png)
 
@@ -68,7 +66,7 @@ The repository detail page opens with a header naming the repository, its SSH ta
 - **Overview** — archives, deduplicated and original size, last write and disk-sync cadence, plus the repository's schedules
 - **Archives** — the archive list and the file browser
 - **Schedules** — every schedule writing to this repository
-- **Settings** — the repository's own connection fields, its [storage quota](quotas.md), its tags, the borg console, and the danger zone (Confirm relocation, Break lock, Remove repository, Delete repository, Reset and re-import)
+- **Settings** — collapsible sections, stacked in one card: **Repository** (its own connection fields), and for admins **Power & dependencies**, **Storage quota** (see [quotas](quotas.md)), **Tags**, **Borg console** and **Danger zone** (Confirm relocation, Break lock, Remove repository, Delete repository, Reset and re-import)
 
 !!! warning "Break lock"
     **Break lock** clears a stale `borg` lock on the repository. It also detects and clears a
@@ -82,22 +80,22 @@ The repository detail page opens with a header naming the repository, its SSH ta
 
 Use this path when the remote directory is empty or does not exist yet.
 
-1. Enter the SSH connection details: host, user, port (default 22), and repository path.
+1. Click **New** on the Repositories page, and enter a name and the SSH connection details: host, user, port (default 22), and repository path. **Fill SSH from existing** copies them from a known repository host.
 2. Use the **Browse** button to navigate the remote filesystem and select a path (see [Folder Browser](#folder-browser)).
 3. Select an encryption type (see [Encryption Types](#encryption-types)).
 4. Enter a passphrase. Choose a strong, unique passphrase — it cannot be recovered if lost.
 5. Optionally select a compression algorithm (see [Compression](#compression)).
-6. Click **Initialize**. The server runs `borg init` on the remote host and registers the repository.
+6. Click **Create Repo**. The server runs `borg init` on the remote host and registers the repository.
 
-The borg output is shown after initialization. If the remote path already contains a borg repository, the server returns a conflict error — use **Import Existing** instead.
+The borg output is shown after initialization. If the remote path already contains a borg repository, the server returns a conflict error — use **Import** instead.
 
 ## Import Existing Repository
 
 Use this path when a borg repository already exists at the remote path and you want to register it in Assimilate without reinitializing.
 
-1. Enter the SSH connection details and the exact path to the existing repository.
+1. Click **Import** on the Repositories page, and enter a name, the SSH connection details and the exact path to the existing repository.
 2. Enter the passphrase that was used when the repository was originally initialized.
-3. Click **Save**. The repository is registered and will appear in the repository list.
+3. Click **Import Repo**. The repository is registered and will appear in the repository list.
 
 No `borg init` is run. The passphrase is stored encrypted at rest and used for all future backup and archive operations.
 
@@ -142,19 +140,15 @@ Unmatched archives can be resolved later by adding hostname patterns and running
 
 After adding hostname aliases to agents, you can re-scan a repository to match previously unmatched archives against the updated patterns.
 
-1. Open the repository detail page.
-2. Click **Re-scan Archives** (admin only).
+1. Open the repository detail page and its **Archives** tab. While it holds unmatched archives, a notice above the list says how many.
+2. Click **Re-scan** in that notice.
 3. The server evaluates all unmatched archives against current hostname patterns.
 4. A toast shows how many archives were matched and how many remain unmatched.
 5. Placeholder agents with no remaining archives are automatically cleaned up.
 
 ## Encryption Migration
 
-Admins can migrate a repository to a different encryption mode (e.g. from `repokey` to `repokey-blake2`).
-
-1. Open the repository detail page.
-2. Click **Migrate Encryption** and select the target encryption mode.
-3. Click **Confirm**.
+Admins can migrate a repository to a different encryption mode (e.g. from `repokey` to `repokey-blake2`). The web UI has no button for this; call `POST /api/repos/{repo_id}/migrate-encryption` (see the [API Reference](api-reference.md)).
 
 The server:
 
@@ -206,23 +200,25 @@ Compression is applied per-archive at backup time. It can be changed on an exist
 | `zlib` (level 1–9) | Slower than lz4, similar ratio; legacy option |
 | `none` | No compression — useful when data is already compressed (e.g., media files) |
 
-For general-purpose backups, `lz4` is the default and works well. Use `zstd,3` when storage space is a priority and CPU overhead is acceptable.
+The new and import dialogs offer `lz4`, `zstd` and `none`; the **Repository** section of its **Settings** tab also offers `zlib` when you edit an existing repository. For general-purpose backups, `lz4` is the default and works well. Use `zstd,3` when storage space is a priority and CPU overhead is acceptable.
 
 ## Repository Tags
 
 Tags are short labels that help organize repositories when managing many agents. A repository can have multiple tags.
 
-Tags are set in the repository edit form. On the repository list, filter by them or group by them with **Group by → Tag**. They have no effect on backup behavior — they are purely organizational.
+Admins set tags in the **Tags** section of the repository's **Settings** tab. On the repository list, filter by them or group by them with **Group by → Tag**. They have no effect on backup behavior — they are purely organizational.
 
 ## Quota by Host
 
 The Repositories page groups repositories sharing an SSH host into one panel by default, so it is clear at a glance which repositories belong to which backup destination. Set **Group by** to **None** for a single sortable list.
 
-Each panel's header names the host (a link to its [repository host](repository-hosts.md) page for admins), with a **Not always online** badge on a host that sleeps, a summary such as `3 repos · 4.2 GB below warn`, and the combined usage at the right. When the host has a [storage quota](server-quotas.md) configured and you have admin access, a storage pool bar runs under the header: it is scaled to the host quota, with one segment per repository sized to its share of the combined usage, and a mark at the host quota's warning threshold.
+Each panel's header starts with a dot for what the host's last [reachability check](power-management.md#when-the-host-is-offline) found: green when it answered, hollow when an intermittent host was away (which it is allowed to be), red when a host that should always be online did not answer, and grey before it was ever checked. Hover the dot for when it was checked. Then the host's name (a link to its [repository host](repository-hosts.md) page for admins), **Intermittent** on a host marked as not always online (hover it for what that means), where the host quota stands, such as `4.2 GB below warning`, and the combined usage at the right.
+
+When the host has a [storage quota](server-quotas.md) configured and you have admin access, a storage pool bar runs under the header: it is scaled to the host quota, with one segment per repository sized to its share of the combined usage, and a mark at the host quota's warning threshold. The bar is blue until the usage passes that mark, then yellow, and red past the critical threshold. On a phone the combined usage moves into the line under the host's name.
 
 ![Repositories page grouped by host, showing a shared storage pool bar and repository rows](assets/screenshots/repositories-host-quota.png)
 
-The rows under the header keep their own scale: a repository's **Size of quota** column measures it against its own [storage quota](quotas.md), never against the host's. Its share of the host is the segment in the pool bar.
+The rows under the header keep their own scale: a repository's size measures it against its own [storage quota](quotas.md), never against the host's. Its share of the host is the segment in the pool bar.
 
 Combining a quota filter pill or the text filter with host grouping dims — rather than removes — the rows that don't match, so the pool bar always reflects the host's true combined usage; the header notes how many of the host's repositories are shown. A host none of whose repositories match keeps only its header.
 
@@ -273,9 +269,10 @@ This means borg will only accept a repository relocation **once**, immediately a
 !!! note
     No manual action is required. The relocation acceptance is automatic and one-shot. If the first backup after a path change fails for an unrelated reason, the flag remains set until a backup succeeds.
 
-**Deleting** a repository removes it from Assimilate — the database record, stored passphrase, and associated schedules are deleted. The remote borg repository and its archives are **not** deleted. You must remove the remote data manually if desired.
+The repository's **Settings → Danger zone** offers two ways to get rid of it, both admin-only and both behind a confirmation:
 
-Deletion requires admin privileges.
+- **Remove repository** removes it from Assimilate — the database record, the stored passphrase and its backup reports. Its schedules are **disabled** and lose their repository link, to be reassigned or deleted by hand. The remote borg repository and its archives are **not** touched.
+- **Delete repository** does the same and also deletes the repository from the remote filesystem with `rm -rf`. This cannot be undone.
 
 ## Power
 
@@ -283,7 +280,7 @@ Waking a powered-down machine, shutting it back down, whether it is expected to 
 
 ## Repository Permissions
 
-By default, repository visibility follows the owner model. Admins can grant per-user access to specific repositories using the permissions panel on the repository detail page.
+By default, repository visibility follows the owner model. Admins grant per-user access to specific repositories in the **Repository permissions** section of a user's page, and per-group access on the **Groups** page — see [Access Control](access-control.md).
 
 | Permission | Effect |
 |------------|--------|

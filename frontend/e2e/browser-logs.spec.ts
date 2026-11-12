@@ -7,7 +7,7 @@ import type { Page } from '@playwright/test'
 const SECRET = 'e2e-very-secret-value'
 
 function segment(page: Page, label: string): ReturnType<Page['locator']> {
-  return page.locator('.segmented-option', { hasText: label })
+  return page.getByRole('group', { name: 'Activity type' }).getByRole('button', { name: label })
 }
 
 /**
@@ -23,7 +23,7 @@ async function produceBrowserLogs(page: Page): Promise<void> {
   )
   await page.goto('/activity')
   await segment(page, 'Server Logs').click()
-  await expect(page.locator('.state-msg')).toBeVisible()
+  await expect(page.locator('.empty-state, .error-banner').first()).toBeVisible()
   await page.evaluate((secret) => {
     setTimeout(() => {
       throw new Error(`e2e-uncaught token=${secret}`)
@@ -39,21 +39,21 @@ test.describe('browser logs', () => {
     await produceBrowserLogs(page)
 
     await segment(page, 'Browser logs').click()
-    const table = page.locator('.log-panel')
+    const table = page.getByTestId('log-entries')
     await expect(table.getByText('fetchLogs failed')).toBeVisible()
     await expect(
-      table.locator('.cell-msg-log').getByText('e2e-uncaught token=[REDACTED]'),
+      table.locator('.log-row-title').getByText('e2e-uncaught token=[REDACTED]'),
     ).toBeVisible()
     await expect(page.locator('body')).not.toContainText(SECRET)
 
     await page.locator('input.search-input').fill('e2e-uncaught')
     await expect(table.getByText('fetchLogs failed')).toHaveCount(0)
     await expect(
-      table.locator('.cell-msg-log').getByText('e2e-uncaught token=[REDACTED]'),
+      table.locator('.log-row-title').getByText('e2e-uncaught token=[REDACTED]'),
     ).toBeVisible()
 
     await page.getByRole('button', { name: 'Clear logs' }).click()
-    await expect(page.locator('.state-msg')).toHaveText(
+    await expect(page.locator('.empty-state .empty-description')).toHaveText(
       'Nothing has been logged in this browser tab yet.',
     )
   })
@@ -64,7 +64,7 @@ test.describe('browser logs', () => {
     await produceBrowserLogs(page)
 
     await segment(page, 'Browser logs').click()
-    await expect(page.locator('.log-panel').getByText('fetchLogs failed')).toBeVisible()
+    await expect(page.getByTestId('log-entries').getByText('fetchLogs failed')).toBeVisible()
     const overflow = await page.evaluate(
       () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
     )

@@ -95,7 +95,7 @@ function setupApi(value: RepoHost = host()): void {
   vi.mocked(apiClient.delete).mockResolvedValue({} as never)
 }
 
-/** Renders the page, then opens `section` from its rail the way a click does. */
+/** Renders the page, then opens `section` from its collapsible heading the way a click does. */
 async function render(section?: string): Promise<ReturnType<typeof renderWithPlugins>> {
   const wrapper = renderWithPlugins(RepoHostDetailView, {
     props: { id: '5' },
@@ -104,9 +104,9 @@ async function render(section?: string): Promise<ReturnType<typeof renderWithPlu
   await flushPromises()
   if (section) {
     const item = wrapper
-      .findAll('.settings-nav-item')
+      .findAll('.accordion-head')
       .find((b) => b.text().toLowerCase().startsWith(section))
-    if (!item) throw new Error(`no rail item for ${section}`)
+    if (!item) throw new Error(`no section heading for ${section}`)
     await item.trigger('click')
     await flushPromises()
   }
@@ -124,8 +124,18 @@ describe('RepoHostDetailView', () => {
     const wrapper = await render()
     const text = wrapper.text()
     expect(text).toContain('nas.lan')
-    expect(text).toContain('Not always online')
     expect(text).toContain('2 repositories')
+    const badge = wrapper.findAll('.badge').find((b) => b.text() === 'Intermittent')
+    expect(badge).toBeDefined()
+    expect(badge!.classes()).toContain('badge--neutral')
+    expect(badge!.attributes('title')).toContain('Missed backups run once it is back.')
+  })
+
+  it('names no availability badge for a host that is always online', async () => {
+    setupApi(host({ intermittent: false }))
+    const wrapper = await render()
+    expect(wrapper.text()).not.toContain('Intermittent')
+    expect(wrapper.text()).not.toContain('Always online')
   })
 
   it('opens on the connection section', async () => {

@@ -51,8 +51,7 @@ describe('AgentDefaultsCard', () => {
     const wrapper = mount()
     expect(wrapper.findAll('.pane-head')).toHaveLength(1)
 
-    await wrapper.find('[aria-label="Help: default paths, patterns and commands"]').trigger('click')
-    expect(wrapper.find('.help-hint-pop').text()).toContain('What a schedule uses for this host')
+    expect(wrapper.find('.pane-lede').text()).toContain('What a schedule uses for this host')
 
     expect(wrapper.findAll('.group-label').map((l) => l.text())).toEqual([
       'Backup paths',

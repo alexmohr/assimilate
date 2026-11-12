@@ -273,6 +273,10 @@ pub struct AgentResponse {
     /// The machine this agent runs on, whose Power & dependencies pane holds
     /// its wake and availability settings.
     pub machine_id: i64,
+    /// Whether the host allows database dumps. A schedule that asks for them
+    /// dumps nothing on a host where this is off.
+    #[serde(default)]
+    pub database_backup_enabled: bool,
     /// Power-management settings: waking this agent's host before a backup,
     /// and starting/stopping the agent process itself over SSH.
     pub power: AgentPowerSettingsResponse,
@@ -686,6 +690,11 @@ pub struct RepoHostRefResponse {
     pub machine_id: i64,
     /// Whether the host is marked as not always online.
     pub intermittent: bool,
+    /// Whether the host answered its last reachability check; `None` before
+    /// it was ever checked.
+    pub last_check_reachable: Option<bool>,
+    /// When the host was last checked.
+    pub last_checked_at: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
@@ -1664,6 +1673,8 @@ pub struct ApiTokenResponse {
     pub scope: crate::types::ApiTokenScope,
     /// Timestamp of when the last used occurred.
     pub last_used_at: Option<DateTime<Utc>>,
+    /// When the token stops working; `None` for one that never expires.
+    pub expires_at: Option<DateTime<Utc>>,
     /// Timestamp of when the created occurred.
     pub created_at: DateTime<Utc>,
 }

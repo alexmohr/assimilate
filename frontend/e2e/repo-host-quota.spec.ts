@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 import type { Page } from '@playwright/test'
-import { expect, loginAsAdmin, test } from './fixtures'
+import { expect, loginAsAdmin, openSettingsSection, test } from './fixtures'
 
 /**
  * A repository host's Storage quota: the limit every repository on the host
@@ -26,9 +26,8 @@ test.describe('Repository host storage quota', () => {
     await page.goto(`/repo-hosts/${id}`)
     await page.waitForLoadState('networkidle')
 
-    await page.locator('.settings-nav-item', { hasText: 'Storage quota' }).click()
+    const pane = await openSettingsSection(page, 'Storage quota')
     await expect(page).toHaveURL(/section=quota/)
-    const pane = page.locator('.settings-pane')
     await expect(pane).toContainText('Block backups')
     await expect(pane).toContainText('limit')
 

@@ -5,6 +5,7 @@ import { describe, it, expect, vi, beforeEach, type MockInstance } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { createPinia } from 'pinia'
 import { createRouter, createMemoryHistory } from 'vue-router'
+import type * as Format from '../utils/format'
 
 vi.mock('../api/client', () => ({
   apiClient: {
@@ -24,7 +25,8 @@ vi.mock('../composables/useClipboard', () => ({
   }),
 }))
 
-vi.mock('../utils/format', () => ({
+vi.mock('../utils/format', async (importOriginal) => ({
+  ...(await importOriginal<typeof Format>()),
   formatBytes: (n: number): string => `${n} B`,
   formatDate: (s: string): string => s,
 }))
@@ -93,12 +95,6 @@ function mountView(router = createTestRouter()): ReturnType<typeof mount> {
       plugins: [createPinia(), router],
       stubs: {
         BaseSpinner: { template: '<div class="stub-spinner" />' },
-        ArchiveDiff: {
-          props: ['open'],
-          emits: ['close'],
-          template:
-            '<div class="stub-diff">{{ open ? "open" : "closed" }}<button class="stub-diff-close" @click="$emit(\'close\')" /></div>',
-        },
         FileSearch: { template: '<div class="stub-search" />' },
         ArchiveFileBrowser: {
           name: 'ArchiveFileBrowser',
@@ -121,6 +117,14 @@ async function pickFirstRepo(wrapper: ReturnType<typeof mount>): Promise<void> {
   }
   await select.trigger('change')
   await flushPromises()
+}
+
+function archiveRows(wrapper: ReturnType<typeof mount>) {
+  return wrapper.findAll('[data-testid="archive-row"]')
+}
+
+function archiveNames(wrapper: ReturnType<typeof mount>): string[] {
+  return archiveRows(wrapper).map((row) => row.get('.browser-row-title').text())
 }
 
 function mockReposAndArchives(archives: unknown[] = ARCHIVES): void {
@@ -235,10 +239,8 @@ describe('ArchivesView', () => {
     await flushPromises()
     await pickFirstRepo(wrapper)
 
-    expect(wrapper.findAll('.archive-name').map((n) => n.text())).toEqual([
-      ARCHIVES[1].name,
-      ARCHIVES[0].name,
-    ])
+    // Grouped by host and the groups sort by hostname, so db-primary leads.
+    expect(archiveNames(wrapper)).toEqual([ARCHIVES[1].name, ARCHIVES[0].name])
   })
 
   it('shows an empty state when the repository holds no archives', async () => {
@@ -252,10 +254,8 @@ describe('ArchivesView', () => {
   })
 
   it('refetches through the refresh action, as a visible load', async () => {
-    // The handler is wrapped (`loadArchives()`) rather than passed by
-    // reference: `loadArchives` takes a `silent` flag, and handing it straight
-    // to @click would pass the MouseEvent as that flag and make every manual
-    // refresh a silent one.
+    // The list menu's refresh asks for a visible reload (`silent` false), not
+    // the silent one the WebSocket-driven reloads use.
     mockReposAndArchives()
     const wrapper = mountView()
     await flushPromises()
@@ -265,14 +265,28 @@ describe('ArchivesView', () => {
       mockGet.mock.calls.filter((c) => String(c[0]).includes('/archives')).length
     const before = archiveCalls()
 
-    const refresh = wrapper.find('button[aria-label="Refresh archives"]')
-    expect(refresh.exists()).toBe(true)
-    await refresh.trigger('click')
+    await wrapper.get('button[aria-label="List options"]').trigger('click')
+    const refresh = wrapper
+      .findAll('.overflow-menu-item')
+      .find((b) => b.text() === 'Refresh archives')
+    expect(refresh).toBeDefined()
+    // Hold the reload, so the visible load can be seen.
+    let answer: (value: unknown) => void = () => undefined
+    mockGet.mockImplementation((url: string) => {
+      if (url === '/repos') return Promise.resolve({ data: REPOS })
+      if (url.includes('/archives')) return new Promise((resolve) => (answer = resolve))
+      return Promise.resolve({ data: [] })
+    })
+    await refresh!.trigger('click')
     await flushPromises()
 
     expect(archiveCalls()).toBe(before + 1)
+    expect(wrapper.find('.archive-loading').exists()).toBe(true)
+
+    answer({ data: ARCHIVES })
+    await flushPromises()
     // Still rendering the list rather than having blanked it to an error.
-    expect(wrapper.findAll('.archive-name')).toHaveLength(ARCHIVES.length)
+    expect(archiveRows(wrapper)).toHaveLength(ARCHIVES.length)
   })
 
   it('surfaces a failed archive load instead of an empty list', async () => {
@@ -303,38 +317,6 @@ describe('ArchivesView', () => {
     expect(mockGet).toHaveBeenCalledWith(expect.stringContaining('/archives'))
   })
 
-  it('opens the diff dialog from the panel actions', async () => {
-    // A diff needs two archives, so the button stays disabled until the list
-    // holds them.
-    mockReposAndArchives([])
-    const empty = mountView()
-    await flushPromises()
-    await pickFirstRepo(empty)
-
-    expect(
-      empty
-        .findAll('button')
-        .find((b) => b.text() === 'Diff')!
-        .attributes('disabled'),
-    ).toBeDefined()
-
-    mockReposAndArchives()
-    const wrapper = mountView()
-    await flushPromises()
-    await pickFirstRepo(wrapper)
-
-    const diff = wrapper.findAll('button').find((b) => b.text() === 'Diff')!
-    expect(wrapper.find('.stub-diff').text()).toBe('closed')
-
-    await diff.trigger('click')
-    expect(wrapper.find('.stub-diff').text()).toBe('open')
-
-    // The dialog owns its dismissal and reports it back up, so the view has
-    // to take the close event or the button silently stops re-opening it.
-    await wrapper.find('.stub-diff-close').trigger('click')
-    expect(wrapper.find('.stub-diff').text()).toBe('closed')
-  })
-
   // Restoring starts from the archive browser below (tick files, or the
   // header's whole-archive Restore), which says which agent it goes to; the
   // panel no longer offers a second, typed-in-paths way to the same thing.
@@ -345,8 +327,8 @@ describe('ArchivesView', () => {
     await pickFirstRepo(wrapper)
 
     const actions = wrapper.findAll('button').map((b) => b.text())
-    expect(actions).toContain('Diff')
-    expect(actions).not.toContain('Restore')
+    expect(actions).toContain('Show Passphrase')
+    expect(actions.some((a) => a.startsWith('Restore'))).toBe(false)
   })
 
   it('narrows the list through the shared search control', async () => {
@@ -363,7 +345,7 @@ describe('ArchivesView', () => {
     await search.setValue('db-primary')
     await flushPromises()
 
-    expect(wrapper.findAll('.archive-name').map((n) => n.text())).toEqual([ARCHIVES[1].name])
+    expect(archiveNames(wrapper)).toEqual([ARCHIVES[1].name])
   })
 
   it('shows an error message when repo loading fails', async () => {
@@ -391,7 +373,7 @@ describe('ArchivesView', () => {
       expect(browser.exists()).toBe(true)
       // The browser takes its repository from the archive it opens, which in
       // a list spanning several repositories is not always the same one.
-      await wrapper.findAll('.archive-row-select')[0].trigger('click')
+      await archiveRows(wrapper)[0]!.trigger('click')
       expect(wrapper.findComponent({ name: 'ArchiveFileBrowser' }).props('repoId')).toBe(1)
     })
 
@@ -408,7 +390,7 @@ describe('ArchivesView', () => {
       await flushPromises()
       await pickFirstRepo(wrapper)
 
-      await wrapper.findAll('.archive-row-select')[0].trigger('click')
+      await archiveRows(wrapper)[0]!.trigger('click')
 
       // Grouped by host and the groups sort by hostname, so db-primary leads.
       expect(wrapper.findComponent({ name: 'ArchiveFileBrowser' }).props('archive')).toEqual(
@@ -420,7 +402,7 @@ describe('ArchivesView', () => {
       const wrapper = mountView()
       await flushPromises()
       await pickFirstRepo(wrapper)
-      await wrapper.findAll('.archive-row-select')[0].trigger('click')
+      await archiveRows(wrapper)[0]!.trigger('click')
       expect(wrapper.findComponent({ name: 'ArchiveFileBrowser' }).props('archive')).not.toBe(null)
 
       await wrapper.find('select').trigger('change')
@@ -452,9 +434,11 @@ describe('ArchivesView', () => {
     })
 
     function openArchive(wrapper: ReturnType<typeof mount>, name: string): Promise<void> {
-      const row = wrapper.findAll('.archive-row').find((r) => r.text().includes(name))
+      const row = archiveRows(wrapper).find(
+        (r) => r.attributes('aria-label') === `Open archive ${name}`,
+      )
       if (!row) throw new Error(`no archive row for ${name}`)
-      return row.find('.archive-row-select').trigger('click')
+      return row.trigger('click')
     }
 
     function browsedComment(wrapper: ReturnType<typeof mount>): unknown {

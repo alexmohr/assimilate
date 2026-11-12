@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { useApiTokens } from './useApiTokens'
 
 vi.mock('../api/client', () => ({
@@ -185,5 +185,104 @@ describe('useApiTokens', () => {
     await submitCreate()
 
     expect(createSubmitting.value).toBe(false)
+  })
+
+  describe('expiry', () => {
+    const NOW = new Date('2026-06-01T12:00:00Z')
+
+    beforeEach(() => {
+      vi.useFakeTimers({ toFake: ['Date'] })
+      vi.setSystemTime(NOW)
+    })
+
+    afterEach(() => {
+      vi.useRealTimers()
+    })
+
+    it('starts a new token as never expiring', () => {
+      const { createExpiry, createExpiryDate, newTokenExpiresAt } = useApiTokens()
+      expect(createExpiry.value).toBe('never')
+      expect(createExpiryDate.value).toBe('')
+      expect(newTokenExpiresAt.value).toBeNull()
+    })
+
+    it('openCreate forgets the expiry chosen for the previous token', () => {
+      const { createExpiry, createExpiryDate, openCreate } = useApiTokens()
+      createExpiry.value = 'date'
+      createExpiryDate.value = '2026-07-15'
+
+      openCreate()
+
+      expect(createExpiry.value).toBe('never')
+      expect(createExpiryDate.value).toBe('')
+    })
+
+    it('creates a never-expiring token without an expiry', async () => {
+      const { createName, newTokenExpiresAt, submitCreate } = useApiTokens()
+      createName.value = 'forever'
+
+      await submitCreate()
+
+      expect(mockApiPost).toHaveBeenCalledWith('/tokens', { name: 'forever' })
+      expect(newTokenExpiresAt.value).toBeNull()
+    })
+
+    it('sends a preset length counted from now, and remembers it for the reveal', async () => {
+      const { createName, createExpiry, newTokenExpiresAt, submitCreate } = useApiTokens()
+      createName.value = 'ci'
+      createExpiry.value = '90d'
+
+      await submitCreate()
+
+      const expected = new Date(NOW.getTime() + 90 * 86_400_000).toISOString()
+      expect(mockApiPost).toHaveBeenCalledWith('/tokens', { name: 'ci', expires_at: expected })
+      expect(newTokenExpiresAt.value).toBe(expected)
+    })
+
+    it('sends the end of a picked day alongside the scope', async () => {
+      const { createName, createScope, createExpiry, createExpiryDate, submitCreate } =
+        useApiTokens()
+      createName.value = 'prometheus'
+      createScope.value = 'monitoring'
+      createExpiry.value = 'date'
+      createExpiryDate.value = '2026-07-15'
+
+      await submitCreate()
+
+      expect(mockApiPost).toHaveBeenCalledWith('/tokens', {
+        name: 'prometheus',
+        scope: 'monitoring',
+        expires_at: new Date(2026, 6, 15, 23, 59, 59).toISOString(),
+      })
+    })
+
+    it('is not ready on a date choice until a day is picked, and creates nothing', async () => {
+      const { createName, createExpiry, createExpiryDate, createReady, submitCreate } =
+        useApiTokens()
+      expect(createReady.value).toBe(false)
+      createName.value = 'ci'
+      expect(createReady.value).toBe(true)
+      createExpiry.value = 'date'
+      expect(createReady.value).toBe(false)
+
+      await submitCreate()
+      expect(mockApiPost).not.toHaveBeenCalled()
+
+      createExpiryDate.value = '2026-07-15'
+      expect(createReady.value).toBe(true)
+    })
+
+    it('does not record an expiry for a token whose creation failed', async () => {
+      const { createName, createExpiry, newTokenExpiresAt, newTokenPlaintext, submitCreate } =
+        useApiTokens()
+      mockApiPost.mockRejectedValue(new Error('nope'))
+      createName.value = 'ci'
+      createExpiry.value = '30d'
+
+      await submitCreate()
+
+      expect(newTokenExpiresAt.value).toBeNull()
+      expect(newTokenPlaintext.value).toBe('')
+    })
   })
 })

@@ -11,17 +11,18 @@ When set, the bandwidth cap is passed to Borg as `--upload-ratelimit` in kB/s.
 
 ## Creating a Schedule
 
-**New** on the Schedules page opens a wizard. Each step states what it still needs, the next step unlocks only once that is answered, and **Create schedule** exists on the final Review step alone — so a half-filled form can no longer be submitted.
+**New** on the Schedules page (or **Add schedule** on an agent's Schedules tab) opens a wizard on its own page. A numbered rail lists the steps; the foot of each step says what it still needs, **Continue** waits until that is answered, and **Create schedule** exists on the final Review step alone, where it waits for every step — so a half-filled form can no longer be submitted. **Back** returns to the previous step, and selecting a step in the rail jumps to it.
 
 ![New schedule wizard](assets/screenshots/schedule-wizard.png)
 
 1. **Basics** — name the schedule and pick its type (Backup, Integrity check, or Verify). The type decides which later steps apply: a check or verify schedule creates no archives, so Retention and Advanced are skipped.
 2. **Sources** — the hosts this schedule runs on and the paths to back up. Leave the paths empty to use each agent's own defaults.
 3. **Targets** — the repositories it writes into (see [Backup targets](#backup-targets)), and, once there is more than one host or more than one target, what a failure does to the rest of the run.
-4. **Timing** — the cron expression (see [Cron Expression Builder](#cron-expression-builder)) and how many missed runs are tolerated before the schedule is marked failed.
-5. **Retention** — the retention policy (see [Retention Policy](#retention-policy)).
-6. **Advanced** — exclude and include patterns, file change patterns, pre/post commands, bandwidth limit, [filesystem snapshots](filesystem-snapshots.md), and the other options most schedules leave alone.
-7. **Review** — a summary of everything, with an **Edit** link back to each step. Creating the schedule validates the cron expression and, if the schedule is enabled, verifies SSH connectivity to **every** target repository.
+4. **Power** — whether this schedule wakes the hosts it needs, overriding each machine's own default (see [Per-Schedule Overrides](power-management.md#per-schedule-overrides)).
+5. **Timing** — the cron expression (see [Cron Expression Builder](#cron-expression-builder)) and how many missed runs are tolerated before the schedule is marked failed.
+6. **Retention** — the retention policy (see [Retention Policy](#retention-policy)).
+7. **Advanced** — exclude and include patterns, file change patterns, pre/post commands, bandwidth limit, [filesystem snapshots](filesystem-snapshots.md), and the other options most schedules leave alone.
+8. **Review** — a summary of everything, with an **Edit** link back to each step. Creating the schedule validates the cron expression and, if the schedule is enabled, verifies SSH connectivity to **every** target repository.
 
 ## Backup targets
 
@@ -43,7 +44,7 @@ The repositories a schedule writes into can be changed later under **Settings �
 
 ![Schedules](assets/screenshots/schedules.png)
 
-The Schedules list page shows every configured schedule as a row, in one bordered panel per group. Each panel's header names the group, counts its schedules, and, in warning text, says how many of them are overdue. The column names appear once per panel: **Schedule**, **Agent**, **Health**, **Last 10 runs** and **Next run**. Rows that need attention sort to the top of their panel.
+The Schedules list page shows every configured schedule as a row, in one bordered panel per group. Each panel's header names the group, counts its schedules, and, in warning text, says how many of them are overdue. The column names appear once per panel: **Schedule**, **Agent**, **Health** and **Next run**. Rows that need attention sort to the top of their panel.
 
 Above the list:
 
@@ -70,35 +71,31 @@ The **Group** control beside the sort buttons switches which question the groups
 A schedule that targets several agents appears under each of them, so an agent's group lists everything that backs that machine up. Sorting, filtering and the overlap notices are unchanged by the group mode — every group is ordered by the active sort, and only schedules matching the current filters are grouped. Schedules with no agent or no repository assigned collect in a final **No agents** or **No repository** group.
 
 !!! note "Agents that share a hostname"
-    A schedule records the *hostname* it targets, and a hostname identifies a machine only together with its [domain](agents.md) — two agents in different domains can report the same one. Grouping by agent therefore puts every schedule naming that hostname in one group, whichever of those agents it actually targets. Such a group is titled with the bare hostname rather than either agent's display name, and carries an **N agents** badge saying how many machines it covers; hover it for the detail. Grouping by agent or repo drops the separate Disabled group: a disabled schedule stays with its agent or repository and is identified by its **Disabled** health chip instead.
+    A schedule records the *hostname* it targets, and a hostname identifies a machine only together with its [domain](agents.md) — two agents in different domains can report the same one. Grouping by agent therefore puts every schedule naming that hostname in one group, whichever of those agents it actually targets. Such a group is titled with the bare hostname rather than either agent's display name, and carries an **N agents** badge saying how many machines it covers; hover it for the detail. Grouping by agent or repo drops the separate Disabled group: a disabled schedule stays with its agent or repository and is identified by **Disabled** in its **Health** column instead.
 
 ### Rows
 
 Each row opens the schedule's detail page. The row shows:
 
-- **Schedule** — the schedule's name, or its repository's name when it has none, over its cadence, type and the repositories it writes into ("Daily at 02:00 · Backup → server-daily"). A status dot in front of the name takes the colour of the health chip.
+- **Schedule** — the schedule's name, or its repository's name when it has none, over its cadence, type and the repositories it writes into ("Daily at 02:00 · Backup → server-daily"). A status dot in front of the name sums up the schedule.
 - **Agent** — the agent the schedule runs on, with "+N" when it targets more; hover for the full list.
-- **Health** — one chip that sums up the schedule. Problems that apply together share the chip, for example **Overdue · 1/3 missed** or **Overdue · Failed**: **Failed** and **Warning** for the last run's outcome, **Overdue** when a target is behind, **N/threshold missed** once the schedule has missed a backup but not yet crossed its [missed backup threshold](#missed-backup-threshold), and **Overlaps <agent>** for a [repository overlap](#overlapping-runs). Without a problem, the chip reads **Running** while a run is in flight, **Disabled** (or **Auto-disabled**) for a disabled schedule, **Agent offline** when a target agent is disconnected, **Catch-up pending** while a run waits for a host to come back, **Not run yet**, or **Healthy**. Hover the chip for the detail behind it, such as the failed run's error message.
-- **Last 10 runs** — the run-history strip and its summary ("10 runs · 1 failed").
+- **Health** — the row's dot sums up the schedule, and anything but healthy is also named here in the dot's colour. A label that names a **Failed** or **Warning** run links to that schedule's runs in the [Activity log](activity.md), where their output is.
+  Problems that apply together share one label, for example **Overdue · 1/3 missed** or **Overdue · Failed**: **Failed** and **Warning** for the last run's outcome, **Overdue** when a target is behind, **N/threshold missed** once the schedule has missed a backup but not yet crossed its [missed backup threshold](#missed-backup-threshold), and **Overlaps <agent>** for a [repository overlap](#overlapping-runs). Without a problem, it reads **Running** while a run is in flight, **Disabled** (or **Auto-disabled**) for a disabled schedule, **Agent offline** when a target agent is disconnected, **Catch-up pending** while a run waits for a host to come back, or **Not run yet**; a healthy schedule shows only its green dot. Hover the label for the detail behind it, such as the failed run's error message.
 - **Next run** — when the schedule runs next, in warning colour while it is overdue. A disabled schedule shows a dash.
-
-The run-history strip draws up to the ten most recent runs as bars — bar height reflects duration for a completed run, and a failed run always draws at full height so it never reads as the least significant bar in the strip. A cancelled run draws as a muted bar distinct from a failure, and isn't counted in the strip's failed-run tally.
-
-A run of a multi-agent schedule is still one bar. It splits into equal-height segments, one per agent (two agents share it 50/50), each colored by that agent's own outcome — a run where one agent failed counts as failed without hiding which agent succeeded. A schedule that also writes into several repositories gets one segment per agent and repository, since each pairing is backed up separately. Hover a segment to see its agent and repository. The bar's height is the sum of its segments' backup durations, since they run one after another.
 
 The list has no controls of its own. Open a schedule to start it with **Run now**, stop a run with **Cancel backup**, or pause it with the **Enabled** switch under **Settings → General**.
 
-On a phone, each row shrinks to three short lines: the status dot, name and next run time; the cadence and agent; and the health chip. The run-history strip is left out.
+On a phone, each row shrinks to three short lines: the status dot, name and next run time; the cadence and agent; and the health label when the schedule is not healthy.
 
 ### Overlapping runs
 
-Borg locks a repository while it writes, so two runs into the same repository at the same time make one of them wait, or fail once the lock times out. The list warns about this with a notice above the groups when two schedules on **different agents** write into the **same repository** and their next runs overlap — for example: *Two agents write to repo server-daily at the same time. web-server-01 runs 02:00 – ~02:40 (estimated from recent runs), db-server-01 starts 02:10. The repo lock makes one of them wait or fail.* Both rows carry an **Overlaps <agent>** chip naming the other agent. Click the notice to open the repository's schedules and move one of them.
+Borg locks a repository while it writes, so two runs into the same repository at the same time make one of them wait, or fail once the lock times out. The list warns about this with a notice above the groups when two schedules on **different agents** write into the **same repository** and their next runs overlap — for example: *Two agents write to repo server-daily at the same time. web-server-01 runs 02:00 – ~02:40 (estimated from recent runs), db-server-01 starts 02:10. The repo lock makes one of them wait or fail.* Both rows name the other agent with **Overlaps <agent>** in their **Health** column. Click the notice to open the repository's schedules and move one of them.
 
 Each next run is taken to last as long as the median of the schedule's recent runs. A schedule with no finished runs is assumed to take 5 minutes, and the notice says so. Runs that touch — one starting the moment the other is expected to end — do not overlap. Only a schedule's next run is checked.
 
 Two schedules on the same agent never overlap: an agent runs its jobs one after another. Two runs that share a storage host but write to different repositories don't block each other either, and are not flagged. The check covers every enabled schedule, whatever the filters show.
 
-Overdue is evaluated per host: a schedule can show Overdue even while its own next/last run times look on track, if one of its target hosts hasn't completed a backup within its cron interval plus a 30-minute grace period. Hover the health chip of an overdue schedule to see which target host(s) are behind and when each last reported a backup; if a host's agent is currently disconnected, the tooltip also notes that ("Agent offline (last seen ...)") so you can tell at a glance whether the host is overdue because it's offline or because something else went wrong. A host whose backup is queued or running right now is never shown as overdue, however long it has been since the last completed backup; the run in progress is the fix, so it only counts as overdue again if that run ends without a success.
+Overdue is evaluated per host: a schedule can show Overdue even while its own next/last run times look on track, if one of its target hosts hasn't completed a backup within its cron interval plus a 30-minute grace period. Hover the **Health** label of an overdue schedule to see which target host(s) are behind and when each last reported a backup; if a host's agent is currently disconnected, the tooltip also notes that ("Agent offline (last seen ...)") so you can tell at a glance whether the host is overdue because it's offline or because something else went wrong. A host whose backup is queued or running right now is never shown as overdue, however long it has been since the last completed backup; the run in progress is the fix, so it only counts as overdue again if that run ends without a success.
 
 ### Filter syntax
 
@@ -124,51 +121,48 @@ Matching ignores case and matches on part of a value, so `host:borg` finds `borg
 
 ### Schedule Detail Tabs
 
-A saved schedule's detail page opens on **Overview**: an at-a-glance summary (repository, on-failure behavior, next/last run, human-readable cron), the list of target agents with their health, and a preview of recent backups. Settings — name, cron, targets, retention, and (for backup-type schedules) the advanced options below — live under a **Settings** tab with its own sub-navigation, so editing a schedule no longer means scrolling past its status. Editing takes effect on save; nothing here is a live view of a running backup except the progress card described below.
+A saved schedule's detail page has three tabs: **Overview**, **Backups** (backup-type schedules only) and **Settings**. Overview opens first: an attention list when something needs looking at, a **Schedule info** summary (repository, hosts, on-failure behavior, next/last run, human-readable cron, dependencies and catch-up), and the schedule's **Recent runs**. Settings — name, cron, targets, retention, and (for backup-type schedules) the advanced options below — live under the **Settings** tab as collapsible sections, so editing a schedule no longer means scrolling past its status. Editing takes effect on save; nothing here is a live view of a running backup except the progress card described below.
 
 ![Schedule Detail](assets/screenshots/schedule-detail.png)
 
-On the Overview tab, a target that's behind shows an **Overdue** badge and a **Retry** button, both in the attention banner at the top and in its row further down. Retry re-runs the backup for just that host, without re-running the other targets in the schedule.
+On the Overview tab, a target that's behind shows an **Overdue** row in the attention list at the top, with a **Retry** button. Retry re-runs the backup for just that host, without re-running the other targets in the schedule. A host whose run was skipped because a [dependency host](dependency-hosts.md) did not answer shows a **Waiting** row naming the dependency, with **Check now**.
+
+#### Recent runs
+
+**Recent runs** draws the schedule's last 20 runs as a strip of small cells, oldest on the left, each coloured by its worst outcome, with a legend counting how many completed. A run is one occurrence of the schedule, however many hosts it ran on. Select a cell to show that run below the strip: one row per host with what happened, how much it wrote and how long it took. Click a host's row to open its full output — warnings, the error or skip reason, and the power-management timeline. **Open in Activity log** opens the run in the [Activity log](activity.md), and **View all in Activity log** opens every run of the schedule there. The newest run is shown until you pick another.
 
 #### Per-repository outcome
 
 A schedule with [several target repositories](#backup-targets) reports each of them separately, because one occurrence leaves one run per repository behind and they can end differently:
 
-- **Repositories** in the summary lists each target with its last outcome, when it last finished, and a **best effort** pill on a target whose failure never stops the run. A target that has never run says so rather than reading as a failure.
-- **Recent runs** draws one history strip per repository, so a run of failures on the offsite copy is visible as exactly that, rather than being mixed into one strip with the healthy local copy.
-- **Targets** rows carry an **N of M repos failing** badge when some of a host's copies are landing and others are not.
-- **Recent backups** rows name the repository each run wrote into. Without it, the two runs a two-target schedule produces for one host in the same minute are indistinguishable.
+- **Repositories** in the summary lists each target with its last outcome, when it last finished, and a **best effort** badge on a target whose failure never stops the run. A target that has never run says so rather than reading as a failure.
+- **Recent runs** draws one strip per repository, so a run of failures on the offsite copy is visible as exactly that, rather than being mixed into one strip with the healthy local copy.
+- The run detail names the repository each host's row wrote into. Without it, the two runs a two-target schedule produces for one host in the same minute are indistinguishable.
 
 A schedule with a single repository is unchanged: the repository is the page's context, and naming it on every row would say nothing.
-
-The **Recent backups** preview below them is a way into each run, not just a status line. A run that produced an archive opens it from the host name, selected on this schedule's **Backups** tab. A run that finished with warnings or failed carries **View warnings** / **View error**, which opens that run on the host's own Logs tab with its output expanded — a failed run wrote no archive, so its output is the only thing there is to show for it.
-
-A run against a repository that has since been removed from the schedule keeps its row, named after the repository it was written to, but offers no way in: the Backups tab browses the schedule's *current* targets, so there is nowhere for it to land. The archive itself is still reachable from that repository's own page.
 
 While a backup for the schedule is running, the Overview tab also shows live progress: elapsed time, an estimated time remaining (once enough history exists), files processed, data transferred, the archive name, and the current file being backed up.
 
 ### Backups Tab
 
-For backup-type schedules, the schedule detail view includes a **Backups** tab. This tab lists all archives produced by the schedule, derived from successful and warning backup reports. Select an archive in the left panel to browse its file contents, navigate directories via breadcrumbs, and download individual files or directories — all without leaving the schedule view. **Growth** shows where an archive's deduplicated size went, compared with the same host's usual growth in that repository — see [Archive growth](archives.md#archive-growth).
+For backup-type schedules, the schedule detail view includes a **Backups** tab. This tab lists all archives produced by the schedule, derived from successful and warning backup reports. Select an archive in the list to browse its file contents, navigate directories via the folder path, and download files or directories — all without leaving the schedule view. The archive's **Growth** tab shows where its deduplicated size went, compared with the same host's usual growth in that repository — see [Archive growth](archives.md#archive-growth).
 
 ![Schedule Backups tab](assets/screenshots/schedule-backups.png)
 
-A schedule that writes into more than one repository lists every target's archives in one list, the primary target's first, each row tagged with the repository it is in. A **Repository** filter above the list names each target and how many of the loaded archives it holds, and narrows the list to one. Browsing, downloading, restoring and deleting an archive all act against that archive's own repository, and the archive header says which one that is. Opening a run's archive from the Overview tab's **Recent backups** preview opens the copy you clicked, clearing a filter or search that would hide it.
+A schedule that writes into more than one repository lists every target's archives in one list, the primary target's first, each row naming the repository it is in. Repository pills above the list name each target and how many of the loaded archives it holds, and narrow the list to one. Browsing, downloading, restoring and deleting an archive all act against that archive's own repository, and the open archive's head says which one that is.
 
 !!! note "One name, one copy per repository"
     The same archive name exists in every target a schedule writes into — they are copies of the same source. Deleting one removes it from the selected repository only; the other copies stay.
 
 The Backups tab is only visible for backup-type schedules that have been saved (not in create mode).
 
-The archive list is built from the schedule's run history, not from a separate archive listing: every successful or warning run that wrote an archive contributes one row, and a re-run that wrote the same archive name appears once. That history is loaded in pages of the most recent runs — the same pages the [Logs tab](#logs-tab) shows — so while older runs have not been fetched yet, a note under the list says how many of the schedule's runs have been checked and offers **Load N more runs** to look further back.
+The archive list is built from the schedule's run history, not from a separate archive listing: every successful or warning run that wrote an archive contributes one row, and a re-run that wrote the same archive name appears once. That history is loaded in pages of the most recent runs, so while older runs have not been fetched yet, a note under the list says how many of the schedule's runs have been checked and offers **Load N more runs** to look further back.
 
 A failed run usually produced no borg archive, so there is nothing on disk to lose by clearing its history — and the rare failed run that did produce one (e.g. a prune or post-backup hook failing after a successful `borg create`) is left alone rather than deleted. When there are one or more archive-less failed runs, **Clean up failed backups (N)** in the header's overflow menu deletes every such failed report for this schedule after a confirmation dialog. This is a manual, on-demand action for this schedule alone — independent of the [`failed_report_retention_days`](configuration.md#system-settings) setting, which prunes failed reports for *every* schedule automatically by age. It requires the same permission as editing or deleting the schedule itself.
 
-### Logs Tab
+### Run history
 
-Every schedule, of any type, has a **Logs** tab: one line per run, any status, oldest failures included — the same view an [agent's own Logs tab](agents.md#logs-tab) renders. A status filter (All / Success / Warning / Failed) and a Newest/Oldest sort sit above the rows; a warned or failed run expands its warning or error output in place. A run that produced an archive links straight to it in the Backups tab's file browser. The latest failed run of each host and repository has a **Retry** button that runs the schedule again for just that host and repository — see [Retrying a failed run](agents.md#retrying-a-failed-run).
-
-The tab label carries the true total, not just how many runs are currently loaded — the list itself starts at the 50 most recent and offers **Load N more** once there are more to fetch, rather than silently capping at that first page.
+A schedule has no run list of its own. Every run of it, of any type and any status, is in the [Activity log](activity.md): **View all in Activity log** under **Recent runs** opens it filtered to this schedule, and a failed or warned run's label on the Schedules list opens that schedule's failed or warned runs there.
 
 ## Cron Expression Builder
 
@@ -242,7 +236,7 @@ When all agents in a schedule back up the same directories, enter the paths in t
 
 ### Per-Agent Paths
 
-When a schedule targets multiple agents and each agent needs different directories, enable **Configure per agent** in the Backup Paths section. This reveals a textarea for each selected agent where you can specify agent-specific paths.
+When a schedule targets multiple agents and each agent needs different directories, open the saved schedule's **Settings → Targets** and turn on **Configure paths per agent** under the backup paths. This reveals a textarea for each selected agent where you can specify agent-specific paths. The wizard's **Sources** step sets the schedule-level paths only.
 
 Per-agent paths completely override schedule-level paths for that agent. If an agent's per-agent paths field is left empty, the system falls back to schedule-level paths, then to the agent's default paths.
 
@@ -251,7 +245,7 @@ Per-agent paths completely override schedule-level paths for that agent. If an a
 
 ## Schedule Status
 
-Each schedule row in the UI shows:
+A schedule's status is made up of:
 
 | Field | Description |
 |-------|-------------|
@@ -264,9 +258,9 @@ Disabling a schedule clears the next-run time. Re-enabling it recalculates the n
 
 ### Missed Backup Threshold
 
-Settings → General has a **Mark as failed after** field (`missed_backup_threshold`, default 3): how many consecutive missed backups — the agent or the backup's target being unreachable when the scheduler tries to trigger the run — this schedule tolerates before it's marked failed and automatically disabled. Every miss shows as **N/threshold missed** in the schedule's health chip on the Schedules list and fires the matching [failed or skipped backup notification](#hosts-that-are-not-always-online) if a channel has a rule for it; once the threshold is reached, the schedule is additionally disabled, its health chip reads "Auto-disabled" (see [Agent Status](agents.md#agent-status)), and a **Schedule Auto Disabled** [notification](notifications.md#supported-events) also fires for that same final miss.
+Settings → General has a **Mark as failed after** field (`missed_backup_threshold`, default 3): how many consecutive missed backups — the agent or the backup's target being unreachable when the scheduler tries to trigger the run — this schedule tolerates before it's marked failed and automatically disabled. Every miss shows as **N/threshold missed** in the schedule's **Health** column on the Schedules list and fires the matching [failed or skipped backup notification](#hosts-that-are-not-always-online) if a channel has a rule for it; once the threshold is reached, the schedule is additionally disabled, its **Health** column reads "Auto-disabled" (see [Agent Status](agents.md#agent-status)), and a **Schedule Auto Disabled** [notification](notifications.md#supported-events) also fires for that same final miss.
 
-The count goes back to zero, and the warning chip with it, as soon as a run reaches its host — the moment the backup starts, not once it finishes — whether the run was scheduled, a [catch-up](#catch-up-runs), or started by hand with **Run now** or **Retry**. A scheduled run of a schedule with several hosts clears it when the last of them starts without a miss. That holds only while none of the schedule's other hosts is unreachable: a run limited to one host leaves the count alone while another is still down.
+The count goes back to zero, and the **N/threshold missed** label with it, as soon as a run reaches its host — the moment the backup starts, not once it finishes — whether the run was scheduled, a [catch-up](#catch-up-runs), or started by hand with **Run now** or **Retry**. A scheduled run of a schedule with several hosts clears it when the last of them starts without a miss. That holds only while none of the schedule's other hosts is unreachable: a run limited to one host leaves the count alone while another is still down.
 
 ### Hosts That Are Not Always Online
 
@@ -338,7 +332,7 @@ A pending miss is also dropped, without running, when the schedule or its reposi
 
 To run a backup immediately without waiting for the next scheduled time, open the schedule and click **Run now** in its header. The server sends a `RunBackupNow` message to the connected agent. The agent starts the backup immediately and reports the result back to the server.
 
-If a host is offline when you press **Run now** or **Retry**, its run is queued rather than dropped: it is sent the moment the agent reconnects. Until then the schedule reads **Queued** instead of **Running**, and its Overview tab says which host the backup is waiting for rather than showing it in progress. **Cancel** calls off a queued run the same way it stops a running one.
+If a host is offline when you press **Run now** or **Retry** (here, or on a failed run in the [Activity log](activity.md#retrying-a-failed-run)), its run is queued rather than dropped: it is sent the moment the agent reconnects. Until then the schedule reads **Queued** instead of **Running**, and its Overview tab says which host the backup is waiting for rather than showing it in progress. **Cancel** calls off a queued run the same way it stops a running one.
 
 Manual runs follow the same retention policy and exclude patterns as scheduled runs, and write every [backup target](#backup-targets) in the same order, so **Run now** produces the same copies the cron would. Because it writes them all, it needs permission on every target repository, not only the schedule's primary one. **Cancel** stops the run on all of them and asks only for permission on the schedule, so whoever can pause it can also stop a run already going.
 
@@ -438,49 +432,30 @@ vzdump --all 1 --storage backup-store --mode snapshot --compress zstd
 find /mnt/pve/backup-store/dump -maxdepth 1 -name 'vzdump-*' -delete
 ```
 
-## Cloning a Schedule
-
-To create a new schedule with the same settings as an existing one:
-
-1. Open the schedule detail view.
-2. Click **Clone**.
-3. Adjust the cron expression, repository, or any other fields as needed.
-4. Click **Save**.
-
-The cloned schedule starts disabled. Enable it once you have verified its settings.
-
-!!! note
-    Cloning copies all fields including retention policy, exclude patterns, pre/post commands, and the rate limit. The clone is always created in the disabled state regardless of the source schedule's state.
-
 ## Dry-Run Preview
 
-Before running a backup for real, you can preview what borg would do without writing any data to the repository.
+Before running a backup for real, you can preview which files it would include without writing any data to the repository. The web UI has no button for this; call the API instead:
 
-1. Open the schedule detail view.
-2. Click **Dry Run**.
-3. The server sends a `DryRunBackup` message to the agent.
-4. The agent runs `borg create --dry-run` and reports the result back.
+```bash
+curl -X POST https://your-server/api/repos/<repo id>/dry-run \
+  -H "Authorization: Bearer <api token>" \
+  -H "Content-Type: application/json" \
+  -d '{"schedule_id": <schedule id>}'
+```
 
-The dry-run result shows:
-
-| Field | Description |
-|-------|-------------|
-| **Files scanned** | Number of files that would be included |
-| **Data volume** | Estimated uncompressed data volume |
-| **New data** | Estimated new (non-deduplicated) data that would be written |
-| **Output** | Full borg stdout/stderr for inspection |
+The server sends a `DryRun` message to the agent, which runs `borg create --dry-run` and reports back the files that would be included, each with its size, and their total size.
 
 !!! note
-    Dry-run uses the same exclude patterns, backup sources, and pre-commands as the real backup. Post-commands are not executed during a dry run. No archive is created and no data is written to the repository.
+    Dry-run uses the same backup sources and exclude and include patterns as the real backup. No hook commands run, no archive is created and no data is written to the repository.
 
 ## Browsing Archives from a Schedule
 
-Each backup schedule's detail view includes a **Backups** tab that shows every archive created by that schedule. It renders the same archive selector and file browser as the repository's **Archives** tab, so from this tab you can:
+Each backup schedule's detail view includes a **Backups** tab that shows every archive created by that schedule. It renders the same archive list and file browser as the repository's **Archives** tab, so from this tab you can:
 
 1. Search, sort and group the schedule's archives by host — useful when the schedule targets several machines.
 2. Select an archive to inspect its contents in the file browser panel on the right.
 3. Browse directories and download individual files — see [Archive Browsing & Extraction](archives.md) for the full file browser reference.
-4. Delete an archive, if you are an administrator.
+4. Delete an archive from its **...** menu, if you are an administrator.
 
 The Backups tab is available only for schedules of type **Backup**.
 

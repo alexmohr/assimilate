@@ -71,7 +71,7 @@ export function byFinishedDesc<T extends { finished_at: string; id: number }>(a:
  * repeating them as an error.
  *
  * Shared rather than repeated: this decides which button a viewer sees, on
- * the host Overview (AgentBackupRow) and the schedule Overview alike, and
+ * the host Overview and the schedule Overview alike, and
  * the two drifting apart would show different rows for the same run.
  */
 export type ReportMessageLabel = 'View warnings' | 'View error'

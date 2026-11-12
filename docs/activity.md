@@ -6,9 +6,9 @@ The Activity Log provides a unified timeline of backup runs, system events, rest
 
 ## Categories
 
-The Activity page has these tabs to filter the timeline by event type:
+The **Type** pills at the top of the Activity page filter the timeline by event type:
 
-| Tab | Content |
+| Type | Content |
 |-----|---------|
 | **All** | Interleaved view of backup activity and system events, sorted by timestamp |
 | **Backup** | Backup run history only (success, warning, failed) |
@@ -19,21 +19,28 @@ The Activity page has these tabs to filter the timeline by event type:
 
 ## Backup Activity
 
-The Backup tab (and the "All" view) shows one card per backup run, with the start timestamp, hostname of the agent that ran the backup, target repository name, the schedule that ran it (a schedule without a name shows as `Schedule #<id>`), status (`success`, `warning`, or `failed`), and duration.
+**Backup** (and **All**) shows one row per backup run: a status dot (green for success, amber for a warning, red for a failure), the hostname of the agent that ran the backup and the target repository, under them the schedule that ran it (a schedule without a name shows as `Schedule #<id>`) and the duration, and the start time on the right.
 
-Click any card to expand it and see detailed statistics:
+While a backup is running, a **Live backup output** card above the list streams its output, one card per host and repository.
+
+Click any row to open it and see detailed statistics:
 
 - **Timing** — start, finish, and duration
 - **Sizes** — original, compressed, and deduplicated
 - **Stats** — files processed, borg version
+- **Command** — the borg command that ran
 - **Warnings** — a list of warning messages (if the run completed with warnings). borg's own `terminating with warning status, rc 1` footer is left out: it restates the exit code without saying what caused it. If borg ends a run with a warning status but reports no message at all, the entry says exactly that and carries the last output borg produced, so a flagged run always states a reason — see [File Change Patterns](file-change-patterns.md) for suppressing the warnings you have already decided to live with
 - **Error** — error message, shown only for a failed run — a warning-only run's message already appears in the Warnings section above, so it isn't duplicated here
 
 ### Acknowledging a warning or failure
 
-A warning or failed run's card carries an **Acknowledge** button. Acknowledging marks the run as reviewed: the entry drops out of the feed (the **Acknowledged** filter brings it back, see [Filters](#filters)) and stops counting towards the dashboard. Nothing is deleted. **Unacknowledge** reverses it. Acknowledgment is shared across every user, not tied to whoever clicked it — like the run itself.
+An opened warning or failed run carries an **Acknowledge** button, next to **View run**, which narrows the list to every entry of that run. Acknowledging marks the run as reviewed: the entry drops out of the feed, or is dimmed and marked **Acknowledged** while the filter shows it (the **Acknowledged** filter brings it back, see [Filters](#filters)) and stops counting towards the dashboard. Nothing is deleted. **Unacknowledge** reverses it. Acknowledgment is shared across every user, not tied to whoever clicked it — like the run itself.
 
 A successful run has no Acknowledge button; there is nothing on it to review.
+
+### Retrying a failed run
+
+An opened failed run also carries **Retry**, when it is the newest run of its schedule on that host and repository. Retry runs the schedule again for just that host and that repository, so copies that already succeeded elsewhere are not written twice. If the host is offline, the run is queued and sent when it reconnects. The button goes away once a newer run of the same copy exists — the retry itself, or a later scheduled run — so a failure that has since been fixed offers nothing to re-run. A run with no schedule (an import, a one-off) has no Retry.
 
 Acknowledging a run also removes it from the dashboard:
 
@@ -65,14 +72,20 @@ When viewing Backup or All activity, the following filters are available:
 | Machine | Show only runs from a specific host |
 | Schedule | Show only runs of a specific schedule |
 | Target | Show only runs targeting a specific repository |
-| Status | Filter by outcome (success, warning, failed) |
+| Status | Filter by outcome (success, warning, failed), or runs that are started or pending |
 | Acknowledged | `Hidden` (the default) leaves out everything already reviewed, `Shown` includes it, `Only acknowledged` shows nothing else |
 | From / To | Date range filter |
 
-Click **Clear** to reset all filters, including putting **Acknowledged** back to `Hidden`.
+Click **Clear** to reset all filters, including putting **Acknowledged** back to `Hidden`. On a phone the filters sit behind the **Filters** button next to the type pills.
 
 !!! note
     Because acknowledged entries are hidden by default, acknowledging an entry makes it disappear from the list straight away. Switch **Acknowledged** to `Shown` or `Only acknowledged` to find it again and undo it.
+
+### Arriving from a failed run
+
+Wherever a failed or warned run is shown — an agent's **failed** chip on the Agents list, a repository's state or the last backup on an agent's Overview, a schedule's health label or last run on the Schedules list or an agent's Schedules tab, a run on a schedule's **Recent runs**, a dashboard finding — it links here, with the filters above set to that run's agent, schedule or repository and status. A link to one particular run also opens its entry, so the error output is the first thing on the page.
+
+This is where a host's or a schedule's run history lives: agents and schedules have no run list of their own.
 
 ## System Events
 
@@ -91,7 +104,7 @@ System events record significant server-side occurrences:
 - A dependency the [machines migration](power-management.md#machines) merged into its repository host's machine, and how their availability settings were reconciled (**Machine migrated**)
 - A decision the [repository hosts migration](repository-hosts.md#upgrading-from-per-repository-settings) made about a repository that changes where or how it connects — a new hostname, another port, a different pinned key or wake address, or a removed server quota
 
-Each event row shows a timestamp, hostname (if applicable), message, and event type badge. The badge colour comes from the event's severity: green for a completed operation, amber for something degraded, red for a failure, grey for a purely informational record. Anything amber or red can be acknowledged — see [Acknowledging a system event](#acknowledging-a-system-event).
+Each event row shows a status dot, the hostname (or **Server**), the event type, the message, and the time. The dot's colour comes from the event's severity: green for a completed operation, amber for something degraded, red for a failure, grey for a purely informational record. Click a row to read the whole message. Anything amber or red can be acknowledged — see [Acknowledging a system event](#acknowledging-a-system-event).
 
 ## Server Logs
 
@@ -102,16 +115,7 @@ The Server Logs tab streams the server's internal log buffer. Use it for debuggi
 | Level | Filter by severity: Error, Warn, Info, Debug, Trace |
 | Search | Free-text filter across log messages |
 
-Log entries display:
-
-| Column | Description |
-|--------|-------------|
-| Timestamp | When the log entry was recorded |
-| Level | Severity badge (ERROR, WARN, INFO, DEBUG, TRACE) |
-| Target | Rust module path that emitted the log |
-| Message | Log message content |
-
-Error and warning rows are highlighted for visibility.
+Each entry is one row: a dot coloured by severity, the message, under it the level (ERROR, WARN, INFO, DEBUG, TRACE) and the Rust module path that emitted it, and the time on the right. Click a row to open it with the full message.
 
 !!! note
     The server keeps a rolling buffer of recent log entries in memory. Logs older than the buffer size are not available through the UI. For persistent log storage, configure your deployment's log collection system (journald, Docker logging driver, etc.).
@@ -135,14 +139,7 @@ The Browser logs tab shows what the web UI logged in your current browser tab: f
 | Level | Error, Warn or Debug. As on the Server Logs tab, a level also shows everything more severe |
 | Search | Free-text filter across the message and the source location |
 
-Log entries display:
-
-| Column | Description |
-|--------|-------------|
-| Timestamp | When the entry was logged |
-| Level | Severity badge (ERROR, WARN, DEBUG) |
-| Source | The function and file location that logged it, where the browser reports one |
-| Message | Log message content. An entry that logged an error has a **Stack trace** section |
+Each entry is one row: a dot coloured by severity, the message, under it the level (ERROR, WARN, DEBUG) and the source — the function and file location that logged it, where the browser reports one — and the time on the right. Click a row to open it; an entry that logged an error has a **Stack trace** section.
 
 The header has two actions:
 

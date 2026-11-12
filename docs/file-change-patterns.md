@@ -21,7 +21,7 @@ File change patterns can be configured at three levels:
 
 ### Schedule-level patterns
 
-Navigate to **Schedules** → select a schedule → **File Change Patterns** section.
+Navigate to **Schedules** → select a schedule → **Settings** → **Advanced**, and its **File change patterns** block (or the **Advanced** step of a new schedule).
 
 Each line is a glob pattern, optionally followed by an action keyword. Patterns are matched against the full warning message text, which is the path plus borg's `: file changed while we backed it up` (see [Pattern Syntax](#pattern-syntax) below) — write the path out from the root and let a trailing `*` or `**` cover the rest of the message:
 
@@ -45,7 +45,7 @@ When a schedule targets multiple agents, you can toggle **Configure per agent** 
 
 ### Agent default patterns
 
-Navigate to **Agents** → select a host → **Default File Change Patterns** section. Patterns are entered the same way as at the schedule level (glob plus optional action). These patterns apply to every schedule that targets the host, so they're useful for host-specific noise (e.g. a database's WAL files) that would otherwise need to be repeated on every schedule backing up that host.
+Navigate to **Agents** → select a host → **Settings** → **Backup defaults**, and its **File change patterns** block. Patterns are entered the same way as at the schedule level (glob plus optional action). These patterns apply to every schedule that targets the host, so they're useful for host-specific noise (e.g. a database's WAL files) that would otherwise need to be repeated on every schedule backing up that host.
 
 ![Default file change patterns configured on a host](assets/screenshots/host-file-change-patterns.png)
 

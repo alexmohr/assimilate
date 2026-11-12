@@ -53,14 +53,13 @@ const { backendUnreachable, retryCountdown, checking, retryNow } = useBackendSta
 .backend-overlay-card {
   display: flex;
   flex-direction: column;
-  align-items: center;
+  align-items: flex-start;
   gap: var(--space-6);
   padding: var(--space-9) var(--space-10);
   background: var(--bg-card);
   border-radius: var(--radius);
   border: 1px solid var(--border);
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
-  text-align: center;
   max-width: 360px;
 }
 

@@ -801,6 +801,47 @@ mod tests {
         drop(child); // must not panic
     }
 
+    /// A child that has exited but not been reaped (a zombie) needs no signal
+    /// and holds no lock: `Drop` must see that through `try_wait` and leave it
+    /// without registering a reaper. `waitid(WNOWAIT)` blocks until the exit
+    /// without reaping it, so the test does not depend on how fast it exits.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn graceful_child_drop_leaves_an_exited_unreaped_child_alone() {
+        use nix::sys::wait::{Id, WaitPidFlag, waitid};
+
+        let registry = TaskRegistry::default();
+        let child = Command::new("sh")
+            .arg("-c")
+            .arg("exit 0")
+            .kill_on_drop(false)
+            .spawn()
+            .expect("failed to spawn sh for test");
+        let pid = child.id().expect("a just-spawned child has a pid");
+        let guard = GracefulChild::new(
+            child,
+            PathBuf::from("sh"),
+            None,
+            Vec::new(),
+            registry.clone(),
+        );
+
+        let raw = i32::try_from(pid).expect("pid fits an i32");
+        waitid(
+            Id::Pid(nix::unistd::Pid::from_raw(raw)),
+            WaitPidFlag::WEXITED | WaitPidFlag::WNOWAIT,
+        )
+        .expect("waitid on our own child");
+
+        drop(guard);
+
+        assert_eq!(
+            registry.pending_count(),
+            0,
+            "an exited child needs no reaper"
+        );
+    }
+
     #[tokio::test]
     async fn graceful_child_wait_returns_error_when_child_already_taken() {
         let mut child = spawn_exited_child();

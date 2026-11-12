@@ -37,7 +37,8 @@ export interface ReportsPager {
 
 /**
  * Pages a backup-report list backed by a `{ reports, total }` endpoint (an
- * agent's or a schedule's), used by every tab that renders `RunLogTab`.
+ * agent's or a schedule's), used by the views that list a host's or a
+ * schedule's runs.
  *
  * The server has always capped a bare `/reports` fetch at 50 rows; before
  * this there was no `total` in the response, so a tab showing "50" had no

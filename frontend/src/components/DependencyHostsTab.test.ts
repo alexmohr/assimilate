@@ -88,8 +88,9 @@ describe('DependencyHostsTab', () => {
     expect(row.get('.status-dot').classes()).toContain('status-dot--warning')
     expect(row.get('[data-testid="dependency-address"]').text()).toBe('SMB · nas-media.lan:445')
     expect(row.text()).toContain('Same machine as nas-01')
-    const chips = row.findAll('[data-testid="dependency-availability"] .badge').map((b) => b.text())
-    expect(chips).toEqual(['Not always online', 'Wake on demand'])
+    expect(row.get('[data-testid="dependency-availability"]').text()).toBe(
+      'Intermittent · woken on demand',
+    )
     const usedBy = row.findAll('.dependency-used-link')
     expect(usedBy.map((l) => l.text())).toEqual(['2 schedules', '1 agent default'])
     for (const link of usedBy) {
@@ -110,15 +111,20 @@ describe('DependencyHostsTab', () => {
   })
 
   it.each([
-    [true, 'badge--success', 'Answering'],
-    [false, 'badge--warning', 'Not answering'],
-    [null, 'badge--neutral', 'Not checked yet'],
-  ])('reads a last check of %s as %s "%s"', async (reachable, tone, label) => {
+    [true, 'status-dot--success', 'Answering'],
+    [false, 'status-dot--warning', 'Not answering'],
+    [null, null, 'Not checked yet'],
+  ])('reads a last check of %s as a %s dot labelled "%s"', async (reachable, tone, label) => {
     listing([dependencyHost({ last_check_reachable: reachable })])
     const wrapper = await render()
-    const badge = wrapper.get('.dependency-name-line .badge')
-    expect(badge.classes()).toContain(tone)
-    expect(badge.text()).toBe(label)
+    const dot = wrapper.get('[data-testid="dependency-row"] .status-dot')
+    if (tone) expect(dot.classes()).toContain(tone)
+    else expect(dot.classes()).toEqual(['status-dot'])
+    expect(dot.attributes('role')).toBe('img')
+    expect(dot.attributes('aria-label')).toBe(label)
+    expect(dot.attributes('title')).toBe(label)
+    // The dot carries the state on its own; no pill repeats it.
+    expect(wrapper.find('.dependency-name-line .badge').exists()).toBe(false)
   })
 
   it('names the protocol from the port, and says when it was never checked', async () => {
@@ -135,8 +141,8 @@ describe('DependencyHostsTab', () => {
     expect(wrapper.text()).toContain('Always online')
     // Wake on an always-online machine is not "on demand".
     expect(
-      wrapper.findAll('[data-testid="dependency-availability"] .badge').map((b) => b.text()),
-    ).toContain('Wake')
+      wrapper.findAll('[data-testid="dependency-availability"]').map((b) => b.text()),
+    ).toContain('Always online · woken')
     const never = wrapper.get('.dependency-checked')
     expect(never.text()).toContain('Never')
     expect(never.classes()).toContain('muted')

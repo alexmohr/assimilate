@@ -13,12 +13,12 @@ A host's quota is set in the **Storage quota** section of its [repository host](
 
 A repository's **Overview** tab shows admins a **Host quota** tile with how full its host is against that quota; clicking it opens the host's **Storage quota** section.
 
-Once a host quota exists, admins can also see it visualized on the [Repositories](repositories.md) list: click **Group by host** to view each host as a storage pool bar, with every repository on it drawn as a segment sized to its share of the combined usage.
+Once a host quota exists, admins can also see it visualized on the [Repositories](repositories.md) list: group it by **Host** (the default) to view each host as a storage pool bar, with every repository on it drawn as a segment sized to its share of the combined usage.
 
 ## Configuring a Host Quota
 
 1. Open the host: on **Repositories**, open a repository, then its **Settings** tab, and click the host's address (or click a repository's **Host quota** tile).
-2. Select **Storage quota**. It shows the combined deduplicated size of every repository on the host.
+2. Open its **Storage quota** section. It shows the combined deduplicated size of every repository on the host.
 3. Click **Configure quota** (or **Edit** if one is already set).
 4. Enter the **Warning** and **Critical** thresholds in GB.
 5. Choose the **action** for each threshold — the same three actions available for repository quotas.

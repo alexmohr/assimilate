@@ -43,7 +43,7 @@ describe('NotificationHistoryTab', () => {
   it('shows the shared empty state when nothing has been delivered', () => {
     const wrapper = mount({ deliveries: [] })
     expect(wrapper.text()).toContain('No deliveries yet')
-    expect(wrapper.find('table').exists()).toBe(false)
+    expect(wrapper.find('.log-row').exists()).toBe(false)
   })
 
   it('names the channel a delivery went to', () => {
@@ -63,56 +63,79 @@ describe('NotificationHistoryTab', () => {
     expect(mount().text()).toContain('Backup failed')
   })
 
-  it('tones the status by outcome', () => {
-    expect(mount().find('.delivery-status').classes()).toContain('status-sent')
-    expect(
-      mount({ deliveries: [delivery({ status: 'failed' })] })
-        .find('.delivery-status')
-        .classes(),
-    ).toContain('status-failed')
+  it('tones the status dot by outcome', () => {
+    const dot = (status: string): string[] =>
+      mount({ deliveries: [delivery({ status } as Partial<NotificationDelivery>)] })
+        .find('.log-row-dot')
+        .classes()
+    expect(dot('sent')).toContain('status-dot--success')
+    expect(dot('failed')).toContain('status-dot--danger')
+    expect(dot('pending')).toContain('status-dot--warning')
+  })
+
+  it('says the outcome on the row, or the error of a failed attempt', () => {
+    expect(mount().find('.log-row-facts').text()).toBe('Sent')
     expect(
       mount({ deliveries: [delivery({ status: 'pending' })] })
-        .find('.delivery-status')
-        .classes(),
-    ).toContain('status-pending')
+        .find('.log-row-facts')
+        .text(),
+    ).toBe('Pending')
+    expect(
+      mount({
+        deliveries: [
+          delivery({ status: 'failed', error_message: 'connection refused\nat line 2' }),
+        ],
+      })
+        .find('.log-row-facts')
+        .text(),
+    ).toBe('connection refused')
+    expect(
+      mount({ deliveries: [delivery({ status: 'failed', error_message: null })] })
+        .find('.log-row-facts')
+        .text(),
+    ).toBe('Failed')
   })
 
   it('expands a row to show the payload, and collapses it again', async () => {
     const wrapper = mount()
-    expect(wrapper.find('.detail-row').exists()).toBe(false)
+    expect(wrapper.find('.log-row-detail').exists()).toBe(false)
 
-    await wrapper.find('.delivery-row').trigger('click')
-    expect(wrapper.find('.detail-row').exists()).toBe(true)
+    await wrapper.find('.log-row-summary').trigger('click')
+    expect(wrapper.find('.log-row-detail').exists()).toBe(true)
+    expect(wrapper.find('.log-row-summary').attributes('aria-expanded')).toBe('true')
     expect(wrapper.find('.detail-pre').text()).toContain('"repo": "main"')
 
-    await wrapper.find('.delivery-row').trigger('click')
-    expect(wrapper.find('.detail-row').exists()).toBe(false)
+    await wrapper.find('.log-row-summary').trigger('click')
+    expect(wrapper.find('.log-row-detail').exists()).toBe(false)
   })
 
   it('expands one row at a time', async () => {
     const wrapper = mount({ deliveries: [delivery({ id: 1 }), delivery({ id: 2 })] })
-    await wrapper.findAll('.delivery-row')[0].trigger('click')
-    await wrapper.findAll('.delivery-row')[1].trigger('click')
-    expect(wrapper.findAll('.detail-row')).toHaveLength(1)
+    await wrapper.findAll('.log-row-summary')[0].trigger('click')
+    await wrapper.findAll('.log-row-summary')[1].trigger('click')
+    expect(wrapper.findAll('.log-row-detail')).toHaveLength(1)
   })
 
   it('shows the error block only for a delivery that failed', async () => {
     const clean = mount()
-    await clean.find('.delivery-row').trigger('click')
+    await clean.find('.log-row-summary').trigger('click')
     expect(clean.find('.error-pre').exists()).toBe(false)
 
     const failed = mount({
       deliveries: [delivery({ status: 'failed', error_message: 'connection refused' })],
     })
-    await failed.find('.delivery-row').trigger('click')
+    await failed.find('.log-row-summary').trigger('click')
     expect(failed.find('.error-pre').text()).toBe('connection refused')
   })
 
-  it('labels every cell for the stacked mobile layout', () => {
-    const labels = mount()
-      .findAll('.delivery-row td[data-label]')
-      .map((c) => c.attributes('data-label'))
-    expect(labels).toEqual(['Channel', 'Event', 'Status', 'Error', 'Time'])
+  it('names the channel, status and time in the open detail', async () => {
+    const wrapper = mount({ deliveries: [delivery({ status: 'failed', error_message: 'x' })] })
+    await wrapper.find('.log-row-summary').trigger('click')
+    const terms = wrapper.findAll('.log-row-detail dt').map((t) => t.text())
+    expect(terms).toEqual(['Time', 'Channel', 'Status'])
+    const values = wrapper.findAll('.log-row-detail dd').map((d) => d.text())
+    expect(values[1]).toBe('Ops Email')
+    expect(values[2]).toBe('Failed')
   })
 
   describe('channel filter', () => {
@@ -120,13 +143,13 @@ describe('NotificationHistoryTab', () => {
 
     it('shows every channel when no filter is set', () => {
       const wrapper = mount({ deliveries: TWO })
-      expect(wrapper.findAll('.delivery-row')).toHaveLength(2)
+      expect(wrapper.findAll('.log-row')).toHaveLength(2)
       expect(wrapper.find<HTMLSelectElement>('select').element.value).toBe('')
     })
 
     it('narrows the log to the channel it is given', () => {
       const wrapper = mount({ deliveries: TWO, channelId: 2 })
-      const rows = wrapper.findAll('.delivery-row')
+      const rows = wrapper.findAll('.log-row')
       expect(rows).toHaveLength(1)
       expect(rows[0].text()).toContain('Slack Hook')
       expect(wrapper.find<HTMLSelectElement>('select').element.value).toBe('2')
@@ -141,7 +164,7 @@ describe('NotificationHistoryTab', () => {
 
     it('says so, and offers every channel back, when the channel sent nothing', async () => {
       const wrapper = mount({ deliveries: [delivery({ channel_id: 1 })], channelId: 2 })
-      expect(wrapper.find('table').exists()).toBe(false)
+      expect(wrapper.find('.log-row').exists()).toBe(false)
       expect(wrapper.text()).toContain('Nothing sent through this channel yet')
       await wrapper.find('.empty-state button').trigger('click')
       expect(wrapper.emitted('update:channelId')).toEqual([[null]])

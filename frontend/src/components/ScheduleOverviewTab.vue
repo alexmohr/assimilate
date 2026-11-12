@@ -106,8 +106,8 @@ function repoStatusBadgeClass(entry: ScheduleRepoRuns): string {
  *
  * Empty when it never has: the badge beside it already says "never run", and
  * a note repeating that in different words read as a second, separate claim.
- * "never run" is also what every other screen calls this state (see
- * `AgentScheduleRow`), so the badge is the one that should say it.
+ * "never run" is also what every other screen calls this state, so the
+ * badge is the one that should say it.
  */
 function repoRunNote(entry: ScheduleRepoRuns): string {
   const last = entry.last
@@ -372,7 +372,6 @@ const dependencySummaries = computed(() =>
                   <span class="badge-dot" />
                   {{ reachabilityBadge(dep.lastCheckReachable).label }}
                 </span>
-                <span class="dependency-note">{{ dep.appliesTo }}</span>
               </span>
             </span>
           </dd>
@@ -426,10 +425,16 @@ const dependencySummaries = computed(() =>
 /* Each repository's status on its own line: the badges wrap into a second
    row on a phone rather than pushing the name out of the value column. */
 .repo-runs,
+/* Name | pill, as a two-column grid so every pill starts on the same line. */
 .dependency-list {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-4);
+  display: grid;
+  grid-template-columns: max-content max-content;
+  align-items: center;
+  gap: var(--space-4) var(--space-6);
+}
+
+.dependency-list > .dependency-item {
+  display: contents;
 }
 
 .repo-run,
@@ -440,8 +445,7 @@ const dependencySummaries = computed(() =>
   gap: var(--space-3);
 }
 
-.repo-run-note,
-.dependency-note {
+.repo-run-note {
   color: var(--text-muted);
   font-size: var(--fs-xs);
 }

@@ -154,12 +154,24 @@ function acknowledgedFilter(page: Page): Locator {
     .filter({ has: page.locator('option', { hasText: 'Only acknowledged' }) })
 }
 
+/** Backup rows of the log whose dot says they warned; the row names no status in words. */
 function warningRows(page: Page): Locator {
-  return page.locator('.run-card:not(.run-card-system)').filter({ hasText: 'warning' })
+  return page
+    .locator('.log-row:not(.run-card-system)')
+    .filter({ has: page.locator('.log-row-dot.status-dot--warning') })
 }
 
 function failedRows(page: Page): Locator {
-  return page.locator('.run-card:not(.run-card-system)').filter({ hasText: 'failed' })
+  return page
+    .locator('.log-row:not(.run-card-system)')
+    .filter({ has: page.locator('.log-row-dot.status-dot--danger') })
+}
+
+/** Opens a log row, unless it is open: its actions (Acknowledge) and output are inside. */
+async function openRow(row: Locator): Promise<void> {
+  const summary = row.locator('.log-row-summary')
+  if ((await summary.getAttribute('aria-expanded')) !== 'true') await summary.click()
+  await expect(summary).toHaveAttribute('aria-expanded', 'true')
 }
 
 test('expands warning report row and shows warning messages', async ({ page }: { page: Page }) => {
@@ -175,8 +187,7 @@ test('expands warning report row and shows warning messages', async ({ page }: {
   const warningRow = warningRows(page)
   await expect(warningRow.first()).toBeVisible({ timeout: 10_000 })
 
-  await warningRow.first().locator('.run-card-summary').click()
-  await page.waitForTimeout(500)
+  await openRow(warningRow.first())
 
   const warningText = page.locator('.warning-pre')
   await expect(warningText).toBeVisible({ timeout: 10_000 })
@@ -204,8 +215,7 @@ test('expands failed report row and shows the hook command stdout and stderr', a
   const failedRow = failedRows(page)
   await expect(failedRow.first()).toBeVisible({ timeout: 10_000 })
 
-  await failedRow.first().locator('.run-card-summary').click()
-  await page.waitForTimeout(500)
+  await openRow(failedRow.first())
 
   const errorText = page.locator('.error-pre')
   await expect(errorText).toBeVisible({ timeout: 10_000 })
@@ -245,16 +255,23 @@ test('acknowledges a warning row, hides it, and can undo it via the filter', asy
   const warningRow = warningRows(page)
   await expect(warningRow.first()).toBeVisible({ timeout: 10_000 })
 
-  await warningRow.first().getByRole('button', { name: 'Acknowledge' }).click()
+  await openRow(warningRow.first())
+  await warningRow.first().getByRole('button', { name: 'Acknowledge', exact: true }).click()
   await expect(warningRow).toHaveCount(0, { timeout: 10_000 })
 
   await acknowledgedFilter(page).selectOption('all')
   await expect(warningRow.first()).toBeVisible({ timeout: 10_000 })
-  await expect(warningRow.first().getByText('Acknowledged')).toBeVisible()
+  await expect(warningRow.first().getByText('Acknowledged', { exact: true })).toBeVisible()
 
+  await openRow(warningRow.first())
   await warningRow.first().getByRole('button', { name: 'Unacknowledge' }).click()
-  await expect(warningRow.first().getByText('Acknowledged')).not.toBeVisible({ timeout: 10_000 })
-  await expect(warningRow.first().getByRole('button', { name: 'Acknowledge' })).toBeVisible()
+  await expect(warningRow.first().getByText('Acknowledged', { exact: true })).not.toBeVisible({
+    timeout: 10_000,
+  })
+  await openRow(warningRow.first())
+  await expect(
+    warningRow.first().getByRole('button', { name: 'Acknowledge', exact: true }),
+  ).toBeVisible()
   expect(ackRequests).toBe(2)
 })
 
@@ -281,7 +298,8 @@ test('acknowledges a failed periodic sync and clears it from the feed', async ({
   const syncEvent = page.locator('.run-card-system').filter({ hasText: 'Repository sync failed' })
   await expect(syncEvent.first()).toBeVisible({ timeout: 10_000 })
 
-  await syncEvent.first().getByRole('button', { name: 'Acknowledge' }).click()
+  await openRow(syncEvent.first())
+  await syncEvent.first().getByRole('button', { name: 'Acknowledge', exact: true }).click()
   await expect(syncEvent).toHaveCount(0, { timeout: 10_000 })
 })
 

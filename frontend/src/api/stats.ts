@@ -39,6 +39,8 @@ export interface ActivityFeedParams {
   schedule_id?: number
   run_id?: string
   acknowledged?: AcknowledgedFilter
+  /** Only this one report, whatever its acknowledgment; the other filters are ignored. */
+  report_id?: number
 }
 
 export async function getActivity(params?: ActivityFeedParams): Promise<ActivityEntry[]> {

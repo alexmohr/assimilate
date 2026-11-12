@@ -320,6 +320,10 @@ onBeforeUnmount(() => {
                   <th>Share of the archive</th>
                   <th class="cell-size">Only here</th>
                   <th class="cell-size">Files</th>
+                  <th
+                    v-if="canCompare"
+                    class="growth-action"
+                  />
                 </tr>
               </thead>
               <tbody>
@@ -350,17 +354,6 @@ onBeforeUnmount(() => {
                           class="growth-icon"
                         />
                         <span class="cell-mono">{{ node.name }}</span>
-                        <button
-                          v-if="canCompare"
-                          type="button"
-                          class="btn btn-sm btn-ghost"
-                          title="Compare with another archive"
-                          :aria-label="`Compare ${node.name} with another archive`"
-                          data-testid="growth-compare-file"
-                          @click.stop="comparePath = filePath(node)"
-                        >
-                          <FileDiff :size="14" />
-                        </button>
                       </template>
                       <template v-else>
                         <Files
@@ -388,6 +381,22 @@ onBeforeUnmount(() => {
                   <td class="cell-size cell-muted">
                     {{ node.kind === 'file' ? '' : node.files.toLocaleString() }}
                   </td>
+                  <td
+                    v-if="canCompare"
+                    class="growth-action"
+                  >
+                    <button
+                      v-if="node.kind === 'file'"
+                      type="button"
+                      class="btn btn-sm btn-ghost"
+                      title="Compare with another archive"
+                      :aria-label="`Compare ${node.name} with another archive`"
+                      data-testid="growth-compare-file"
+                      @click.stop="comparePath = filePath(node)"
+                    >
+                      <FileDiff :size="14" />
+                    </button>
+                  </td>
                 </tr>
               </tbody>
             </table>
@@ -407,6 +416,10 @@ onBeforeUnmount(() => {
                 <th>Path</th>
                 <th class="cell-size">Only here</th>
                 <th class="cell-size">File size</th>
+                <th
+                  v-if="canCompare"
+                  class="growth-action"
+                />
               </tr>
             </thead>
             <tbody>
@@ -414,10 +427,14 @@ onBeforeUnmount(() => {
                 v-for="largest in growth.largest_files"
                 :key="largest.path"
               >
-                <td class="cell-mono growth-path">
-                  {{ largest.path }}
+                <td class="cell-mono growth-path">{{ largest.path }}</td>
+                <td class="cell-size">{{ formatBytes(largest.bytes) }}</td>
+                <td class="cell-size cell-muted">{{ formatBytes(largest.size) }}</td>
+                <td
+                  v-if="canCompare"
+                  class="growth-action"
+                >
                   <button
-                    v-if="canCompare"
                     type="button"
                     class="btn btn-sm btn-ghost"
                     title="Compare with another archive"
@@ -428,8 +445,6 @@ onBeforeUnmount(() => {
                     <FileDiff :size="14" />
                   </button>
                 </td>
-                <td class="cell-size">{{ formatBytes(largest.bytes) }}</td>
-                <td class="cell-size cell-muted">{{ formatBytes(largest.size) }}</td>
               </tr>
             </tbody>
           </table>
@@ -510,5 +525,12 @@ onBeforeUnmount(() => {
 
 .growth-path {
   overflow-wrap: anywhere;
+}
+/* The compare button has a narrow column of its own at the row's end, so a
+   long path wraps on its own instead of around the button. */
+.growth-action {
+  width: 1%;
+  text-align: right;
+  white-space: nowrap;
 }
 </style>

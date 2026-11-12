@@ -1,8 +1,18 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
-import type { Page } from '@playwright/test'
-import { expect, loginAsAdmin, mockSystemVersion, test } from './fixtures'
+import type { Locator, Page } from '@playwright/test'
+import { expect, loginAsAdmin, mockSystemVersion, openSettingsSection, test } from './fixtures'
+
+/**
+ * Opens the System page's Settings section card (the page opens on Version),
+ * where the form with the time zone, public URL, Keep for and Timeouts
+ * tables lives.
+ */
+async function openSystemSettings(page: Page): Promise<Locator> {
+  await page.goto('/system')
+  return openSettingsSection(page, 'Settings')
+}
 
 async function interceptSystemApis(page: Page): Promise<void> {
   await page.route(
@@ -38,20 +48,28 @@ async function interceptSystemApis(page: Page): Promise<void> {
   await mockSystemVersion(page)
 }
 
-test('system settings page renders borg timeout input', async ({ page }) => {
+test('system settings page renders the borg timeout in the Timeouts table', async ({ page }) => {
   await loginAsAdmin(page)
   await interceptSystemApis(page)
-  await page.goto('/system')
-  await expect(page.locator('#settings-borg-timeout')).toBeVisible({ timeout: 10_000 })
-  await expect(page.locator('#settings-borg-timeout')).toHaveValue('300')
+  const settings = await openSystemSettings(page)
+  const timeouts = settings.getByRole('table', { name: 'Timeouts' })
+  await expect(timeouts).toBeVisible({ timeout: 10_000 })
+  await expect(timeouts.getByLabel('Borg queries')).toHaveValue('300')
+  await expect(timeouts.getByLabel('Idle session')).toBeVisible()
 })
 
-test('system settings page renders report retention input', async ({ page }) => {
+test('system settings page renders report retention in the Keep for table', async ({ page }) => {
   await loginAsAdmin(page)
   await interceptSystemApis(page)
-  await page.goto('/system')
-  await expect(page.locator('#settings-report-retention')).toBeVisible({ timeout: 10_000 })
-  await expect(page.locator('#settings-report-retention')).toHaveValue('365')
+  const settings = await openSystemSettings(page)
+  const keepFor = settings.getByRole('table', { name: 'Keep for' })
+  await expect(keepFor).toBeVisible({ timeout: 10_000 })
+  await expect(keepFor.getByLabel('Reports', { exact: true })).toHaveValue('365')
+  await expect(keepFor.getByLabel('Failed reports', { exact: true })).toHaveValue('365')
+  await expect(keepFor.getByLabel('System events', { exact: true })).toHaveValue('90')
+  await expect(keepFor.getByLabel('Notification deliveries', { exact: true })).toHaveValue('30')
+  // The legacy catch-all retention_days has no box of its own any more.
+  await expect(keepFor.getByRole('spinbutton')).toHaveCount(6)
 })
 
 test('admin can update borg timeout and save settings', async ({ page }) => {
@@ -82,12 +100,12 @@ test('admin can update borg timeout and save settings', async ({ page }) => {
     },
   )
 
-  await page.goto('/system')
+  const settings = await openSystemSettings(page)
   const input = page.locator('#settings-borg-timeout')
   await expect(input).toBeVisible({ timeout: 10_000 })
 
   await input.fill('600')
-  await page.getByRole('button', { name: 'Save' }).click()
+  await settings.getByRole('button', { name: 'Save', exact: true }).click()
 
   await expect(async () => {
     expect(savedBody).not.toBeNull()
@@ -97,8 +115,8 @@ test('admin can update borg timeout and save settings', async ({ page }) => {
 
 test('admin can set how long archive browse indexes are kept', async ({ page }) => {
   await loginAsAdmin(page)
-  await page.goto('/system')
-  const input = page.locator('#settings-archive-index-retention')
+  const settings = await openSystemSettings(page)
+  const input = settings.getByLabel('Archive browse indexes', { exact: true })
   await expect(input).toBeVisible({ timeout: 10_000 })
   const original = await input.inputValue()
 
@@ -107,12 +125,13 @@ test('admin can set how long archive browse indexes are kept', async ({ page }) 
     const saved = page.waitForResponse(
       (resp) => resp.url().endsWith('/api/system/settings') && resp.request().method() === 'PUT',
     )
-    await page.getByRole('button', { name: 'Save' }).click()
+    await settings.getByRole('button', { name: 'Save', exact: true }).click()
     expect((await saved).ok()).toBe(true)
   }
 
   await save('30')
   await page.reload()
+  await openSettingsSection(page, 'Settings')
   await expect(input).toHaveValue('30', { timeout: 10_000 })
 
   await save(original)
@@ -120,7 +139,7 @@ test('admin can set how long archive browse indexes are kept', async ({ page }) 
 
 test('admin can set the public URL used in notification links', async ({ page }) => {
   await loginAsAdmin(page)
-  await page.goto('/system')
+  const settings = await openSystemSettings(page)
   const input = page.locator('#settings-public-url')
   await expect(input).toBeVisible({ timeout: 10_000 })
   const original = await input.inputValue()
@@ -130,13 +149,14 @@ test('admin can set the public URL used in notification links', async ({ page })
     const saved = page.waitForResponse(
       (resp) => resp.url().endsWith('/api/system/settings') && resp.request().method() === 'PUT',
     )
-    await page.getByRole('button', { name: 'Save' }).click()
+    await settings.getByRole('button', { name: 'Save', exact: true }).click()
     expect((await saved).ok()).toBe(true)
   }
 
   // The server keeps only the origin, so the trailing slash typed here is gone on reload.
   await save('https://backups.example.com/')
   await page.reload()
+  await openSettingsSection(page, 'Settings')
   await expect(input).toHaveValue('https://backups.example.com', { timeout: 10_000 })
 
   await save(original)
@@ -144,7 +164,7 @@ test('admin can set the public URL used in notification links', async ({ page })
 
 test('admin changes the borg timeout and it persists without a restart', async ({ page }) => {
   await loginAsAdmin(page)
-  await page.goto('/system')
+  const settings = await openSystemSettings(page)
   const input = page.locator('#settings-borg-timeout')
   await expect(input).toBeVisible({ timeout: 10_000 })
   const original = await input.inputValue()
@@ -154,16 +174,17 @@ test('admin changes the borg timeout and it persists without a restart', async (
     const saved = page.waitForResponse(
       (resp) => resp.url().endsWith('/api/system/settings') && resp.request().method() === 'PUT',
     )
-    await page.getByRole('button', { name: 'Save' }).click()
+    await settings.getByRole('button', { name: 'Save', exact: true }).click()
     expect((await saved).ok()).toBe(true)
   }
 
   await save('900')
   await page.reload()
+  await openSettingsSection(page, 'Settings')
   await expect(input).toHaveValue('900', { timeout: 10_000 })
-  const settings = await page.request.get('/api/system/settings')
+  const stored = await page.request.get('/api/system/settings')
   expect(
-    ((await settings.json()) as { borg_query_timeout_secs: number }).borg_query_timeout_secs,
+    ((await stored.json()) as { borg_query_timeout_secs: number }).borg_query_timeout_secs,
   ).toBe(900)
 
   await save(original)
@@ -172,20 +193,22 @@ test('admin changes the borg timeout and it persists without a restart', async (
 test('the deployment panel shows the secure cookies setting read-only', async ({ page }) => {
   await loginAsAdmin(page)
   await page.goto('/system')
-  await expect(page.getByRole('heading', { name: 'Deployment' })).toBeVisible({ timeout: 10_000 })
+  const deployment = await openSettingsSection(page, 'Deployment')
   // The demo leaves ASSIMILATE_SECURE_COOKIES unset, so the fail-safe default applies.
-  await expect(page.locator('#deployment-secure-cookies')).toHaveText('On')
-  await expect(page.getByText('ASSIMILATE_SECURE_COOKIES')).toBeVisible()
+  await expect(deployment.locator('#deployment-secure-cookies')).toHaveText('On')
+  await expect(deployment.getByText('ASSIMILATE_SECURE_COOKIES')).toBeVisible()
 })
 
 test('database storage has its own page under Settings', async ({ page }) => {
   await loginAsAdmin(page)
-  await page.goto('/system')
+  await openSystemSettings(page)
   await expect(page.locator('#settings-public-url')).toBeVisible({ timeout: 10_000 })
   await expect(page.getByText('Total database size')).toHaveCount(0)
 
-  await page.getByRole('button', { name: 'Settings' }).click()
-  await page.getByRole('link', { name: 'Database', exact: true }).click()
+  // The sidebar's Settings group, not the page's Settings section card.
+  const nav = page.locator('.nav')
+  await nav.getByRole('button', { name: 'Settings' }).click()
+  await nav.getByRole('link', { name: 'Database', exact: true }).click()
   await expect(page).toHaveURL(/\/database-storage$/)
   await expect(page.getByRole('heading', { name: 'Database Storage' })).toBeVisible()
   await expect(page.getByText('Total database size')).toBeVisible({ timeout: 10_000 })

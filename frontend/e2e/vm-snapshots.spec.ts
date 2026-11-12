@@ -11,7 +11,7 @@ import { expect, loginAsAdmin, test } from './fixtures'
 test.describe('Virtual machine staging', () => {
   test('the host settings and its domains are listed', async ({ page }) => {
     await loginAsAdmin(page)
-    await page.goto('/agents/db-server-01?tab=settings&section=vms')
+    await page.goto('/agents/db-server-01?tab=sources&section=vms')
     await page.waitForLoadState('networkidle')
 
     const pane = page.locator('.settings-pane')
@@ -28,7 +28,7 @@ test.describe('Virtual machine staging', () => {
 
   test('the host settings can be edited', async ({ page }) => {
     await loginAsAdmin(page)
-    await page.goto('/agents/db-server-01?tab=settings&section=vms')
+    await page.goto('/agents/db-server-01?tab=sources&section=vms')
     await page.waitForLoadState('networkidle')
 
     const pane = page.locator('.settings-pane')
@@ -48,19 +48,30 @@ test.describe('Virtual machine staging', () => {
 
   test('a per-domain limit is saved on its own', async ({ page }) => {
     await loginAsAdmin(page)
-    await page.goto('/agents/db-server-01?tab=settings&section=vms')
+    await page.goto('/agents/db-server-01?tab=sources&section=vms')
     await page.waitForLoadState('networkidle')
 
-    const row = page.locator('tbody tr', { hasText: 'web01' })
-    await expect(row).toContainText('Host default')
+    // An empty limit says, as its placeholder, that it is the host's default.
+    const limit = page.getByRole('spinbutton', { name: 'Limit for web01 in GiB' })
+    await expect(limit).toHaveValue('')
+    await expect(limit).toHaveAttribute('placeholder', 'Host default')
 
-    await row.locator('input.vm-limit').fill('300')
-    await row.locator('input.vm-limit').blur()
-    await expect(row).toContainText('Overridden')
+    await limit.fill('300')
+    await Promise.all([
+      page.waitForResponse(
+        (resp) =>
+          resp.url().endsWith('/api/agents/db-server-01/vms/web01') &&
+          resp.request().method() === 'PUT' &&
+          resp.ok(),
+      ),
+      limit.blur(),
+    ])
 
     await page.reload()
     await page.waitForLoadState('networkidle')
-    await expect(page.locator('tbody tr', { hasText: 'web01' })).toContainText('Overridden')
+    await expect(page.getByRole('spinbutton', { name: 'Limit for web01 in GiB' })).toHaveValue(
+      '300',
+    )
   })
 
   /**
@@ -90,7 +101,7 @@ test.describe('Virtual machine staging', () => {
 
     test('only-selected drops the domains nobody picked', async ({ page }) => {
       await loginAsAdmin(page)
-      await page.goto('/agents/db-server-01?tab=settings&section=vms')
+      await page.goto('/agents/db-server-01?tab=sources&section=vms')
       await page.waitForLoadState('networkidle')
 
       const pane = page.locator('.settings-pane')
@@ -101,8 +112,16 @@ test.describe('Virtual machine staging', () => {
       // survive the switch as an opt-in.
       const undecided = page.locator('tbody tr', { hasText: 'mail01' })
       await undecided.locator('input.vm-limit').fill('64')
-      await undecided.locator('input.vm-limit').blur()
-      await expect(undecided).toContainText('Overridden')
+      await Promise.all([
+        page.waitForResponse(
+          (resp) =>
+            resp.url().endsWith('/api/agents/db-server-01/vms/mail01') &&
+            resp.request().method() === 'PUT' &&
+            resp.ok(),
+        ),
+        undecided.locator('input.vm-limit').blur(),
+      ])
+      await expect(undecided.locator('input.vm-limit')).toHaveValue('64')
       await expect(undecided).toContainText('Offline copy')
 
       await pane.getByRole('button', { name: 'Edit' }).click()
@@ -127,7 +146,7 @@ test.describe('Virtual machine staging', () => {
 
   test('a domain can be snapshotted on demand', async ({ page }) => {
     await loginAsAdmin(page)
-    await page.goto('/agents/db-server-01?tab=settings&section=vms')
+    await page.goto('/agents/db-server-01?tab=sources&section=vms')
     await page.waitForLoadState('networkidle')
 
     // win-ci is excluded from staging, so there is nothing to snapshot.
@@ -184,7 +203,7 @@ test.describe('Virtual machine staging', () => {
 
   test('the restore wizard walks both stages', async ({ page }) => {
     await loginAsAdmin(page)
-    await page.goto('/agents/db-server-01?tab=settings&section=vms')
+    await page.goto('/agents/db-server-01?tab=sources&section=vms')
     await page.waitForLoadState('networkidle')
 
     await page

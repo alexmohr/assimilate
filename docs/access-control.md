@@ -21,7 +21,7 @@ graph TD
 
 ## Roles
 
-Users are assigned one or more roles via the **Roles** tab in the user editor. Each role bundles a set of system-wide capabilities. A user's effective permissions are the union of all capabilities across every role they hold.
+Users are assigned one or more roles in the **Roles & groups** section of the user's page (**Users**, then click the user). Each role bundles a set of system-wide capabilities. A user's effective permissions are the union of all capabilities across every role they hold.
 
 Built-in roles cannot be deleted:
 
@@ -122,8 +122,8 @@ When evaluating whether a user can perform an action on a repository:
 
 All access-control settings are under **Settings → Access Control** in the sidebar:
 
-- **Users** — create accounts, assign roles, and grant direct per-repo permissions.
-- **Groups** — create groups, manage membership, and assign per-repo permissions to the group.
+- **Users** — create accounts with **New**, and click a user to open their page. Its collapsible sections are **Role** (the base role), **Roles & groups**, **Repository permissions** (direct per-repo grants: View, Backup, Schedules, Extract, Delete) and **Password** (a reset). Your own account opens read-only: change your own password on your [profile](profile.md).
+- **Groups** — create groups with **New**, and use a group's **Members** and **Edit** buttons to manage its membership, name and description.
 - **Roles** — view and create roles with custom capability sets.
 
 ![Users](assets/screenshots/users.png)

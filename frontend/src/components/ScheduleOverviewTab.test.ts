@@ -211,21 +211,25 @@ describe('ScheduleOverviewTab', () => {
     })
 
     it('draws one run strip per repository', () => {
-      const strips = multiRepoMount().findAll('.repo-strip')
-      expect(strips).toHaveLength(2)
-      expect(strips[0].find('.group-label').text()).toBe('server-daily')
-      expect(strips[1].find('.group-label').text()).toBe('offsite-weekly')
+      const rows = multiRepoMount().findAll('.runs-row')
+      expect(rows).toHaveLength(2)
+      expect(rows[0].find('.runs-row-name').text()).toBe('server-daily')
+      expect(rows[1].find('.runs-row-name').text()).toBe('offsite-weekly')
+      expect(rows.map((r) => r.findAll('.run-strip').length)).toEqual([1, 1])
     })
 
     it('keeps the single merged strip when the schedule writes to one repository', () => {
       const wrapper = mount({ reports: REPO_REPORTS, agents: AGENTS })
-      expect(wrapper.findAll('.repo-strip')).toHaveLength(0)
-      expect(wrapper.find('.run-strip').exists()).toBe(true)
+      const rows = wrapper.findAll('.runs-row')
+      expect(rows).toHaveLength(1)
+      expect(rows[0].find('.runs-row-name').text()).toBe('server-daily')
+      expect(wrapper.findAll('.run-strip')).toHaveLength(1)
     })
 
     it('leaves the repository off the rows of a single-repository schedule', () => {
       const wrapper = mount({ reports: REPO_REPORTS, agents: AGENTS })
-      expect(wrapper.findAll('.agent-row .meta-pill')).toHaveLength(0)
+      expect(wrapper.findAll('.run-detail .log-row').length).toBeGreaterThan(0)
+      expect(wrapper.findAll('.run-detail .log-row-subtitle')).toHaveLength(0)
     })
 
     it('says nothing about repositories on a target whose copies all landed', () => {
@@ -267,12 +271,14 @@ describe('ScheduleOverviewTab', () => {
       } as unknown as ReportRow
       const wrapper = multiRepoMount({ reports: [retired] })
 
-      // The Targets rows share the `.agent-row` class, so the Recent backups
-      // row is the last one, as the preview hand-off tests below also read it.
-      const rows = wrapper.findAll('.agent-row')
+      // The run detail still names the repository the run was given...
+      const rows = wrapper.findAll('.run-detail .log-row')
       const row = rows[rows.length - 1]
-      expect(row.text()).toContain('retired-repo')
-      expect(row.find('button.agent-row-name').exists()).toBe(false)
+      expect(row.find('.log-row-subtitle').text()).toBe('retired-repo')
+      // ...but nothing on it leads to an archive: a clean run has no output
+      // to open, so the row carries no control at all.
+      expect(row.findAll('a')).toHaveLength(0)
+      expect(row.findAll('button')).toHaveLength(0)
     })
 
     // The badge already says "never run"; a note restating that in different
@@ -381,7 +387,7 @@ describe('ScheduleOverviewTab', () => {
     })
   })
 
-  it('gives a cancelled backup a muted stripe, not a success-green one', () => {
+  it('gives a cancelled backup a muted dot, not a success-green one', () => {
     // `filterSettledReports` keeps cancelled runs (only pending/started are
     // dropped), so they do reach this preview - and the badge beside the
     // stripe renders them in a neutral tone. A green stripe would say the
@@ -399,11 +405,13 @@ describe('ScheduleOverviewTab', () => {
       ] as unknown as ReportRow[],
     })
 
-    const row = wrapper.findAll('.agent-row').find((r) => r.text().includes('cancelled'))
-    expect(row).toBeTruthy()
-    const stripe = row!.find('.agent-row-stripe')
-    expect(stripe.classes()).toContain('agent-row-stripe--muted')
-    expect(stripe.classes()).not.toContain('agent-row-stripe--success')
+    expect(wrapper.find('.run-detail').text()).toContain('Cancelled')
+    const row = wrapper.find('.run-detail .log-row')
+    expect(row.exists()).toBe(true)
+    const dot = row.get('.log-row-dot')
+    // Neutral: the dot's own grey, no tone modifier at all.
+    expect(dot.classes().filter((c) => c.startsWith('status-dot--'))).toEqual([])
+    expect(wrapper.find('.runs-row .status-dot').classes()).not.toContain('status-dot--success')
   })
 
   // The Targets rows that used to carry the marker are gone; the summary
@@ -446,7 +454,8 @@ describe('ScheduleOverviewTab', () => {
     })
     expect(wrapper.find('.tiles').exists()).toBe(false)
     expect(wrapper.text()).not.toContain('Recent backups')
-    expect(wrapper.findAll('.section-title')).toHaveLength(0)
+    // The only section below the schedule info is the runs panel.
+    expect(wrapper.findAll('.section-title').map((t) => t.text())).toEqual(['Recent runs'])
   })
 
   describe('dependencies', () => {
@@ -545,7 +554,7 @@ describe('ScheduleOverviewTab', () => {
       expect(wrapper.find('.attention').exists()).toBe(false)
     })
 
-    it('lists each dependency once in the schedule info, with its state and where it applies', () => {
+    it('lists each dependency once in the schedule info, with its state', () => {
       const wrapper = mount({
         dependencies: [
           dep({ agent_id: 11, source: 'agent_default' }),
@@ -565,9 +574,8 @@ describe('ScheduleOverviewTab', () => {
       expect(items).toHaveLength(2)
       expect(items[0].find('a').text()).toBe('nas-media')
       expect(items[0].find('.badge--warning').text()).toBe('Not answering')
-      expect(items[0].find('.dependency-note').text()).toBe(
-        'db-server-01 (agent defaults), web-server-01',
-      )
+      // Name and state only: which hosts it applies to is the Dependencies tab's.
+      expect(items[0].find('.dependency-note').exists()).toBe(false)
       expect(items[1].find('.badge--neutral').text()).toBe('Not checked yet')
     })
 
@@ -685,18 +693,17 @@ describe('ScheduleOverviewTab', () => {
       expect(pills[2].attributes('aria-pressed')).toBe('true')
       expect(pills[0].attributes('aria-pressed')).toBe('false')
 
-      const rows = wrapper.findAll('.run-detail .agent-row')
+      const rows = wrapper.findAll('.run-detail .log-row')
       expect(rows).toHaveLength(2)
-      expect(rows[0].text()).toContain('web-server-01')
+      expect(rows[0].find('.log-row-title').text()).toBe('web-server-01')
       expect(rows[0].text()).toContain('2.0 GB')
-      expect(rows[1].text()).toContain('db-server-01')
-      expect(rows[1].find('.badge--warning').text()).toBe('skipped')
+      expect(rows[1].find('.log-row-title').text()).toBe('db-server-01')
+      expect(rows[1].find('.log-row-dot').classes()).toContain('status-dot--warning')
       // Only the first line of the reason; the rest is behind the toggle.
-      expect(rows[1].find('.agent-row-sub').text()).toBe(
-        "dependency 'nas-media' did not answer on port 445 (nas-media.lan)",
-      )
+      const facts = rows[1].findAll('.log-row-fact').map((f) => f.text())
+      expect(facts[0]).toBe("dependency 'nas-media' did not answer on port 445 (nas-media.lan)")
       // A skipped run wrote nothing, so it has no size.
-      expect(rows[1].find('.agent-row-stats').text()).toContain('–')
+      expect(facts.some((f) => /\d (B|KB|MB|GB)$/.test(f))).toBe(false)
       expect(wrapper.find('.run-detail').text()).toContain('Skipped')
     })
 
@@ -707,8 +714,8 @@ describe('ScheduleOverviewTab', () => {
       expect(wrapper.findAll('.run-pill')[1].attributes('aria-pressed')).toBe('true')
       const detail = wrapper.find('.run-detail')
       expect(detail.find('.badge--danger').text()).toBe('Failed')
-      const rows = detail.findAll('.agent-row')
-      expect(rows.map((r) => r.find('.agent-row-name').text())).toEqual([
+      const rows = detail.findAll('.log-row')
+      expect(rows.map((r) => r.find('.log-row-title').text())).toEqual([
         'db-server-01',
         'web-server-01',
       ])
@@ -718,18 +725,17 @@ describe('ScheduleOverviewTab', () => {
 
     it('keeps the output collapsed until asked, and labels a skip as one', async () => {
       const wrapper = runsMount()
-      const row = wrapper.findAll('.run-detail .agent-row')[1]
-      const toggle = row.find('button[aria-expanded]')
-      expect(toggle.text()).toBe('Show detail')
+      const row = wrapper.findAll('.run-detail .log-row')[1]
+      // The row's summary is the toggle.
+      const toggle = row.find('button.log-row-summary[aria-expanded]')
       expect(toggle.attributes('aria-expanded')).toBe('false')
-      expect(wrapper.find('.agent-row-detail').exists()).toBe(false)
+      expect(wrapper.find('.log-row-detail').exists()).toBe(false)
 
       await toggle.trigger('click')
       await flushPromises()
 
-      expect(toggle.text()).toBe('Hide detail')
       expect(toggle.attributes('aria-expanded')).toBe('true')
-      const detail = wrapper.find('.agent-row-detail')
+      const detail = wrapper.find('.log-row-detail')
       expect(detail.find('.group-label--warning').text()).toBe('Skipped')
       expect(detail.text()).not.toContain('Error')
       expect(detail.text()).toContain('nothing was mounted')
@@ -738,21 +744,21 @@ describe('ScheduleOverviewTab', () => {
       expect(detail.text()).toContain('No power-management activity for this run.')
 
       await toggle.trigger('click')
-      expect(wrapper.find('.agent-row-detail').exists()).toBe(false)
+      expect(wrapper.find('.log-row-detail').exists()).toBe(false)
     })
 
     it("labels a failed report's output as an error", async () => {
       const wrapper = runsMount()
       await wrapper.findAll('.run-pill')[1].trigger('click')
-      await wrapper.findAll('.run-detail .agent-row')[1].find('button').trigger('click')
-      const detail = wrapper.find('.agent-row-detail')
+      await wrapper.findAll('.run-detail .log-row')[1].find('button').trigger('click')
+      const detail = wrapper.find('.log-row-detail')
       expect(detail.find('.group-label--danger').text()).toBe('Error')
       expect(detail.find('.detail-output--danger').text()).toContain('exited with code 2')
     })
 
-    it('opens the run on the Logs tab at the first report that did not succeed', async () => {
+    it('opens the run in the Activity log at the first report that did not succeed', async () => {
       const wrapper = runsMount()
-      const open = wrapper.findAll('button').find((b) => b.text() === 'Open in Logs')
+      const open = wrapper.findAll('button').find((b) => b.text() === 'Open in Activity log')
       await open!.trigger('click')
       expect(wrapper.emitted('openReportDetail')).toEqual([[expect.objectContaining({ id: 5 })]])
     })
@@ -762,7 +768,7 @@ describe('ScheduleOverviewTab', () => {
       await wrapper.findAll('.run-pill')[0].trigger('click')
       await wrapper
         .findAll('button')
-        .find((b) => b.text() === 'Open in Logs')!
+        .find((b) => b.text() === 'Open in Activity log')!
         .trigger('click')
       expect(wrapper.emitted('openReportDetail')).toEqual([[expect.objectContaining({ id: 1 })]])
     })
@@ -802,10 +808,10 @@ describe('ScheduleOverviewTab', () => {
           }),
         ],
       })
-      const rows = wrapper.findAll('.run-detail .agent-row')
+      const rows = wrapper.findAll('.run-detail .log-row')
       expect(rows).toHaveLength(2)
       const notes = Object.fromEntries(
-        rows.map((r) => [r.find('.agent-row-name').text(), r.find('.run-report-note').text()]),
+        rows.map((r) => [r.find('.log-row-title').text(), r.findAll('.log-row-fact')[0]!.text()]),
       )
       expect(notes).toEqual({ 'web-server-01': '1 warning', 'db-server-01': '2 warnings' })
     })
@@ -822,29 +828,32 @@ describe('ScheduleOverviewTab', () => {
       }
 
       it("draws one labelled strip per repository, each pill that repository's share of a run", () => {
-        const strips = multiMount().findAll('.repo-strip')
+        const strips = multiMount().findAll('.runs-row')
         expect(strips).toHaveLength(2)
-        expect(strips[0].find('.group-label').text()).toBe('server-daily')
+        expect(strips[0].find('.runs-row-name').text()).toBe('server-daily')
+        expect(strips[0].find('.run-strip').attributes('aria-label')).toBe(
+          'server-daily: last 2 runs, oldest first',
+        )
         expect(strips[0].findAll('.run-pill')).toHaveLength(2)
         expect(strips[0].findAll('.run-pill')[1].classes()).toContain('run-tone--success')
-        expect(strips[1].find('.group-label').text()).toBe('offsite-weekly')
+        expect(strips[1].find('.runs-row-name').text()).toBe('offsite-weekly')
         expect(strips[1].findAll('.run-pill')).toHaveLength(1)
         expect(strips[1].find('.run-pill').classes()).toContain('run-tone--failed')
       })
 
       it('names the repository on each row of the run detail', () => {
         const pills = multiMount()
-          .findAll('.run-detail .agent-row .meta-pill')
+          .findAll('.run-detail .log-row .log-row-subtitle')
           .map((p) => p.text())
         expect(pills).toEqual(['server-daily', 'offsite-weekly'])
       })
 
       it("picks the whole run from either repository's strip", async () => {
         const wrapper = multiMount()
-        await wrapper.findAll('.repo-strip')[0].findAll('.run-pill')[0].trigger('click')
-        const rows = wrapper.findAll('.run-detail .agent-row')
+        await wrapper.findAll('.runs-row')[0].findAll('.run-pill')[0].trigger('click')
+        const rows = wrapper.findAll('.run-detail .log-row')
         expect(rows).toHaveLength(1)
-        expect(rows[0].find('.meta-pill').text()).toBe('server-daily')
+        expect(rows[0].find('.log-row-subtitle').text()).toBe('server-daily')
         // The same run is marked on every strip it appears on.
         expect(wrapper.findAll('.run-pill[aria-pressed="true"]')).toHaveLength(1)
       })

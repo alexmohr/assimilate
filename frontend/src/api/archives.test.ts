@@ -14,6 +14,7 @@ import {
   diffArchives,
   downloadArchiveFiles,
   getArchiveContents,
+  getArchiveFile,
   getArchiveTreeTotals,
   getArchiveIndexStatus,
   listArchiveDatabases,
@@ -164,6 +165,27 @@ describe('archives api', () => {
     expect(apiClient.get).toHaveBeenCalledWith('/repos/1/search', {
       params: { pattern: '*.conf', max_archives: 20 },
     })
+  })
+
+  it('reads one file of an archive as a blob, its name and path encoded', async () => {
+    const blob = new Blob(['png bytes'], { type: 'image/png' })
+    vi.mocked(apiClient.get).mockResolvedValue({ data: blob })
+
+    await expect(getArchiveFile(1, ARCHIVE_NAME, 'srv/www/a logo.png')).resolves.toBe(blob)
+
+    expect(apiClient.get).toHaveBeenCalledWith(
+      `/repos/1/archives/${ENCODED_ARCHIVE_NAME}/extract`,
+      {
+        params: { path: 'srv/www/a logo.png' },
+        responseType: 'blob',
+      },
+    )
+  })
+
+  it('passes a failed file read on to the caller', async () => {
+    vi.mocked(apiClient.get).mockRejectedValue(new Error('not found'))
+
+    await expect(getArchiveFile(1, ARCHIVE_NAME, 'missing.png')).rejects.toThrow('not found')
   })
 
   it('diffs two archives', async () => {

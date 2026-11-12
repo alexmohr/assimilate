@@ -32,25 +32,40 @@ function cronTimeToDisplay(hourNum: number, minNum: number): string {
  * parsing and shape detection and risk drifting out of sync.
  */
 export type CronShape =
-  | { kind: 'hourly'; intervalHours: number }
+  | { kind: 'hourly'; intervalHours: number; minNum: number }
   | { kind: 'daily'; hourNum: number; minNum: number }
   | { kind: 'weekly'; dow: string; hourNum: number; minNum: number }
   | { kind: 'monthly'; dom: string; hourNum: number; minNum: number }
+
+/**
+ * One fixed value of a cron field, or null for a list, range, step or
+ * anything out of range: `parseInt` alone reads `0,30` as `0` and would
+ * describe a schedule that runs twice an hour as running once.
+ */
+function fixedValue(field: string, max: number): number | null {
+  if (!/^\d+$/.test(field)) return null
+  const value = Number(field)
+  return value <= max ? value : null
+}
 
 export function classifyCron(expr: string): CronShape | null {
   const parts = expr.trim().split(/\s+/)
   if (parts.length !== 5) return null
 
-  const [min, hour, dom, , dow] = parts
+  const [min = '', hour = '', dom, , dow] = parts
 
-  const hourlyMatch = hour.match(/^\*\/(\d+)$/)
-  if (hourlyMatch && min === CRON_TOP_OF_HOUR && dom === CRON_ANY && dow === CRON_ANY) {
-    return { kind: 'hourly', intervalHours: parseInt(hourlyMatch[1], 10) }
+  const minNum = fixedValue(min, 59)
+  if (minNum === null) return null
+
+  // `*` and `*/n` in the hour field, at any fixed minute: `30 */6 * * *` is
+  // every six hours at half past, which used to get no description at all.
+  const hourlyMatch = hour === CRON_ANY ? ['*', '1'] : hour.match(/^\*\/(\d+)$/)
+  if (hourlyMatch && dom === CRON_ANY && dow === CRON_ANY) {
+    return { kind: 'hourly', intervalHours: parseInt(hourlyMatch[1] ?? '1', 10), minNum }
   }
 
-  const minNum = parseInt(min, 10)
-  const hourNum = parseInt(hour, 10)
-  if (isNaN(minNum) || isNaN(hourNum)) return null
+  const hourNum = fixedValue(hour, 23)
+  if (hourNum === null) return null
 
   if (dom === CRON_ANY && dow === CRON_ANY) return { kind: 'daily', hourNum, minNum }
   if (dom === CRON_ANY && dow !== CRON_ANY) return { kind: 'weekly', dow, hourNum, minNum }
@@ -59,21 +74,43 @@ export function classifyCron(expr: string): CronShape | null {
   return null
 }
 
+const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
+
+/** One day number (0-7, both 0 and 7 being Sunday), or null for anything else. */
+function dayName(token: string): string | null {
+  return /^\d+$/.test(token) ? (DAY_NAMES[Number(token)] ?? null) : null
+}
+
+/**
+ * One comma-separated part of a day-of-week field, read aloud: a day
+ * (`1` is Mon) or a range (`1-5` is Mon-Fri). Anything else - a step, a name,
+ * an out-of-range number - is shown as written rather than guessed at.
+ */
+function weekdayToken(token: string): string {
+  const single = dayName(token)
+  if (single !== null) return single
+  const range = /^(\d+)-(\d+)$/.exec(token)
+  if (range) {
+    const from = dayName(range[1] ?? '')
+    const to = dayName(range[2] ?? '')
+    if (from !== null && to !== null) return `${from}–${to}`
+  }
+  return token
+}
+
 export function cronToHuman(expr: string): string {
   const shape = classifyCron(expr)
   if (!shape) return ''
 
   switch (shape.kind) {
-    case 'hourly':
-      return shape.intervalHours === 1 ? 'Every hour' : `Every ${shape.intervalHours} hours`
+    case 'hourly': {
+      const every = shape.intervalHours === 1 ? 'Every hour' : `Every ${shape.intervalHours} hours`
+      return shape.minNum === 0 ? every : `${every} at :${shape.minNum.toString().padStart(2, '0')}`
+    }
     case 'daily':
       return `Daily at ${cronTimeToDisplay(shape.hourNum, shape.minNum)}`
     case 'weekly': {
-      const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
-      const days = shape.dow.split(',').map((d) => {
-        const n = parseInt(d, 10)
-        return dayNames[n] ?? d
-      })
+      const days = shape.dow.split(',').map(weekdayToken)
       return `${days.join(', ')} at ${cronTimeToDisplay(shape.hourNum, shape.minNum)}`
     }
     case 'monthly':

@@ -4,7 +4,7 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 -->
 
 <script setup lang="ts">
-import { ref, reactive, onMounted } from 'vue'
+import { computed, ref, reactive, onMounted } from 'vue'
 import {
   exportConfig as apiExportConfig,
   getSshPublicKey,
@@ -24,6 +24,7 @@ import { badgeClass } from '../utils/badge'
 import AgentChannelKey from '../components/AgentChannelKey.vue'
 import BaseSpinner from '../components/BaseSpinner.vue'
 import MetricsSettingsPanel from '../components/MetricsSettingsPanel.vue'
+import SettingsRail, { type SettingsSections } from '../components/SettingsRail.vue'
 import TimezoneSelect from '../components/TimezoneSelect.vue'
 import type {
   ImportResultResponse,
@@ -59,6 +60,46 @@ const settingsForm = reactive({
   session_idle_timeout_minutes: 480,
   public_url: '',
 })
+
+type RetentionKey =
+  | 'report_retention_days'
+  | 'failed_report_retention_days'
+  | 'system_event_retention_days'
+  | 'notification_delivery_retention_days'
+  | 'run_event_retention_days'
+  | 'archive_index_retention_days'
+
+/**
+ * The rows of the Keep for table, each a retention setting in days. The old
+ * catch-all `retention_days` is not among them: the server falls back to it
+ * only for a setting that was never saved, and saving this form saves every
+ * one of them, so it would be a box that changes nothing. The form still
+ * sends the value it loaded, which the server requires.
+ */
+const RETENTION_ROWS: readonly { key: RetentionKey; label: string; hint: string }[] = [
+  { key: 'report_retention_days', label: 'Reports', hint: 'Successful and archived reports.' },
+  {
+    key: 'failed_report_retention_days',
+    label: 'Failed reports',
+    hint: 'Failed reports, and reports without an archive.',
+  },
+  { key: 'system_event_retention_days', label: 'System events', hint: 'System events.' },
+  {
+    key: 'notification_delivery_retention_days',
+    label: 'Notification deliveries',
+    hint: 'The history of notification delivery attempts.',
+  },
+  {
+    key: 'run_event_retention_days',
+    label: 'Run timelines',
+    hint: "A run's power-management event timeline.",
+  },
+  {
+    key: 'archive_index_retention_days',
+    label: 'Archive browse indexes',
+    hint: "An archive's browse index, counted from when it was last browsed or indexed. The next browse rebuilds it.",
+  },
+]
 
 /** Deployment-time configuration the server reports but the form cannot change. */
 const secureCookies = ref<boolean | null>(null)
@@ -237,6 +278,29 @@ async function resetSystem(): Promise<void> {
     resetting.value = false
   }
 }
+
+type SystemSection =
+  | 'version'
+  | 'ssh'
+  | 'channel'
+  | 'settings'
+  | 'deployment'
+  | 'metrics'
+  | 'config'
+  | 'danger'
+
+/** Deployment is listed only once the server has said how it was started. */
+const sections = computed<SettingsSections<SystemSection>>(() => [
+  { id: 'version', label: 'Version' },
+  { id: 'ssh', label: 'SSH public key' },
+  { id: 'channel', label: 'Agent channel key' },
+  { id: 'settings', label: 'Settings' },
+  ...(secureCookies.value !== null ? [{ id: 'deployment', label: 'Deployment' } as const] : []),
+  { id: 'metrics', label: 'Prometheus metrics' },
+  { id: 'config', label: 'Configuration export / import' },
+  { id: 'danger', label: 'Danger zone', danger: true },
+])
+const section = ref<SystemSection>('version')
 </script>
 
 <template>
@@ -245,12 +309,14 @@ async function resetSystem(): Promise<void> {
       <h1 class="page-title">System</h1>
     </div>
 
-    <div class="panel-stack">
-      <div class="panel">
-        <div class="panel-header">
-          <h2 class="panel-title">Version</h2>
-        </div>
-
+    <SettingsRail
+      v-slot="{ section: current }"
+      :sections="sections"
+      :section="section"
+      label="System settings sections"
+      @update:section="section = $event"
+    >
+      <template v-if="current === 'version'">
         <BaseSpinner
           v-if="versionLoading"
           size="lg"
@@ -274,11 +340,10 @@ async function resetSystem(): Promise<void> {
             <dd class="mono">{{ versionInfo.agent_version }}</dd>
           </template>
         </dl>
-      </div>
+      </template>
 
-      <div class="panel">
-        <div class="panel-header">
-          <h2 class="panel-title">SSH public key</h2>
+      <template v-else-if="current === 'ssh'">
+        <div class="pane-head pane-head--end">
           <button
             class="btn btn-sm btn-ghost btn-danger-text"
             @click="showRegenConfirm = true"
@@ -312,25 +377,18 @@ async function resetSystem(): Promise<void> {
             {{ copied ? 'Copied!' : 'Copy' }}
           </button>
         </div>
-      </div>
+      </template>
 
-      <div class="panel">
-        <div class="panel-header">
-          <h2 class="panel-title">Agent channel key</h2>
-        </div>
+      <template v-else-if="current === 'channel'">
         <p class="pane-lede">
           Every agent connection is encrypted end to end, and an agent only talks to a server that
           proves it holds this key. The key is derived from <code>ASSIMILATE_SECRET_KEY</code>, so
           it changes only if that does.
         </p>
         <AgentChannelKey />
-      </div>
+      </template>
 
-      <div class="panel">
-        <div class="panel-header">
-          <h2 class="panel-title">Settings</h2>
-        </div>
-
+      <template v-else-if="current === 'settings'">
         <BaseSpinner
           v-if="settingsLoading"
           size="lg"
@@ -386,183 +444,109 @@ async function resetSystem(): Promise<void> {
               >
             </div>
 
+            <!-- How long each kind of history is kept: one table, a name and
+                 a short box per row, and the note said once under it. -->
             <div class="field">
-              <label
+              <span
+                id="settings-retention-label"
                 class="field-label"
-                for="settings-retention"
+                >Keep for</span
               >
-                Retention days
-              </label>
-              <input
-                id="settings-retention"
-                v-model.number="settingsForm.retention_days"
-                type="number"
-                min="0"
-                step="1"
-                class="input field-narrow"
-              />
-              <span class="field-hint">Number of days to keep backup job history.</span>
+              <div class="table-wrap">
+                <table
+                  class="retention-table"
+                  aria-labelledby="settings-retention-label"
+                >
+                  <tbody>
+                    <tr
+                      v-for="row in RETENTION_ROWS"
+                      :key="row.key"
+                    >
+                      <td>
+                        <label
+                          :for="`settings-${row.key}`"
+                          :title="row.hint"
+                          >{{ row.label }}</label
+                        >
+                      </td>
+                      <td class="retention-value">
+                        <input
+                          :id="`settings-${row.key}`"
+                          v-model.number="settingsForm[row.key]"
+                          type="number"
+                          min="0"
+                          step="1"
+                          class="input retention-input"
+                        />
+                        <span class="retention-unit">days</span>
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+              <span class="field-hint">0 keeps it forever.</span>
             </div>
 
+            <!-- The two timeouts, laid out like Keep for above them. -->
             <div class="field">
-              <label
+              <span
+                id="settings-timeouts-label"
                 class="field-label"
-                for="settings-report-retention"
+                >Timeouts</span
               >
-                Report retention (days)
-              </label>
-              <input
-                id="settings-report-retention"
-                v-model.number="settingsForm.report_retention_days"
-                type="number"
-                min="0"
-                step="1"
-                class="input field-narrow"
-              />
+              <div class="table-wrap">
+                <table
+                  class="retention-table"
+                  aria-labelledby="settings-timeouts-label"
+                >
+                  <tbody>
+                    <tr>
+                      <td>
+                        <label
+                          for="settings-borg-timeout"
+                          title="The longest a single borg list or borg info may take, from 1 to 604800 seconds (a week). Applies to the next query, no restart needed."
+                          >Borg queries</label
+                        >
+                      </td>
+                      <td class="retention-value">
+                        <input
+                          id="settings-borg-timeout"
+                          v-model.number="settingsForm.borg_query_timeout_secs"
+                          type="number"
+                          min="1"
+                          max="604800"
+                          step="1"
+                          class="input retention-input"
+                        />
+                        <span class="retention-unit">seconds</span>
+                      </td>
+                    </tr>
+                    <tr>
+                      <td>
+                        <label
+                          for="settings-idle-timeout"
+                          title="Minutes of inactivity before a session expires. Does not apply to Remember me sessions."
+                          >Idle session</label
+                        >
+                      </td>
+                      <td class="retention-value">
+                        <input
+                          id="settings-idle-timeout"
+                          v-model.number="settingsForm.session_idle_timeout_minutes"
+                          type="number"
+                          min="1"
+                          step="1"
+                          class="input retention-input"
+                        />
+                        <span class="retention-unit">minutes</span>
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
               <span class="field-hint"
-                >Days to keep successful/archived reports. 0 = keep forever.</span
-              >
-            </div>
-
-            <div class="field">
-              <label
-                class="field-label"
-                for="settings-failed-retention"
-              >
-                Failed report retention (days)
-              </label>
-              <input
-                id="settings-failed-retention"
-                v-model.number="settingsForm.failed_report_retention_days"
-                type="number"
-                min="0"
-                step="1"
-                class="input field-narrow"
-              />
-              <span class="field-hint"
-                >Days to keep failed/archive-less reports. 0 = keep forever.</span
-              >
-            </div>
-
-            <div class="field">
-              <label
-                class="field-label"
-                for="settings-event-retention"
-              >
-                System event retention (days)
-              </label>
-              <input
-                id="settings-event-retention"
-                v-model.number="settingsForm.system_event_retention_days"
-                type="number"
-                min="0"
-                step="1"
-                class="input field-narrow"
-              />
-              <span class="field-hint">Days to keep system events. 0 = keep forever.</span>
-            </div>
-
-            <div class="field">
-              <label
-                class="field-label"
-                for="settings-notification-delivery-retention"
-              >
-                Notification delivery retention (days)
-              </label>
-              <input
-                id="settings-notification-delivery-retention"
-                v-model.number="settingsForm.notification_delivery_retention_days"
-                type="number"
-                min="0"
-                step="1"
-                class="input field-narrow"
-              />
-              <span class="field-hint"
-                >Days to keep notification delivery-attempt history. 0 = keep forever.</span
-              >
-            </div>
-
-            <div class="field">
-              <label
-                class="field-label"
-                for="settings-run-event-retention"
-              >
-                Run event retention (days)
-              </label>
-              <input
-                id="settings-run-event-retention"
-                v-model.number="settingsForm.run_event_retention_days"
-                type="number"
-                min="0"
-                step="1"
-                class="input field-narrow"
-              />
-              <span class="field-hint"
-                >Days to keep a run's power-management event timeline. 0 = keep forever.</span
-              >
-            </div>
-
-            <div class="field">
-              <label
-                class="field-label"
-                for="settings-archive-index-retention"
-              >
-                Archive index retention (days)
-              </label>
-              <input
-                id="settings-archive-index-retention"
-                v-model.number="settingsForm.archive_index_retention_days"
-                type="number"
-                min="0"
-                step="1"
-                class="input field-narrow"
-              />
-              <span class="field-hint"
-                >Days to keep an archive's browse index after it was last browsed or indexed. The
-                next browse rebuilds it. 0 = keep forever.</span
-              >
-            </div>
-
-            <div class="field">
-              <label
-                class="field-label"
-                for="settings-borg-timeout"
-              >
-                Borg timeout
-              </label>
-              <input
-                id="settings-borg-timeout"
-                v-model.number="settingsForm.borg_query_timeout_secs"
-                type="number"
-                min="1"
-                max="604800"
-                step="1"
-                class="input field-narrow"
-              />
-              <span class="field-hint"
-                >Maximum seconds to wait for a single <code>borg list</code> or
-                <code>borg info</code> invocation, from 1 to 604800 (a week). Default: 300. Applies
-                to the next query, no restart needed.</span
-              >
-            </div>
-
-            <div class="field">
-              <label
-                class="field-label"
-                for="settings-idle-timeout"
-              >
-                Session idle timeout
-              </label>
-              <input
-                id="settings-idle-timeout"
-                v-model.number="settingsForm.session_idle_timeout_minutes"
-                type="number"
-                min="1"
-                class="input field-narrow"
-              />
-              <span class="field-hint"
-                >Minutes of inactivity before a session expires. Default: 480 (8 hours). Does not
-                apply to "Remember Me" sessions.</span
+                >Defaults: 300 seconds, 480 minutes. A "Remember me" sign-in does not time
+                out.</span
               >
             </div>
 
@@ -583,15 +567,9 @@ async function resetSystem(): Promise<void> {
             </div>
           </form>
         </template>
-      </div>
+      </template>
 
-      <div
-        v-if="secureCookies !== null"
-        class="panel"
-      >
-        <div class="panel-header">
-          <h2 class="panel-title">Deployment</h2>
-        </div>
+      <template v-else-if="current === 'deployment'">
         <p class="pane-lede">
           Set through environment variables when the server starts. To change one, update your
           deployment and restart the server.
@@ -616,14 +594,14 @@ async function resetSystem(): Promise<void> {
             </span>
           </dd>
         </dl>
-      </div>
+      </template>
 
-      <MetricsSettingsPanel />
+      <MetricsSettingsPanel
+        v-else-if="current === 'metrics'"
+        embedded
+      />
 
-      <div class="panel">
-        <div class="panel-header">
-          <h2 class="panel-title">Configuration export / import</h2>
-        </div>
+      <template v-else-if="current === 'config'">
         <p class="pane-lede">
           Export host and schedule configuration as JSON for backup or migration. Importing restores
           hosts and schedules by name; repositories must exist before importing.
@@ -715,12 +693,9 @@ async function resetSystem(): Promise<void> {
             </ul>
           </div>
         </div>
-      </div>
+      </template>
 
-      <div class="panel danger-zone">
-        <div class="panel-header">
-          <h2 class="panel-title">Danger zone</h2>
-        </div>
+      <template v-else-if="current === 'danger'">
         <p class="pane-lede">
           Emergency actions to bring the system back to a safe state. Use when backups are stuck or
           the system is in an inconsistent state.
@@ -749,8 +724,8 @@ async function resetSystem(): Promise<void> {
           <span>Cancelled backups: {{ resetResult.cancelled_backups }}</span>
           <span>Agents notified: {{ resetResult.notified_agents }}</span>
         </div>
-      </div>
-    </div>
+      </template>
+    </SettingsRail>
 
     <!-- Regenerate Confirmation -->
     <BaseModal
@@ -829,7 +804,6 @@ async function resetSystem(): Promise<void> {
 
 <style scoped>
 .page {
-  max-width: 800px;
 }
 
 .warning-text {
@@ -865,8 +839,10 @@ async function resetSystem(): Promise<void> {
 }
 
 .config-io-controls {
+  flex: 1;
   display: flex;
   align-items: center;
+  justify-content: flex-end;
   gap: var(--space-5);
   flex-wrap: wrap;
 }
@@ -898,10 +874,8 @@ async function resetSystem(): Promise<void> {
 
 .import-result {
   margin-top: var(--space-4);
-  padding: var(--space-5) var(--space-6);
-  background: var(--bg-base);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
+  padding: var(--space-5) 0 0;
+  border-top: 1px solid var(--border);
   font-size: var(--fs-base);
 }
 
@@ -923,10 +897,8 @@ async function resetSystem(): Promise<void> {
   display: flex;
   gap: var(--space-7);
   margin-top: var(--space-6);
-  padding: var(--space-5) var(--space-6);
-  background: var(--bg-base);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
+  padding: var(--space-5) 0 0;
+  border-top: 1px solid var(--border);
   font-size: var(--fs-base);
   color: var(--text-secondary);
   flex-wrap: wrap;
@@ -941,5 +913,46 @@ async function resetSystem(): Promise<void> {
   & li {
     margin-bottom: var(--space-2);
   }
+}
+/* The Keep for table: a name per row, its value in a short box at the
+   right, rows split by hairlines like every other list in a card. */
+.retention-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.retention-table td {
+  padding: var(--space-3) 0;
+  border-top: 1px solid var(--border-subtle);
+  font-size: var(--fs-sm);
+  vertical-align: middle;
+}
+
+.retention-table tr:first-child td {
+  border-top: none;
+}
+
+.retention-table label {
+  cursor: help;
+}
+
+.retention-value {
+  text-align: right;
+  white-space: nowrap;
+}
+
+.retention-input {
+  width: 5.5rem;
+  padding-block: var(--space-2);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.retention-unit {
+  display: inline-block;
+  min-width: 3.75rem;
+  margin-left: var(--space-3);
+  color: var(--text-muted);
+  font-size: var(--fs-xs);
 }
 </style>

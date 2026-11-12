@@ -45,10 +45,10 @@ test.describe('Schedule with several target repositories', () => {
   test('recent runs are drawn one strip per repository', async ({ page }) => {
     await openDualTargetSchedule(page)
 
-    const strips = page.locator('.repo-strip')
+    const strips = page.locator('.runs-row')
     await expect(strips).toHaveCount(2)
-    await expect(strips.nth(0).locator('.group-label')).toHaveText('server-daily')
-    await expect(strips.nth(1).locator('.group-label')).toHaveText('media-weekly')
+    await expect(strips.nth(0).locator('.runs-row-name')).toHaveText('server-daily')
+    await expect(strips.nth(1).locator('.runs-row-name')).toHaveText('media-weekly')
   })
 
   // The seeded reports carry no run id, so each copy is a run of its own: the
@@ -57,10 +57,11 @@ test.describe('Schedule with several target repositories', () => {
   test('the run detail says which repository each run wrote into', async ({ page }) => {
     await openDualTargetSchedule(page)
 
-    const pills = page.locator('.run-detail .agent-row .meta-pill')
+    // Each host row of the run names the repository under the host.
+    const pills = page.locator('.run-detail .log-row-subtitle')
     await expect(pills).toHaveText(['media-weekly'])
 
-    await page.locator('.repo-strip').nth(0).locator('.run-pill').last().click()
+    await page.locator('.runs-row').nth(0).locator('.run-pill').last().click()
     await expect(pills).toHaveText(['server-daily'])
   })
 
@@ -69,25 +70,30 @@ test.describe('Schedule with several target repositories', () => {
     await page.getByRole('tab', { name: 'Backups' }).click()
 
     // Named in write order, each with the archives it holds.
-    const filter = page.locator('.archive-repo-filter')
+    const filter = page.locator('.archives-panel').getByRole('group', { name: 'Repository' })
     await expect(filter).toBeVisible({ timeout: 15_000 })
-    const labels = await filter.locator('.segmented-option').allTextContents()
+    const labels = await filter.getByRole('button').allTextContents()
     expect(labels).toHaveLength(3)
     expect(labels[0]).toContain('All')
     expect(labels[1]).toContain('server-daily')
     expect(labels[2]).toContain('media-weekly')
 
     // Each copy opens against its own repository: the archive header says
-    // which one the file tree - and the Delete beside it - acts on.
-    await filter.locator('.segmented-option', { hasText: 'server-daily' }).click()
-    await page.locator('.archive-row').first().click()
-    await expect(page.locator('.archive-meta-bar .repo-link')).toHaveText('server-daily')
+    // which one the file tree - and the Delete in its menu - acts on.
+    const repoLink = page.locator('.archive-head-facts a[href^="/repos/"]')
+    const rows = page.locator('.archives-panel').getByTestId('archive-row')
+    await filter.getByRole('button', { name: /server-daily/ }).click()
+    await rows.first().click()
+    await expect(repoLink).toHaveText('server-daily')
 
-    await filter.locator('.segmented-option', { hasText: 'media-weekly' }).click()
-    const weeklyRow = page.locator('.archive-row').first()
-    await expect(weeklyRow.locator('.archive-repo')).toHaveText('media-weekly')
+    // Under All, each row names its repository.
+    await filter.getByRole('button', { name: /^All/ }).click()
+    await expect(rows.filter({ hasText: 'media-weekly' }).first()).toBeVisible()
+
+    await filter.getByRole('button', { name: /media-weekly/ }).click()
+    const weeklyRow = rows.first()
     await weeklyRow.click()
-    await expect(page.locator('.archive-meta-bar .repo-link')).toHaveText('media-weekly')
+    await expect(repoLink).toHaveText('media-weekly')
   })
 
   test('a single-repository schedule keeps its pane unscoped', async ({ page }) => {
@@ -96,7 +102,12 @@ test.describe('Schedule with several target repositories', () => {
     await page.waitForLoadState('networkidle')
     await page.getByRole('tab', { name: 'Backups' }).click()
 
-    await expect(page.locator('.archive-repo-filter')).toHaveCount(0)
-    await expect(page.locator('.repo-strip')).toHaveCount(0)
+    await expect(page.getByTestId('archive-row').first()).toBeVisible({ timeout: 15_000 })
+    await expect(
+      page.locator('.archives-panel').getByRole('group', { name: 'Repository' }),
+    ).toHaveCount(0)
+    await page.getByRole('tab', { name: 'Overview' }).click()
+    // One strip of runs, under the one repository's name.
+    await expect(page.locator('.runs-row')).toHaveCount(1)
   })
 })

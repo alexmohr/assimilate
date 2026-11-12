@@ -4,12 +4,10 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 -->
 
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { Plus } from '@lucide/vue'
 import { useAuthStore } from '../stores/auth'
-import type { DependencyHost } from '../api/dependencyHosts'
-import DependencyCreateDialog from '../components/DependencyCreateDialog.vue'
 import DependencyHostsTab from '../components/DependencyHostsTab.vue'
 
 /**
@@ -20,11 +18,9 @@ const router = useRouter()
 const authStore = useAuthStore()
 const isAdmin = computed(() => authStore.isAdmin)
 
-const showDialog = ref(false)
-
-function onCreated(host: DependencyHost): void {
-  showDialog.value = false
-  router.push(`/dependency-hosts/${host.id}`)
+/** A new dependency is made on its own wizard page, like a new schedule. */
+function openCreate(): void {
+  router.push('/dependencies/new')
 }
 </script>
 
@@ -38,7 +34,7 @@ function onCreated(host: DependencyHost): void {
       >
         <button
           class="btn btn-primary"
-          @click="showDialog = true"
+          @click="openCreate"
         >
           <Plus :size="14" />
           New
@@ -51,14 +47,7 @@ function onCreated(host: DependencyHost): void {
 
     <DependencyHostsTab
       :is-admin="isAdmin"
-      @new="showDialog = true"
-    />
-
-    <DependencyCreateDialog
-      v-if="isAdmin"
-      :open="showDialog"
-      @close="showDialog = false"
-      @created="onCreated"
+      @new="openCreate"
     />
   </div>
 </template>

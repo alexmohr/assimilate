@@ -36,6 +36,7 @@ const emit = defineEmits<{ toggle: [et: EventType] }>()
       <ToggleSwitch
         :model-value="isEnabled(et)"
         :disabled="isDisabled(et)"
+        :label="labelFor(et)"
         @update:model-value="emit('toggle', et)"
       />
       <span class="event-label">{{ labelFor(et) }}</span>

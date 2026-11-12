@@ -1,8 +1,19 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
-import type { Page } from '@playwright/test'
+import type { Locator, Page } from '@playwright/test'
 import { expect, loginAsAdmin, openSeededWebArchive, test } from './fixtures'
+
+/** Opens a folder of the open archive by clicking its name, and waits for the path to show it. */
+async function openFolder(browserPanel: Locator, name: string): Promise<void> {
+  await browserPanel.getByTestId('browser-entry').getByRole('button', { name, exact: true }).click()
+  await expect(browserPanel.locator('.path-crumbs')).toContainText(name)
+}
+
+/** Goes up to the folder above the open one, through the path's crumbs. */
+async function upOneLevel(browserPanel: Locator): Promise<void> {
+  await browserPanel.locator('.path-crumbs .crumb').nth(-2).click()
+}
 
 /**
  * Opens web-server-01's Backups tab on its newest seeded archive, at the
@@ -11,10 +22,7 @@ import { expect, loginAsAdmin, openSeededWebArchive, test } from './fixtures'
 async function openSeededArchive(page: Page): Promise<void> {
   await openSeededWebArchive(page)
   const browserPanel = page.locator('.browser-panel')
-  for (const dir of ['tmp', 'tmp.web-server-01']) {
-    await browserPanel.getByText(dir, { exact: true }).click()
-    await expect(browserPanel.locator('.path-crumbs')).toContainText(dir)
-  }
+  for (const dir of ['tmp', 'tmp.web-server-01']) await openFolder(browserPanel, dir)
 }
 
 test.describe('Restoring picked files', () => {
@@ -24,9 +32,9 @@ test.describe('Restoring picked files', () => {
     await page.getByRole('checkbox', { name: 'Select restore-example.txt' }).check()
     const bar = page.getByTestId('browser-selection')
     await expect(bar).toContainText('1 selected')
-    await expect(bar).toContainText('to their original paths on web-server-01')
+    await expect(bar).toContainText('Restores to web-server-01, at the original paths or elsewhere')
 
-    await bar.getByRole('button', { name: 'Restore to web-server-01' }).click()
+    await bar.getByTestId('restore-picked').click()
     const dialog = page.getByRole('dialog', { name: 'Where to restore' })
     await expect(dialog).toBeVisible()
     // It opens on the machine the backup came from, named as the agent list
@@ -71,21 +79,22 @@ test.describe('Picking folders', () => {
   }) => {
     await openSeededWebArchive(page)
     const browserPanel = page.locator('.browser-panel')
-    await browserPanel.getByText('tmp', { exact: true }).click()
-    await expect(browserPanel.locator('.path-crumbs')).toContainText('tmp')
+    await openFolder(browserPanel, 'tmp')
 
     // What the folder holds comes from the content index: the demo source's
-    // index.html, app.js, nginx.conf, default.conf and restore-example.txt.
-    const folderRow = browserPanel.locator('tr', { hasText: 'tmp.web-server-01' })
-    await expect(folderRow.getByTestId('folder-files')).toHaveText('5 files')
+    // index.html, app.js, logo.png, nginx.conf, default.conf and
+    // restore-example.txt.
+    const folderRow = browserPanel
+      .getByTestId('browser-entry')
+      .filter({ hasText: 'tmp.web-server-01' })
+    await expect(folderRow.getByTestId('folder-files')).toHaveText('6 files')
 
     const folderPick = page.getByRole('checkbox', { name: 'Select tmp.web-server-01' })
     await folderPick.check()
     const bar = page.getByTestId('browser-selection')
-    await expect(bar).toContainText(/1 selected · .+ · 5 files/)
+    await expect(bar).toContainText(/1 selected · .+ · 6 files/)
 
-    await browserPanel.getByText('tmp.web-server-01', { exact: true }).click()
-    await expect(browserPanel.locator('.path-crumbs')).toContainText('tmp.web-server-01')
+    await openFolder(browserPanel, 'tmp.web-server-01')
     const example = page.getByRole('checkbox', { name: 'Select restore-example.txt' })
     await expect(example).toBeChecked()
     await expect(page.getByRole('checkbox', { name: 'Select etc' })).toBeChecked()
@@ -93,9 +102,9 @@ test.describe('Picking folders', () => {
     await example.uncheck()
     await expect(example).not.toBeChecked()
     await expect(page.getByRole('checkbox', { name: 'Select etc' })).toBeChecked()
-    await expect(bar).toContainText(/2 selected · .+ · 4 files/)
+    await expect(bar).toContainText(/2 selected · .+ · 5 files/)
 
-    await browserPanel.getByRole('button', { name: 'Up one level' }).click()
+    await upOneLevel(browserPanel)
     await expect(folderPick).not.toBeChecked()
     expect(await folderPick.evaluate((input: HTMLInputElement) => input.indeterminate)).toBe(true)
   })
@@ -106,20 +115,33 @@ test.describe('Searching an archive', () => {
     await openSeededWebArchive(page)
     const browserPanel = page.locator('.browser-panel')
 
+    // The search sits behind the path bar's search button.
+    await browserPanel.getByTestId('tree-search-toggle').click()
     await browserPanel.getByTestId('tree-search').fill('NGINX.conf')
     const hits = browserPanel.getByTestId('search-hit')
     await expect(hits).toHaveCount(1)
-    await expect(hits.first()).toContainText('tmp/tmp.web-server-01/etc/nginx/nginx.conf')
+    // A hit names the file, and the folder it is in.
+    await expect(
+      hits.first().getByRole('checkbox', {
+        name: 'Select tmp/tmp.web-server-01/etc/nginx/nginx.conf',
+        exact: true,
+      }),
+    ).toBeVisible()
+    await expect(hits.first()).toContainText('/tmp/tmp.web-server-01/etc/nginx')
     await expect(hits.first().locator('mark')).toHaveText('nginx.conf')
 
     // Only folders: etc/nginx and the conf.d folder in it match the text,
     // nginx.conf does not.
     await browserPanel.getByTestId('tree-search').fill('nginx')
-    await browserPanel.getByTestId('tree-search-filters').click()
-    await browserPanel.getByRole('radio', { name: 'Folders' }).click()
+    await browserPanel
+      .getByRole('group', { name: 'Type' })
+      .getByRole('button', { name: 'Folders' })
+      .click()
     await expect(hits).toHaveCount(2)
     const folder = hits.filter({ hasNotText: 'conf.d' })
-    await expect(folder).toContainText('tmp/tmp.web-server-01/etc/nginx')
+    await expect(
+      folder.getByRole('checkbox', { name: 'Select tmp/tmp.web-server-01/etc/nginx', exact: true }),
+    ).toBeVisible()
 
     await folder.getByTestId('pick-hit').check()
     await expect(page.getByTestId('browser-selection')).toContainText('1 selected')
@@ -136,20 +158,19 @@ test.describe('Change badges', () => {
     await openSeededWebArchive(page)
     const browserPanel = page.locator('.browser-panel')
     for (const dir of ['tmp', 'tmp.web-server-01', 'etc', 'nginx']) {
-      await browserPanel.getByText(dir, { exact: true }).click()
-      await expect(browserPanel.locator('.path-crumbs')).toContainText(dir)
+      await openFolder(browserPanel, dir)
     }
 
     // The demo writes every file afresh for each archive, so nginx.conf always
     // differs from the previous one. Reading that archive's folder may start
     // its indexing first; reopening the folder asks again once it is done.
-    const row = browserPanel.locator('tr', { hasText: 'nginx.conf' })
+    const row = browserPanel.getByTestId('browser-entry').filter({ hasText: 'nginx.conf' })
     await expect(async () => {
-      await browserPanel.getByRole('button', { name: 'Up one level' }).click()
-      await browserPanel.getByText('nginx', { exact: true }).click()
-      await expect(row.getByTestId('change-badge')).toHaveText('Changed', { timeout: 2_000 })
+      await upOneLevel(browserPanel)
+      await openFolder(browserPanel, 'nginx')
+      await expect(row.getByTestId('change-badge')).toHaveText('changed', { timeout: 2_000 })
     }).toPass({ timeout: 120_000 })
-    await expect(row.getByTestId('change-badge')).toHaveAttribute('title', /^Changed since /)
+    await expect(row.getByTestId('change-badge')).toHaveAttribute('title', /^changed since /)
   })
 })
 
@@ -163,11 +184,11 @@ test.describe('Backups tab on a phone', () => {
 
     const list = page.locator('.archives-panel')
     await expect(list).toBeVisible()
-    await page.locator('.archive-row-body:visible').first().click()
+    await page.locator('[data-testid="archive-row"]:visible').first().click()
 
     await expect(list).not.toBeVisible()
-    await expect(page.locator('.browser-title')).toBeVisible()
-    await page.getByRole('button', { name: 'Archives' }).click()
+    await expect(page.locator('.archive-head-name')).toBeVisible()
+    await page.getByRole('button', { name: 'All archives' }).click()
     await expect(list).toBeVisible()
   })
 })

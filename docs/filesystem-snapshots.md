@@ -28,7 +28,7 @@ The agent reports which tools it found when it connects. Point it at a tool outs
 
 Open the schedule, then **Settings → Advanced**, or the **Advanced** step of a new schedule.
 
-![The schedule's Advanced tab with Filesystem snapshots set to If possible and the LVM snapshot size below it](assets/screenshots/schedule-fs-snapshots.png)
+![The schedule's Advanced settings with Filesystem snapshots set to If possible and the LVM snapshot size below it](assets/screenshots/schedule-fs-snapshots.png)
 
 1. Set **Filesystem snapshots**:
     - **Off** reads the live files. This is the default.
@@ -72,7 +72,7 @@ Some directories below a source must stay live, because borg writes to them whil
 
 ## The run's timeline
 
-Each snapshot shows on the run's timeline, next to the [power management](power-management.md) steps: when it was taken, when it was removed, and why one could not be taken or removed. Open a run in the schedule's or the host's **Logs** tab and click **Show detail**.
+Each snapshot shows on the run's timeline, next to the [power management](power-management.md) steps: when it was taken, when it was removed, and why one could not be taken or removed. Click the run's row in the [Activity log](activity.md), or a host's row in a run under the schedule's **Recent runs**, to open its detail.
 
 ## Cleanup
 

@@ -4,6 +4,7 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 -->
 
 <script setup lang="ts">
+import { runLogLink } from '../utils/activityLink'
 import { ref, reactive, computed, onMounted, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { listAgents, listAgentTags, createAgent } from '../api/agents'
@@ -15,7 +16,6 @@ import { useAuthStore } from '../stores/auth'
 import { useEscapeKey } from '../composables/useEscapeKey'
 import { useWebSocket } from '../composables/useWebSocket'
 import { useClipboard } from '../composables/useClipboard'
-import { useMobile } from '../composables/useMobile'
 import { useListSort } from '../composables/useListSort'
 import {
   usePersistedRef,
@@ -31,6 +31,7 @@ import AgentChannelKey from '../components/AgentChannelKey.vue'
 import BaseSegmented, { type SegmentedOption } from '../components/BaseSegmented.vue'
 import BaseSpinner from '../components/BaseSpinner.vue'
 import EmptyState from '../components/EmptyState.vue'
+import PaneRow from '../components/PaneRow.vue'
 import SortControls from '../components/SortControls.vue'
 import ToggleSwitch from '../components/ToggleSwitch.vue'
 import EntityStatusBadges, { type EntityIssue } from '../components/EntityStatusBadges.vue'
@@ -173,10 +174,14 @@ const coverageHostIds = ref<Record<Exclude<CoverageFilter, 'all'>, Set<number>>>
   'never-succeeded': new Set(),
   'disabled-only': new Set(),
 })
-const showTagDropdown = ref(false)
-
-const { isMobile } = useMobile()
 const showMobileFilters = ref(false)
+/** Filters set in the filters card, so its button says when it is narrowing the list. */
+const activeFilterCount = computed(
+  () =>
+    (filterCoverage.value !== 'all' ? 1 : 0) +
+    filterTagIds.value.length +
+    (showHidden.value ? 1 : 0),
+)
 
 const allAgentTags = ref<TagRow[]>([])
 const agentTagsMap = ref<Record<number, { name: string; color: string }[]>>({})
@@ -298,10 +303,6 @@ function formatLastSeen(iso: string | null | undefined): string {
 
 function scheduleCount(agent: AgentRow): number {
   return machineScheduleCount.value[agent.id] ?? 0
-}
-
-function agentTags(agent: AgentRow): { name: string; color: string }[] {
-  return agentTagsMap.value[agent.id] ?? []
 }
 
 function agentHealthStatus(agent: AgentRow): AgentHealth | null {
@@ -581,9 +582,11 @@ function hiddenCount(group: AgentListGroup): number {
   return group.collapsible ? Math.max(0, group.agents.length - OFFLINE_PREVIEW) : 0
 }
 
-/** Where each issue chip lands on the agent's detail page. */
-const ISSUE_QUERY: Record<'failed' | 'overdue' | 'unprotected', Record<string, string>> = {
-  failed: { tab: 'logs', status: 'failed' },
+/**
+ * Where the overdue and unprotected chips land on the agent's detail page.
+ * A failure is read in the Activity log instead, where its output is.
+ */
+const ISSUE_QUERY: Record<'overdue' | 'unprotected', Record<string, string>> = {
   overdue: { tab: 'schedules', health: 'overdue' },
   unprotected: { tab: 'schedules' },
 }
@@ -621,6 +624,27 @@ function agentIssues(agent: AgentRow): EntityIssue[] {
     })
   }
   return issues
+}
+
+/** The one issue a row shows: a failure first, then a host with no schedules, then overdue. */
+const ISSUE_ORDER: readonly string[] = ['failed', 'unprotected', 'overdue']
+
+function primaryIssue(agent: AgentRow): EntityIssue | null {
+  const issues = agentIssues(agent)
+  return (
+    [...issues].sort((a, b) => ISSUE_ORDER.indexOf(a.key) - ISSUE_ORDER.indexOf(b.key))[0] ?? null
+  )
+}
+
+/** The line under the hostname: its display name, and whether it is imported or hidden. */
+function agentSub(agent: AgentRow): string {
+  return [
+    agent.display_name,
+    isImported(agent) ? 'Imported' : null,
+    agent.is_hidden ? 'Hidden' : null,
+  ]
+    .filter((part): part is string => Boolean(part))
+    .join(' · ')
 }
 
 type IssueKind = 'failed' | 'overdue' | 'unprotected'
@@ -666,6 +690,10 @@ function rowTone(agent: AgentRow): DotTone {
 }
 
 function navigateToAgentIssue(agent: AgentRow, kind: 'failed' | 'overdue' | 'unprotected'): void {
+  if (kind === 'failed') {
+    router.push(runLogLink({ hostname: agent.hostname, status: 'failed' }))
+    return
+  }
   const query = ISSUE_QUERY[kind]
   router.push({
     path: `/agents/${agent.hostname}`,
@@ -966,29 +994,28 @@ useQueryOverride(() => route.query.coverage, isCoverageFilter, filterCoverage)
     </div>
 
     <div>
-      <div class="toolbar agents-toolbar">
-        <input
-          v-model="filterText"
-          class="input search-input"
-          placeholder="Filter by hostname or tag..."
-        />
-        <button
-          v-if="isMobile"
-          class="filter-toggle"
-          :class="{
-            active: filterCoverage !== 'all' || filterTagIds.length > 0,
-          }"
-          aria-label="Filters"
-          @click="showMobileFilters = !showMobileFilters"
-        >
-          <SlidersHorizontal :size="14" />
-          <span
-            v-if="filterCoverage !== 'all' || filterTagIds.length > 0"
-            class="filter-badge"
-          ></span>
-        </button>
+      <!-- Search and a Filters button on one line, the status pills under
+           them; everything else waits in the filters card. -->
+      <div class="agents-filter-bar">
+        <div class="agents-search-row">
+          <input
+            v-model="filterText"
+            class="input search-input"
+            placeholder="Filter by hostname or tag..."
+          />
+          <button
+            type="button"
+            class="btn btn-sm"
+            :class="{ active: showMobileFilters }"
+            :aria-expanded="showMobileFilters"
+            @click="showMobileFilters = !showMobileFilters"
+          >
+            <SlidersHorizontal :size="14" />
+            Filters{{ activeFilterCount > 0 ? ` · ${activeFilterCount}` : '' }}
+          </button>
+        </div>
         <div
-          class="filter-pills agents-pills"
+          class="filter-pills"
           role="group"
           aria-label="Status"
         >
@@ -1009,74 +1036,84 @@ useQueryOverride(() => route.query.coverage, isCoverageFilter, filterCoverage)
             {{ pill.label }} · {{ pill.count }}
           </button>
         </div>
-        <template v-if="!isMobile || showMobileFilters">
-          <select
-            v-model="filterCoverage"
-            class="input select-input select-input--sm"
-            aria-label="Coverage"
-          >
-            <option value="all">All coverage</option>
-            <option value="protected">Protected</option>
-            <option value="unassigned">Unassigned</option>
-            <option value="never-succeeded">Never succeeded</option>
-            <option value="disabled-only">Disabled schedules only</option>
-          </select>
-          <div
-            v-if="allAgentTags.length > 0"
-            class="tag-filter-wrapper"
-          >
-            <button
-              class="btn btn-sm btn-ghost"
-              :class="{ active: filterTagIds.length > 0 }"
-              @click="showTagDropdown = !showTagDropdown"
+        <div
+          v-if="showMobileFilters"
+          class="panel agents-filters"
+        >
+          <div class="pane-rows">
+            <PaneRow
+              title="Coverage"
+              label-for="agents-coverage"
             >
-              Tags{{ filterTagIds.length > 0 ? ` (${filterTagIds.length})` : '' }}
-              <span class="dropdown-arrow">{{ showTagDropdown ? '\u25B4' : '\u25BE' }}</span>
-            </button>
-            <div
-              v-if="showTagDropdown"
-              class="tag-dropdown"
-            >
-              <label
-                v-for="tag in allAgentTags"
-                :key="tag.id"
-                class="tag-dropdown-item"
+              <select
+                id="agents-coverage"
+                v-model="filterCoverage"
+                class="input"
               >
-                <input
-                  type="checkbox"
-                  :checked="filterTagIds.includes(tag.id)"
-                  @change="toggleTagFilter(tag.id)"
-                />
-                <span
-                  class="tag-dot"
-                  :style="{ background: tag.color }"
-                ></span>
-                <span class="tag-dropdown-name">{{ tag.name }}</span>
-              </label>
-            </div>
+                <option value="all">All coverage</option>
+                <option value="protected">Protected</option>
+                <option value="unassigned">Unassigned</option>
+                <option value="never-succeeded">Never succeeded</option>
+                <option value="disabled-only">Disabled schedules only</option>
+              </select>
+            </PaneRow>
+            <PaneRow
+              v-if="allAgentTags.length > 0"
+              title="Tags"
+              stack
+            >
+              <div
+                class="filter-pills"
+                role="group"
+                aria-label="Tags"
+              >
+                <button
+                  v-for="tag in allAgentTags"
+                  :key="tag.id"
+                  type="button"
+                  class="filter-pill"
+                  :class="{ active: filterTagIds.includes(tag.id) }"
+                  :aria-pressed="filterTagIds.includes(tag.id)"
+                  @click="toggleTagFilter(tag.id)"
+                >
+                  <span
+                    class="status-dot"
+                    :style="{ background: tag.color }"
+                  ></span>
+                  {{ tag.name }}
+                </button>
+              </div>
+            </PaneRow>
+            <PaneRow title="Group by">
+              <BaseSegmented
+                v-model="groupMode"
+                :options="GROUP_OPTIONS"
+                label="Group agents by"
+              />
+            </PaneRow>
+            <PaneRow
+              title="Sort by"
+              stack
+            >
+              <SortControls
+                :field="sortField"
+                :direction="sortDir"
+                :options="SORT_OPTIONS"
+                hide-label
+                @toggle="toggleSort"
+              />
+            </PaneRow>
+            <PaneRow
+              v-if="isAdmin"
+              title="Show hidden agents"
+            >
+              <ToggleSwitch
+                v-model="showHidden"
+                label="Show hidden agents"
+              />
+            </PaneRow>
           </div>
-          <div
-            v-if="isAdmin"
-            class="hidden-toggle"
-          >
-            <ToggleSwitch v-model="showHidden" />
-            <span class="hidden-toggle-label">Show hidden</span>
-          </div>
-          <div class="agents-group-control">
-            <span class="sort-label">Group:</span>
-            <BaseSegmented
-              v-model="groupMode"
-              :options="GROUP_OPTIONS"
-              label="Group agents by"
-            />
-          </div>
-          <SortControls
-            :field="sortField"
-            :direction="sortDir"
-            :options="SORT_OPTIONS"
-            @toggle="toggleSort"
-          />
-        </template>
+        </div>
       </div>
 
       <div
@@ -1107,19 +1144,6 @@ useQueryOverride(() => route.query.coverage, isCoverageFilter, filterCoverage)
             >{{ fleetSummary.attention }}</span
           >
           <span class="stat-sub">{{ fleetSummary.attentionSub }}</span>
-        </div>
-        <div class="fleet-cell">
-          <span class="stat-label">Versions</span>
-          <div class="fleet-versions">
-            <span
-              v-for="v in fleetSummary.versions"
-              :key="v.version"
-              class="badge mono"
-              :class="v.badgeClass"
-              :title="v.title"
-              >{{ v.version }} · {{ v.count }}</span
-            >
-          </div>
         </div>
       </div>
 
@@ -1188,10 +1212,10 @@ useQueryOverride(() => route.query.coverage, isCoverageFilter, filterCoverage)
           >
             <span>Agent</span>
             <span>Status</span>
-            <span>Schedules</span>
-            <span>Last backup</span>
-            <span>Last seen</span>
-            <span>Version</span>
+            <span data-col="schedules">Schedules</span>
+            <span data-col="last-backup">Last backup</span>
+            <span data-col="last-seen">Last seen</span>
+            <span data-col="version">Version</span>
             <span></span>
           </div>
           <RouterLink
@@ -1219,9 +1243,9 @@ useQueryOverride(() => route.query.coverage, isCoverageFilter, filterCoverage)
                   ></span
                 >
                 <span
-                  v-if="agent.display_name"
+                  v-if="agentSub(agent)"
                   class="list-row-sub list-wide-only"
-                  >{{ agent.display_name }}</span
+                  >{{ agentSub(agent) }}</span
                 >
                 <span class="list-row-sub list-narrow-only">{{ narrowSummary(agent) }}</span>
               </span>
@@ -1232,35 +1256,21 @@ useQueryOverride(() => route.query.coverage, isCoverageFilter, filterCoverage)
               >
             </span>
             <span class="list-row-chips">
+              <!-- One thing at most: the most pressing issue, else a running
+                   backup. Offline is the dimmed row and its last-seen time;
+                   tags, hidden and imported live elsewhere. -->
               <EntityStatusBadges
-                :notable="!isOnline(agent)"
-                notable-label="Offline"
-                :running="hostActiveBackups(agent).length > 0"
-                :running-label="hostRunningLabel(agent)"
-                :issues="agentIssues(agent)"
+                v-if="primaryIssue(agent) !== null"
+                :issues="[primaryIssue(agent)!]"
               />
+              <!-- The blue dot already says it is backing up; the text only
+                   names where to, and ends in "..." when it does not fit. -->
               <span
-                v-if="agent.is_hidden"
-                class="badge badge--neutral"
-                >Hidden</span
+                v-else-if="hostActiveBackups(agent).length > 0"
+                class="agents-running"
+                :title="hostRunningLabel(agent)"
+                >{{ hostRunningLabel(agent) }}</span
               >
-              <span
-                v-if="isImported(agent)"
-                class="badge badge--accent"
-                >Imported</span
-              >
-              <span
-                v-for="tag in agentTags(agent)"
-                :key="tag.name"
-                class="tag-pill"
-                :style="{
-                  background: tag.color + '22',
-                  color: tag.color,
-                  borderColor: tag.color + '44',
-                }"
-              >
-                {{ tag.name }}
-              </span>
             </span>
             <span
               class="list-row-value list-wide-only"
@@ -1400,6 +1410,43 @@ useQueryOverride(() => route.query.coverage, isCoverageFilter, filterCoverage)
 </template>
 
 <style scoped>
+.agents-filter-bar {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  margin-bottom: var(--space-7);
+}
+
+.agents-search-row {
+  display: flex;
+  gap: var(--space-4);
+}
+
+.agents-search-row .search-input {
+  flex: 1;
+  min-width: 0;
+  max-width: 28rem;
+}
+
+.agents-search-row .btn {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.agents-filters {
+  padding-block: 0;
+}
+
+.agents-filters .pane-rows {
+  border-top: none;
+}
+
+.agents-filters .pane-row:last-child {
+  border-bottom: none;
+}
+
 .hosts-view {
   max-width: 1100px;
   overflow-x: hidden;
@@ -1408,34 +1455,10 @@ useQueryOverride(() => route.query.coverage, isCoverageFilter, filterCoverage)
 
 /* The status pills, the coverage select, the toggles and the sort share one
    strip, which wraps rather than pushing the page sideways. */
-.agents-toolbar {
-  flex-wrap: wrap;
-}
-
-.agents-group-control {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-}
-
-.hidden-toggle {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  cursor: pointer;
-  font-size: var(--fs-sm);
-  color: var(--text-secondary);
-  user-select: none;
-}
-
-.hidden-toggle-label {
-  white-space: nowrap;
-}
-
 /* The fleet in four figures, as one ruled strip rather than four cards. */
 .fleet-strip {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   border: 1px solid var(--border);
   border-radius: var(--radius);
   background: var(--bg-card);
@@ -1466,6 +1489,34 @@ useQueryOverride(() => route.query.coverage, isCoverageFilter, filterCoverage)
   --list-cols: minmax(0, 2.2fr) minmax(0, 2.2fr) 5rem 6rem 6rem 5.5rem 2rem;
 }
 
+/* A status never spills into the next column. */
+.agents-list .list-row-chips {
+  overflow: hidden;
+}
+
+.agents-running {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--fs-sm);
+  color: var(--accent);
+}
+
+/* Between a phone and a wide screen the fixed columns left the name and the
+   status a few pixels each: Schedules and Version step aside there, as the
+   agent's own page has both. */
+@media (min-width: 641px) and (max-width: 1280px) {
+  .agents-list .list-group {
+    --list-cols: minmax(0, 2fr) minmax(0, 1.6fr) 6rem 6rem 2rem;
+  }
+
+  .agents-list [data-col='schedules'],
+  .agents-list [data-col='version'] {
+    display: none;
+  }
+}
+
 .agents-row--dim .list-row-text,
 .agents-row--dim .list-row-value {
   opacity: 0.7;
@@ -1478,7 +1529,7 @@ useQueryOverride(() => route.query.coverage, isCoverageFilter, filterCoverage)
 
 @media (max-width: 640px) {
   .fleet-strip {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 
   .fleet-cell + .fleet-cell {
@@ -1491,12 +1542,6 @@ useQueryOverride(() => route.query.coverage, isCoverageFilter, filterCoverage)
 
   .fleet-cell:nth-child(n + 3) {
     border-top: 1px solid var(--border);
-  }
-
-  /* The pills take a line of their own and scroll sideways within it. */
-  .agents-pills {
-    flex: 1 1 100%;
-    min-width: 0;
   }
 
   /* The last-backup figure sits at the end of the name's line, clear of the

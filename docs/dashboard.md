@@ -6,7 +6,7 @@ The Dashboard is an operational summary of current backup risk, fleet protection
 
 ## Layout
 
-Below the counter tiles, Backup Stats and Protection Coverage sit side by side. The panels under them are arranged in two columns: Needs Attention, Backup Calendar, and Repository Capacity on the left; Upcoming Work and Recent Activity on the right. Each column is an independent stack, so a hidden or short panel is followed by the next panel in its column rather than leaving a gap beside a taller neighbour.
+Below the counter tiles, Backup Stats and Protection Coverage sit side by side. The panels under them are arranged in two columns: Needs Attention and Backup Calendar on the left; Upcoming Work, Recent Activity and Repository Capacity on the right. Each column is an independent stack, so a hidden or short panel is followed by the next panel in its column rather than leaving a gap beside a taller neighbour.
 
 The Backup Calendar needs the full width of a half-page column to render a seven-day month grid, so below 1024px the two columns fold into a single full-width column.
 
@@ -14,14 +14,18 @@ Clicking a day lists its runs underneath the grid. A successful run opens the re
 
 ## Summary
 
-The top row uses explicit entity counts:
+The top row is a strip of tiles. Most of them open the page behind the number:
 
-| Counter                | Definition                                                                                                                     |
-| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
-| **Protected Agents**   | Eligible visible agents with at least one enabled backup assignment and at least one successful run for an enabled assignment. |
-| **Needs Attention**    | Current actionable findings after target-level symptom deduplication.                                                          |
-| **Running Operations** | Persisted backup operations that are currently running.                                                                        |
-| **Storage**            | Current deduplicated size summed once per enabled repository from authoritative Borg repository statistics.                    |
+| Tile               | Shows                                                                                         | Opens |
+| ------------------ | --------------------------------------------------------------------------------------------- | ----- |
+| **Online agents**  | Connected agents out of all agents, with a dot that is green when all are online and amber otherwise | The Agents list filtered to offline agents |
+| **Repositories**   | How many repositories there are                                                               | The Repositories page |
+| **Overdue**        | How many schedule targets are overdue                                                         | The Schedules list filtered to overdue schedules |
+| **Last backup**    | When the most recent backup finished                                                          | That archive in its repository |
+| **Next backup**    | When the next backup is due, and how many are running now                                     | That schedule |
+| **Total storage**  | The deduplicated size of every repository together                                            | — |
+| **Last failure**   | When the most recent failed run finished                                                      | The Activity Log filtered to failed runs of that schedule |
+| **Last warning**   | When the most recent run with warnings finished                                               | The Activity Log filtered to warned runs of that schedule |
 
 Eligible agents are registered agents that are not hidden and are not imported placeholder agents. Hidden and imported agents do not affect the coverage denominator.
 

@@ -138,8 +138,8 @@ function removeRow(index: number): void {
 
 .fcp-input {
   padding: var(--space-4) var(--space-5);
-  background: var(--bg-input);
-  border: 1px solid var(--border);
+  background: var(--bg-field);
+  border: 1px solid transparent;
   border-radius: var(--radius-sm);
   color: var(--text-primary);
   font-size: var(--fs-base);
@@ -155,11 +155,12 @@ function removeRow(index: number): void {
 .fcp-row .fcp-input:first-child {
   flex: 1;
   width: auto;
+  min-width: 0;
 }
 
 .fcp-select {
   width: auto;
-  min-width: 8rem;
+  min-width: 6rem;
   flex-shrink: 0;
 }
 

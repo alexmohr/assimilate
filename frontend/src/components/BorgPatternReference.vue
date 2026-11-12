@@ -98,7 +98,7 @@ const SECTIONS: readonly PatternSection[] = [
 
 <style scoped>
 .ref-panel {
-  background: var(--bg-base);
+  background: var(--bg-code);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   padding: var(--space-5);
@@ -116,6 +116,7 @@ const SECTIONS: readonly PatternSection[] = [
   width: 280px;
   flex-shrink: 0;
   background: var(--bg-card);
+  border: 1px solid var(--border);
   border-radius: var(--radius);
   padding: var(--space-7);
   gap: var(--space-6);
@@ -203,5 +204,26 @@ const SECTIONS: readonly PatternSection[] = [
 .ref-panel--sidebar .ref-entry span {
   font-size: var(--fs-xs);
   padding-left: var(--space-2);
+}
+
+/* On a phone it sits under the patterns card at its full width, scrolling
+   with the page, and has the room for each pattern beside its meaning. */
+@media (max-width: 768px) {
+  .ref-panel--sidebar {
+    width: 100%;
+    position: static;
+    padding: var(--space-6);
+  }
+
+  .ref-panel--sidebar .ref-entry {
+    display: grid;
+    grid-template-columns: minmax(6rem, auto) minmax(0, 1fr);
+    align-items: baseline;
+    gap: var(--space-5);
+  }
+
+  .ref-panel--sidebar .ref-entry span {
+    padding-left: 0;
+  }
 }
 </style>

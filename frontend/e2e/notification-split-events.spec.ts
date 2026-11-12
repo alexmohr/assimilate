@@ -1,7 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
-import { expect, loginAsAdmin, mockNotificationsApi, opsWebhookWithRules, test } from './fixtures'
+import {
+  expect,
+  loginAsAdmin,
+  mockNotificationsApi,
+  openSettingsSection,
+  opsWebhookWithRules,
+  test,
+} from './fixtures'
 import type { Page } from '@playwright/test'
 
 test('a channel can follow file-changed warnings and abandoned catch-ups on their own', async ({
@@ -39,12 +46,12 @@ test('a channel can follow file-changed warnings and abandoned catch-ups on thei
 
   await page.goto('/notifications')
   await page.waitForLoadState('networkidle')
-  // Events are edited from the channel row's overflow menu.
-  const row = page.locator('.channel-row').first()
-  await row.getByRole('button', { name: /^More actions for / }).click()
-  await row.getByRole('menuitem', { name: 'Edit events' }).click()
+  // The channel's page lists its events as switches in a section of their own.
+  await page.locator('.list-row[data-channel]').first().click()
+  await expect(page).toHaveURL(/\/notifications\/channels\/1/)
+  const events = await openSettingsSection(page, 'Events')
 
-  const modal = page.locator('.events-list')
+  const modal = events.locator('.events-list')
   await expect(modal).toBeVisible({ timeout: 10_000 })
 
   // The two events sit beside the ones they were split out of, each with a

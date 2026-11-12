@@ -2,11 +2,13 @@
 
 The Profile page lets you manage your account settings, API tokens, and UI preferences. Access it from **Settings → Profile** in the sidebar.
 
+The page shows your username, then its sections as collapsible rows stacked in one card: **Change password**, **API tokens**, **Two-factor auth**, **Sessions** and **Appearance**. Click a section's title to open or fold it; several can be open at once, and **Expand all** opens every one. The page opens with **Change password** open.
+
 ![Profile](assets/screenshots/profile.png)
 
 ## Change Password
 
-The **Change Password** tab lets you update your login password.
+The **Change password** section lets you update your login password.
 
 1. Enter your new password (minimum 8 characters).
 2. Confirm the password.
@@ -19,14 +21,17 @@ Passwords are hashed with bcrypt before storage. The server enforces a minimum l
 
 ## API Tokens
 
-The **API Tokens** tab lets you create and manage personal API tokens for programmatic access to the REST API.
+The **API tokens** section lets you create and manage personal API tokens for programmatic access to the REST API.
 
 ### Creating a Token
 
 1. Click **New token**.
 2. Enter a descriptive name (e.g., "CI pipeline", "monitoring script").
-3. Click **Create**.
-4. **Copy the token immediately** — it is shown only once and cannot be retrieved later.
+3. Choose when it **Expires**: **Never** (the default), after **30 days**, **90 days** or **1 year**, or **On a date** you pick, at the end of that day; **Create** waits until a day is picked. The dialog says when that is.
+4. Click **Create**.
+5. **Copy the token immediately** — it is shown only once and cannot be retrieved later.
+
+The token list shows each token's expiry in its **Expires** column: amber within two weeks of the date, and red once it has passed. An expired token is refused like an unknown one, on the API and on `/metrics`; delete it and create a new one. Through the API, `POST /api/tokens` takes an optional `expires_at` timestamp, which must lie in the future.
 
 ### Using a Token
 
@@ -46,9 +51,10 @@ The token list shows:
 |--------|-------------|
 | Name | The label you assigned at creation |
 | Created | When the token was created |
-| Last Used | When the token was last used to authenticate a request (or "Never") |
+| Last used | When the token was last used to authenticate a request (or "Never") |
+| Expires | When the token expires (or "Never") |
 
-Click the delete icon to revoke a token. Any integrations using that token will immediately stop working.
+Click the delete button in its **Actions** column to revoke a token. Any integrations using that token will immediately stop working.
 
 !!! warning
     Deleted tokens cannot be recovered. Create a new token if you need to replace a revoked one.
@@ -59,10 +65,11 @@ Admins can view and delete all users' tokens from **Settings → Access Control 
 
 ## Appearance
 
-The **Appearance** tab lets you switch between light and dark mode. Your preference is saved server-side and persists across browsers and sessions.
+The **Appearance** section lets you choose the theme. Your preference is saved server-side and persists across browsers and sessions.
 
 | Theme | Description |
 |-------|-------------|
+| Auto | Follows your operating system's light or dark setting |
 | Light | Light background, dark text |
 | Dark | Dark background, light text |
 
@@ -70,14 +77,14 @@ The theme applies immediately without a page reload.
 
 ## Two-Factor Authentication (TOTP)
 
-The **Two-Factor Auth** tab enrolls and manages TOTP-based two-factor authentication for your account. Once enabled, every login requires a one-time code from an authenticator app (e.g. Google Authenticator, Authy) in addition to your password.
+The **Two-factor auth** section enrolls and manages TOTP-based two-factor authentication for your account. Once enabled, every login requires a one-time code from an authenticator app (e.g. Google Authenticator, Authy) in addition to your password.
 
 !!! note
-    The desktop app doesn't offer two-factor authentication. It signs in automatically with only a password, so it hides this tab and the server refuses to set up TOTP (see [`ASSIMILATE_DEPLOYMENT_MODE`](configuration.md)). An account that already has TOTP still sees the tab, so it can turn it off.
+    The desktop app doesn't offer two-factor authentication. It signs in automatically with only a password, so it hides this section and the server refuses to set up TOTP (see [`ASSIMILATE_DEPLOYMENT_MODE`](configuration.md)). An account that already has TOTP still sees the section, so it can turn it off.
 
 ### Enabling 2FA
 
-1. Click **Set Up Two-Factor Auth**. The server generates a new TOTP secret and a set of recovery codes.
+1. Click **Set up two-factor auth**. The server generates a new TOTP secret and a set of recovery codes.
 2. Scan the displayed QR code with your authenticator app, or enter the manual key.
 3. Enter the current 6-digit code from your authenticator app and click **Verify & Enable**.
 4. **Save the recovery codes** shown on completion in a secure place. Each code can be used once to regain access if you lose your authenticator device.
@@ -90,7 +97,7 @@ If you lose access to your authenticator app, click **Use a recovery code instea
 
 ### Disabling 2FA
 
-To turn 2FA off, enter your current account password on the **Two-Factor Auth** tab and click **Disable Two-Factor Auth**. Disabling removes the stored secret and any remaining recovery codes.
+To turn 2FA off, enter your current account password in the **Two-factor auth** section and click **Disable two-factor auth**. Disabling removes the stored secret and any remaining recovery codes.
 
 !!! warning
     Disabling 2FA reduces account security. Prefer rotating your authenticator device over disabling 2FA whenever possible.
@@ -99,17 +106,17 @@ See [Security & Authentication](security.md) for the security properties of TOTP
 
 ## Sessions
 
-The **Sessions** tab lists every active session for your account. Use it to review where your account is signed in and to sign out other devices.
+The **Sessions** section lists every active session for your account. Use it to review where your account is signed in and to sign out other devices.
 
 | Column | Description |
 |--------|-------------|
 | Created | When the session was established |
-| Last Active | The most recent time the session made an API request |
+| Last active | The most recent time the session made an API request |
 | Expires | When the session expires (remember-me sessions last 7 days) |
 | Type | `Remember Me` (7-day) or `Session` (24-hour) |
 | Status | `Current` for the session used by this browser, otherwise `Active` |
 
-Click the trash icon next to any non-current session to revoke it immediately. Your current session cannot be revoked from here — sign out normally instead.
+Click the revoke button in the **Actions** column of any non-current session and confirm to revoke it immediately. Your current session cannot be revoked from here — sign out normally instead.
 
 Sessions that are inactive longer than the configured **Session Idle Timeout** (see [Configuration](configuration.md)) are revoked automatically on the next request.
 

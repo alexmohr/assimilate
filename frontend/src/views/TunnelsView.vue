@@ -15,7 +15,7 @@ import { listAgents } from '../api/agents'
 import { ArrowRight, Cable, ChevronRight, Plus } from '@lucide/vue'
 import BaseSpinner from '../components/BaseSpinner.vue'
 import EmptyState from '../components/EmptyState.vue'
-import { badgeClass, tunnelStatusTone, tunnelStatusLabel } from '../utils/badge'
+import { tunnelStatusTone, tunnelStatusLabel } from '../utils/badge'
 import type { TunnelWithStatus, CreateTunnelRequest } from '../types/tunnel'
 import BaseModal from '../components/BaseModal.vue'
 import {
@@ -203,7 +203,7 @@ onMounted(() => {
       </div>
     </div>
     <p class="page-description">
-      Reverse SSH tunnels that let an agent reach a repository host it cannot connect to directly.
+      Reverse SSH tunnels that let an agent reach this server when it cannot connect to it directly.
     </p>
 
     <BaseSpinner
@@ -327,15 +327,9 @@ onMounted(() => {
           </div>
 
           <div class="list-row-text tunnel-status">
+            <!-- The dot says connected; any other state is named, in its colour. -->
             <span
-              class="badge list-wide-only"
-              :class="badgeClass(tunnelStatusTone(tunnel.status))"
-            >
-              <span class="badge-dot"></span>
-              {{ tunnelStatusLabel(tunnel.status) }}
-            </span>
-            <span
-              class="list-narrow-only"
+              v-if="tunnelStatusTone(tunnel.status) !== 'success'"
               :class="`tunnel-status-text--${tunnelStatusTone(tunnel.status)}`"
             >
               {{ tunnelStatusLabel(tunnel.status) }}
@@ -519,6 +513,12 @@ onMounted(() => {
 
 .tunnel-status {
   align-items: flex-start;
+  min-width: 0;
+}
+
+.tunnel-status .list-row-sub {
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 .tunnel-status-text--success {

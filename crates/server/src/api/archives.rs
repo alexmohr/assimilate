@@ -1860,6 +1860,21 @@ mod tests {
         assert_eq!(only.archive_name, "a-1");
         assert_eq!(only.requested_by.as_deref(), Some("admin"));
 
+        // A repository that is gone, or a name the database refuses, leaves the
+        // deletion to borg instead of queueing it.
+        assert!(
+            !queue_if_now_append_only(&state, repo.id.saturating_add(10_000), "a-3", 1, "admin")
+                .await
+        );
+        assert!(!queue_if_now_append_only(&state, repo.id, "bad\0name", 1, "admin").await);
+        let after: Vec<String> = db::append_only::list_pending_deletions(&pool, repo.id)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|d| d.archive_name)
+            .collect();
+        assert_eq!(after, vec!["a-1".to_owned()]);
+
         // And the whole task takes that way out without running borg.
         run_archive_deletion(
             state.clone(),

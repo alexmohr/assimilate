@@ -796,6 +796,21 @@ mod tests {
         json
     }
 
+    /// A `public_url` setting that cannot be read is logged and treated as
+    /// unset, so a notification still goes out, only without its link.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn an_unreadable_public_url_reads_as_unset(pool: PgPool) {
+        let service = crate::test_support::test_notification_service(pool.clone());
+        pool.close().await;
+
+        let (base_url, logs) =
+            crate::test_support::formatted_logs_while(public_base_url(&service)).await;
+
+        assert_eq!(base_url, None);
+        assert!(logs.contains("failed to read public_url setting"), "{logs}");
+    }
+
     #[test]
     fn a_channel_link_points_email_webhook_and_push_where_it_says() {
         let event = || {

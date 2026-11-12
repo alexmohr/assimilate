@@ -340,6 +340,8 @@ To run a backup immediately without waiting for the next scheduled time, open th
 
 If a host is offline when you press **Run now** or **Retry**, its run is queued rather than dropped: it is sent the moment the agent reconnects. Until then the schedule reads **Queued** instead of **Running**, and its Overview tab says which host the backup is waiting for rather than showing it in progress. **Cancel** calls off a queued run the same way it stops a running one.
 
+A run stays cancellable even when its agent was stopped or restarted after the run was handed to it. The restarted agent answers the cancel by saying it has no such backup running, and the run is closed as cancelled. A backup the agent was already running when it restarted ends with it: once the agent reconnects as a new process, the run is marked failed with *Agent '<host>' restarted; backup abandoned*, and its progress card goes away. A run that hadn't started yet is sent to the restarted agent instead.
+
 Manual runs follow the same retention policy and exclude patterns as scheduled runs, and write every [backup target](#backup-targets) in the same order, so **Run now** produces the same copies the cron would. Because it writes them all, it needs permission on every target repository, not only the schedule's primary one. **Cancel** stops the run on all of them and asks only for permission on the schedule, so whoever can pause it can also stop a run already going.
 
 A manual run also updates **Last run** and **Next run** exactly as a scheduled one does, so the schedule doesn't look overdue right after you've just run it, and the regular cron run for the same occurrence is skipped rather than duplicating the work.

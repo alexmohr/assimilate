@@ -1209,6 +1209,23 @@ describe('HostsView issue rows', () => {
     expect(wrapper.text()).not.toContain('Backing up')
   })
 
+  it('clears the running pill when a backup is stopped instead of completing', async () => {
+    const { wrapper } = await mountAgentsList([issueAgent])
+
+    ws.handlers['BackupStarted']({ hostname: 'flaky-host', target_name: 'offsite' })
+    ws.handlers['BackupStarted']({ hostname: 'flaky-host', target_name: 'nightly' })
+    await flushPromises()
+    expect(wrapper.text()).toContain('Backing up: offsite, nightly')
+
+    ws.handlers['BackupStopped']({ hostname: 'flaky-host', target_name: 'offsite' })
+    await flushPromises()
+    expect(wrapper.text()).toContain('Backing up: nightly')
+
+    ws.handlers['BackupStopped']({ hostname: 'flaky-host', target_name: 'nightly' })
+    await flushPromises()
+    expect(wrapper.text()).not.toContain('Backing up')
+  })
+
   it('surfaces a load failure when there is nothing already listed', async () => {
     vi.mocked(apiClient.get).mockRejectedValue(new Error('backend is down'))
     const router = makeRouter()

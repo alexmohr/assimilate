@@ -372,6 +372,11 @@ pub async fn insert_backup_started(
     Ok(())
 }
 
+/// Marks `agent_id`'s in-flight (`pending`/`started`) backup reports for
+/// `repo_id` cancelled. Returns the schedule of each report it cancelled
+/// (`None` for a run no schedule started), so an empty result means there
+/// was nothing in flight to cancel.
+///
 /// # Errors
 ///
 /// Returns [`ApiError::Database`] if the database query fails.
@@ -379,18 +384,52 @@ pub async fn cancel_backup_report(
     pool: &PgPool,
     agent_id: i64,
     repo_id: i64,
-) -> Result<(), ApiError> {
-    sqlx::query!(
+) -> Result<Vec<Option<i64>>, ApiError> {
+    sqlx::query_scalar!(
         "UPDATE backup_reports SET status = 'cancelled', finished_at = NOW(), \
          cancellation_acknowledged = false WHERE agent_id = $1 AND repo_id = $2 AND status IN \
-         ('pending', 'started')",
+         ('pending', 'started') RETURNING schedule_id",
         agent_id,
         repo_id,
     )
-    .execute(pool)
+    .fetch_all(pool)
     .await
-    .map_err(ApiError::Database)?;
-    Ok(())
+    .map_err(ApiError::Database)
+}
+
+/// A backup report [`fail_started_backups_for_agent_restart`] gave up on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AbandonedBackup {
+    /// Repository the backup wrote to.
+    pub repo_id: i64,
+    /// Schedule that started it, if any.
+    pub schedule_id: Option<i64>,
+}
+
+/// Marks every backup an agent had *running* (`started`) as failed, because
+/// the agent process that ran it has been replaced by a new one: borg died
+/// with the old process and no completion will ever arrive. `pending` runs
+/// are left alone - the agent never began them, and the reconnect catch-up
+/// hands them to the new process.
+///
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
+pub async fn fail_started_backups_for_agent_restart(
+    pool: &PgPool,
+    agent_id: i64,
+    hostname: &str,
+) -> Result<Vec<AbandonedBackup>, ApiError> {
+    sqlx::query_as!(
+        AbandonedBackup,
+        "UPDATE backup_reports SET status = 'failed', finished_at = NOW(), error_message = $1 \
+         WHERE agent_id = $2 AND status = 'started' RETURNING repo_id, schedule_id",
+        format!("Agent '{hostname}' restarted; backup abandoned"),
+        agent_id,
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(ApiError::Database)
 }
 
 /// # Errors

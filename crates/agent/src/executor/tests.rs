@@ -409,7 +409,7 @@ async fn configure_single_repo(executor: &Executor, repo: &shared::types::RepoCo
 }
 
 #[tokio::test]
-async fn cancel_backup_with_no_active_task_sends_nothing() {
+async fn cancel_backup_with_no_active_task_reports_not_running() {
     let executor = Executor::new(
         crate::endpoint::test_support::endpoint("ws://localhost"),
         TaskRegistry::default(),
@@ -419,6 +419,8 @@ async fn cancel_backup_with_no_active_task_sends_nothing() {
 
     executor.handle_cancel_backup(repo_id, &tx).await;
 
+    let msg = rx.try_recv().unwrap();
+    assert!(matches!(msg, AgentToServer::BackupNotRunning { repo_id: r } if r == repo_id));
     assert!(rx.try_recv().is_err());
 }
 

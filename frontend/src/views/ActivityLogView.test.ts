@@ -12,8 +12,8 @@ vi.mock('../api/client', () => mockApiClientRw())
 
 const wsMessageHandlers = new Map<string, Array<(payload?: unknown) => void>>()
 
-function triggerWsMessage(type: string): void {
-  for (const handler of wsMessageHandlers.get(type) ?? []) handler()
+function triggerWsMessage(type: string, payload?: unknown): void {
+  for (const handler of wsMessageHandlers.get(type) ?? []) handler(payload)
 }
 
 vi.mock('../composables/useWebSocket', () => ({
@@ -313,6 +313,20 @@ describe('ActivityLogView', () => {
   })
 
   describe('page header', () => {
+    it('drops the live output of a backup that was stopped instead of completing', async () => {
+      const wrapper = await mountDefault()
+      const backup = { hostname: 'web-server-01', target_name: 'server-daily' }
+
+      triggerWsMessage('BackupStarted', backup)
+      triggerWsMessage('BackupLog', { ...backup, repo_id: 1, line: 'Creating archive' })
+      await flushPromises()
+      expect(wrapper.find('.live-session-card').exists()).toBe(true)
+
+      triggerWsMessage('BackupStopped', { ...backup, repo_id: 1, schedule_id: null })
+      await flushPromises()
+      expect(wrapper.find('.live-session-card').exists()).toBe(false)
+    })
+
     it('renders the Activity Log page title', async () => {
       setupDefaultMocks()
       const wrapper = mountView()

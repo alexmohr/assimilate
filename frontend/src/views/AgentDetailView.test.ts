@@ -907,6 +907,35 @@ describe('AgentDetailView — backup progress', () => {
     expect(wrapper.find('.live-log-card').exists()).toBe(false)
   })
 
+  it('BackupStopped hides the progress card of a cancelled backup', async () => {
+    const wrapper = await startBackupOnHost()
+    expect(wrapper.find('.live-log-card').exists()).toBe(true)
+
+    wsHandlers['BackupStopped']?.({
+      hostname: 'test-host',
+      target_name: 'server-daily',
+      repo_id: 10,
+      schedule_id: null,
+    })
+    await nextTick()
+
+    expect(wrapper.find('.live-log-card').exists()).toBe(false)
+  })
+
+  it('BackupStopped for another host leaves the progress card alone', async () => {
+    const wrapper = await startBackupOnHost()
+
+    wsHandlers['BackupStopped']?.({
+      hostname: 'other-host',
+      target_name: 'server-daily',
+      repo_id: 10,
+      schedule_id: null,
+    })
+    await nextTick()
+
+    expect(wrapper.find('.live-log-card').exists()).toBe(true)
+  })
+
   it('BackupLog with archive_progress JSON updates the progress data', async () => {
     const wrapper = await startBackupOnHost()
 

@@ -654,6 +654,22 @@ describe('DashboardView success ring', () => {
     expect(track.find('.progress-bar').attributes('style')).toContain('width: 99%')
   })
 
+  it('drops an active backup that was stopped instead of completing', async () => {
+    vi.mocked(apiClient.get).mockImplementation(dashboardWithBackups())
+    const wrapper = await renderDashboard()
+    expect(wrapper.find('.active-backup-item').exists()).toBe(true)
+
+    wsHandlers['BackupStopped']({
+      hostname: 'web-server-01',
+      target_name: 'server-daily',
+      repo_id: 1,
+      schedule_id: null,
+    })
+    await flushPromises()
+
+    expect(wrapper.find('.active-backup-item').exists()).toBe(false)
+  })
+
   it('ignores a BackupLog line for a repo with no matching active backup', async () => {
     vi.mocked(apiClient.get).mockImplementation(dashboardWithBackups())
     const wrapper = await renderDashboard()

@@ -265,11 +265,19 @@ function toggleSegment(name: string): void {
 const { onMessage, status: wsStatus } = useWebSocket()
 
 onMessage('BackupCompleted', (payload) => {
-  activeBackups.value = activeBackups.value.filter(
-    (b) => !(b.hostname === payload.hostname && b.target_name === payload.target_name),
-  )
+  dropActiveBackup(payload.hostname, payload.target_name)
   fetchAll().catch(logger.error)
 })
+// A backup that was cancelled, or lost with an agent that restarted, never
+// completes; the DataChanged that follows refreshes the rest.
+onMessage('BackupStopped', (payload) => {
+  dropActiveBackup(payload.hostname, payload.target_name)
+})
+function dropActiveBackup(hostname: string, targetName: string): void {
+  activeBackups.value = activeBackups.value.filter(
+    (b) => !(b.hostname === hostname && b.target_name === targetName),
+  )
+}
 onMessage('BackupStarted', (payload) => {
   const exists = activeBackups.value.some(
     (b) => b.hostname === payload.hostname && b.target_name === payload.target_name,

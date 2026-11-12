@@ -892,19 +892,25 @@ onMessage('BackupStarted', (payload) => {
 })
 
 onMessage('BackupCompleted', (payload) => {
-  const list = activeBackupsByHost.value[payload.hostname]
-  if (list) {
-    const filtered = list.filter((t) => t !== payload.target_name)
-    if (filtered.length === 0) {
-      const copy = { ...activeBackupsByHost.value }
-      delete copy[payload.hostname]
-      activeBackupsByHost.value = copy
-    } else {
-      activeBackupsByHost.value = { ...activeBackupsByHost.value, [payload.hostname]: filtered }
-    }
-  }
+  dropActiveBackup(payload.hostname, payload.target_name)
   loadAgents().catch(logger.error)
 })
+// A backup that was cancelled, or lost with an agent that restarted, never
+// completes; the DataChanged that follows reloads the hosts.
+onMessage('BackupStopped', (payload) => dropActiveBackup(payload.hostname, payload.target_name))
+
+function dropActiveBackup(hostname: string, targetName: string): void {
+  const list = activeBackupsByHost.value[hostname]
+  if (!list) return
+  const filtered = list.filter((t) => t !== targetName)
+  if (filtered.length === 0) {
+    const copy = { ...activeBackupsByHost.value }
+    delete copy[hostname]
+    activeBackupsByHost.value = copy
+  } else {
+    activeBackupsByHost.value = { ...activeBackupsByHost.value, [hostname]: filtered }
+  }
+}
 
 function hostActiveBackups(agent: AgentRow): string[] {
   return activeBackupsByHost.value[agent.hostname] ?? []

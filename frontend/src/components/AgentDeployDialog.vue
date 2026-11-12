@@ -6,7 +6,8 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 <script setup lang="ts">
 import { ref, reactive, computed, onMounted } from 'vue'
 import { ArrowRight, Upload, KeyRound, CheckCircle } from '@lucide/vue'
-import { previewAgentServiceUnit, deployAgent } from '../api/agents'
+import axios from 'axios'
+import { previewAgentServiceUnit, deployAgent, listAgents } from '../api/agents'
 import type { DeployAgentResult, ServiceUnitPreviewResponse } from '../api/agents'
 import { useEscapeKey } from '../composables/useEscapeKey'
 import { extractError } from '../utils/error'
@@ -153,6 +154,34 @@ function submitLabel(): string {
   return 'Deploy Agent'
 }
 
+const VERIFY_ATTEMPTS = 5
+const VERIFY_DELAY_MS = 2000
+
+/**
+ * The deploy request can lose its connection (a proxy dropping the long-lived
+ * socket) after the server already installed the new build, which axios
+ * reports as a bare "Network Error". When the upgrade has a known target
+ * version, ask the server what the agent now runs instead of reporting a
+ * failure for an upgrade that went through.
+ */
+async function upgradeLanded(): Promise<boolean> {
+  const target = props.availableVersion
+  if (!target || !showAvailableVersion.value) return false
+  for (let attempt = 0; attempt < VERIFY_ATTEMPTS; attempt++) {
+    if (attempt > 0) await new Promise<void>((r) => setTimeout(r, VERIFY_DELAY_MS))
+    try {
+      const agents = await listAgents(true)
+      const agent = agents.find(
+        (a) => a.hostname === props.hostname && (a.domain ?? null) === (props.domain ?? null),
+      )
+      if (agent?.agent_version === target) return true
+    } catch {
+      // The server may be unreachable for a moment; try again.
+    }
+  }
+  return false
+}
+
 async function submitDeploy(): Promise<void> {
   deployLoading.value = true
   deployError.value = null
@@ -177,7 +206,20 @@ async function submitDeploy(): Promise<void> {
       emit('deployed', res.available_version)
     }
   } catch (e: unknown) {
-    deployError.value = extractError(e)
+    if (axios.isAxiosError(e) && e.response === undefined && (await upgradeLanded())) {
+      // The response (and with it the one-time token) was lost, so only the
+      // fact that the upgrade succeeded can be reported.
+      deployResult.value = {
+        success: true,
+        skipped: false,
+        token: null,
+        available_version: props.availableVersion ?? null,
+        error: null,
+      }
+      emit('deployed', props.availableVersion ?? null)
+    } else {
+      deployError.value = extractError(e)
+    }
   } finally {
     deployLoading.value = false
   }
@@ -405,10 +447,19 @@ async function submitDeploy(): Promise<void> {
                   : `Deployed version: ${deployResult.available_version}`
             }}
           </p>
-          <p class="token-warning">A new agent token was generated for this deployment:</p>
-          <div class="token-box">
-            <code class="token-text">{{ deployResult.token }}</code>
-          </div>
+          <template v-if="deployResult.token">
+            <p class="token-warning">A new agent token was generated for this deployment:</p>
+            <div class="token-box">
+              <code class="token-text">{{ deployResult.token }}</code>
+            </div>
+          </template>
+          <p
+            v-else
+            class="deploy-version-info"
+          >
+            The connection dropped before the server replied, so the new agent token could not be
+            shown. The agent already runs with it.
+          </p>
         </template>
       </div>
     </template>

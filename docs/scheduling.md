@@ -397,6 +397,8 @@ A failing pre-backup command aborts the backup, and no post-backup command runs.
 
 Where both levels are set, the agent's defaults run first for pre-backup and last for post-backup, so a schedule's own commands sit inside the agent's.
 
+While a backup runs, the **Backup in progress** card on the agent's Overview and the schedule's Overview shows what its hook commands print as **Script output**, line by line as they print it. Standard error lines are tinted. A pre-backup command that takes a while therefore shows what it is doing, instead of the card sitting at *Waiting for progress...* until `borg create` starts. The card keeps the newest 200 lines, and a page opened mid-run shows the output from then on.
+
 When a hook command fails, the run's **View error** detail (see [Schedule Detail Tabs](#schedule-detail-tabs)) includes the command's stdout and stderr alongside its exit code, so you can diagnose the failure without shelling into the agent host.
 
 ### Timeouts

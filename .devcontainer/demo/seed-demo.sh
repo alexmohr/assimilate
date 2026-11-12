@@ -566,6 +566,9 @@ echo "==> Creating schedules..."
 # here would make a Run Now that lands while a previous run is still mid-hook
 # queue for the full remaining cycle - risking busting the e2e specs' own
 # wait timeouts for the Cancel backup button to appear.
+#
+# The hook prints two lines, which the Backup in progress card shows live
+# as script output (docs/scheduling.md#pre-and-post-backup-commands).
 WEB01_DAILY_SCHEDULE_ID=$(api POST "/api/schedules" "{
     \"agent_ids\": [$WEB01_ID],
     \"repo_id\": $REPO_DAILY_ID,
@@ -578,7 +581,7 @@ WEB01_DAILY_SCHEDULE_ID=$(api POST "/api/schedules" "{
     \"keep_monthly\": 6,
     \"backup_sources\": [\"/etc\", \"/tmp/tmp.web-server-01\"],
     \"file_change_patterns_raw\": \"/var/log/nginx/access.log* ignore\n/var/www/cache/** fatal\n/etc/nginx/nginx.conf* warn\",
-    \"pre_backup_commands\": [{\"command\": \"sleep 2\"}]
+    \"pre_backup_commands\": [{\"command\": \"echo Quiescing the application; sleep 1; echo Application quiesced; sleep 1\"}]
 }" | jq -r '.id')
 
 # A schedule with two target repositories: the daily repo is required, the

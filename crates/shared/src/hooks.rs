@@ -19,6 +19,54 @@ use utoipa::ToSchema;
 /// statement by the operator that *this* command legitimately runs long.
 pub const MAX_HOOK_COMMAND_TIMEOUT_SECONDS: u32 = 86_400;
 
+/// Which side of the backup a hook runs on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS, ToSchema)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum HookPhase {
+    /// Runs before borg reads the sources.
+    PreBackup,
+    /// Runs after borg created, pruned and compacted.
+    PostBackup,
+}
+
+impl std::fmt::Display for HookPhase {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::PreBackup => write!(f, "pre-backup"),
+            Self::PostBackup => write!(f, "post-backup"),
+        }
+    }
+}
+
+/// Which stream of a hook a line of output came from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS, ToSchema)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum HookStream {
+    /// The hook's standard output.
+    Stdout,
+    /// The hook's standard error.
+    Stderr,
+}
+
+/// A line the agent adds to a backup's log stream next to borg's own lines.
+/// Tagged with `type` so a consumer can tell it from a borg line.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS, ToSchema)]
+#[serde(tag = "type", rename_all = "snake_case")]
+#[ts(export)]
+pub enum AgentLogLine {
+    /// One line a running hook printed.
+    HookOutput {
+        /// Whether the hook runs before or after the backup.
+        phase: HookPhase,
+        /// The stream the line was written to.
+        stream: HookStream,
+        /// The line, without its trailing newline.
+        line: String,
+    },
+}
+
 /// A single pre- or post-backup hook command.
 ///
 /// Serialises as an object; deserialises from either an object or a bare

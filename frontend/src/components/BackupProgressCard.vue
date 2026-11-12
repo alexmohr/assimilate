@@ -4,8 +4,9 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 -->
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
 import { formatDuration, formatBytes } from '../utils/format'
+import type { HookOutputEntry } from '../utils/hookOutput'
 
 interface ArchiveProgressData {
   nfiles: number
@@ -33,11 +34,28 @@ const props = withDefaults(
      * known progress is worth more than a "starts when it reconnects".
      */
     waitingFor?: string | null
+    /**
+     * What the pre- and post-backup scripts have printed so far. A pre-backup
+     * script runs before borg reports anything, so this is often all there is
+     * to show for a while - and what explains a run that seems to hang.
+     */
+    hookOutput?: readonly HookOutputEntry[]
   }>(),
-  { repoId: null, cancelLoading: false, clampPath: false, waitingFor: null },
+  { repoId: null, cancelLoading: false, clampPath: false, waitingFor: null, hookOutput: () => [] },
 )
 
 const queued = computed(() => props.waitingFor != null && props.progress === null)
+
+const hookLog = ref<HTMLElement | null>(null)
+
+// Follows the newest line, as a terminal does.
+watch(
+  () => props.hookOutput.length,
+  async () => {
+    await nextTick()
+    if (hookLog.value) hookLog.value.scrollTop = hookLog.value.scrollHeight
+  },
+)
 
 const emit = defineEmits<{
   cancel: []
@@ -83,12 +101,12 @@ const emit = defineEmits<{
         {{ waitingFor }} is offline. The backup starts as soon as it reconnects.
       </div>
       <div
-        v-else-if="!progress"
+        v-else-if="!progress && hookOutput.length === 0"
         class="live-log-empty"
       >
         Waiting for progress...
       </div>
-      <template v-else>
+      <template v-else-if="progress">
         <div class="live-stat-row">
           <span class="live-stat-label">Elapsed</span>
           <span class="live-stat-value">{{ formatDuration(elapsedSecs) }}</span>
@@ -127,6 +145,23 @@ const emit = defineEmits<{
           >
         </div>
       </template>
+      <div
+        v-if="!queued && hookOutput.length > 0"
+        class="hook-output"
+      >
+        <span class="group-label">Script output</span>
+        <pre
+          ref="hookLog"
+          class="detail-pre hook-output-log"
+          aria-label="Script output"
+        ><span
+          v-for="(entry, i) in hookOutput"
+          :key="i"
+          class="hook-output-line"
+          :class="{ 'hook-output-line--stderr': entry.stream === 'stderr' }"
+        >{{ entry.line }}
+</span></pre>
+      </div>
     </div>
   </div>
 </template>
@@ -227,5 +262,23 @@ const emit = defineEmits<{
 .progress-mono {
   font-family: var(--mono);
   font-size: var(--fs-xs);
+}
+
+.hook-output {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-4) var(--space-6) 0;
+}
+
+/* Scrolls inside the card, so a chatty script cannot push the page down. */
+.hook-output-log {
+  max-height: 12rem;
+  margin: 0;
+  overflow-y: auto;
+}
+
+.hook-output-line--stderr {
+  color: var(--warning);
 }
 </style>

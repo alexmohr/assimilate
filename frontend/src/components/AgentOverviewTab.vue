@@ -13,6 +13,7 @@ import { byFinishedDesc, normalizeBackupStatus, filterSettledReports } from '../
 import { backupStatusBadgeClass } from '../utils/badge'
 import { buildRepoOverview, type RepoOverviewState } from '../utils/repoOverview'
 import BackupProgressCard from './BackupProgressCard.vue'
+import type { HookOutputEntry } from '../utils/hookOutput'
 import type { ScheduleHealthEntry } from '../utils/scheduleHealth'
 import type { ScheduleRow } from '../types/schedule'
 import type { ReportRow } from '../types/report'
@@ -34,6 +35,7 @@ export interface LiveBackup {
   archiveName: string | null
   elapsedSecs: number
   progress: { nfiles: number; originalSize: number; currentPath: string } | null
+  hookOutput: readonly HookOutputEntry[]
 }
 
 const props = defineProps<{
@@ -224,6 +226,7 @@ const REPO_STATE_TONE: Record<RepoOverviewState, Tone | 'info'> = {
       :elapsed-secs="b.elapsedSecs"
       :estimated-remaining-secs="null"
       :progress="b.progress"
+      :hook-output="b.hookOutput"
       :cancel-loading="b.repoId !== null && cancellingRepoIds.includes(b.repoId)"
       :waiting-for="agent.is_connected === false ? (agent.display_name ?? agent.hostname) : null"
       clamp-path

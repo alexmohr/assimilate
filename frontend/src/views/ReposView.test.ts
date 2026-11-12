@@ -76,6 +76,7 @@ interface RepoWithStats {
     last_check_reachable?: boolean | null
     last_checked_at?: string | null
   }
+  append_only?: { maintenance_stopped: boolean; pending_deletion_count: number } | null
 }
 
 const baseRepo = {
@@ -761,6 +762,32 @@ describe('ReposView quota filter chips', () => {
 
     expect(wrapper.text()).toContain('unconfigured')
     expect(wrapper.text()).not.toContain('over-warn')
+    expect(wrapper.text()).not.toContain('healthy')
+  })
+
+  it('counts append-only repositories on their chip and filters to them', async () => {
+    setupApiSuccess([
+      {
+        ...reposWithQuota[0]!,
+        append_only: { maintenance_stopped: false, pending_deletion_count: 0 },
+      },
+      { ...reposWithQuota[1]!, append_only: null },
+      {
+        ...reposWithQuota[2]!,
+        append_only: { maintenance_stopped: true, pending_deletion_count: 0 },
+      },
+    ])
+    const wrapper = await mountAsAdmin()
+    await ungroup(wrapper)
+
+    const chip = wrapper.findAll('.filter-pill')[3]
+    expect(chip?.text()).toContain('Append-only')
+    expect(chip?.text()).toContain('2')
+    await chip?.trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('over-warn')
+    expect(wrapper.text()).toContain('unconfigured')
     expect(wrapper.text()).not.toContain('healthy')
   })
 

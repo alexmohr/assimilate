@@ -26,6 +26,14 @@ export interface UseArchiveDeletionOptions {
   refreshRepo: () => Promise<unknown>
   /** Called after a delete is accepted, so the caller can clear a selection. */
   onDeleted?: (archive: RepoArchive) => void
+  /**
+   * Whether a delete of `archive` is only queued for the repository's next
+   * maintenance run (an append-only repository). Such an archive is not
+   * "deleting": it stays in the list, so it gets no in-flight marker, no
+   * selection is cleared, and `onQueued` fires instead of `onDeleted`.
+   */
+  isQueued?: (archive: RepoArchive) => boolean
+  onQueued?: (archive: RepoArchive) => void
 }
 
 /**
@@ -107,6 +115,7 @@ export function useArchiveDeletion(options: UseArchiveDeletionOptions): UseArchi
     const archive = pending.value
     if (!archive) return
     const repo = String(archive.repo_id)
+    const queued = options.isQueued?.(archive) === true
     deleteLoading.value = true
     // Mark it as deleting before the request even goes out, not after it
     // resolves. On a fast repo the DELETE's DataChanged notification can
@@ -117,17 +126,25 @@ export function useArchiveDeletion(options: UseArchiveDeletionOptions): UseArchi
     // can also take a moment on its own (repo-level lock contention with
     // another queued operation, network latency), so the button must show
     // "in flight" the instant the user confirms either way.
-    markIn(repo, archive.name)
+    if (!queued) markIn(repo, archive.name)
     try {
       await options.deleteArchiveByName(archive)
       pending.value = null
-      options.onDeleted?.(archive)
+      if (queued) {
+        options.onQueued?.(archive)
+      } else {
+        options.onDeleted?.(archive)
+      }
       await options.refreshRepo()
-      toastSuccess('Archive deletion started. It will disappear once borg finishes.')
+      toastSuccess(
+        queued
+          ? 'Deletion queued. The archive is removed at the next maintenance run.'
+          : 'Archive deletion started. It will disappear once borg finishes.',
+      )
     } catch (e: unknown) {
       // The request never made it (or the server rejected it), so it was
       // never actually queued - undo the optimistic mark.
-      forgetIn(repo, archive.name)
+      if (!queued) forgetIn(repo, archive.name)
       toastError(extractError(e))
     } finally {
       deleteLoading.value = false

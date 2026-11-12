@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM repo_vanished_archives WHERE repo_id = $1 AND archive_name = ANY($2)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "TextArray"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "5cf5d0b711a1efc0651e33806b9f24d0b1b8b1f07f2a32f42a3b75b5e12b8fd6"
+}

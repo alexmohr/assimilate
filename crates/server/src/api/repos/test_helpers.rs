@@ -5,7 +5,7 @@ use std::os::unix::fs::PermissionsExt;
 
 use sqlx::PgPool;
 
-pub(super) async fn install_fake_script(
+pub(crate) async fn install_fake_script(
     script: &str,
 ) -> (tempfile::TempDir, crate::borg::TestBinaryOverrideGuard) {
     let tempdir = tempfile::tempdir().unwrap();

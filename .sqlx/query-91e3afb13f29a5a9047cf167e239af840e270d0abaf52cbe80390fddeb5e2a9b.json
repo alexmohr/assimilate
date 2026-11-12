@@ -1,0 +1,27 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE append_only_logins\n           SET checked_at = NOW(), backup_key_ok = $3, maintenance_key_ok = $4,\n               restriction_in_place = $5, check_error = $6\n           WHERE repo_host_id = $1 AND ssh_user = $2\n           RETURNING checked_at AS \"checked_at!\"",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "checked_at!",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Text",
+        "Bool",
+        "Bool",
+        "Bool",
+        "Text"
+      ]
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "91e3afb13f29a5a9047cf167e239af840e270d0abaf52cbe80390fddeb5e2a9b"
+}

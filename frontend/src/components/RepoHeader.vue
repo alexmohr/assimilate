@@ -13,6 +13,7 @@ import { useClipboard } from '../composables/useClipboard'
 import BaseModal from './BaseModal.vue'
 import DetailHeader from './DetailHeader.vue'
 import OverflowMenu from './OverflowMenu.vue'
+import RepoAppendOnlyBadges from './RepoAppendOnlyBadges.vue'
 import RepoPassphraseDialog from './RepoPassphraseDialog.vue'
 import type { RepoWithStats } from '../types/repo'
 
@@ -151,6 +152,7 @@ async function revealPassphrase(): Promise<void> {
       >
         {{ statusLabel }}
       </span>
+      <RepoAppendOnlyBadges :append-only="repo.append_only" />
     </template>
 
     <template #meta>
@@ -168,6 +170,9 @@ async function revealPassphrase(): Promise<void> {
       </span>
       <span>
         encryption <b>{{ repo.encryption }}</b>
+      </span>
+      <span v-if="(repo.append_only?.pending_deletion_count ?? 0) > 0">
+        pending deletions <b>{{ repo.append_only?.pending_deletion_count }}</b>
       </span>
     </template>
 

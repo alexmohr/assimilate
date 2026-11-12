@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT r.id, r.name, r.repo_path, r.ssh_user, h.ssh_host, h.ssh_port, h.ssh_host_key, r.compression AS \"compression: Compression\", r.encryption AS \"encryption: BorgEncryption\", r.enabled, r.owner_id, r.visibility AS \"visibility: Visibility\", r.sync_schedule, r.repo_host_id, h.machine_id AS host_machine_id, hm.intermittent AS host_intermittent, hm.last_check_reachable AS host_last_check_reachable, hm.last_checked_at AS host_last_checked_at, hm.wake_enabled, hm.wake_mac_address, hm.wake_broadcast_address, hm.wake_timeout_seconds, hm.shutdown_after_backup, r.relocation_pending, COALESCE(rs.original_size, 0) AS \"total_original_size!\", COALESCE(rs.compressed_size, 0) AS \"total_compressed_size!\", COALESCE(rs.deduplicated_size, 0) AS \"total_deduplicated_size!\", COALESCE(rs.archive_count::INT8, 0) AS \"archive_count!\", rs.last_synced_at AS \"last_synced_at?\", COALESCE(ris.importing, false) AS \"importing!\", ris.error AS \"import_error?\", COALESCE(ris.progress, 0) AS \"import_progress!\", COALESCE(ris.total, 0) AS \"import_total!\", ris.status_message AS \"import_status_message?\", rlo.kind AS \"last_op_kind?: RepoOpKind\", rlo.at AS \"last_op_at?\", rlo.by_text AS \"last_op_by?\", agg.last_backup_at AS \"last_backup_at?\", COALESCE(agg.agent_count, 0) AS \"agent_count!\", COALESCE(agg.unmatched_count, 0) AS \"unmatched_count!\", q.warn_bytes AS \"quota_warn_bytes?\", q.critical_bytes AS \"quota_critical_bytes?\", q.warn_action AS \"quota_warn_action?: QuotaAction\", q.critical_action AS \"quota_critical_action?: QuotaAction\", q.enabled AS \"quota_enabled?\" FROM repos r JOIN repo_hosts h ON h.id = r.repo_host_id JOIN machines hm ON hm.id = h.machine_id LEFT JOIN repo_stats rs ON rs.repo_id = r.id LEFT JOIN repo_import_state ris ON ris.repo_id = r.id LEFT JOIN repo_last_op rlo ON rlo.repo_id = r.id LEFT JOIN repo_quotas q ON q.repo_id = r.id LEFT JOIN LATERAL (SELECT MAX(CASE WHEN br.finished_at > '1970-01-01T00:00:00Z' THEN br.finished_at END) AS last_backup_at, COUNT(DISTINCT br.agent_id) AS agent_count, COUNT(DISTINCT br.agent_id) FILTER (WHERE br.matched = false) AS unmatched_count FROM backup_reports br WHERE br.repo_id = r.id AND br.status = 'success') agg ON true WHERE r.id = $1",
+  "query": "SELECT r.id, r.name, r.repo_path, r.ssh_user, h.ssh_host, h.ssh_port, h.ssh_host_key, r.compression AS \"compression: Compression\", r.encryption AS \"encryption: BorgEncryption\", r.enabled, r.owner_id, r.visibility AS \"visibility: Visibility\", r.sync_schedule, r.repo_host_id, h.machine_id AS host_machine_id, hm.intermittent AS host_intermittent, hm.last_check_reachable AS host_last_check_reachable, hm.last_checked_at AS host_last_checked_at, hm.wake_enabled, hm.wake_mac_address, hm.wake_broadcast_address, hm.wake_timeout_seconds, hm.shutdown_after_backup, r.relocation_pending, COALESCE(rs.original_size, 0) AS \"total_original_size!\", COALESCE(rs.compressed_size, 0) AS \"total_compressed_size!\", COALESCE(rs.deduplicated_size, 0) AS \"total_deduplicated_size!\", COALESCE(rs.archive_count::INT8, 0) AS \"archive_count!\", rs.last_synced_at AS \"last_synced_at?\", COALESCE(ris.importing, false) AS \"importing!\", ris.error AS \"import_error?\", COALESCE(ris.progress, 0) AS \"import_progress!\", COALESCE(ris.total, 0) AS \"import_total!\", ris.status_message AS \"import_status_message?\", rlo.kind AS \"last_op_kind?: RepoOpKind\", rlo.at AS \"last_op_at?\", rlo.by_text AS \"last_op_by?\", agg.last_backup_at AS \"last_backup_at?\", COALESCE(agg.agent_count, 0) AS \"agent_count!\", COALESCE(agg.unmatched_count, 0) AS \"unmatched_count!\", q.warn_bytes AS \"quota_warn_bytes?\", q.critical_bytes AS \"quota_critical_bytes?\", q.warn_action AS \"quota_warn_action?: QuotaAction\", q.critical_action AS \"quota_critical_action?: QuotaAction\", q.enabled AS \"quota_enabled?\", EXISTS (SELECT 1 FROM append_only_logins aol WHERE aol.repo_host_id = r.repo_host_id AND aol.ssh_user = r.ssh_user) AS \"append_only!\", COALESCE(rm.stopped_at IS NOT NULL, false) AS \"maintenance_stopped!\", (SELECT COUNT(*) FROM repo_pending_deletions pd WHERE pd.repo_id = r.id) AS \"pending_deletion_count!\" FROM repos r JOIN repo_hosts h ON h.id = r.repo_host_id JOIN machines hm ON hm.id = h.machine_id LEFT JOIN repo_stats rs ON rs.repo_id = r.id LEFT JOIN repo_import_state ris ON ris.repo_id = r.id LEFT JOIN repo_last_op rlo ON rlo.repo_id = r.id LEFT JOIN repo_quotas q ON q.repo_id = r.id LEFT JOIN repo_maintenance rm ON rm.repo_id = r.id LEFT JOIN LATERAL (SELECT MAX(CASE WHEN br.finished_at > '1970-01-01T00:00:00Z' THEN br.finished_at END) AS last_backup_at, COUNT(DISTINCT br.agent_id) AS agent_count, COUNT(DISTINCT br.agent_id) FILTER (WHERE br.matched = false) AS unmatched_count FROM backup_reports br WHERE br.repo_id = r.id AND br.status = 'success') agg ON true ORDER BY r.name",
   "describe": {
     "columns": [
       {
@@ -227,12 +227,25 @@
         "ordinal": 44,
         "name": "quota_enabled?",
         "type_info": "Bool"
+      },
+      {
+        "ordinal": 45,
+        "name": "append_only!",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 46,
+        "name": "maintenance_stopped!",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 47,
+        "name": "pending_deletion_count!",
+        "type_info": "Int8"
       }
     ],
     "parameters": {
-      "Left": [
-        "Int8"
-      ]
+      "Left": []
     },
     "nullable": [
       false,
@@ -272,15 +285,18 @@
       true,
       true,
       true,
-      null,
+      true,
       null,
       null,
       true,
       true,
-      false,
-      false,
-      false
+      true,
+      true,
+      true,
+      null,
+      null,
+      null
     ]
   },
-  "hash": "00603b8a0cc24b8dcb93f68ac462be751b412bbba66b36e39fb01110ad86555e"
+  "hash": "88eb213e7991339bd301342574727daade84c844ef8dbc4fd4f2162f0a843a34"
 }

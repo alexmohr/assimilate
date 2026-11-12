@@ -140,4 +140,24 @@ describe('ArchiveSelectorRow', () => {
     expect(facts(wrapper)).toEqual(['+1.0 KB new'])
     expect(wrapper.find('time').exists()).toBe(true)
   })
+  describe('queued for maintenance', () => {
+    it('steps the row back and says when it goes', () => {
+      const wrapper = row({ queued: true })
+      expect(wrapper.classes()).toContain('browser-row--dim')
+      expect(facts(wrapper)).toContain('Removed at next maintenance')
+    })
+
+    it('still only opens the archive: nothing on the row acts on it', async () => {
+      const wrapper = row({ queued: true })
+      expect(wrapper.find('button[aria-label^="Keep"]').exists()).toBe(false)
+      await wrapper.trigger('click')
+      expect(wrapper.emitted('select')).toHaveLength(1)
+    })
+
+    it('leaves an ordinary archive alone', () => {
+      const wrapper = row()
+      expect(wrapper.classes()).not.toContain('browser-row--dim')
+      expect(facts(wrapper)).not.toContain('Removed at next maintenance')
+    })
+  })
 })

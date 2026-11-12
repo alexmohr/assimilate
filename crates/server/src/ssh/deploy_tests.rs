@@ -80,16 +80,7 @@ impl Handler for Connection {
         std::future::ready(Ok(Auth::Accept))
     }
 
-    async fn channel_open_session(
-        &mut self,
-        channel: Channel<Msg>,
-        reply: ChannelOpenHandle,
-        _session: &mut Session,
-    ) -> Result<(), Self::Error> {
-        self.sessions.insert(channel.id(), channel);
-        reply.accept().await;
-        Ok(())
-    }
+    keep_offered_channels!();
 
     async fn subsystem_request(
         &mut self,

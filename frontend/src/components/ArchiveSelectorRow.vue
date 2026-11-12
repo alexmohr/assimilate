@@ -25,6 +25,8 @@ const props = withDefaults(
     selected: boolean
     /** A borg delete is already queued for this archive. */
     deleting?: boolean
+    /** Waiting for its append-only repository's next maintenance run. */
+    queued?: boolean
     /**
      * Whether to name the host: a list of one machine's archives - an agent's
      * Backups tab - would repeat the same name on every row.
@@ -38,7 +40,7 @@ const props = withDefaults(
      */
     clock?: boolean
   }>(),
-  { deleting: false, showHost: false, repoName: null, clock: false },
+  { deleting: false, queued: false, showHost: false, repoName: null, clock: false },
 )
 
 defineEmits<{ select: [] }>()
@@ -60,7 +62,7 @@ const time = computed(() =>
     :time="time"
     :time-title="formatDate(archive.start)"
     :selected="selected"
-    :dim="deleting"
+    :dim="deleting || queued"
     :aria-current="selected"
     :aria-label="`Open archive ${archive.name}`"
     data-testid="archive-row"
@@ -89,6 +91,11 @@ const time = computed(() =>
         class="archive-row-deleting"
         >Deleting</span
       >
+      <span
+        v-if="queued"
+        class="archive-row-queued"
+        >Removed at next maintenance</span
+      >
     </template>
   </BrowserRow>
 </template>
@@ -101,5 +108,9 @@ const time = computed(() =>
 
 .archive-row-deleting {
   color: var(--danger);
+}
+
+.archive-row-queued {
+  color: var(--violet);
 }
 </style>

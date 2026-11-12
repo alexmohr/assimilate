@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
+/// Append-only repositories: logins, maintenance schedules and runs, vanished
+/// archives and queued deletions.
+pub mod append_only;
 /// Audit log database queries.
 pub mod audit;
 /// Missed-run catch-up queries.

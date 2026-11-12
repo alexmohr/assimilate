@@ -5,7 +5,7 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 <script setup lang="ts">
 import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue'
-import { Folder, FolderPlus } from '@lucide/vue'
+import { Folder, FolderPlus, Info } from '@lucide/vue'
 import { createRepo, initRepo, testRepoConnection } from '../api/repos'
 import type { TestRepoConnectionResponse } from '../api/repos'
 import { createSshDirectory, listSshDirectory } from '../api/ssh'
@@ -139,6 +139,21 @@ const breadcrumbs = computed(() => {
     crumbs.push({ label: part, path: acc })
   }
   return crumbs
+})
+
+/**
+ * The repositories already using the typed SSH login (host and user) that are
+ * append-only. Append-only belongs to the login, so a repository added to it
+ * is covered the moment its keys are installed - the dialog says so rather
+ * than offering a switch it cannot honour.
+ */
+const appendOnlySiblings = computed<RepoWithStats[]>(() => {
+  const host = form.ssh_host.trim()
+  const user = form.ssh_user.trim()
+  if (host === '' || user === '') return []
+  return props.repos.filter(
+    (r) => Boolean(r.append_only) && r.ssh_host === host && r.ssh_user === user,
+  )
 })
 
 const sshReady = computed(() => form.ssh_host.trim().length > 0)
@@ -678,6 +693,27 @@ defineExpose({ reset })
           <option value="none">none</option>
         </select>
       </div>
+    </div>
+
+    <div
+      v-if="appendOnlySiblings.length > 0"
+      class="callout callout--info"
+    >
+      <Info :size="16" />
+      <p>
+        <template v-if="mode === 'create'">
+          Assimilate restricts the server key on <strong>{{ form.ssh_host.trim() }}</strong> after
+          initializing;
+        </template>
+        <template
+          v-for="(sibling, index) in appendOnlySiblings"
+          :key="sibling.id"
+          ><span class="mono">{{ sibling.name }}</span
+          ><template v-if="index < appendOnlySiblings.length - 1">, </template
+          ><template v-else>{{ ' ' }}</template></template
+        >already {{ appendOnlySiblings.length === 1 ? 'uses' : 'use' }} this login so
+        {{ appendOnlySiblings.length === 1 ? 'it is' : 'they are' }} append-only too.
+      </p>
     </div>
 
     <div

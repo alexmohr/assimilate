@@ -144,6 +144,14 @@ use crate::{
         crate::api::schedules::list_schedule_repos,
         crate::api::schedules::list_schedule_backup_sources,
         crate::api::schedules::list_schedule_catch_up_sources,
+        crate::api::append_only::get_append_only,
+        crate::api::append_only::set_append_only,
+        crate::api::append_only::check_append_only,
+        crate::api::append_only::reapply_append_only,
+        crate::api::append_only::update_maintenance,
+        crate::api::append_only::run_maintenance,
+        crate::api::append_only::resume_maintenance,
+        crate::api::append_only::cancel_archive_deletion,
         crate::api::repo_hosts::list_repo_hosts,
         crate::api::repo_hosts::get_repo_host,
         crate::api::repo_hosts::update_repo_host,
@@ -485,5 +493,46 @@ mod tests {
                 "{schema}.{field} must be an array of HookCommand, got {property}"
             );
         }
+    }
+
+    /// Every `$ref` the published spec makes must name a declared component:
+    /// a handler's request or response type that is not listed under
+    /// `components(schemas(...))` leaves a dangling reference.
+    #[test]
+    fn every_schema_reference_resolves() {
+        fn collect(value: &serde_json::Value, refs: &mut std::collections::BTreeSet<String>) {
+            match value {
+                serde_json::Value::Object(map) => {
+                    for (key, inner) in map {
+                        if let ("$ref", serde_json::Value::String(target)) = (key.as_str(), inner) {
+                            refs.insert(target.clone());
+                        }
+                        collect(inner, refs);
+                    }
+                }
+                serde_json::Value::Array(items) => {
+                    for item in items {
+                        collect(item, refs);
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        let json = serde_json::to_value(ApiDoc::openapi()).unwrap();
+        let mut refs = std::collections::BTreeSet::new();
+        collect(&json, &mut refs);
+        let missing: Vec<&String> = refs
+            .iter()
+            .filter(|target| {
+                target
+                    .strip_prefix("#/components/schemas/")
+                    .is_none_or(|name| {
+                        json.pointer(&format!("/components/schemas/{name}"))
+                            .is_none()
+                    })
+            })
+            .collect();
+        assert_eq!(missing, Vec::<&String>::new(), "dangling $ref");
     }
 }

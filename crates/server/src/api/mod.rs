@@ -3,6 +3,8 @@
 
 /// Agent management endpoints.
 pub mod agents;
+/// Append-only repositories: key setup, maintenance and queued deletions.
+pub mod append_only;
 /// Database dumps inside an archive: listing and restoring them.
 pub mod archive_databases;
 /// Where an archive's deduplicated size sits.

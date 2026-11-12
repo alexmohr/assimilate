@@ -299,6 +299,8 @@ async fn build_repo_config(
         ssh_host_key
     };
 
+    let append_only = db::append_only::is_repo_append_only(pool, repo.id).await?;
+
     Ok(RepoConfig {
         repo_id: RepoId(repo.id),
         name: repo.name,
@@ -311,6 +313,7 @@ async fn build_repo_config(
         compression,
         enabled: repo.enabled,
         accept_relocation: repo.relocation_pending,
+        append_only,
         schedules,
     })
 }

@@ -173,6 +173,13 @@ See [Agent Management](agents.md) for setup and configuration details.
 | `GET` | `/api/repos/{repo_id}/schedules` | List schedules for the repository |
 | `GET` / `PUT` | `/api/repos/{repo_id}/tags` | Get or set repository tags |
 | `GET` / `PUT` | `/api/repos/{id}/quota` | Get or set the repository storage quota |
+| `GET` / `PUT` | `/api/repos/{repo_id}/append-only` | Get the [append-only](append-only.md) state, or turn it on or off for the repository's SSH login (admin only) |
+| `POST` | `/api/repos/{repo_id}/append-only/check` | Try both keys against the host and read its `authorized_keys` (admin only) |
+| `POST` | `/api/repos/{repo_id}/append-only/reapply` | Rewrite the host's `authorized_keys` for the login's repositories (admin only) |
+| `PUT` | `/api/repos/{repo_id}/append-only/maintenance` | Set the maintenance schedule (admin only) |
+| `POST` | `/api/repos/{repo_id}/append-only/maintenance/run` | Run maintenance now (admin only) |
+| `POST` | `/api/repos/{repo_id}/append-only/maintenance/resume` | Accept vanished archives and resume a stopped repository (admin only) |
+| `DELETE` | `/api/repos/{repo_id}/archives/{archive_name}/deletion` | Take an archive off the deletion queue of an append-only repository |
 | `GET` | `/api/repos/{repo_id}/permissions` | List per-repo user permissions |
 | `PUT` | `/api/repos/{repo_id}/permissions/{user_id}` | Grant or update a user's repo permission |
 

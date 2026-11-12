@@ -74,6 +74,7 @@ describe('RepoOverviewCard', () => {
       ['agent_check', 'Integrity check'],
       ['agent_verify', 'Verify'],
       ['compact_repo', 'Compact repository'],
+      ['maintenance', 'Maintenance'],
     ])('labels a %s last operation', (kind, label) => {
       expect(mount({ repo: repo({ last_op_kind: kind }) }).text()).toContain(label)
     })

@@ -3,6 +3,7 @@
 
 use std::path::Path;
 
+use shared::prune::keep_args;
 use tracing::{error, info, warn};
 use uuid::Uuid;
 
@@ -41,11 +42,13 @@ impl BackupEngine {
             return Ok(());
         }
 
-        let keep_hourly = retention.hourly.to_string();
-        let keep_daily = retention.daily.to_string();
-        let keep_weekly = retention.weekly.to_string();
-        let keep_monthly = retention.monthly.to_string();
-        let keep_yearly = retention.yearly.to_string();
+        let keeps = keep_args(
+            retention.hourly,
+            retention.daily,
+            retention.weekly,
+            retention.monthly,
+            retention.yearly,
+        );
 
         let mut args = vec![
             "prune",
@@ -57,27 +60,7 @@ impl BackupEngine {
             "-a",
             glob_pattern,
         ];
-
-        if retention.hourly > 0 {
-            args.push("--keep-hourly");
-            args.push(&keep_hourly);
-        }
-        if retention.daily > 0 {
-            args.push("--keep-daily");
-            args.push(&keep_daily);
-        }
-        if retention.weekly > 0 {
-            args.push("--keep-weekly");
-            args.push(&keep_weekly);
-        }
-        if retention.monthly > 0 {
-            args.push("--keep-monthly");
-            args.push(&keep_monthly);
-        }
-        if retention.yearly > 0 {
-            args.push("--keep-yearly");
-            args.push(&keep_yearly);
-        }
+        args.extend(keeps.iter().map(String::as_str));
 
         let env_vars = borg_env(target);
 

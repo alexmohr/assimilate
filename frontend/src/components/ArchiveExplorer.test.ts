@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
+import type * as ReposApi from '../api/repos'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { defineComponent, h } from 'vue'
 import { flushPromises, mount } from '@vue/test-utils'
@@ -24,15 +25,31 @@ vi.mock('./ArchiveFileBrowser.vue', () => ({
       'archives',
       'isAdmin',
       'deleting',
+      'queued',
+      'keeping',
       'pathQueryKey',
       'routeArchiveName',
       'reveal',
       'archiveKey',
     ],
-    emits: ['delete-archive', 'back', 'revealed'],
+    emits: ['delete-archive', 'keep-archive', 'back', 'revealed'],
     template:
       '<div class="stub-browser"><button class="stub-delete" @click="$emit(\'delete-archive\', archive)" /></div>',
   },
+}))
+
+// The explorer asks which repositories are append-only so it can mark queued
+// deletions; these specs browse ordinary ones.
+vi.mock('../api/repos', async (importOriginal) => ({
+  ...(await importOriginal<typeof ReposApi>()),
+  listRepoStats: vi.fn().mockResolvedValue([]),
+}))
+
+const mockStatus = vi.fn()
+const mockKeep = vi.fn()
+vi.mock('../api/appendOnly', () => ({
+  getAppendOnlyStatus: (id: number) => mockStatus(id),
+  keepArchive: (id: number, name: string) => mockKeep(id, name),
 }))
 
 vi.mock('./FileSearch.vue', () => ({
@@ -527,6 +544,66 @@ describe('ArchiveExplorer', () => {
 
         expect(selections(wrapper)).toEqual([ARCHIVE.name])
       })
+    })
+  })
+  describe('in an append-only repository', () => {
+    const QUEUED_STATUS = {
+      pending_deletions: [{ archive_name: ARCHIVE.name }],
+    }
+
+    beforeEach(() => {
+      mockStatus.mockResolvedValue(QUEUED_STATUS)
+      mockKeep.mockResolvedValue(undefined)
+    })
+
+    it('words the confirmation as a queued deletion and keeps the archive listed', async () => {
+      mockStatus.mockResolvedValue({ pending_deletions: [] })
+      const wrapper = explorer({ appendOnlyRepoIds: [REPO_ID], selected: ARCHIVE })
+      await flushPromises()
+
+      await requestDelete(wrapper)
+      const text = document.body.querySelector('.modal-dialog')?.textContent ?? ''
+      expect(text).toContain('Queue archive deletion')
+      expect(text).toContain('nothing is removed now')
+      expect(text).not.toContain('cannot be recovered')
+
+      confirmButton()?.click()
+      await flushPromises()
+
+      expect(mockRequestArchiveDelete).toHaveBeenCalledWith(REPO_ID, ARCHIVE.name)
+      expect(toastSuccess).toHaveBeenCalledWith(expect.stringContaining('Deletion queued'))
+      // Still listed, now marked, and not shown as deleting.
+      expect(rowFor(wrapper, ARCHIVE.name).text()).toContain('Removed at next maintenance')
+      expect(rowFor(wrapper, ARCHIVE.name).text()).not.toContain('Deleting')
+    })
+
+    it('marks a queued archive and takes the request back from the open archive', async () => {
+      const wrapper = explorer({ appendOnlyRepoIds: [REPO_ID], selected: ARCHIVE })
+      await flushPromises()
+
+      expect(rowFor(wrapper, ARCHIVE.name).text()).toContain('Removed at next maintenance')
+      // The open archive is told it is queued, so its menu offers Keep, not Delete.
+      const browser = wrapper.findComponent({ name: 'ArchiveFileBrowser' })
+      expect(browser.props('queued')).toBe(true)
+
+      mockStatus.mockResolvedValue({ pending_deletions: [] })
+      browser.vm.$emit('keep-archive', ARCHIVE)
+      await flushPromises()
+
+      expect(mockKeep).toHaveBeenCalledWith(REPO_ID, ARCHIVE.name)
+      expect(rowFor(wrapper, ARCHIVE.name).text()).not.toContain('Removed at next maintenance')
+      expect(browser.props('queued')).toBe(false)
+    })
+
+    it('keeps the ordinary wording for a repository that is not append-only', async () => {
+      const wrapper = explorer({ appendOnlyRepoIds: [], selected: ARCHIVE })
+      await flushPromises()
+      await requestDelete(wrapper)
+
+      expect(document.body.querySelector('.modal-dialog')?.textContent).toContain(
+        'cannot be recovered',
+      )
+      expect(rowFor(wrapper, ARCHIVE.name).text()).not.toContain('Removed at next maintenance')
     })
   })
 })

@@ -145,6 +145,8 @@ command="borg serve --restrict-to-path /backup/repos",restrict ssh-ed25519 AAAA.
 !!! warning
     The `restrict` keyword disables port forwarding, agent forwarding, and X11 forwarding for this key. Combined with `command=`, it limits the key to running `borg serve` only — recommended for production repository hosts.
 
+Every agent borrows this key, so whatever it may do on the host, a compromised agent may do too. To stop agents from deleting from a repository, make it [append-only](append-only.md): Assimilate restricts this key to `borg serve --append-only` and keeps a second key, which the relay never offers to agents, for the server's own pruning and compacting.
+
 ## Failure Modes
 
 | Condition | Behaviour |

@@ -14,7 +14,7 @@ use std::{
 
 use russh::{
     Channel, ChannelId,
-    server::{Auth, Handler, Msg, Server, Session},
+    server::{Auth, ChannelOpenHandle, Handler, Msg, Server, Session},
 };
 use russh_sftp::protocol::{FileAttributes, Handle, OpenFlags, Status, StatusCode, Version};
 use tokio::net::TcpListener;
@@ -80,13 +80,15 @@ impl Handler for Connection {
         std::future::ready(Ok(Auth::Accept))
     }
 
-    fn channel_open_session(
+    async fn channel_open_session(
         &mut self,
         channel: Channel<Msg>,
+        reply: ChannelOpenHandle,
         _session: &mut Session,
-    ) -> impl Future<Output = Result<bool, Self::Error>> + Send {
+    ) -> Result<(), Self::Error> {
         self.sessions.insert(channel.id(), channel);
-        std::future::ready(Ok(true))
+        reply.accept().await;
+        Ok(())
     }
 
     async fn subsystem_request(

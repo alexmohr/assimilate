@@ -9,7 +9,7 @@ use std::{
 
 use russh::{
     client,
-    keys::{PrivateKey, PublicKey, key::PrivateKeyWithHashAlg},
+    keys::{PrivateKey, PublicKey, PublicKeyOrCertificate, key::PrivateKeyWithHashAlg},
 };
 use russh_sftp::{
     client::SftpSession,
@@ -105,6 +105,15 @@ pub struct DeployKeyResponse {
     pub error: Option<String>,
 }
 
+/// Plain host key offered by the server; host certificates are not supported
+/// because host keys are pinned by their OpenSSH public key.
+pub(crate) fn plain_host_key(offered: &PublicKeyOrCertificate) -> Option<&PublicKey> {
+    match offered {
+        PublicKeyOrCertificate::PublicKey { key, .. } => Some(key),
+        PublicKeyOrCertificate::Certificate(_) => None,
+    }
+}
+
 pub(crate) struct SshClientHandler {
     pub expected_host_key: Option<String>,
 }
@@ -114,12 +123,16 @@ impl client::Handler for SshClientHandler {
 
     fn check_server_key(
         &mut self,
-        server_public_key: &PublicKey,
+        server_public_key: &PublicKeyOrCertificate,
     ) -> impl std::future::Future<Output = Result<bool, Self::Error>> {
         let Some(expected) = &self.expected_host_key else {
             return std::future::ready(Ok(true));
         };
-        let actual = server_public_key.to_openssh().unwrap_or_default();
+        let Some(key) = plain_host_key(server_public_key) else {
+            tracing::error!("SSH host certificates are not supported");
+            return std::future::ready(Ok(false));
+        };
+        let actual = key.to_openssh().unwrap_or_default();
         if actual.trim() == expected.trim() {
             std::future::ready(Ok(true))
         } else {
@@ -138,10 +151,10 @@ impl client::Handler for HostKeyCaptureHandler {
 
     fn check_server_key(
         &mut self,
-        server_public_key: &PublicKey,
+        server_public_key: &PublicKeyOrCertificate,
     ) -> impl std::future::Future<Output = Result<bool, Self::Error>> {
         if let Ok(mut host_key) = self.host_key.lock() {
-            *host_key = server_public_key.to_openssh().ok();
+            *host_key = plain_host_key(server_public_key).and_then(|key| key.to_openssh().ok());
         }
         std::future::ready(Ok(true))
     }

@@ -315,6 +315,12 @@ impl std::str::FromStr for ServeWord {
 /// Whether `command` is `borg serve --append-only ...` and nothing that could
 /// chain another command after it: outside single quotes it holds no shell
 /// control characters.
+///
+/// This is a simplified model of shell quoting, and it only feeds the status
+/// and the connection check; sshd's forced command is what enforces the
+/// restriction. It errs toward "not append-only": a line it cannot account for
+/// (a double quote around a control character, say) reads as another
+/// restriction, never as a safe one.
 fn is_append_only_command(command: &str) -> bool {
     let leading = command
         .split_whitespace()

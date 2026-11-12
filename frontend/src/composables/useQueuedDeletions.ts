@@ -66,11 +66,13 @@ export function useQueuedDeletions(options: UseQueuedDeletionsOptions): UseQueue
     const mine = ++generation
     try {
       const ids = await resolveAppendOnly()
+      const onScreen = repoIds.value.filter((repoId) => ids.has(repoId))
+      const statuses = await Promise.all(onScreen.map((id) => getAppendOnlyStatus(id)))
       const next = new Map<number, ReadonlySet<string>>()
-      for (const id of repoIds.value.filter((repoId) => ids.has(repoId))) {
-        const status = await getAppendOnlyStatus(id)
-        next.set(id, new Set(status.pending_deletions.map((p) => p.archive_name)))
-      }
+      onScreen.forEach((id, index) => {
+        const status = statuses[index]
+        if (status) next.set(id, new Set(status.pending_deletions.map((p) => p.archive_name)))
+      })
       if (mine !== generation) return
       appendOnlyIds.value = ids
       queued.value = next

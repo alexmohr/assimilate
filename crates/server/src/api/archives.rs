@@ -1036,6 +1036,35 @@ async fn queue_archive_deletion(
     ))
 }
 
+/// Puts the deletion on the maintenance queue when the repository has become
+/// append-only since it was requested, as [`queue_archive_deletion`] does for
+/// one requested afterwards. Returns whether it did.
+async fn queue_if_now_append_only(
+    state: &AppState,
+    repo_id: i64,
+    archive_name: &str,
+    user_id: i64,
+    username: &str,
+) -> bool {
+    let Ok(_login) = super::append_only::lock_repo_login(state, repo_id).await else {
+        return false;
+    };
+    if !matches!(
+        db::append_only::is_repo_append_only(&state.pool, repo_id).await,
+        Ok(true)
+    ) {
+        return false;
+    }
+    if let Err(e) =
+        db::append_only::queue_deletion(&state.pool, repo_id, archive_name, username).await
+    {
+        tracing::warn!(repo_id, error = %e, "could not queue a deletion for an append-only repository");
+        return false;
+    }
+    audit_archive_deletion(&state.pool, user_id, username, archive_name, repo_id).await;
+    true
+}
+
 async fn run_archive_deletion(
     state: AppState,
     repo_id: i64,
@@ -1064,7 +1093,13 @@ async fn run_archive_deletion(
             op: state.repo_op_tracker.get(repo_id).await,
         });
 
-    let deleted = execute_borg_delete(&state, repo_id, &borg_repo, &archive_name, &env).await;
+    // Append-only may have been turned on while this waited for the lock: the
+    // agents' key can no longer delete, so ask for it at the next maintenance
+    // run instead of failing.
+    let rerouted =
+        queue_if_now_append_only(&state, repo_id, &archive_name, user_id, &username).await;
+    let deleted =
+        !rerouted && execute_borg_delete(&state, repo_id, &borg_repo, &archive_name, &env).await;
 
     if !deleted {
         state.repo_op_tracker.clear(repo_id).await;
@@ -1775,6 +1810,74 @@ pub async fn extract_file(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_deletion_waiting_for_a_repository_that_became_append_only_is_queued(
+        pool: sqlx::PgPool,
+    ) {
+        let repo = db::insert_repo(
+            &pool,
+            &db::InsertRepoParams {
+                name: "turned-append-only",
+                repo_path: "/srv/borg/late",
+                ssh_user: "late-user",
+                ssh_host: "127.0.0.1",
+                ssh_port: 22,
+                passphrase_encrypted: b"encrypted_data",
+                compression: "lz4",
+                encryption: "repokey",
+                owner_id: None,
+                sync_schedule: None,
+            },
+        )
+        .await
+        .unwrap();
+        let state =
+            crate::test_support::build_test_state(pool.clone(), b"archives-test-key-material");
+
+        // Not append-only yet: the deletion is left for borg to carry out.
+        assert!(!queue_if_now_append_only(&state, repo.id, "a-1", 1, "admin").await);
+        assert!(
+            db::append_only::list_pending_deletions(&pool, repo.id)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+
+        // Turned on while it waited for the repository lock.
+        db::append_only::upsert_login(&pool, repo.repo_host_id, "late-user")
+            .await
+            .unwrap();
+        assert!(queue_if_now_append_only(&state, repo.id, "a-1", 1, "admin").await);
+        let queued = db::append_only::list_pending_deletions(&pool, repo.id)
+            .await
+            .unwrap();
+        let [only] = queued.as_slice() else {
+            panic!("exactly one deletion is queued: {queued:?}");
+        };
+        assert_eq!(only.archive_name, "a-1");
+        assert_eq!(only.requested_by.as_deref(), Some("admin"));
+
+        // And the whole task takes that way out without running borg.
+        run_archive_deletion(
+            state.clone(),
+            repo.id,
+            "a-2".to_owned(),
+            "ssh://unused".to_owned(),
+            HashMap::new(),
+            1,
+            "admin".to_owned(),
+        )
+        .await;
+        let names: Vec<String> = db::append_only::list_pending_deletions(&pool, repo.id)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|d| d.archive_name)
+            .collect();
+        assert!(names.contains(&"a-2".to_owned()), "{names:?}");
+    }
 
     #[ignore = "requires DATABASE_URL"]
     #[sqlx::test(migrations = "./migrations")]

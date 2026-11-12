@@ -278,7 +278,7 @@ const {
   },
   // An append-only repository only queues the deletion: the archive stays,
   // marked, until maintenance removes it.
-  isQueued: (archive) => queuedDeletions.isAppendOnly(archive.repo_id),
+  willBeQueued: (archive) => queuedDeletions.isAppendOnly(archive.repo_id),
   onQueued: queuedDeletions.markQueued,
 })
 

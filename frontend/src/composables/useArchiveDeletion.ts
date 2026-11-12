@@ -32,7 +32,7 @@ export interface UseArchiveDeletionOptions {
    * "deleting": it stays in the list, so it gets no in-flight marker, no
    * selection is cleared, and `onQueued` fires instead of `onDeleted`.
    */
-  isQueued?: (archive: RepoArchive) => boolean
+  willBeQueued?: (archive: RepoArchive) => boolean
   onQueued?: (archive: RepoArchive) => void
 }
 
@@ -115,7 +115,7 @@ export function useArchiveDeletion(options: UseArchiveDeletionOptions): UseArchi
     const archive = pending.value
     if (!archive) return
     const repo = String(archive.repo_id)
-    const queued = options.isQueued?.(archive) === true
+    const queued = options.willBeQueued?.(archive) === true
     deleteLoading.value = true
     // Mark it as deleting before the request even goes out, not after it
     // resolves. On a fast repo the DELETE's DataChanged notification can

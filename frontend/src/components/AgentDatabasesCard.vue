@@ -15,7 +15,7 @@ import {
 import { useAsyncAction } from '../composables/useAsyncAction'
 import { useSchedulesAskingForDumps } from '../composables/useHostDumpSettings'
 import { extractError } from '../utils/error'
-import { formatDate } from '../utils/format'
+import { formatDate, listSeparator } from '../utils/format'
 import {
   DEFAULT_HOST_OS_USER,
   DEFAULT_HOST_ROOT_USER,
@@ -277,13 +277,7 @@ onMounted(load)
                   :to="`/schedules/${schedule.id}`"
                   class="dump-asked-link"
                   >{{ schedule.name || `Schedule #${schedule.id}` }}</RouterLink
-                >{{
-                  i < schedulesAskingForDumps.length - 2
-                    ? ', '
-                    : i === schedulesAskingForDumps.length - 2
-                      ? ' and '
-                      : ''
-                }}
+                >{{ listSeparator(i, schedulesAskingForDumps.length) }}
               </template>
               {{ schedulesAskingForDumps.length === 1 ? 'asks' : 'ask' }} for database dumps, but
               they are blocked on this host, so their archives hold none. Allow them here to include

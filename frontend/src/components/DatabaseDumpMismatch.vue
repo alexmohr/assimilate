@@ -7,6 +7,7 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 import { TriangleAlert } from '@lucide/vue'
 import type { RouteLocationRaw } from 'vue-router'
 import { domainParams } from '../utils/agent'
+import { listSeparator } from '../utils/format'
 import type { AgentRow } from '../types/agent'
 
 /**
@@ -53,7 +54,7 @@ function hostName(host: AgentRow): string {
             :to="settingsLink(host)"
             class="dump-mismatch-host"
             >{{ hostName(host) }}</RouterLink
-          >{{ i < hosts.length - 2 ? ', ' : i === hosts.length - 2 ? ' and ' : '.' }}
+          >{{ listSeparator(i, hosts.length, '.') }}
         </template>
         Their backups run without them until dumps are allowed in each host's database settings.
       </span>

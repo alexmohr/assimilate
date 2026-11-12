@@ -19,6 +19,7 @@ import { reachabilityBadge } from '../utils/dependencyHost'
 import { dependencyWaitNote, summarizeScheduleDependencies } from '../utils/scheduleDependencies'
 import type { ScheduleRepoOption } from '../types/schedule'
 import BackupProgressCard from './BackupProgressCard.vue'
+import type { HookOutputEntry } from '../utils/hookOutput'
 import ScheduleRunsPanel from './ScheduleRunsPanel.vue'
 
 interface ArchiveProgressData {
@@ -60,6 +61,8 @@ const props = defineProps<{
   backupElapsedSecs: number
   estimatedRemainingSecs: number | null
   archiveProgress: ArchiveProgressData | null
+  /** What the run's pre- and post-backup scripts have printed so far. */
+  hookOutput?: readonly HookOutputEntry[]
   /** Every dependency this schedule's agents need, per agent. */
   dependencies?: readonly ScheduleDependencyResponse[]
   /** Runs skipped because a dependency did not answer, waiting for it to come back. */
@@ -208,6 +211,7 @@ const dependencySummaries = computed(() =>
       :elapsed-secs="backupElapsedSecs"
       :estimated-remaining-secs="estimatedRemainingSecs"
       :progress="archiveProgress"
+      :hook-output="hookOutput"
       :waiting-for="backupQueued ? backupHostname : null"
     />
 

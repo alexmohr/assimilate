@@ -13,7 +13,7 @@ use shared::{
         log_json::truncate_chars,
     },
     database::EXCLUDED_WHILE_DUMPING,
-    hooks::HookCommand,
+    hooks::{HookCommand, HookPhase},
     task_registry::TaskRegistry,
     types::{BackupStatus, BackupWarningKind},
 };
@@ -213,8 +213,13 @@ impl BackupEngine {
         }
 
         for cmd in &target.pre_backup_commands {
-            self.run_hook_command(cmd, "pre-backup", target.hook_timeout_seconds)
-                .await?;
+            self.run_hook_command(
+                cmd,
+                HookPhase::PreBackup,
+                target.hook_timeout_seconds,
+                log_tx.as_ref(),
+            )
+            .await?;
         }
 
         let exclude_file = Self::write_exclude_file(&exclude_patterns(target, dumps.is_some()))?;
@@ -231,7 +236,7 @@ impl BackupEngine {
                 &target.backup_sources,
                 exclude_file.path(),
                 include_file.as_ref().map(tempfile::NamedTempFile::path),
-                log_tx,
+                log_tx.clone(),
                 create::ReadFrom {
                     dumps,
                     snapshots: snapshots.as_ref(),
@@ -274,8 +279,13 @@ impl BackupEngine {
         }
 
         for cmd in &target.post_backup_commands {
-            self.run_hook_command(cmd, "post-backup", target.hook_timeout_seconds)
-                .await?;
+            self.run_hook_command(
+                cmd,
+                HookPhase::PostBackup,
+                target.hook_timeout_seconds,
+                log_tx.as_ref(),
+            )
+            .await?;
         }
 
         let duration_secs = i64::try_from(start.elapsed().as_secs()).unwrap_or(i64::MAX);
@@ -300,17 +310,21 @@ impl BackupEngine {
     async fn run_hook_command(
         &self,
         cmd: &HookCommand,
-        label: &str,
+        phase: HookPhase,
         default_timeout_seconds: u32,
+        log_tx: Option<&mpsc::Sender<String>>,
     ) -> Result<(), BackupError> {
+        let label = phase.to_string();
         let timeout_seconds = cmd.timeout_or(default_timeout_seconds);
         info!("Running {label} hook command (timeout {timeout_seconds}s)");
 
+        let live = log_tx.map(|log_tx| hook::LiveOutput { log_tx, phase });
         let Some(output) = hook::run(
             &cmd.command,
             Duration::from_secs(timeout_seconds.into()),
             self.hook_kill_grace,
             &self.task_registry,
+            live.as_ref(),
         )
         .await?
         else {

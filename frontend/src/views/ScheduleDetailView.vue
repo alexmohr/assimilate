@@ -56,6 +56,7 @@ import {
   normalizeScheduleDependencies,
 } from '../utils/scheduleDependencies'
 import { parseArchiveProgress } from '../utils/archiveProgress'
+import { appendHookOutput, parseHookOutput, type HookOutputEntry } from '../utils/hookOutput'
 import ScheduleHeader from '../components/ScheduleHeader.vue'
 import ScheduleOverviewTab from '../components/ScheduleOverviewTab.vue'
 import ScheduleSettingsTab from '../components/ScheduleSettingsTab.vue'
@@ -183,6 +184,7 @@ interface ArchiveProgressData {
   currentPath: string
 }
 const archiveProgress = ref<ArchiveProgressData | null>(null)
+const hookOutput = ref<HookOutputEntry[]>([])
 const backupHostname = ref<string | null>(null)
 const backupArchiveName = ref<string | null>(null)
 const backupStartedAt = ref<number | null>(null)
@@ -445,6 +447,7 @@ function clearScheduleState(): void {
   backupStartedAt.value = null
   backupAgentId.value = null
   archiveProgress.value = null
+  hookOutput.value = []
   scheduleDependencies.value = normalizeScheduleDependencies(null)
 }
 
@@ -869,6 +872,7 @@ onMessage('BackupStarted', (payload) => {
   backupHostname.value = agent?.display_name ?? payload.hostname
   backupArchiveName.value = payload.archive_name ?? null
   archiveProgress.value = null
+  hookOutput.value = []
   backupStartedAt.value = Date.parse(payload.started_at)
 })
 
@@ -955,6 +959,8 @@ onMessage('BackupLog', (payload) => {
       currentPath: progress.path ?? '',
     }
   }
+  const hook = parseHookOutput(payload.line)
+  if (hook !== null) hookOutput.value = appendHookOutput(hookOutput.value, hook)
 })
 
 // The Backups tab browses this schedule's archives and, for an admin, deletes
@@ -1090,6 +1096,7 @@ watch(activeTab, (tab) => {
           :backup-elapsed-secs="backupElapsedSecs"
           :estimated-remaining-secs="estimatedRemainingSecs"
           :archive-progress="archiveProgress"
+          :hook-output="hookOutput"
           :dependencies="scheduleDependencies.dependencies"
           :dependency-waits="dependencyWaits"
           :can-check-dependencies="isAdmin"

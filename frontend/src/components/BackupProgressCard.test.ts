@@ -56,6 +56,40 @@ describe('BackupProgressCard', () => {
     expect(wrapper.text()).not.toContain('is offline')
   })
 
+  it('shows what a script printed instead of waiting for progress', () => {
+    const wrapper = mount({
+      progress: null,
+      hookOutput: [
+        { type: 'hook_output', phase: 'pre_backup', stream: 'stdout', line: 'dumping database' },
+        { type: 'hook_output', phase: 'pre_backup', stream: 'stderr', line: 'disk almost full' },
+      ],
+    })
+    expect(wrapper.text()).not.toContain('Waiting for progress')
+    expect(wrapper.find('.hook-output-log').text()).toContain('dumping database')
+    expect(wrapper.find('.hook-output-line--stderr').text()).toContain('disk almost full')
+  })
+
+  it('shows script output beside the progress once borg is running', () => {
+    const wrapper = mount({
+      hookOutput: [{ type: 'hook_output', phase: 'pre_backup', stream: 'stdout', line: 'ready' }],
+    })
+    expect(wrapper.text()).toContain('Files')
+    expect(wrapper.find('.hook-output-log').text()).toContain('ready')
+  })
+
+  it('has no script output section when no script printed anything', () => {
+    expect(mount().find('.hook-output').exists()).toBe(false)
+  })
+
+  it('hides script output for a run that is only queued', () => {
+    const wrapper = mount({
+      waitingFor: 'dragon',
+      progress: null,
+      hookOutput: [{ type: 'hook_output', phase: 'pre_backup', stream: 'stdout', line: 'x' }],
+    })
+    expect(wrapper.find('.hook-output').exists()).toBe(false)
+  })
+
   it('emits cancel when the cancel button is clicked', async () => {
     const wrapper = mount({ repoId: 7 })
     await wrapper.find('.live-log-header-actions button').trigger('click')

@@ -21,21 +21,38 @@ use std::{
 };
 
 use futures_util::future::OptionFuture;
-use shared::task_registry::TaskRegistry;
+use shared::{
+    borg::log_json::truncate_chars,
+    hooks::{AgentLogLine, HookPhase, HookStream},
+    task_registry::TaskRegistry,
+};
 use tokio::{
-    io::{AsyncRead, AsyncReadExt},
+    io::{AsyncBufReadExt, AsyncRead, BufReader},
     process::{Child, Command},
+    sync::mpsc,
 };
 
+/// The longest line forwarded live, in characters. The collected output keeps
+/// the full bytes; this only bounds what one runaway line costs the log stream.
+const MAX_FORWARDED_LINE_CHARS: usize = 2_000;
+
+/// Where a hook's output goes while it runs: the backup's log stream.
+pub(super) struct LiveOutput<'a> {
+    pub(super) log_tx: &'a mpsc::Sender<String>,
+    pub(super) phase: HookPhase,
+}
+
 /// Runs `command` through `sh -c` (`cmd /C` on Windows), collecting its
-/// output. If it is still running after `timeout`, its process group is
-/// terminated (SIGTERM, then SIGKILL after `grace`; on Windows Ctrl+C on its
-/// console, then a kill) and this returns `Ok(None)`.
+/// output and, with `live`, forwarding each line as it is printed. If it is
+/// still running after `timeout`, its process group is terminated (SIGTERM,
+/// then SIGKILL after `grace`; on Windows Ctrl+C on its console, then a kill)
+/// and this returns `Ok(None)`.
 pub(super) async fn run(
     command: &str,
     timeout: Duration,
     grace: Duration,
     task_registry: &TaskRegistry,
+    live: Option<&LiveOutput<'_>>,
 ) -> io::Result<Option<Output>> {
     let mut cmd = shell(command);
     cmd.stdin(Stdio::null())
@@ -65,8 +82,11 @@ pub(super) async fn run(
             .child
             .as_mut()
             .ok_or_else(|| io::Error::other("hook gone"))?;
-        let (status, stdout, stderr) =
-            tokio::join!(child.wait(), read_all(stdout), read_all(stderr));
+        let (status, stdout, stderr) = tokio::join!(
+            child.wait(),
+            read_all(stdout, HookStream::Stdout, live),
+            read_all(stderr, HookStream::Stderr, live)
+        );
         Ok::<_, io::Error>(Output {
             status: status?,
             stdout: stdout?,
@@ -98,10 +118,43 @@ fn shell(command: &str) -> Command {
     cmd
 }
 
-async fn read_all(mut reader: impl AsyncRead + Unpin) -> io::Result<Vec<u8>> {
+/// Reads `reader` to the end, returning every byte and forwarding each line
+/// to `live` as soon as its newline arrives. A full log channel drops the
+/// line rather than stalling the hook, as borg's stderr stream does.
+async fn read_all(
+    reader: impl AsyncRead + Unpin,
+    stream: HookStream,
+    live: Option<&LiveOutput<'_>>,
+) -> io::Result<Vec<u8>> {
+    let mut reader = BufReader::new(reader);
     let mut buf = Vec::new();
-    reader.read_to_end(&mut buf).await?;
-    Ok(buf)
+    let mut line = Vec::new();
+    loop {
+        line.clear();
+        if reader.read_until(b'\n', &mut line).await? == 0 {
+            return Ok(buf);
+        }
+        buf.extend_from_slice(&line);
+        if let Some(live) = live {
+            forward(live, stream, &line);
+        }
+    }
+}
+
+fn forward(live: &LiveOutput<'_>, stream: HookStream, raw: &[u8]) {
+    let text = String::from_utf8_lossy(raw);
+    let text = text.trim_end();
+    if text.is_empty() {
+        return;
+    }
+    let entry = AgentLogLine::HookOutput {
+        phase: live.phase,
+        stream,
+        line: truncate_chars(text.to_owned(), MAX_FORWARDED_LINE_CHARS),
+    };
+    if let Ok(json) = serde_json::to_string(&entry) {
+        live.log_tx.try_send(json).ok();
+    }
 }
 
 /// Owns a hook's `sh` process, the leader of the hook's process group.
@@ -308,6 +361,7 @@ mod windows_tests {
             Duration::from_secs(1),
             Duration::from_secs(40),
             &registry,
+            None,
         )
         .await
         .unwrap();
@@ -328,6 +382,7 @@ mod windows_tests {
             Duration::from_secs(10),
             Duration::from_secs(1),
             &TaskRegistry::default(),
+            None,
         )
         .await
         .unwrap()
@@ -348,6 +403,7 @@ mod windows_tests {
             Duration::from_secs(1),
             Duration::from_secs(1),
             &registry,
+            None,
         )
         .await
         .unwrap();
@@ -422,6 +478,7 @@ mod tests {
             Duration::from_secs(10),
             Duration::from_secs(1),
             &TaskRegistry::default(),
+            None,
         )
         .await
         .unwrap()
@@ -429,6 +486,41 @@ mod tests {
         assert!(output.status.success());
         assert_eq!(output.stdout, b"out\n");
         assert_eq!(output.stderr, b"err\n");
+    }
+
+    #[tokio::test]
+    async fn forwards_each_line_with_its_phase_and_stream() {
+        let (log_tx, mut log_rx) = mpsc::channel(16);
+        let live = LiveOutput {
+            log_tx: &log_tx,
+            phase: HookPhase::PostBackup,
+        };
+
+        let output = run(
+            "echo out; echo; echo err >&2",
+            Duration::from_secs(10),
+            Duration::from_secs(1),
+            &TaskRegistry::default(),
+            Some(&live),
+        )
+        .await
+        .unwrap()
+        .expect("the command finished before its timeout");
+        drop(log_tx);
+
+        assert_eq!(output.stdout, b"out\n\n", "collected output is unchanged");
+        let mut forwarded = Vec::new();
+        while let Some(json) = log_rx.recv().await {
+            forwarded.push(serde_json::from_str::<AgentLogLine>(&json).unwrap());
+        }
+        let line = |stream, text: &str| AgentLogLine::HookOutput {
+            phase: HookPhase::PostBackup,
+            stream,
+            line: text.to_owned(),
+        };
+        assert!(forwarded.contains(&line(HookStream::Stdout, "out")));
+        assert!(forwarded.contains(&line(HookStream::Stderr, "err")));
+        assert_eq!(forwarded.len(), 2, "blank lines are not forwarded");
     }
 
     #[tokio::test]
@@ -441,6 +533,7 @@ mod tests {
             Duration::from_secs(1),
             Duration::from_secs(5),
             &TaskRegistry::default(),
+            None,
         )
         .await;
 
@@ -466,6 +559,7 @@ mod tests {
             Duration::from_secs(1),
             Duration::from_secs(1),
             &TaskRegistry::default(),
+            None,
         )
         .await;
 
@@ -491,6 +585,7 @@ mod tests {
                 Duration::from_mins(1),
                 Duration::from_secs(5),
                 &registry,
+                None,
             ),
         )
         .await;
@@ -524,6 +619,7 @@ mod tests {
             Duration::from_mins(1),
             Duration::from_mins(1),
             &registry,
+            None,
         ));
         let pid = runtime
             .block_on(async {

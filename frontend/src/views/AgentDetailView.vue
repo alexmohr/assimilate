@@ -41,6 +41,7 @@ import type { ScheduleRow } from '../types/schedule'
 import { normalizeBackupStatus } from '../utils/backupStatus'
 import { agentPowerPhase, type AgentPowerPhase } from '../utils/badge'
 import { parseArchiveProgress } from '../utils/archiveProgress'
+import { appendHookOutput, parseHookOutput, type HookOutputEntry } from '../utils/hookOutput'
 import type { ScheduleHealthEntry } from '../utils/scheduleHealth'
 import { isSettingsSection, type SettingsSection } from '../utils/agentSettings'
 import { domainParams } from '../utils/agent'
@@ -548,6 +549,7 @@ async function loadTabData(isCurrent: IsCurrent): Promise<void> {
           archiveName: r.archive_name,
           startedAt,
           progress: null,
+          hookOutput: [],
         },
       ]
     })
@@ -718,6 +720,7 @@ interface ActiveBackup {
   archiveName: string | null
   startedAt: number
   progress: ArchiveProgressData | null
+  hookOutput: HookOutputEntry[]
 }
 
 const activeBackups = ref<ActiveBackup[]>([])
@@ -732,6 +735,7 @@ const liveBackups = computed<LiveBackup[]>(() =>
     archiveName: b.archiveName,
     elapsedSecs: Math.max(0, Math.floor((now.value - b.startedAt) / 1000)),
     progress: b.progress,
+    hookOutput: b.hookOutput,
   })),
 )
 
@@ -746,6 +750,7 @@ onMessage('BackupStarted', (payload) => {
       archiveName: payload.archive_name ?? null,
       startedAt: Date.parse(payload.started_at),
       progress: null,
+      hookOutput: [],
     },
   ]
 })
@@ -780,6 +785,8 @@ onMessage('BackupLog', (payload) => {
       currentPath: progress.path ?? '',
     }
   }
+  const hook = parseHookOutput(payload.line)
+  if (hook !== null) backup.hookOutput = appendHookOutput(backup.hookOutput, hook)
 })
 
 watch(wsStatus, (newStatus, oldStatus) => {

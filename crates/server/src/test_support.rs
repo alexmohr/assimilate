@@ -369,7 +369,7 @@ impl russh::server::Handler for AcceptAllHandler {
     fn auth_publickey(
         &mut self,
         _user: &str,
-        _public_key: &russh::keys::PublicKey,
+        _public_key: russh::server::VerifiedPublicKey<'_>,
     ) -> impl std::future::Future<Output = Result<russh::server::Auth, Self::Error>> {
         std::future::ready(Ok(russh::server::Auth::Accept))
     }

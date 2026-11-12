@@ -10,7 +10,7 @@ use std::{
 
 use russh::{
     Channel, client,
-    keys::{PrivateKeyWithHashAlg, PublicKey},
+    keys::{PrivateKeyWithHashAlg, PublicKeyOrCertificate},
 };
 use shared::protocol::{ServerToUi, TunnelStatus};
 use sqlx::PgPool;
@@ -55,12 +55,16 @@ impl client::Handler for TunnelSshHandler {
 
     fn check_server_key(
         &mut self,
-        server_public_key: &PublicKey,
+        server_public_key: &PublicKeyOrCertificate,
     ) -> impl std::future::Future<Output = Result<bool, Self::Error>> {
         let Some(expected) = &self.expected_host_key else {
             return std::future::ready(Ok(true));
         };
-        let actual = server_public_key.to_openssh().unwrap_or_default();
+        let Some(key) = crate::ssh::plain_host_key(server_public_key) else {
+            error!("tunnel SSH host certificates are not supported");
+            return std::future::ready(Ok(false));
+        };
+        let actual = key.to_openssh().unwrap_or_default();
         if actual.trim() == expected.trim() {
             std::future::ready(Ok(true))
         } else {
@@ -76,6 +80,7 @@ impl client::Handler for TunnelSshHandler {
         _connected_port: u32,
         _originator_address: &str,
         _originator_port: u32,
+        reply: client::ChannelOpenHandle,
         _session: &mut client::Session,
     ) -> impl std::future::Future<Output = Result<(), Self::Error>> {
         let server_addr = self.server_addr;
@@ -88,10 +93,12 @@ impl client::Handler for TunnelSshHandler {
                         addr = %server_addr,
                         "tunnel: failed to connect to local addr: {e}"
                     );
+                    // Dropping `reply` rejects the channel open.
                     return;
                 }
             };
 
+            reply.accept().await;
             let mut stream = channel.into_stream();
             if let Err(e) = copy_bidirectional(&mut stream, &mut tcp).await {
                 error!("tunnel: copy_bidirectional error: {e}");
@@ -794,7 +801,7 @@ mod tests {
 
         tokio::runtime::Runtime::new()
             .unwrap()
-            .block_on(handler.check_server_key(public_key))
+            .block_on(handler.check_server_key(&public_key.clone().into()))
     }
 
     #[test]

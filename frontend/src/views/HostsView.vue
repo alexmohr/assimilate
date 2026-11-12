@@ -34,7 +34,10 @@ import EmptyState from '../components/EmptyState.vue'
 import PaneRow from '../components/PaneRow.vue'
 import SortControls from '../components/SortControls.vue'
 import ToggleSwitch from '../components/ToggleSwitch.vue'
-import EntityStatusBadges, { type EntityIssue } from '../components/EntityStatusBadges.vue'
+import EntityStatusBadges, {
+  type EntityIssue,
+  type EntityIssueKey,
+} from '../components/EntityStatusBadges.vue'
 import type { DashboardOverview } from '../types/dashboard'
 import type { AgentRow } from '../types/agent'
 import type { TagRow } from '../types/tag'
@@ -627,7 +630,7 @@ function agentIssues(agent: AgentRow): EntityIssue[] {
 }
 
 /** The one issue a row shows: a failure first, then a host with no schedules, then overdue. */
-const ISSUE_ORDER: readonly string[] = ['failed', 'unprotected', 'overdue']
+const ISSUE_ORDER: readonly EntityIssueKey[] = ['failed', 'unprotected', 'overdue']
 
 function primaryIssue(agent: AgentRow): EntityIssue | null {
   const issues = agentIssues(agent)

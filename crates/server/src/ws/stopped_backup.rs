@@ -159,6 +159,7 @@ mod tests {
         }
     }
 
+    #[ignore = "requires DATABASE_URL"]
     #[sqlx::test(migrations = "./migrations")]
     async fn cancel_settles_a_started_report_and_tells_everyone(pool: PgPool) {
         let state = build_test_state(pool.clone());
@@ -223,6 +224,7 @@ mod tests {
         );
     }
 
+    #[ignore = "requires DATABASE_URL"]
     #[sqlx::test(migrations = "./migrations")]
     async fn cancel_with_nothing_in_flight_stays_quiet_unless_asked(pool: PgPool) {
         let state = build_test_state(pool.clone());
@@ -249,6 +251,7 @@ mod tests {
         );
     }
 
+    #[ignore = "requires DATABASE_URL"]
     #[sqlx::test(migrations = "./migrations")]
     async fn announce_leaves_another_operation_on_the_repo_alone(pool: PgPool) {
         let state = build_test_state(pool.clone());

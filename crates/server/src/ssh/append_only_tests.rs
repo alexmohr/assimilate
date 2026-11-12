@@ -880,11 +880,10 @@ async fn a_path_that_cannot_go_in_a_forced_command_is_refused_before_the_host_is
 
 #[tokio::test]
 async fn turning_it_off_restores_the_plain_key_and_removes_the_maintenance_key() {
+    const OTHER_USER_AND_BACKUP: &str =
+        "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOtherKey0 bob\n{backup}\n";
     let host = Fixture::start(HostOptions {
-        authorized_keys: "ssh-ed25519 \
-             AAAAC3NzaC1lZDI1NTE5AAAAIOtherKeyOtherKeyOtherKeyOtherKeyOtherKeyOtherKey0 \
-             bob\n{backup}\n"
-            .to_owned(),
+        authorized_keys: OTHER_USER_AND_BACKUP.to_owned(),
         ..HostOptions::default()
     })
     .await;

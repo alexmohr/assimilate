@@ -10,7 +10,7 @@ use std::{
 
 use russh::{
     Channel, client,
-    keys::{PrivateKeyWithHashAlg, PublicKey},
+    keys::{PrivateKeyWithHashAlg, PublicKeyOrCertificate},
 };
 use shared::protocol::{ServerToUi, TunnelStatus};
 use sqlx::PgPool;
@@ -55,12 +55,16 @@ impl client::Handler for TunnelSshHandler {
 
     fn check_server_key(
         &mut self,
-        server_public_key: &PublicKey,
+        server_public_key: &PublicKeyOrCertificate,
     ) -> impl std::future::Future<Output = Result<bool, Self::Error>> {
         let Some(expected) = &self.expected_host_key else {
             return std::future::ready(Ok(true));
         };
-        let actual = server_public_key.to_openssh().unwrap_or_default();
+        let Some(key) = crate::ssh::plain_host_key(server_public_key) else {
+            error!("tunnel SSH host certificates are not supported");
+            return std::future::ready(Ok(false));
+        };
+        let actual = key.to_openssh().unwrap_or_default();
         if actual.trim() == expected.trim() {
             std::future::ready(Ok(true))
         } else {
@@ -76,6 +80,7 @@ impl client::Handler for TunnelSshHandler {
         _connected_port: u32,
         _originator_address: &str,
         _originator_port: u32,
+        reply: client::ChannelOpenHandle,
         _session: &mut client::Session,
     ) -> impl std::future::Future<Output = Result<(), Self::Error>> {
         let server_addr = self.server_addr;
@@ -88,10 +93,12 @@ impl client::Handler for TunnelSshHandler {
                         addr = %server_addr,
                         "tunnel: failed to connect to local addr: {e}"
                     );
+                    // Dropping `reply` rejects the channel open.
                     return;
                 }
             };
 
+            reply.accept().await;
             let mut stream = channel.into_stream();
             if let Err(e) = copy_bidirectional(&mut stream, &mut tcp).await {
                 error!("tunnel: copy_bidirectional error: {e}");
@@ -680,7 +687,10 @@ mod tests {
     };
     use crate::{
         db,
-        test_support::{TestSshKeyDir, generate_test_key, spawn_test_ssh_server},
+        test_support::{
+            TestSshKeyDir, generate_test_host_certificate, generate_test_key,
+            spawn_test_ssh_server, spawn_test_ssh_server_forwarding,
+        },
         ws::ui_broadcast::UiBroadcast,
     };
 
@@ -794,7 +804,7 @@ mod tests {
 
         tokio::runtime::Runtime::new()
             .unwrap()
-            .block_on(handler.check_server_key(public_key))
+            .block_on(handler.check_server_key(&public_key.clone().into()))
     }
 
     #[test]
@@ -986,6 +996,78 @@ mod tests {
         .await
         .expect("connect_and_forward should not hang")
         .expect("connect_and_forward should succeed against the local test server");
+
+        drop(session);
+        server.shutdown().await;
+    }
+
+    #[test]
+    fn ssh_handler_rejects_host_certificates_when_a_key_is_pinned() {
+        let key_b64 = "AAAAC3NzaC1lZDI1NTE5AAAAINwxkbeQjd0zydveueMhRPJE+cxoP0DNuUcYAwqmOs6S";
+        let public = russh::keys::parse_public_key_base64(key_b64).unwrap();
+        let mut handler = super::TunnelSshHandler {
+            server_addr: "127.0.0.1:2222".parse().unwrap(),
+            ui_broadcast: crate::ws::ui_broadcast::UiBroadcast::new(),
+            agent_id: 1,
+            expected_host_key: Some(public.to_openssh().unwrap()),
+        };
+        let offered =
+            russh::keys::PublicKeyOrCertificate::Certificate(generate_test_host_certificate());
+
+        let accepted = tokio::runtime::Runtime::new()
+            .unwrap()
+            .block_on(handler.check_server_key(&offered))
+            .unwrap();
+        assert!(!accepted);
+    }
+
+    /// A connection the server opens through the tunnel is accepted and
+    /// carried to the local address: bytes sent into the channel reach it and
+    /// its replies come back.
+    #[tokio::test]
+    async fn forwarded_channel_is_bridged_to_the_local_address() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let echo = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let echo_addr = echo.local_addr().unwrap();
+        tokio::spawn(async move {
+            let (mut conn, _) = echo.accept().await.unwrap();
+            let mut buf = [0u8; 4];
+            conn.read_exact(&mut buf).await.unwrap();
+            conn.write_all(&buf).await.unwrap();
+        });
+
+        let (server, mut forwarded) = spawn_test_ssh_server_forwarding().await;
+        let mgr = dummy_manager();
+        let cancel = CancellationToken::new();
+        let mut params = test_connection_params(server.port);
+        params.handler.server_addr = echo_addr;
+
+        let session = connect_and_forward(
+            &mgr,
+            1,
+            "test-host",
+            &cancel,
+            params,
+            Duration::from_millis(10),
+        )
+        .await
+        .expect("connect_and_forward should succeed against the local test server");
+
+        let mut channel = tokio::time::timeout(Duration::from_secs(5), forwarded.recv())
+            .await
+            .expect("server should open a forwarded channel")
+            .expect("forwarded channel");
+        channel.data(&b"ping"[..]).await.unwrap();
+
+        let msg = tokio::time::timeout(Duration::from_secs(5), channel.wait())
+            .await
+            .expect("echo should come back through the tunnel")
+            .expect("channel should stay open");
+        assert!(
+            matches!(&msg, russh::ChannelMsg::Data { data } if data.as_ref() == b"ping"),
+            "expected the echoed bytes, got {msg:?}"
+        );
 
         drop(session);
         server.shutdown().await;

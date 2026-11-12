@@ -361,7 +361,12 @@ pub(crate) async fn update_dependency_host_availability(
 /// SSH session instead of only through incidental background-task scheduling
 /// during unrelated tests (see #440's coverage-diff investigation for how that
 /// showed up as non-deterministic coverage on these functions).
-struct AcceptAllHandler;
+struct AcceptAllHandler {
+    /// When set, every granted `tcpip_forward` is followed by the server
+    /// opening a `forwarded-tcpip` channel back to the client, whose server
+    /// end is handed to the receiver.
+    forwarded: Option<tokio::sync::mpsc::UnboundedSender<russh::Channel<russh::server::Msg>>>,
+}
 
 impl russh::server::Handler for AcceptAllHandler {
     type Error = russh::Error;
@@ -369,7 +374,7 @@ impl russh::server::Handler for AcceptAllHandler {
     fn auth_publickey(
         &mut self,
         _user: &str,
-        _public_key: &russh::keys::PublicKey,
+        _public_key: russh::server::VerifiedPublicKey<'_>,
     ) -> impl std::future::Future<Output = Result<russh::server::Auth, Self::Error>> {
         std::future::ready(Ok(russh::server::Auth::Accept))
     }
@@ -378,22 +383,37 @@ impl russh::server::Handler for AcceptAllHandler {
         &mut self,
         _address: &str,
         port: &mut u32,
-        _session: &mut russh::server::Session,
+        session: &mut russh::server::Session,
     ) -> impl std::future::Future<Output = Result<bool, Self::Error>> {
         if *port == 0 {
             *port = 2222;
+        }
+        if let Some(forwarded) = self.forwarded.clone() {
+            let handle = session.handle();
+            tokio::spawn(async move {
+                if let Ok(channel) = handle
+                    .channel_open_forwarded_tcpip("127.0.0.1", 2222, "127.0.0.1", 40000)
+                    .await
+                {
+                    let _ = forwarded.send(channel);
+                }
+            });
         }
         std::future::ready(Ok(true))
     }
 }
 
-struct AcceptAllServer;
+struct AcceptAllServer {
+    forwarded: Option<tokio::sync::mpsc::UnboundedSender<russh::Channel<russh::server::Msg>>>,
+}
 
 impl russh::server::Server for AcceptAllServer {
     type Handler = AcceptAllHandler;
 
     fn new_client(&mut self, _peer_addr: Option<std::net::SocketAddr>) -> Self::Handler {
-        AcceptAllHandler
+        AcceptAllHandler {
+            forwarded: self.forwarded.clone(),
+        }
     }
 }
 
@@ -409,6 +429,21 @@ pub(crate) fn generate_test_key() -> russh::keys::PrivateKey {
         .to_openssh(ssh_key::LineEnding::LF)
         .expect("encode test key as OpenSSH PEM");
     russh::keys::decode_secret_key(&pem, None).expect("decode test key")
+}
+
+/// An OpenSSH host certificate, signed by a throwaway CA, for exercising the
+/// code that must refuse host certificates.
+pub(crate) fn generate_test_host_certificate() -> russh::keys::Certificate {
+    use russh::keys::ssh_key::certificate::{Builder, CertType};
+
+    let ca = generate_test_key();
+    let host = generate_test_key();
+    let mut builder =
+        Builder::new(vec![7u8; 32], host.public_key(), 0, u64::MAX).expect("certificate builder");
+    builder.cert_type(CertType::Host).expect("cert type");
+    builder.key_id("test-host").expect("key id");
+    builder.valid_principal("localhost").expect("principal");
+    builder.sign(&ca).expect("sign test host certificate")
 }
 
 /// A running [`AcceptAllServer`] test fixture. Call [`Self::shutdown`] to
@@ -434,6 +469,24 @@ impl TestSshServer {
 
 /// Starts [`AcceptAllServer`] on an ephemeral loopback port.
 pub(crate) async fn spawn_test_ssh_server() -> TestSshServer {
+    spawn_test_ssh_server_with(None).await
+}
+
+/// Like [`spawn_test_ssh_server`], but the server also opens a
+/// `forwarded-tcpip` channel to the client after granting a `tcpip_forward`,
+/// the way a reverse tunnel carries a connection. The server end of each such
+/// channel arrives on the returned receiver.
+pub(crate) async fn spawn_test_ssh_server_forwarding() -> (
+    TestSshServer,
+    tokio::sync::mpsc::UnboundedReceiver<russh::Channel<russh::server::Msg>>,
+) {
+    let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+    (spawn_test_ssh_server_with(Some(tx)).await, rx)
+}
+
+async fn spawn_test_ssh_server_with(
+    forwarded: Option<tokio::sync::mpsc::UnboundedSender<russh::Channel<russh::server::Msg>>>,
+) -> TestSshServer {
     use russh::server::Server as _;
 
     let host_key = generate_test_key();
@@ -449,7 +502,7 @@ pub(crate) async fn spawn_test_ssh_server() -> TestSshServer {
 
     let (handle_tx, handle_rx) = tokio::sync::oneshot::channel();
     let join = tokio::spawn(async move {
-        let mut server = AcceptAllServer;
+        let mut server = AcceptAllServer { forwarded };
         let running = server.run_on_socket(config, &listener);
         let _ = handle_tx.send(running.handle());
         let _ = running.await;

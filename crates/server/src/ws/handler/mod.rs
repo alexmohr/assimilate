@@ -108,6 +108,11 @@ pub(crate) async fn validate_agent_repo(
     false
 }
 
+async fn handle_agent_message(text: &str, hostname: &str, agent_id: i64, state: &AppState) {
+    // The dispatch future is large; boxing it keeps every caller's future small.
+    Box::pin(handle_agent_message_impl(text, hostname, agent_id, state)).await;
+}
+
 /// Dispatches a decoded [`AgentToServer`] message to its handler.
 ///
 /// Every variant carrying real logic is delegated to its own `handle_*`
@@ -123,7 +128,7 @@ pub(crate) async fn validate_agent_repo(
               delegates to its own handle_* function, so splitting this further would fragment \
               routing logic across multiple partial matches without removing any code"
 )]
-async fn handle_agent_message(text: &str, hostname: &str, agent_id: i64, state: &AppState) {
+async fn handle_agent_message_impl(text: &str, hostname: &str, agent_id: i64, state: &AppState) {
     let msg = match serde_json::from_str::<AgentToServer>(text) {
         Ok(m) => m,
         Err(e) => {

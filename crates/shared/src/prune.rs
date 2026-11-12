@@ -21,6 +21,7 @@ pub struct Retention {
 }
 
 impl Retention {
+    /// Whether every count is zero, so nothing is kept.
     #[must_use]
     pub fn is_unset(self) -> bool {
         self == Self::default()

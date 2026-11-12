@@ -16,8 +16,6 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
  * pane head rather than in a footer under the body, so it stays put as the
  * body grows.
  */
-import HelpHint from './HelpHint.vue'
-
 defineProps<{
   /**
    * The group's label, for a section that is one of several in its pane. It
@@ -25,15 +23,8 @@ defineProps<{
    * rather than sitting on a line of its own above it.
    */
   label?: string
-  /** The sentence that says what the section is for, disclosed behind a `HelpHint`. */
+  /** The sentence that says what the section is for, shown under the head. */
   lede?: string
-  /** Accessible name for that `HelpHint`, e.g. "host power". Required whenever `lede` is set. */
-  ledeLabel?: string
-  /**
-   * Accessible name for the `#hint` slot's `HelpHint`, e.g. "command
-   * inheritance". Required whenever that slot is filled.
-   */
-  hintLabel?: string
   /** Whether the edit form is showing. Owned by the parent. */
   editing: boolean
   /** Hides the Edit button entirely, e.g. for read-only imported hosts. */
@@ -58,12 +49,6 @@ const emit = defineEmits<{
       class="pane-section-head"
     >
       <p class="group-label group-label--lg">{{ label }}</p>
-      <HelpHint
-        v-if="lede"
-        :label="ledeLabel ?? 'this section'"
-      >
-        {{ lede }}
-      </HelpHint>
       <button
         v-if="canEdit && !editing"
         class="btn btn-sm btn-ghost"
@@ -95,6 +80,13 @@ const emit = defineEmits<{
         Edit
       </button>
     </div>
+    <!-- Under a label too, the lede is said in words, not behind a lone "?". -->
+    <p
+      v-if="label && lede"
+      class="pane-lede"
+    >
+      {{ lede }}
+    </p>
     <template v-if="!editing">
       <slot name="view" />
       <!-- A footnote in words, not a "?" alone on the last line. -->

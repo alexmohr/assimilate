@@ -30,7 +30,6 @@ const props = defineProps<{
   markedHint: string
   unmarkedHint: string
   lede?: string
-  ledeLabel?: string
   editing: boolean
   canEdit: boolean
   saving: boolean
@@ -63,7 +62,6 @@ const giveUpText = computed(() => {
       v-else-if="settings"
       label="When the host is offline"
       :lede="lede"
-      :lede-label="ledeLabel"
       :editing="editing"
       :can-edit="canEdit"
       :saving="saving"

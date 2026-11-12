@@ -55,7 +55,7 @@ onMounted(fetchTokens)
 </script>
 
 <template>
-  <div class="tokens-page">
+  <div>
     <div class="page-header">
       <h1 class="page-title">API Tokens</h1>
       <div class="header-actions">
@@ -213,8 +213,3 @@ onMounted(fetchTokens)
     </ConfirmDeleteDialog>
   </div>
 </template>
-
-<style scoped>
-.tokens-page {
-}
-</style>

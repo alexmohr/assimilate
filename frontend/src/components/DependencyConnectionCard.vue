@@ -65,7 +65,6 @@ async function save(): Promise<void> {
 <template>
   <EditableSection
     lede="How Assimilate checks that this machine is up before a backup that needs it runs."
-    lede-label="checking a dependency"
     :editing="editing"
     :can-edit="canEdit"
     :saving="saving"

@@ -15,8 +15,6 @@ function mount(props: Record<string, unknown> = {}) {
   return renderWithPlugins(EditableSection, {
     props: {
       lede: 'What a schedule uses when it sets none of its own.',
-      ledeLabel: 'backup defaults',
-      hintLabel: 'command inheritance',
       editing: false,
       ...props,
     },
@@ -91,14 +89,15 @@ describe('EditableSection', () => {
     expect(wrapper.find('.pane-head').exists()).toBe(false)
   })
 
-  it("discloses a lede beside a group label, on the label's row", async () => {
+  it('says a lede under a group label in words, not behind a lone "?"', () => {
     const wrapper = renderWithPlugins(EditableSection, {
       props: { editing: false, canEdit: true, label: 'Address', lede: 'Where the host is.' },
       slots: { view: '<span />' },
     })
     const head = wrapper.find('.pane-section-head')
-    await head.find('[aria-label="Help: this section"]').trigger('click')
-    expect(head.find('.help-hint-pop').text()).toBe('Where the host is.')
+    expect(head.find('.group-label').text()).toBe('Address')
+    expect(wrapper.find('.pane-lede').text()).toBe('Where the host is.')
+    expect(wrapper.find('.help-hint').exists()).toBe(false)
     expect(editingButtons(wrapper).map((b) => b.text())).toEqual(['Edit'])
   })
 

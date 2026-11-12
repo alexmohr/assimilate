@@ -297,7 +297,7 @@ describe('useArchiveDeletion', () => {
     it('queues the delete without an in-flight marker or a cleared selection', async () => {
       const onQueued = vi.fn()
       const { deletion, onDeleted, refreshRepo } = setup({
-        isQueued: (a: RepoArchive) => a.repo_id === REPO,
+        willBeQueued: (a: RepoArchive) => a.repo_id === REPO,
         onQueued,
       })
 
@@ -313,7 +313,7 @@ describe('useArchiveDeletion', () => {
 
     it('still deletes in the repositories that are not append-only', async () => {
       const { deletion, onDeleted } = setup({
-        isQueued: (a: RepoArchive) => a.repo_id === REPO,
+        willBeQueued: (a: RepoArchive) => a.repo_id === REPO,
       })
 
       deletion.request(archive('one', OTHER))
@@ -325,7 +325,7 @@ describe('useArchiveDeletion', () => {
 
     it('reports a rejected request as an error', async () => {
       const { deletion, onDeleted } = setup({
-        isQueued: () => true,
+        willBeQueued: () => true,
         deleteArchiveByName: vi.fn().mockRejectedValue(new Error('nope')),
       })
 

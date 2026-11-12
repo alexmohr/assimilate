@@ -843,6 +843,9 @@ pub(super) async fn check_repository_move(
         return Ok(None);
     }
     let guard = lock_unless_busy(state, repo_id).await?;
+    // Onto another append-only login nothing is lost: queued deletions and
+    // vanished marks belong to the repository, and maintenance there carries
+    // on with them. Only leaving append-only strands them.
     if is_append_only_login(state, new_host, new_user).await? {
         return Ok(Some(guard));
     }

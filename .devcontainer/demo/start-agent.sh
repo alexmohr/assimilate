@@ -128,6 +128,16 @@ $HTTP_LINE
 }
 NGINX
             echo "Restore this file from the archive browser." > "$ARCHIVE_DIR/restore-example.txt"
+            # A site logo that, like nginx.conf, changes in the two newest
+            # archives (a wider green image in place of the blue square), so
+            # comparing one of them with an older archive opens the image
+            # comparison (docs/archives.md, e2e/image-diff.spec.ts).
+            if [ "$i" -le 2 ]; then
+                LOGO_PNG="iVBORw0KGgoAAAANSUhEUgAAABgAAAAQCAIAAACDRijCAAAAGklEQVR4nGMQW+xFFcQwatCoQaMGjRpEGQIALnqEkDKfgOsAAAAASUVORK5CYII="
+            else
+                LOGO_PNG="iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAIAAACQkWg2AAAAFklEQVR4nGNQTX5NEmIY1TCqYfhqAAB2SXMQ7mVTQgAAAABJRU5ErkJggg=="
+            fi
+            echo "$LOGO_PNG" | base64 -d > "$ARCHIVE_DIR/var/www/html/logo.png"
             dd if=/dev/urandom of="$ARCHIVE_DIR/var/www/html/app.js" bs=1024 count=$((50 + i * 10)) 2>/dev/null
             # A release tarball and a debug log that only this archive holds,
             # so its deduplicated size jumps and its Growth view

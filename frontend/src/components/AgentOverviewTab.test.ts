@@ -169,6 +169,8 @@ describe('AgentOverviewTab', () => {
   })
 
   describe('repositories', () => {
+    // The name's link stretches over the whole row, so the row opens the
+    // repository.
     it('lists one row per repository, linking to it', () => {
       const wrapper = mount({
         repos: [
@@ -178,9 +180,12 @@ describe('AgentOverviewTab', () => {
       })
       const rows = wrapper.findAll('.repo-row')
       expect(rows.map((r) => r.find('.repo-name').text())).toEqual(['server-daily', 'media'])
-      expect(rows[1].attributes('href')).toBe('/repos/11')
+      expect(rows[0].get('a.repo-row-link').attributes('href')).toBe('/repos/10')
+      expect(rows[1].get('a.repo-row-link').attributes('href')).toBe('/repos/11')
     })
 
+    // A healthy repository is said by its green dot alone; only a repository
+    // with something else to say carries a pill.
     it('reports each repository on its own, not the agent as a whole', () => {
       const wrapper = mount({
         repos: [
@@ -189,21 +194,42 @@ describe('AgentOverviewTab', () => {
         ],
         reports: [report({ id: 2, repo_id: 11, status: 'failed' }), report({ id: 1, repo_id: 10 })],
       })
-      const states = wrapper.findAll('.repo-row .badge').map((b) => b.text())
-      expect(states).toEqual(['Healthy', 'Last run failed'])
+      const [healthy, failed] = wrapper.findAll('.repo-row')
+      expect(healthy.get('.repo-dot').classes()).toContain('repo-dot--success')
+      expect(healthy.find('.repo-pill').exists()).toBe(false)
+      expect(failed.get('.repo-dot').classes()).toContain('repo-dot--danger')
+      expect(failed.get('.repo-pill').text()).toBe('Last run failed')
     })
 
-    it("draws only that repository's runs in its strip", () => {
+    // The repository only says that its last run failed, not why; the pill
+    // opens that run's output in the Activity log instead.
+    it.each([
+      ['failed', 'Last run failed', 'badge--danger'],
+      ['warning', 'Warnings', 'badge--warning'],
+    ])("links a %s run's pill to that run in the activity log", (status, label, tone) => {
       const wrapper = mount({
-        repos: [
-          { id: 10, name: 'server-daily' },
-          { id: 11, name: 'media' },
-        ],
-        reports: [report({ id: 2, repo_id: 11 }), report({ id: 1, repo_id: 10 })],
+        repos: [{ id: 11, name: 'media' }],
+        reports: [report({ id: 42, repo_id: 11, repo_name: 'media', status })],
       })
-      for (const row of wrapper.findAll('.repo-row')) {
-        expect(row.findAll('.run-cell')).toHaveLength(1)
-      }
+      const pill = wrapper.get('a.repo-state-link')
+      expect(pill.text()).toBe(label)
+      expect(pill.classes()).toContain(tone)
+      const href = new URL(pill.attributes('href')!, 'http://x')
+      expect(href.pathname).toBe('/activity')
+      expect(Object.fromEntries(href.searchParams)).toEqual({
+        category: 'backup',
+        hostname: 'web-01',
+        target: 'media',
+        report: '42',
+      })
+      // The row's own link still opens the repository.
+      expect(wrapper.get('a.repo-row-link').attributes('href')).toBe('/repos/11')
+    })
+
+    it('does not link an overdue pill anywhere: there is no run to read', () => {
+      const wrapper = mount({ health: [health({ is_overdue: true })] })
+      expect(wrapper.find('a.repo-state-link').exists()).toBe(false)
+      expect(wrapper.get('.repo-pill').text()).toBe('Overdue')
     })
 
     it('shows when the repository next runs and how much the last run added', () => {

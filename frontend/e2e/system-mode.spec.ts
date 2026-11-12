@@ -19,6 +19,11 @@ async function pretendDesktopMode(page: Page): Promise<void> {
   await page.route('**/api/system/mode', (route) => route.fulfill({ json: desktop }))
 }
 
+/** A Profile section card's heading, by its title. */
+function profileSection(page: Page, label: string): ReturnType<Page['locator']> {
+  return page.locator('.accordion-head').filter({ hasText: label })
+}
+
 async function openSettingsNav(page: Page): Promise<void> {
   await page.locator('.nav').getByRole('button', { name: 'Settings' }).click()
 }
@@ -78,16 +83,16 @@ test.describe('desktop mode', () => {
   })
 
   // The desktop app signs in with only a password, so enrolling TOTP there
-  // would lock it out; the demo admin has no TOTP, so the tab is gone.
-  test('hides the two-factor tab on the profile page', async ({ page }) => {
+  // would lock it out; the demo admin has no TOTP, so the section is gone.
+  test('hides the two-factor section on the profile page', async ({ page }) => {
     await pretendDesktopMode(page)
     await loginAsAdmin(page)
 
     await page.goto('/profile')
 
-    await expect(page.getByRole('tab', { name: 'Change password' })).toBeVisible()
-    await expect(page.getByRole('tab', { name: 'Sessions' })).toBeVisible()
-    await expect(page.getByRole('tab', { name: 'Two-factor auth' })).toHaveCount(0)
+    await expect(profileSection(page, 'Change password')).toBeVisible()
+    await expect(profileSection(page, 'Sessions')).toBeVisible()
+    await expect(profileSection(page, 'Two-factor auth')).toHaveCount(0)
   })
 
   // The desktop app ships its own agent, updates it with the app and issues it
@@ -101,7 +106,7 @@ test.describe('desktop mode', () => {
     await loginAsAdmin(page)
 
     await page.goto('/agents/web-server-01')
-    await page.locator('.overflow-toggle').click()
+    await page.getByRole('button', { name: 'More agent actions' }).click()
 
     const menu = page.locator('.overflow-menu-item')
     await expect(menu.filter({ hasText: 'Deploy SSH key' })).toBeVisible()
@@ -124,6 +129,6 @@ test.describe('desktop mode', () => {
 
     await page.goto('/profile')
 
-    await expect(page.getByRole('tab', { name: 'Two-factor auth' })).toBeVisible()
+    await expect(profileSection(page, 'Two-factor auth')).toBeVisible()
   })
 })

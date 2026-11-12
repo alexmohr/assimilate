@@ -45,11 +45,11 @@ test('a backup skipped because its repository host was offline reaches the histo
   const deliveryRow = await openNotificationHistory(page)
   await expect(deliveryRow.first()).toContainText('Backup skipped repo offline')
 
-  await deliveryRow.first().click()
+  await deliveryRow.first().locator('.log-row-summary').click()
 
   // Both skips share one "Backup skipped" label, so the payload is what has to
   // say which host was the one that wasn't there.
-  const detailPanel = page.locator('.detail-panel')
+  const detailPanel = deliveryRow.first().locator('.log-row-detail')
   await expect(detailPanel).toBeVisible({ timeout: 10_000 })
   await expect(detailPanel).toContainText(REASON)
   await expect(detailPanel).toContainText('database-hourly')

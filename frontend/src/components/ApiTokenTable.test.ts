@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
-import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { mount } from '@vue/test-utils'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { mount, type DOMWrapper } from '@vue/test-utils'
 import ApiTokenTable from './ApiTokenTable.vue'
 
 vi.mock('../utils/format', () => ({
@@ -25,6 +25,7 @@ interface TestToken {
   name: string
   created_at: string
   last_used_at: string | null
+  expires_at?: string | null
 }
 
 const mockTokens: TestToken[] = [
@@ -62,7 +63,13 @@ describe('ApiTokenTable', () => {
   it('renders table headers', () => {
     const wrapper = mount(ApiTokenTable, { props: { tokens: mockTokens } })
     const headers = wrapper.findAll('th')
-    expect(headers.map((h) => h.text())).toEqual(['Name', 'Created', 'Last used', 'Actions'])
+    expect(headers.map((h) => h.text())).toEqual([
+      'Name',
+      'Created',
+      'Last used',
+      'Expires',
+      'Actions',
+    ])
   })
 
   it('renders one row per token', () => {
@@ -88,14 +95,12 @@ describe('ApiTokenTable', () => {
 
   it('renders "Never" when last_used_at is null', () => {
     const wrapper = mount(ApiTokenTable, { props: { tokens: mockTokens } })
-    const dateCells = wrapper.findAll('.cell-date')
-    expect(dateCells[1].text()).toContain('Never')
+    expect(wrapper.findAll('td[data-label="Last used"]')[0].text()).toContain('Never')
   })
 
   it('renders formatted last_used_at when present', () => {
     const wrapper = mount(ApiTokenTable, { props: { tokens: mockTokens } })
-    const dateCells = wrapper.findAll('.cell-date')
-    const lastUsedText = dateCells[3].text()
+    const lastUsedText = wrapper.findAll('td[data-label="Last used"]')[1].text()
     expect(lastUsedText).toContain('2026')
     expect(lastUsedText).toContain('May')
   })
@@ -162,5 +167,51 @@ describe('ApiTokenTable', () => {
   it('calls formatDate with Never fallback for null last_used_at', () => {
     mount(ApiTokenTable, { props: { tokens: mockTokens } })
     expect(mockFormatDate).toHaveBeenCalledWith(null, 'Never')
+  })
+
+  describe('Expires column', () => {
+    const NOW = Date.parse('2026-06-01T12:00:00Z')
+
+    beforeEach(() => {
+      vi.useFakeTimers()
+      vi.setSystemTime(NOW)
+    })
+
+    afterEach(() => {
+      vi.useRealTimers()
+    })
+
+    function expiresCell(expiresAt: string | null | undefined): DOMWrapper<Element> {
+      const wrapper = mount(ApiTokenTable, {
+        props: { tokens: [{ ...mockTokens[0], expires_at: expiresAt }] },
+      })
+      return wrapper.get('td[data-label="Expires"]')
+    }
+
+    it('says Never, muted, for a token without an expiry', () => {
+      for (const expiresAt of [null, undefined]) {
+        const cell = expiresCell(expiresAt)
+        expect(cell.text()).toBe('Never')
+        expect(cell.classes()).toContain('token-expiry--none')
+      }
+    })
+
+    it('shows a distant expiry plainly', () => {
+      const cell = expiresCell('2026-12-01T00:00:00Z')
+      expect(cell.text()).toBe('Dec 1, 2026')
+      expect(cell.classes()).toContain('token-expiry--ok')
+    })
+
+    it('flags an expiry within two weeks as soon', () => {
+      const cell = expiresCell('2026-06-10T00:00:00Z')
+      expect(cell.text()).toBe('Jun 10, 2026')
+      expect(cell.classes()).toContain('token-expiry--soon')
+    })
+
+    it('names an expiry already passed as Expired', () => {
+      const cell = expiresCell('2026-05-01T00:00:00Z')
+      expect(cell.text()).toBe('Expired May 1, 2026')
+      expect(cell.classes()).toContain('token-expiry--expired')
+    })
   })
 })

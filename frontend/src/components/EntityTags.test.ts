@@ -292,6 +292,21 @@ describe('EntityTags', () => {
     })
   })
 
+  it('keeps the add row behind a + Tag toggle when compact', async () => {
+    const wrapper = mount({ compact: true })
+    await flushPromises()
+    const toggle = wrapper.find('.tag-add-toggle')
+    expect(toggle.attributes('aria-expanded')).toBe('false')
+    expect(wrapper.find('.tag-add-row').exists()).toBe(false)
+
+    await toggle.trigger('click')
+    expect(toggle.attributes('aria-expanded')).toBe('true')
+    expect(wrapper.find('.tag-add-row').exists()).toBe(true)
+
+    await toggle.trigger('click')
+    expect(wrapper.find('.tag-add-row').exists()).toBe(false)
+  })
+
   it('exposes a reload for the parent view', async () => {
     const wrapper = mount()
     await flushPromises()

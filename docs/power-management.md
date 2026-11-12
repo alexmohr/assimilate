@@ -145,7 +145,7 @@ See [Hosts That Are Not Always Online](scheduling.md#hosts-that-are-not-always-o
 
 ## Run Timeline
 
-A backup run's detail view shows every power-management step recorded around it, in order — the source, repository and [dependency](dependency-hosts.md#run-timeline) hosts' events interleaved by time, since they run independently. A run whose hosts were already reachable records nothing here beyond what the backup itself reports; most runs never touch this at all.
+A backup run's detail view — on a schedule's Overview, under **Recent runs**, select the run and click a host's row — shows every power-management step recorded around it, in order — the source, repository and [dependency](dependency-hosts.md#run-timeline) hosts' events interleaved by time, since they run independently. A run whose hosts were already reachable records nothing here beyond what the backup itself reports; most runs never touch this at all.
 
 A **Cannot wake** step means a schedule asked to wake a host that has no MAC address on file. The run continues — the host simply is not woken, and the backup fails naturally if it never comes up.
 

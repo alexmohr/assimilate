@@ -15,13 +15,28 @@ interface RestoreRun {
  * only ever picked by id.
  */
 function restoreRow(page: Page, id: string): ReturnType<Page['locator']> {
-  return page.getByTestId('restore-runs').locator(`tr[data-restore-id="${id}"]`)
+  return page.getByTestId('restore-runs').locator(`[data-restore-id="${id}"]`)
+}
+
+/** The Activity log's type pills: All, Backup, System, Restores, ... */
+function activityType(page: Page): ReturnType<Page['locator']> {
+  return page.getByRole('group', { name: 'Activity type' })
 }
 
 async function openRestoresTab(page: Page): Promise<void> {
   await page.goto('/activity')
-  await page.locator('.segmented-option', { hasText: 'Restores' }).click()
+  await activityType(page).getByRole('button', { name: 'Restores' }).click()
   await expect(page.getByTestId('restore-runs')).toBeVisible()
+}
+
+/**
+ * Opens a restore's row, where its status is named (the row itself shows it
+ * as a dot), unless it is open already.
+ */
+async function openRow(row: ReturnType<Page['locator']>): Promise<void> {
+  const summary = row.locator('.log-row-summary')
+  if ((await summary.getAttribute('aria-expanded')) !== 'true') await summary.click()
+  await expect(row.locator('.log-row-detail')).toBeVisible()
 }
 
 /** Records a restore of `etc/hosts` from server-daily onto `hostname`. */
@@ -47,10 +62,19 @@ test.describe('restore runs', () => {
     await openRestoresTab(page)
 
     const table = page.getByTestId('restore-runs')
-    await expect(table).toContainText('Restored')
     await expect(table).toContainText('No space left on device')
-    await expect(table).toContainText('Cancelled')
     await expect(table).toContainText('the whole archive')
+
+    // Each row names its outcome once opened.
+    const rows = table.locator('.log-row')
+    const statuses: string[] = []
+    const count = await rows.count()
+    for (let i = 0; i < count; i++) {
+      await openRow(rows.nth(i))
+      statuses.push(await rows.nth(i).locator('.log-row-detail').innerText())
+    }
+    expect(statuses.join('\n')).toContain('Restored')
+    expect(statuses.join('\n')).toContain('Cancelled')
   })
 
   test('a restore for an offline host waits for it and can be cancelled', async ({ page }) => {
@@ -62,11 +86,12 @@ test.describe('restore runs', () => {
 
     // The new restore arrives at the top of the list as it is recorded.
     const row = restoreRow(page, run.id)
-    await expect(page.getByTestId('restore-runs').locator('tbody tr').first()).toHaveAttribute(
+    await expect(page.getByTestId('restore-runs').locator('.log-row').first()).toHaveAttribute(
       'data-restore-id',
       run.id,
     )
     await expect(row).toContainText('offline-due-01')
+    await openRow(row)
     await expect(row).toContainText('Waiting for agent')
 
     await row.getByRole('button', { name: 'Cancel' }).click()
@@ -87,7 +112,10 @@ test.describe('restore runs', () => {
     // does not stay waiting or running.
     const row = restoreRow(page, run.id)
     await expect(row).toContainText('web-server-01')
-    await expect(row).toContainText(/Restored|Failed/, { timeout: 60_000 })
+    await openRow(row)
+    await expect(row.locator('.log-row-detail')).toContainText(/Restored|Failed/, {
+      timeout: 60_000,
+    })
     const finished = await page.request.get(`/api/restores/${run.id}`)
     expect(['success', 'failed']).toContain(((await finished.json()) as RestoreRun).status)
   })
@@ -117,8 +145,8 @@ test.describe('restore runs', () => {
     await loginAsViewer(page)
     await page.goto('/activity?category=restores')
 
-    await expect(page.locator('.segmented-option.active')).toHaveText('All')
-    await expect(page.locator('.segmented-option', { hasText: 'Restores' })).toHaveCount(0)
+    await expect(activityType(page).locator('[aria-pressed="true"]')).toHaveText('All')
+    await expect(activityType(page).getByRole('button', { name: 'Restores' })).toHaveCount(0)
     expect((await page.request.get('/api/restores')).status()).toBe(403)
   })
 })

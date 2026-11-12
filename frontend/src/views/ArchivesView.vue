@@ -7,7 +7,6 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 import { ref, computed, onMounted, useTemplateRef, watch } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useRoute, useRouter } from 'vue-router'
-import { RefreshCw } from '@lucide/vue'
 import { listRepoArchives } from '../api/archives'
 import { getRepoPassphrase, listRepos } from '../api/repos'
 import { useAuthStore } from '../stores/auth'
@@ -17,8 +16,6 @@ import { useArchiveDeletionEvents } from '../composables/useArchiveDeletionEvent
 import { extractError } from '../utils/error'
 import { logger } from '../utils/logger'
 import ArchiveExplorer from '../components/ArchiveExplorer.vue'
-import ArchiveDiff from '../components/ArchiveDiff.vue'
-import FileSearch from '../components/FileSearch.vue'
 import type { ArchiveEntry } from '../composables/useArchiveBrowser'
 import { inRepo, type RepoArchive } from '../utils/repoArchive'
 import type { Repo } from '../types/repo'
@@ -136,8 +133,6 @@ async function loadArchives(silent = false): Promise<void> {
   }
 }
 
-const showArchiveDiff = ref(false)
-
 const passphrase = ref<string | null>(null)
 const passphraseLoading = ref(false)
 const passphraseError = ref<string | null>(null)
@@ -252,32 +247,6 @@ onMounted(loadRepos)
         :archive-query-key="`browse-${selectedRepoId}`"
         :path-query-key="`path-${selectedRepoId}`"
         empty-description="This repository has no archives yet. They appear here once a backup has run."
-      >
-        <template #actions>
-          <button
-            class="btn btn-sm btn-ghost"
-            :disabled="archives.length < 2"
-            @click="showArchiveDiff = true"
-          >
-            Diff
-          </button>
-          <button
-            class="btn btn-sm btn-ghost"
-            :disabled="archivesLoading"
-            aria-label="Refresh archives"
-            @click="loadArchives()"
-          >
-            <RefreshCw
-              :size="14"
-              :class="{ spinning: archivesLoading }"
-            />
-          </button>
-        </template>
-      </ArchiveExplorer>
-
-      <FileSearch
-        :repo-id="selectedRepoId"
-        :archives="archives.map((a) => ({ name: a.name }))"
       />
     </div>
 
@@ -315,13 +284,6 @@ onMounted(loadRepos)
         </button>
       </template>
     </BaseModal>
-    <!-- Archive Diff -->
-    <ArchiveDiff
-      :open="showArchiveDiff"
-      :repo-id="selectedRepoId"
-      :archives="archives"
-      @close="showArchiveDiff = false"
-    />
   </div>
 </template>
 
@@ -333,8 +295,15 @@ onMounted(loadRepos)
 
 .repo-selector {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: var(--space-6);
+  gap: var(--space-4) var(--space-6);
+  min-width: 0;
+}
+
+.repo-selector > * {
+  min-width: 0;
+  max-width: 100%;
 }
 
 .selector-label {

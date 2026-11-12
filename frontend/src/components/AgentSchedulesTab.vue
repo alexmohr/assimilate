@@ -5,10 +5,10 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 <script setup lang="ts">
 import { ref } from 'vue'
-import { CalendarClock } from '@lucide/vue'
+import { CalendarClock, Plus } from '@lucide/vue'
 import { useScheduleRun } from '../composables/useScheduleRun'
 import EmptyState from './EmptyState.vue'
-import AgentScheduleRow from './AgentScheduleRow.vue'
+import ScheduleTable from './ScheduleTable.vue'
 import type { ScheduleHealthEntry } from '../utils/scheduleHealth'
 import type { ScheduleRow } from '../types/schedule'
 import type { AgentRow } from '../types/agent'
@@ -26,15 +26,11 @@ const emit = defineEmits<{ open: [schedule: ScheduleRow] }>()
 
 const runError = ref<string | null>(null)
 
-function healthFor(schedule: ScheduleRow): ScheduleHealthEntry[] {
-  return props.health.filter((h) => h.schedule_id === schedule.id)
-}
-
 /**
  * The run is restricted to this agent: a schedule can target several hosts,
  * and "Run now" pressed on one host's page must not kick off a backup on the
  * others. The failure goes inline rather than to a toast, next to the rows it
- * applies to, and a start is not announced at all - as it never was here.
+ * applies to.
  */
 const { runNowLoading: runningId, runNow } = useScheduleRun(null, {
   body: () => ({ agent_ids: [props.agent.id] }),
@@ -46,19 +42,6 @@ const { runNowLoading: runningId, runNow } = useScheduleRun(null, {
 
 <template>
   <div class="schedules-tab">
-    <div class="tab-header">
-      <h2 class="panel-title">
-        {{ schedules.length }} schedule{{ schedules.length === 1 ? '' : 's' }} target this agent
-      </h2>
-      <RouterLink
-        v-if="!agent.is_imported"
-        :to="{ name: 'schedule-create', query: { agent_id: agent.id } }"
-        class="btn btn-primary btn-sm"
-      >
-        Add schedule
-      </RouterLink>
-    </div>
-
     <p
       v-if="runError"
       class="form-error"
@@ -68,10 +51,7 @@ const { runNowLoading: runningId, runNow } = useScheduleRun(null, {
 
     <!--
       An imported host is a host reconstructed from archives found in a repo,
-      so there is no agent on it to run anything. The tab is kept rather than
-      hidden: a tab bar whose contents shift per host means the position of
-      Backups moves, and this is exactly where the emptiness ends once the
-      host is adopted.
+      so there is no agent on it to run anything.
     -->
     <EmptyState
       v-if="schedules.length === 0 && agent.is_imported"
@@ -85,24 +65,27 @@ const { runNowLoading: runningId, runNow } = useScheduleRun(null, {
       title="No schedules yet"
       description="This agent has no backup schedules. Create one to start backing it up."
     />
-    <div
+    <ScheduleTable
       v-else
-      class="rows"
+      :schedules="schedules"
+      :health="health"
+      :subtitle-for="repoNameFor"
+      :highlight-overdue="highlightOverdue"
+      :running-id="runningId"
+      @open="emit('open', $event)"
+      @run="runNow"
     >
-      <AgentScheduleRow
-        v-for="s in schedules"
-        :key="s.id"
-        :data-schedule-id="s.id"
-        :schedule="s"
-        :repo-name="repoNameFor(s)"
-        :health="healthFor(s)"
-        :highlighted="highlightOverdue && healthFor(s).some((h) => h.is_overdue)"
-        :running="runningId === s.id"
-        show-actions
-        @open="emit('open', s)"
-        @run="runNow(s)"
-      />
-    </div>
+      <template #actions>
+        <RouterLink
+          v-if="!agent.is_imported"
+          :to="{ name: 'schedule-create', query: { agent_id: agent.id } }"
+          class="btn btn-primary btn-sm"
+        >
+          <Plus :size="14" />
+          Add schedule
+        </RouterLink>
+      </template>
+    </ScheduleTable>
   </div>
 </template>
 
@@ -111,13 +94,5 @@ const { runNowLoading: runningId, runNow } = useScheduleRun(null, {
   display: flex;
   flex-direction: column;
   gap: var(--space-5);
-}
-
-.tab-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-5);
-  flex-wrap: wrap;
 }
 </style>

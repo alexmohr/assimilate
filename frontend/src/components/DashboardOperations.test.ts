@@ -65,8 +65,27 @@ describe('dashboard operational components', () => {
     const wrapper = renderWithPlugins(NeedsAttention, { props: { findings } })
 
     findingKinds.forEach((kind) => expect(wrapper.text()).toContain(`reason-${kind}`))
-    expect(wrapper.findAll('.finding-row')).toHaveLength(findingKinds.length)
-    expect(wrapper.find('.finding-row .finding-action').attributes('href')).toBe('/schedules/1')
+    const rows = wrapper.findAll('.finding-row')
+    expect(rows).toHaveLength(findingKinds.length)
+    // A finding that is not about a failed or warned backup goes straight to its schedule.
+    const overdue = findingKinds.indexOf('schedule_target_overdue')
+    expect(rows[overdue].find('.finding-action').attributes('href')).toBe(
+      `/schedules/${overdue + 1}`,
+    )
+  })
+
+  it('sends a failed or warned backup to its run in the Activity log, whatever its destination', () => {
+    const findings = findingKinds.map(finding)
+    const wrapper = renderWithPlugins(NeedsAttention, { props: { findings } })
+    const rows = wrapper.findAll('.finding-row')
+
+    // Both still carry a schedule destination; the log is where the output is read.
+    expect(rows[0].find('.finding-action').attributes('href')).toBe(
+      '/activity?category=backup&hostname=host-0&schedule_id=1&status=failed',
+    )
+    expect(rows[1].find('.finding-action').attributes('href')).toBe(
+      '/activity?category=backup&hostname=host-1&schedule_id=2&status=warning',
+    )
   })
 
   it('exposes the full reason as a tooltip on the clamped reason element', () => {

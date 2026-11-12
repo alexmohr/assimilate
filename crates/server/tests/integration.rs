@@ -14671,6 +14671,87 @@ async fn test_metrics_refuses_sessions_full_tokens_and_unknown_tokens() {
     assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
 }
 
+/// Inserts a token with a known plaintext that expires at `expires_at`.
+#[cfg(test)]
+async fn insert_token_expiring(
+    pool: &PgPool,
+    plaintext: &str,
+    scope: shared::types::ApiTokenScope,
+    expires_at: chrono::DateTime<chrono::Utc>,
+) -> String {
+    let user_id = integration_admin_id(pool).await;
+    server::db::insert_api_token_expiring(
+        pool,
+        user_id,
+        plaintext,
+        &hash_token(plaintext),
+        scope,
+        Some(expires_at),
+    )
+    .await
+    .unwrap();
+    plaintext.to_owned()
+}
+
+/// Expiry is enforced by the request extractors, not only by the lookup
+/// query: an expired token gets a 401 from an API route and from `/metrics`,
+/// while one still in date is let through on both.
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn test_an_expired_token_is_refused_over_http() {
+    use shared::types::ApiTokenScope;
+
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+    assert_eq!(
+        set_metrics_settings(&mut app, json!({ "enabled": true }))
+            .await
+            .status(),
+        StatusCode::OK
+    );
+    let past = chrono::Utc::now()
+        .checked_sub_signed(chrono::Duration::hours(1))
+        .unwrap();
+    let future = chrono::Utc::now()
+        .checked_add_signed(chrono::Duration::days(30))
+        .unwrap();
+
+    let stale_full = insert_token_expiring(&pool, "stale-full", ApiTokenScope::Full, past).await;
+    let fresh_full = insert_token_expiring(&pool, "fresh-full", ApiTokenScope::Full, future).await;
+    let stale_metrics =
+        insert_token_expiring(&pool, "stale-metrics", ApiTokenScope::Monitoring, past).await;
+    let fresh_metrics =
+        insert_token_expiring(&pool, "fresh-metrics", ApiTokenScope::Monitoring, future).await;
+
+    let resp = oneshot(
+        &mut app,
+        bearer_get_request("/api/auth/me", Some(&stale_full), PEER),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    let resp = oneshot(
+        &mut app,
+        bearer_get_request("/api/auth/me", Some(&fresh_full), PEER),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let resp = oneshot(
+        &mut app,
+        bearer_get_request("/metrics", Some(&stale_metrics), PEER),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    let resp = oneshot(
+        &mut app,
+        bearer_get_request("/metrics", Some(&fresh_metrics), PEER),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+}
+
 #[tokio::test]
 #[ignore = "requires DATABASE_URL"]
 async fn test_monitoring_token_is_refused_by_every_other_endpoint() {

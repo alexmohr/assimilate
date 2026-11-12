@@ -1015,6 +1015,44 @@ mod database_dumps {
         assert_eq!(target.database_backup, Some(allowed));
     }
 
+    #[test]
+    fn what_a_host_leaves_out_becomes_a_warning_on_the_run() {
+        let mut schedule = make_schedule(10, vec!["/var"]);
+        schedule.database_backup_enabled = true;
+        schedule.vm_snapshot_enabled = true;
+        let repo = make_repo(vec![schedule]);
+
+        let target = backup_target_from_repo(
+            &repo,
+            "hostname",
+            Some(10),
+            &VmSnapshotConfig::default(),
+            &DatabaseBackupConfig::default(),
+        );
+        assert_eq!(
+            target.setup_warnings,
+            vec![
+                crate::executor::transport::VMS_OFF_WARNING.to_owned(),
+                crate::executor::transport::DATABASES_OFF_WARNING.to_owned(),
+            ]
+        );
+
+        let target = backup_target_from_repo(
+            &repo,
+            "hostname",
+            Some(10),
+            &VmSnapshotConfig {
+                enabled: true,
+                ..VmSnapshotConfig::default()
+            },
+            &DatabaseBackupConfig {
+                enabled: true,
+                ..DatabaseBackupConfig::default()
+            },
+        );
+        assert_eq!(target.setup_warnings, Vec::<String>::new());
+    }
+
     #[tokio::test]
     async fn a_dry_run_for_a_configured_schedule_waits_its_turn_on_the_repository() {
         let task_registry = TaskRegistry::default();
@@ -1036,6 +1074,34 @@ mod database_dumps {
         assert!(
             rx.try_recv().is_err(),
             "nothing runs while the repository is busy"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_skipped_run_fails_but_keeps_the_hosts_setup_warnings() {
+        let engine = BackupEngine::with_config(mock_borg(), Vec::new());
+        let target = BackupTarget {
+            target_name: "nightly".to_owned(),
+            skip_targets: vec!["nightly".to_owned()],
+            setup_warnings: vec!["database dumps are turned off on this host".to_owned()],
+            ..BackupTarget::default()
+        };
+
+        let sent = run(target, &engine).await;
+
+        let report = completed(&sent);
+        assert_eq!(report.status, BackupStatus::Failed);
+        assert_eq!(
+            report.error_message.as_deref(),
+            Some("target nightly is listed in skip_targets")
+        );
+        assert_eq!(
+            report.warnings,
+            ["database dumps are turned off on this host"]
+        );
+        assert!(
+            report.borg_command.is_some(),
+            "a skipped run still names the borg command it would have run"
         );
     }
 }

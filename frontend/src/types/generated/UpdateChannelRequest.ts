@@ -2,6 +2,7 @@
 import type { ChannelConfigInput } from "./ChannelConfigInput";
 import type { ChannelScope } from "./ChannelScope";
 import type { NoConfigChange } from "./NoConfigChange";
+import type { NotificationLink } from "./NotificationLink";
 
 /**
  * The TypeScript shape of [`super::UpdateChannelRequest`]: its plain
@@ -20,4 +21,8 @@ export type UpdateChannelRequest = {
    * New scope.
    */
   scope?: ChannelScope;
+  /**
+   * New link setting.
+   */
+  link?: NotificationLink;
 } & (ChannelConfigInput | NoConfigChange);

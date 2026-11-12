@@ -5,7 +5,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { createRouter, createMemoryHistory } from 'vue-router'
 import { createPinia } from 'pinia'
-import { dataTableStubs, mockApiClient, mockTimezone } from '../test-utils/sharedMocks'
+import { mockApiClient, mockTimezone } from '../test-utils/sharedMocks'
 
 vi.mock('../composables/useTimezone', () => mockTimezone())
 vi.mock('../api/client', () => mockApiClient())
@@ -93,7 +93,6 @@ function mountView(userRole: 'admin' | 'viewer' | null = 'admin'): ReturnType<ty
     global: {
       plugins: [pinia, createTestRouter()],
       stubs: {
-        ...dataTableStubs(),
         BaseSpinner: { template: '<div class="spinner" />' },
         EmptyState: {
           props: ['title', 'description'],
@@ -151,18 +150,19 @@ describe('AuditLogView', () => {
       expect(emptyState.text()).toContain('No audit entries')
     })
 
-    it('does not show the table wrapper when entries list is empty', async () => {
+    it('does not show the entry list or the pager when entries list is empty', async () => {
       mockGet.mockResolvedValue({ data: { items: [], total: 0, page: 1, per_page: 25 } })
 
       const wrapper = mountView('admin')
       await flushPromises()
 
-      expect(wrapper.find('.table-wrap').exists()).toBe(false)
+      expect(wrapper.find('[data-testid="audit-entries"]').exists()).toBe(false)
+      expect(wrapper.find('.audit-pager').exists()).toBe(false)
     })
   })
 
   describe('entries table', () => {
-    it('renders the table wrapper when entries are present', async () => {
+    it('renders one log row per entry when entries are present', async () => {
       mockGet.mockResolvedValue({
         data: { items: AUDIT_ENTRIES, total: AUDIT_ENTRIES.length, page: 1, per_page: 25 },
       })
@@ -170,8 +170,67 @@ describe('AuditLogView', () => {
       const wrapper = mountView('admin')
       await flushPromises()
 
-      expect(wrapper.find('.table-wrap').exists()).toBe(true)
+      const list = wrapper.find('[data-testid="audit-entries"]')
+      expect(list.exists()).toBe(true)
+      expect(list.findAll('.log-row')).toHaveLength(AUDIT_ENTRIES.length)
       expect(wrapper.find('.empty-state').exists()).toBe(false)
+    })
+
+    it('names the user, the action, its target and the address on each row', async () => {
+      mockGet.mockResolvedValue({
+        data: { items: AUDIT_ENTRIES, total: AUDIT_ENTRIES.length, page: 1, per_page: 25 },
+      })
+
+      const wrapper = mountView('admin')
+      await flushPromises()
+
+      const rows = wrapper.findAll('.log-row')
+      expect(rows[0].find('.log-row-title').text()).toBe('admin')
+      expect(rows[0].find('.log-row-subtitle').text()).toBe('Delete archive')
+      expect(rows[0].findAll('.log-row-fact').map((f) => f.text())).toEqual([
+        'repository #10',
+        '192.168.1.1',
+      ])
+      // No target and no address: those facts are left out rather than shown blank.
+      expect(rows[1].findAll('.log-row-fact').map((f) => f.text())).toEqual(['10.0.0.1'])
+      expect(rows[2].findAll('.log-row-fact').map((f) => f.text())).toEqual(['quota #5'])
+    })
+
+    it('opens an entry to show its details, and closes it again', async () => {
+      mockGet.mockResolvedValue({
+        data: { items: AUDIT_ENTRIES, total: AUDIT_ENTRIES.length, page: 1, per_page: 25 },
+      })
+
+      const wrapper = mountView('admin')
+      await flushPromises()
+
+      expect(wrapper.find('.log-row-detail').exists()).toBe(false)
+      await wrapper.findAll('.log-row-summary')[0].trigger('click')
+      const detail = wrapper.find('.log-row-detail')
+      expect(detail.exists()).toBe(true)
+      expect(detail.find('.detail-pre').text()).toContain('main-repo')
+      expect(detail.find('.audit-ip').text()).toBe('192.168.1.1')
+
+      // One entry open at a time.
+      await wrapper.findAll('.log-row-summary')[2].trigger('click')
+      expect(wrapper.findAll('.log-row-detail')).toHaveLength(1)
+      expect(wrapper.find('.log-row-detail .audit-ip').text()).toBe('\u2014')
+
+      await wrapper.findAll('.log-row-summary')[2].trigger('click')
+      expect(wrapper.find('.log-row-detail').exists()).toBe(false)
+    })
+
+    it('shows no details block for an entry that recorded none', async () => {
+      mockGet.mockResolvedValue({
+        data: { items: [AUDIT_ENTRIES[1]], total: 1, page: 1, per_page: 25 },
+      })
+
+      const wrapper = mountView('admin')
+      await flushPromises()
+      await wrapper.find('.log-row-summary').trigger('click')
+
+      expect(wrapper.find('.log-row-detail').exists()).toBe(true)
+      expect(wrapper.find('.log-row-detail .detail-pre').exists()).toBe(false)
     })
 
     it('displays the total entry count in the header', async () => {
@@ -214,8 +273,15 @@ describe('AuditLogView', () => {
       const wrapper = mountView()
       await flushPromises()
 
-      const cell = wrapper.find('[data-field="action"] .badge')
-      expect(cell.text()).toBe(action)
+      // The closed row carries the tone on its status dot...
+      const tone = badge.replace('badge--', '')
+      expect(wrapper.find('.log-row-dot').classes()).toContain(`status-dot--${tone}`)
+
+      // ...and the open entry names the action in a badge of the same tone.
+      await wrapper.find('.log-row-summary').trigger('click')
+      const cell = wrapper.find('.log-row-detail .badge')
+      const words = action.replace(/_/g, ' ')
+      expect(cell.text()).toBe(words.charAt(0).toUpperCase() + words.slice(1))
       expect(cell.classes()).toContain(badge)
     })
   })
@@ -297,19 +363,21 @@ describe('AuditLogView', () => {
       expect(wrapper.find('.error-banner').exists()).toBe(true)
     })
 
-    it('does not render the table on API error', async () => {
+    it('does not render the entry list on API error', async () => {
       mockGet.mockRejectedValue({ response: { data: { error: 'Server error' } } })
 
       const wrapper = mountView('admin')
       await flushPromises()
 
-      expect(wrapper.find('.table-wrap').exists()).toBe(false)
+      expect(wrapper.find('[data-testid="audit-entries"]').exists()).toBe(false)
     })
   })
 
   describe('per-page selector', () => {
     it('renders rows-per-page select with options', async () => {
-      mockGet.mockResolvedValue({ data: { items: [], total: 0, page: 1, per_page: 25 } })
+      mockGet.mockResolvedValue({
+        data: { items: AUDIT_ENTRIES, total: AUDIT_ENTRIES.length, page: 1, per_page: 25 },
+      })
 
       const wrapper = mountView('admin')
       await flushPromises()
@@ -318,6 +386,89 @@ describe('AuditLogView', () => {
       expect(select.exists()).toBe(true)
       const options = select.findAll('option')
       expect(options.map((o) => o.text())).toEqual(['10', '25', '50'])
+    })
+
+    it('fetches again from the first page when the page size changes', async () => {
+      mockGet.mockResolvedValue({
+        data: { items: AUDIT_ENTRIES, total: 112, page: 1, per_page: 25 },
+      })
+      const wrapper = mountView('admin')
+      await flushPromises()
+      await wrapper.find('button[aria-label="Next page"]').trigger('click')
+      await flushPromises()
+
+      await wrapper.find('select.select-input').setValue('50')
+      await flushPromises()
+
+      expect(mockGet).toHaveBeenLastCalledWith('/audit-log', {
+        params: expect.objectContaining({ page: 1, per_page: 50 }),
+      })
+      expect(wrapper.find('.audit-page').text()).toBe('Page 1 of 3')
+    })
+  })
+
+  describe('pager', () => {
+    async function mountWithTotal(total: number) {
+      mockGet.mockResolvedValue({
+        data: { items: AUDIT_ENTRIES, total, page: 1, per_page: 25 },
+      })
+      const wrapper = mountView('admin')
+      await flushPromises()
+      return wrapper
+    }
+
+    const prev = (w: ReturnType<typeof mountView>) => w.find('button[aria-label="Previous page"]')
+    const next = (w: ReturnType<typeof mountView>) => w.find('button[aria-label="Next page"]')
+
+    it('says which entries the page shows and how many pages there are', async () => {
+      const wrapper = await mountWithTotal(112)
+      expect(wrapper.find('.audit-pager .row-count').text()).toBe('1-25 of 112')
+      expect(wrapper.find('.audit-page').text()).toBe('Page 1 of 5')
+      expect(prev(wrapper).attributes('disabled')).toBeDefined()
+      expect(next(wrapper).attributes('disabled')).toBeUndefined()
+    })
+
+    it('fetches the next page and steps back again', async () => {
+      const wrapper = await mountWithTotal(112)
+
+      await next(wrapper).trigger('click')
+      await flushPromises()
+      expect(mockGet).toHaveBeenLastCalledWith('/audit-log', {
+        params: expect.objectContaining({ page: 2, per_page: 25 }),
+      })
+      expect(wrapper.find('.audit-pager .row-count').text()).toBe('26-50 of 112')
+
+      await prev(wrapper).trigger('click')
+      await flushPromises()
+      expect(mockGet).toHaveBeenLastCalledWith('/audit-log', {
+        params: expect.objectContaining({ page: 1 }),
+      })
+    })
+
+    it('ends the range at the total on the last page', async () => {
+      const wrapper = await mountWithTotal(30)
+      await next(wrapper).trigger('click')
+      await flushPromises()
+
+      expect(wrapper.find('.audit-pager .row-count').text()).toBe('26-30 of 30')
+      expect(wrapper.find('.audit-page').text()).toBe('Page 2 of 2')
+      expect(next(wrapper).attributes('disabled')).toBeDefined()
+    })
+
+    it('closes an open entry when the page changes', async () => {
+      const wrapper = await mountWithTotal(112)
+      await wrapper.find('.log-row-summary').trigger('click')
+      expect(wrapper.find('.log-row-detail').exists()).toBe(true)
+
+      await next(wrapper).trigger('click')
+      await flushPromises()
+      expect(wrapper.find('.log-row-detail').exists()).toBe(false)
+    })
+
+    it('has a single page when nothing more than one page was logged', async () => {
+      const wrapper = await mountWithTotal(3)
+      expect(wrapper.find('.audit-page').text()).toBe('Page 1 of 1')
+      expect(next(wrapper).attributes('disabled')).toBeDefined()
     })
   })
 })

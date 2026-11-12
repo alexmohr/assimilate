@@ -2,7 +2,19 @@
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 import { expandAllArchiveGroups, expect, loginAsAdmin, test } from './fixtures'
-import type { Page } from '@playwright/test'
+import type { Locator, Page } from '@playwright/test'
+
+/** The archive list's rows; each is a button named "Open archive <name>". */
+function archiveRows(page: Page): Locator {
+  return page.locator('.archives-panel').getByTestId('archive-row')
+}
+
+/** A folder of the open archive: the button its row's name is. */
+function folderEntry(browserPanel: Locator, name: string | RegExp): Locator {
+  return browserPanel
+    .getByTestId('browser-entry')
+    .getByRole('button', { name, exact: typeof name === 'string' })
+}
 
 // media-weekly has 12 weeks of seeded archives and isn't asserted on by name
 // or exact count anywhere else in the suite, unlike server-daily's
@@ -28,10 +40,10 @@ test.describe('Archive browsing & diff journey', () => {
     await expect(page.locator('.panel-title').filter({ hasText: 'Archives' })).toBeVisible()
     await expandAllArchiveGroups(page)
 
-    const firstRow = page.locator('.archive-row').first()
+    const firstRow = archiveRows(page).first()
     await expect(firstRow).toBeVisible({ timeout: 30_000 })
-    await expect(firstRow.locator('.archive-name')).toBeVisible()
-    await expect(firstRow.locator('.archive-date')).toBeVisible()
+    await expect(firstRow.locator('.browser-row-title')).not.toBeEmpty()
+    await expect(firstRow.locator('time.browser-row-time')).toBeVisible()
   })
 
   test('archive list contains web-server-01 backup entries', async ({ page }) => {
@@ -53,13 +65,14 @@ test.describe('Archive browsing & diff journey', () => {
       .getByText(/web-server-01-backup/)
       .first()
       .click()
-    await page.waitForTimeout(1000)
-
-    await expect(page.locator('.browser-title').filter({ hasText: /Files/ })).toBeVisible()
-    await expect(page.locator('.path-crumbs')).toBeVisible()
 
     const browserPanel = page.locator('.browser-panel').last()
     await expect(browserPanel).toBeVisible()
+    await expect(browserPanel.getByRole('tab', { name: 'Files' })).toHaveAttribute(
+      'aria-selected',
+      'true',
+    )
+    await expect(browserPanel.locator('.path-crumbs')).toBeVisible()
   })
 
   test('file browser shows directory entries with names and modified dates', async ({ page }) => {
@@ -72,16 +85,26 @@ test.describe('Archive browsing & diff journey', () => {
       .getByText(/web-server-01-backup/)
       .first()
       .click()
-    await page.waitForTimeout(1000)
 
     // Indexing an archive's contents on first access can take a while - allow
     // more time than the default 5s before the directory listing renders.
     // The demo backs up a mktemp -d directory, so the archive root contains a
     // single "tmp" entry rather than the backed-up paths (etc/, var/) directly.
     const browserPanel = page.locator('.browser-panel').last()
-    await expect(browserPanel.getByText('Name')).toBeVisible({ timeout: 30_000 })
-    await expect(browserPanel.getByText('Modified')).toBeVisible()
-    await expect(browserPanel.getByText('tmp', { exact: true })).toBeVisible()
+    const tmpEntry = folderEntry(browserPanel, 'tmp')
+    await expect(tmpEntry).toBeVisible({ timeout: 30_000 })
+    // A folder's row says it is one (or how many files it holds).
+    await expect(browserPanel.getByTestId('folder-files').first()).toBeVisible()
+
+    // The backed-up directory holds restore-example.txt, a file whose row
+    // carries its modified date.
+    await tmpEntry.click()
+    await folderEntry(browserPanel, /^tmp\./).click()
+    const file = browserPanel
+      .getByTestId('browser-entry')
+      .filter({ hasText: 'restore-example.txt' })
+    await expect(file).toBeVisible({ timeout: 30_000 })
+    await expect(file).toContainText(/modified /)
   })
 
   test('file browser breadcrumb shows root path', async ({ page }) => {
@@ -94,9 +117,12 @@ test.describe('Archive browsing & diff journey', () => {
       .getByText(/web-server-01-backup/)
       .first()
       .click()
-    await page.waitForTimeout(1000)
 
-    await expect(page.locator('.path-crumbs').getByText('~')).toBeVisible()
+    // The root crumb is the archive's "/".
+    const crumbs = page.locator('.browser-panel').last().locator('.path-crumbs .crumb')
+    await expect(crumbs).toHaveCount(1, { timeout: 30_000 })
+    await expect(crumbs.first()).toHaveClass(/crumb-root/)
+    await expect(crumbs.first()).toHaveText('/')
   })
 
   test('clicking a directory in file browser navigates into it', async ({ page }) => {
@@ -109,16 +135,14 @@ test.describe('Archive browsing & diff journey', () => {
       .getByText(/web-server-01-backup/)
       .first()
       .click()
-    await page.waitForTimeout(1000)
 
     // The demo backs up a mktemp -d directory, so the archive root's sole entry is "tmp".
     const browserPanel = page.locator('.browser-panel').last()
-    const tmpEntry = browserPanel.getByText('tmp', { exact: true })
+    const tmpEntry = folderEntry(browserPanel, 'tmp')
     await expect(tmpEntry).toBeVisible({ timeout: 30_000 })
     await tmpEntry.click()
-    await page.waitForTimeout(1000)
 
-    await expect(page.locator('.path-crumbs')).toContainText('tmp')
+    await expect(browserPanel.locator('.path-crumbs')).toContainText('tmp')
   })
 
   // The standalone /archives page reaches the same browser through
@@ -137,20 +161,25 @@ test.describe('Archive browsing & diff journey', () => {
     // The two-pane layout mounts with the repository, so the placeholder is
     // the state between picking a repository and picking an archive.
     const browserPanel = page.locator('.browser-panel')
-    await expect(browserPanel).toContainText('Select an archive to browse its contents.')
+    await expect(browserPanel).toContainText('Pick an archive')
 
-    const archiveRow = page.locator('.archives-panel .archive-name').first()
+    await expandAllArchiveGroups(page)
+    const archiveRow = archiveRows(page).first()
     await expect(archiveRow).toBeVisible({ timeout: 15_000 })
     await archiveRow.click()
 
     // Indexing an archive's contents on first access can take a while.
-    await expect(browserPanel.locator('.browser-title')).toContainText('Files', {
+    await expect(browserPanel.getByRole('tab', { name: 'Files' })).toHaveAttribute(
+      'aria-selected',
+      'true',
+      { timeout: 30_000 },
+    )
+    await expect(browserPanel.locator('.path-crumbs .crumb-root')).toBeVisible({
       timeout: 30_000,
     })
-    await expect(browserPanel.locator('.path-crumbs').getByText('~')).toBeVisible({
+    await expect(browserPanel.getByTestId('browser-entry').first()).toBeVisible({
       timeout: 30_000,
     })
-    await expect(browserPanel.getByText('Name')).toBeVisible({ timeout: 30_000 })
   })
 
   test('standalone archives page navigates into a directory', async ({ page }) => {
@@ -162,14 +191,15 @@ test.describe('Archive browsing & diff journey', () => {
     await expect(repoSelect).toBeVisible({ timeout: 15_000 })
     await repoSelect.selectOption({ index: 1 })
 
-    const archiveRow = page.locator('.archives-panel .archive-name').first()
+    await expandAllArchiveGroups(page)
+    const archiveRow = archiveRows(page).first()
     await expect(archiveRow).toBeVisible({ timeout: 15_000 })
     await archiveRow.click()
 
     // The demo backs up a mktemp -d directory, so the archive root's sole
     // entry is "tmp".
     const browserPanel = page.locator('.browser-panel')
-    const tmpEntry = browserPanel.getByText('tmp', { exact: true })
+    const tmpEntry = folderEntry(browserPanel, 'tmp')
     await expect(tmpEntry).toBeVisible({ timeout: 30_000 })
     await tmpEntry.click()
 
@@ -199,7 +229,7 @@ test.describe('Archive browsing & diff journey', () => {
 
     // The demo backs up a mktemp -d directory: the archive root holds "tmp",
     // which holds the single tmp.XXXXXXXXXX directory that was backed up.
-    const tmpEntry = browserPanel.getByText('tmp', { exact: true })
+    const tmpEntry = folderEntry(browserPanel, 'tmp')
     await expect(tmpEntry).toBeVisible({ timeout: 30_000 })
     await expect(crumbs).toHaveCount(1)
     expect(pathParam()).toBeNull()
@@ -210,7 +240,7 @@ test.describe('Archive browsing & diff journey', () => {
     await expect(crumbs).toHaveCount(2)
     await expect.poll(pathParam).toBe('/tmp')
 
-    const backedUpDir = browserPanel.locator('.name-text').filter({ hasText: /^tmp\./ })
+    const backedUpDir = folderEntry(browserPanel, /^tmp\./)
     await expect(backedUpDir).toBeVisible({ timeout: 30_000 })
     const backedUpName = (await backedUpDir.innerText()).trim()
     await backedUpDir.click()
@@ -234,7 +264,7 @@ test.describe('Archive browsing & diff journey', () => {
 
     // From the archive root, Back closes the archive...
     await page.goBack()
-    await expect(browserPanel.getByText('Select an archive to browse its contents.')).toBeVisible()
+    await expect(browserPanel.getByText('Pick an archive')).toBeVisible()
     await expect.poll(browseParam).toBeNull()
 
     // ...and then it is ordinary navigation again.
@@ -263,9 +293,10 @@ test.describe('Archive browsing & diff journey', () => {
     await expect(browserPanel).toContainText(archiveName)
   })
 
-  test('the file browser header offers download, restore and delete outright', async ({ page }) => {
+  test('the open archive offers download, restore and delete in its menu', async ({ page }) => {
     // These used to hang off the file table's "." row, with delete rendered at
-    // zero opacity until the pointer happened to hover that row.
+    // zero opacity until the pointer happened to hover that row; the archive
+    // card now keeps everything that acts on the whole archive in one menu.
     await loginAsAdmin(page)
     await page.goto('/repos/1?tab=archives')
     await page.waitForLoadState('networkidle')
@@ -276,15 +307,19 @@ test.describe('Archive browsing & diff journey', () => {
       .first()
       .click()
 
-    const header = page.locator('.browser-actions')
-    await expect(header).toBeVisible({ timeout: 30_000 })
-    await expect(header.locator('button[title="Download whole archive"]')).toBeVisible()
-    await expect(header.locator('button[title="Restore whole archive"]')).toBeVisible()
-    await expect(header.locator('button[title="Delete whole archive"]')).toBeVisible()
+    const browserPanel = page.locator('.browser-panel').last()
+    const menuButton = browserPanel.getByRole('button', { name: 'Archive actions' })
+    await expect(menuButton).toBeVisible({ timeout: 30_000 })
+    await menuButton.click()
+    const menu = browserPanel.getByRole('menu')
+    await expect(menu.getByRole('menuitem', { name: 'Download' })).toBeVisible()
+    await expect(menu.getByRole('menuitem', { name: 'Restore whole archive...' })).toBeVisible()
+    await expect(menu.getByRole('menuitem', { name: 'Delete archive...' })).toBeVisible()
 
-    // The archive says what it is beside its files.
-    await expect(page.locator('.browser-title-name')).toContainText('web-server-01-backup')
-    await expect(page.locator('.archive-meta-bar')).toContainText('Dedup')
+    // The archive says what it is beside its files: its name, and a facts
+    // line ending in what it added to the repository.
+    await expect(browserPanel.locator('.archive-head-name')).toContainText('web-server-01-backup')
+    await expect(browserPanel.locator('.archive-head-facts')).toContainText(/\+.* new/)
   })
 
   test('archive tags API endpoint returns the seeded tags, not just an array', async ({ page }) => {
@@ -370,16 +405,17 @@ test.describe('Archive browsing & diff journey', () => {
     await navigateToMediaWeeklyArchives(page)
     await expandAllArchiveGroups(page)
 
-    const firstRow = page.locator('.archive-row').first()
+    const firstRow = archiveRows(page).first()
     await expect(firstRow).toBeVisible({ timeout: 30_000 })
-    const archiveName = await firstRow.locator('.archive-name').innerText()
+    const archiveName = (await firstRow.locator('.browser-row-title').innerText()).trim()
 
-    const deleteBtn = firstRow.locator('button[title="Delete archive"]')
-    await expect(deleteBtn).toBeVisible()
-    await deleteBtn.click()
+    // Deleting is in the open archive's menu, not on the row.
+    await firstRow.click()
+    const browserPanel = page.locator('.browser-panel').last()
+    await browserPanel.getByRole('button', { name: 'Archive actions' }).click()
+    await browserPanel.getByRole('menuitem', { name: 'Delete archive...' }).click()
 
-    // The row buttons carry the same "Delete archive" title, so the confirm
-    // button is reached through the dialog rather than by name alone.
+    // The confirm button is reached through the dialog's footer.
     await page
       .locator('.modal-footer')
       .getByRole('button', { name: 'Delete archive', exact: true })
@@ -415,12 +451,12 @@ test.describe('Archive browsing & diff journey', () => {
     // in place, but the very next run never sampled it as visible at all -
     // the pending window on this backend can be narrower than what a
     // backing-off poll reliably lands inside.
-    const pendingBtn = page
-      .locator('.archive-row', { hasText: archiveName })
-      .locator('button[title="Deletion in progress"]')
+    const pendingRow = archiveRows(page)
+      .filter({ hasText: archiveName })
+      .filter({ has: page.locator('.archive-row-deleting') })
     await expect(async () => {
-      expect(await pendingBtn.isVisible()).toBe(true)
-      expect(await pendingBtn.isDisabled()).toBe(true)
+      expect(await pendingRow.isVisible()).toBe(true)
+      expect(await pendingRow.textContent()).toContain('Deleting')
     }).toPass({ timeout: 5_000, intervals: [20] })
 
     // While the delete (and the compact that automatically follows it) is
@@ -438,7 +474,7 @@ test.describe('Archive browsing & diff journey', () => {
 
     await page.getByRole('tab', { name: 'Archives', exact: true }).click()
     await expandAllArchiveGroups(page)
-    await expect(page.locator('.archive-name', { hasText: archiveName })).not.toBeVisible({
+    await expect(archiveRows(page).filter({ hasText: archiveName })).toHaveCount(0, {
       timeout: 60_000,
     })
   })

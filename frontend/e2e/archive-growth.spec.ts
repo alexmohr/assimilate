@@ -12,10 +12,11 @@ test.describe('Archive growth', () => {
     const { repoId, name } = await seededGrowthArchive(page)
 
     await page.goto(`/repos/${repoId}?tab=archives`)
-    await page.getByText('Flat', { exact: true }).first().click()
-    await page.getByPlaceholder('Search name, host or repository').fill(name)
-    await page.locator('.archive-row-body:visible').first().click()
-    await page.locator('.browser-view .segmented-option', { hasText: 'Growth' }).click()
+    await page.getByRole('button', { name: 'List options' }).click()
+    await page.getByRole('menuitemradio', { name: 'Flat list' }).click()
+    await page.getByLabel('Search archives').fill(name)
+    await page.getByRole('button', { name: `Open archive ${name}`, exact: true }).click()
+    await page.locator('.browser-panel').getByRole('tab', { name: 'Growth' }).click()
 
     const growth = page.getByTestId('archive-growth')
     await expect(growth.getByTestId('archive-growth-total')).toBeVisible({ timeout: 120_000 })

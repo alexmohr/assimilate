@@ -69,7 +69,7 @@ test('repo detail shows archive list with entries', async ({ page }) => {
   await navigateToRepo(page, 'server-daily', 'Archives')
   await expandAllArchiveGroups(page)
   // Archives section must contain at least one row
-  await expect(page.locator('.archive-row').first()).toBeVisible({
+  await expect(page.getByTestId('archive-row').first()).toBeVisible({
     timeout: 15_000,
   })
 })
@@ -117,11 +117,12 @@ test('agents page shows imported placeholder agents', async ({ page }) => {
   ).toBeVisible()
 })
 
-test('imported agents have the Imported badge', async ({ page }) => {
+test('imported agents are marked Imported', async ({ page }) => {
   await loginAsAdmin(page)
   await openAgentsList(page)
-  // At least one Imported badge must be present (old-webserver and legacy-db-prod)
-  await expect(page.locator('.badge', { hasText: 'Imported' }).first()).toBeVisible()
+  // The line under the hostname says so (old-webserver and legacy-db-prod).
+  const imported = page.locator('.list-row').filter({ hasText: /old-webserver|legacy-db-prod/ })
+  await expect(imported.first().locator('.list-row-sub').first()).toContainText('Imported')
 })
 
 test('imported agents offer Merge into... and Adopt on their own page', async ({ page }) => {
@@ -129,7 +130,7 @@ test('imported agents offer Merge into... and Adopt on their own page', async ({
   await openAgentsList(page)
   const imported = page
     .locator('.list-row')
-    .filter({ has: page.locator('.badge', { hasText: 'Imported' }) })
+    .filter({ has: page.locator('.list-row-sub', { hasText: 'Imported' }) })
     .first()
   await expect(imported).toBeVisible()
   // The row is a link to the agent's page, whose header leads with both. It
@@ -235,7 +236,7 @@ test('full resync completes and preserves archives', async ({ page }) => {
   // Switch to archives tab and verify entries are still present after resync
   await page.getByRole('tab', { name: 'Archives', exact: true }).click()
   await expandAllArchiveGroups(page)
-  await expect(page.locator('.archive-row').first()).toBeVisible({ timeout: 15_000 })
+  await expect(page.getByTestId('archive-row').first()).toBeVisible({ timeout: 15_000 })
 })
 
 test('full resync preserves unmatched-banner', async ({ page }) => {
@@ -438,8 +439,8 @@ test('full resync removes archive deleted from borg', async ({ page }) => {
   // Switch to Archives tab and confirm the deleted archive is no longer listed.
   await page.getByRole('tab', { name: 'Archives', exact: true }).click()
   await expandAllArchiveGroups(page)
-  await expect(page.locator('.archive-row').first()).toBeVisible({ timeout: 15_000 })
-  await expect(page.locator('.archive-name', { hasText: toDelete })).not.toBeVisible()
+  await expect(page.getByTestId('archive-row').first()).toBeVisible({ timeout: 15_000 })
+  await expect(page.getByTestId('archive-row').filter({ hasText: toDelete })).toHaveCount(0)
 })
 
 test('import-status-msg shows waiting-for-lock during borg lock contention', async ({ page }) => {
@@ -479,18 +480,18 @@ test('clicking an archive opens the file browser', async ({ page }) => {
   await navigateToRepo(page, 'server-daily', 'Archives')
   await expandAllArchiveGroups(page)
 
-  // Wait for archive rows to load, then click the first one. The row is the
-  // click surface; the button inside it is there for focus and takes no
-  // pointer events, so clicking it directly would never resolve.
-  const firstArchiveRow = page.locator('.archive-row').first()
+  // Wait for archive rows to load, then click the first one: each row is a
+  // button of its own.
+  const firstArchiveRow = page.getByTestId('archive-row').first()
   await expect(firstArchiveRow).toBeVisible({ timeout: 15_000 })
   await firstArchiveRow.click()
 
   // `ArchiveFileBrowser` renders its header and path trail only once an
-  // archive is selected - before that it shows `.browser-placeholder`. The
-  // previous selector list could not fail: `.file-browser` never existed, but
-  // `[class*="browser"]` matched `.archive-file-browser`, which the tab mounts
-  // unconditionally, and `.breadcrumb` matches the page's own nav trail.
-  await expect(page.locator('.browser-title')).toBeVisible({ timeout: 10_000 })
+  // archive is selected - before that it shows a "Pick an archive" empty
+  // state. The previous selector list could not fail: `.file-browser` never
+  // existed, but `[class*="browser"]` matched `.archive-file-browser`, which
+  // the tab mounts unconditionally, and `.breadcrumb` matches the page's own
+  // nav trail.
+  await expect(page.locator('.archive-head-name')).toBeVisible({ timeout: 10_000 })
   await expect(page.locator('.path-crumbs')).toBeVisible()
 })

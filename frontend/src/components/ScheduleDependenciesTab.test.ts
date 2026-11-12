@@ -219,16 +219,13 @@ describe('ScheduleDependenciesTab', () => {
     expect(wrapper.find('.error-banner').exists()).toBe(true)
   })
 
-  it('explains why dependencies are per agent behind the help button', async () => {
+  it('explains why dependencies are per agent in a footnote under the list', async () => {
     const wrapper = mount()
     await flushPromises()
 
-    const help = wrapper.find('button[aria-label="Help: per-agent dependencies"]')
-    expect(help.exists()).toBe(true)
-    expect(wrapper.text()).not.toContain('each agent mounts its own shares')
-    await help.trigger('click')
-
-    const note = wrapper.find('[role="note"]')
+    // Said in words under the view, not behind a lone help icon.
+    expect(wrapper.find('button[aria-label="Help: per-agent dependencies"]').exists()).toBe(false)
+    const note = wrapper.findAll('.field-hint').at(-1)!
     expect(note.text()).toContain('Per agent, because each agent mounts its own shares.')
     expect(note.text()).toContain("can't be removed here")
   })

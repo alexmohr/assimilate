@@ -106,13 +106,72 @@ async function shotOfTo(locator: Locator, dir: string, name: string): Promise<vo
 
 /** Waits until an opened archive's file tree has been indexed and listed. */
 async function waitForIndex(page: Page): Promise<void> {
-  // Wait for the browser's finished state (the file table, or an empty
-  // directory) rather than for the indexing note to go away: the note only
+  // Wait for the browser's finished state (its file rows, or an empty
+  // folder) rather than for the indexing note to go away: the note only
   // appears a moment after the archive opens, so its absence proves nothing.
   // An indexing error never reaches either state and fails the wait.
-  const listed = page.locator('table.browser-table').or(page.getByText('Empty directory.'))
+  const listed = page.getByTestId('browser-entry').or(page.getByText('This folder is empty.'))
   await expect(listed.first()).toBeVisible({ timeout: 120_000 })
   await settle(page)
+}
+
+/** The archive list's rows that are on screen. */
+function archiveRows(page: Page): Locator {
+  return page.locator('[data-testid="archive-row"]:visible')
+}
+
+/** Shows the archive list ungrouped, from the list card's menu. */
+async function flatArchiveList(page: Page): Promise<void> {
+  await page.getByRole('button', { name: 'List options' }).click()
+  await page.getByRole('menuitemradio', { name: 'Flat list' }).click()
+}
+
+/** Narrows the archive list to archives whose name matches `query`. */
+async function searchArchives(page: Page, query: string): Promise<void> {
+  await page.getByLabel('Search archives').fill(query)
+  await settle(page)
+}
+
+/** Opens a folder of the open archive by its name, and waits until the path shows it. */
+async function openFolder(panel: Locator, name: string): Promise<void> {
+  await panel.locator('.browser-open').getByText(name, { exact: true }).click()
+  await expect(panel.locator('.path-crumbs')).toContainText(name)
+}
+
+/**
+ * Opens a run whose detail shows `text`: on each schedule's Overview, every
+ * run in its Recent runs strip whose label matches `pill`, from the newest,
+ * with every host row of it opened. Returns whether one was found.
+ */
+async function openScheduleRunShowing(
+  page: Page,
+  scheduleIds: readonly number[],
+  text: string | RegExp,
+  pill: RegExp = /./,
+): Promise<boolean> {
+  const wanted = page.locator('.runs-detail').getByText(text).first()
+  for (const id of scheduleIds) {
+    await visit(page, `/schedules/${id}`)
+    const pills = page.locator('.run-pill')
+    const labels = await pills.evaluateAll((els) =>
+      els.map((el) => el.getAttribute('aria-label') ?? ''),
+    )
+    for (let i = labels.length - 1; i >= 0; i--) {
+      if (!pill.test(labels[i] ?? '')) continue
+      await pills.nth(i).click()
+      await settle(page)
+      const rows = page.locator('.runs-detail .log-row-summary--button')
+      const count = await rows.count()
+      for (let r = 0; r < count; r++) {
+        if ((await rows.nth(r).getAttribute('aria-expanded')) !== 'true') {
+          await rows.nth(r).click()
+          await settle(page)
+        }
+      }
+      if (await wanted.isVisible()) return true
+    }
+  }
+  return false
 }
 
 interface AgentStatus {
@@ -236,6 +295,12 @@ test.describe('signed in', () => {
     await visit(page, '/dependencies')
     await shot(page, 'dependency-hosts')
 
+    // New opens the dependency wizard on a page of its own, which replaced
+    // the New dependency dialog.
+    await visit(page, '/dependencies/new')
+    await expect(page.getByRole('navigation', { name: 'Dependency steps' })).toBeVisible()
+    await shot(page, 'dependency-wizard')
+
     await visitDependencyUsedBy(page, 'files-01')
     await shot(page, 'dependency-used-by')
 
@@ -249,39 +314,31 @@ test.describe('signed in', () => {
     await visit(page, '/agents/media-store-01?tab=settings&section=power')
     await shot(page, 'agent-power')
 
-    // The seeded power-managed run (see seed-demo.sh): open each run's
-    // detail until one shows the wake packet sent to media-store-01.
-    await visit(page, '/agents/media-store-01?tab=logs')
-    const details = page.getByRole('button', { name: 'Show detail' })
-    const count = await details.count()
-    for (let i = 0; i < count; i++) {
-      await details.nth(i).click()
-      await settle(page)
-      if (await page.getByText('Sent Wake-on-LAN packet to 3C:97:0E:2B:9A:44').first().isVisible())
-        break
-      await page.getByRole('button', { name: 'Hide detail' }).first().click()
-    }
+    // The seeded power-managed run (see seed-demo.sh), in its schedule's
+    // Recent runs: open each run of media-store-01's schedules until one
+    // shows the wake packet sent to media-store-01.
+    const mediaReports = (await (
+      await page.request.get('/api/agents/media-store-01/reports', { params: { limit: 200 } })
+    ).json()) as { reports: { schedule_id: number | null; run_id: string | null }[] }
+    const mediaSchedules = [
+      ...new Set(
+        mediaReports.reports
+          .filter((report) => report.run_id !== null)
+          .map((report) => report.schedule_id)
+          .filter((id): id is number => id !== null),
+      ),
+    ]
+    const wake = 'Sent Wake-on-LAN packet to 3C:97:0E:2B:9A:44'
+    await openScheduleRunShowing(page, mediaSchedules, wake)
     // Fail rather than capture a page with no run expanded.
     await expect(
-      page.getByText('Sent Wake-on-LAN packet to 3C:97:0E:2B:9A:44').first(),
-      'the seeded power-managed run is in the log',
+      page.getByText(wake).first(),
+      "the seeded power-managed run is in its schedule's Recent runs",
     ).toBeVisible()
     await page.getByText('Power management', { exact: true }).first().scrollIntoViewIfNeeded()
     await shot(page, 'run-timeline')
 
-    // The seeded failed pre-backup hook run is the newest run of its copy, so
-    // it is the one row on this log that offers Retry (see seed-demo.sh).
-    await visit(page, '/agents/media-store-01?tab=logs')
-    const retryable = page
-      .locator('.agent-row')
-      .filter({ has: page.getByRole('button', { name: 'Retry', exact: true }) })
-    await expect(retryable, 'the seeded hook failure offers Retry').toHaveCount(1)
-    await retryable.getByRole('button', { name: 'Show detail' }).click()
-    await settle(page)
-    await retryable.scrollIntoViewIfNeeded()
-    await shot(page, 'run-log-retry')
-
-    await visit(page, '/agents/db-server-01?tab=settings&section=vms')
+    await visit(page, '/agents/db-server-01?tab=sources&section=vms')
     await shot(page, 'agent-vms')
 
     await page
@@ -290,31 +347,28 @@ test.describe('signed in', () => {
       .click()
     await shot(page, 'vm-restore')
 
-    await visit(page, '/agents/db-server-01?tab=settings&section=databases')
+    await visit(page, '/agents/db-server-01?tab=sources&section=databases')
     await expect(page.getByText('shop/orders-db'), 'the seeded database sources').toBeVisible()
     await shot(page, 'agent-databases')
 
     // db-server-01 backs up into two repositories (see seed-demo.sh), so its
     // Backups tab is one list across both, with the newest archive open.
     await visit(page, '/agents/db-server-01?tab=backups')
-    await expect(page.locator('.archive-repo-filter'), 'two repositories').toBeVisible({
+    await expect(page.getByRole('group', { name: 'Repository' }), 'two repositories').toBeVisible({
       timeout: 30_000,
     })
-    await page.locator('.archive-row-body:visible').first().click()
+    await archiveRows(page).first().click()
     await waitForIndex(page)
     await shot(page, 'agent-backups')
 
     // Picking files and restoring them: one file ticked, the dialog asking
     // where to, into a folder.
     await visit(page, '/agents/web-server-01?tab=backups')
-    await page.getByPlaceholder('Search name, host or repository').fill('web-server-01-backup')
-    await page.locator('.archive-row-body:visible').first().click()
+    await searchArchives(page, 'web-server-01-backup')
+    await archiveRows(page).first().click()
     await waitForIndex(page)
     const browserPanel = page.locator('.browser-panel')
-    for (const dir of ['tmp', 'tmp.web-server-01']) {
-      await browserPanel.getByText(dir, { exact: true }).click()
-      await expect(browserPanel.locator('.path-crumbs')).toContainText(dir)
-    }
+    for (const dir of ['tmp', 'tmp.web-server-01']) await openFolder(browserPanel, dir)
     await page.getByRole('checkbox', { name: 'Select restore-example.txt' }).check()
     await page.getByRole('checkbox', { name: 'Select etc' }).check()
     await shot(page, 'archive-selection')
@@ -341,7 +395,7 @@ test.describe('signed in', () => {
     await visit(page, `/repos/${hourly}?tab=archives`)
     await shot(page, 'archives')
 
-    await page.locator('.archive-row-body').first().click()
+    await archiveRows(page).first().click()
     await waitForIndex(page)
     await shot(page, 'archive-browse')
 
@@ -355,8 +409,8 @@ test.describe('signed in', () => {
       .sort((a, b) => b.start.localeCompare(a.start))
     await visit(page, `/repos/${hourly}?tab=archives`)
     await expandAllArchiveGroups(page)
-    await page.getByText(withDumps!.name, { exact: true }).first().click()
-    await page.locator('.browser-view .segmented-option', { hasText: 'Databases' }).click()
+    await page.getByRole('button', { name: `Open archive ${withDumps!.name}`, exact: true }).click()
+    await page.locator('.browser-panel').getByRole('tab', { name: 'Databases' }).click()
     await expect(page.getByText('shop/orders-db').first(), 'the seeded dumps').toBeVisible({
       timeout: 30_000,
     })
@@ -369,15 +423,14 @@ test.describe('signed in', () => {
     const media = await seededIdByName(page, '/api/repos', 'media-weekly')
     await visit(page, `/repos/${media}?tab=archives`)
     await expandAllArchiveGroups(page)
-    await page
-      .locator('.archive-row-body')
+    await archiveRows(page)
       .filter({ hasText: /media-store-01-backup-/ })
       .first()
       .click()
     await waitForIndex(page)
     const browser = page.locator('.browser-panel').last()
     for (const name of [/^tmp$/, /^tmp\./, /^mnt$/, /^media$/]) {
-      await browser.locator('.name-text').filter({ hasText: name }).click()
+      await browser.locator('.browser-open').filter({ hasText: name }).click()
       await waitForIndex(page)
     }
     await expect(browser.getByTestId('entry-link').first()).toBeVisible()
@@ -388,17 +441,16 @@ test.describe('signed in', () => {
     const daily = await seededIdByName(page, '/api/repos', 'server-daily')
     const nginx = await seededNginxComparison(page, daily)
     await visit(page, `/repos/${daily}?tab=archives`)
-    await page.getByText('Flat', { exact: true }).first().click()
-    await page.getByPlaceholder('Search name, host or repository').fill(nginx.target)
-    await settle(page)
-    await page.locator('.archive-row-body:visible').first().click()
+    await flatArchiveList(page)
+    await searchArchives(page, nginx.target)
+    await page.getByRole('button', { name: `Open archive ${nginx.target}`, exact: true }).click()
     await waitForIndex(page)
     const browserPanel = page.locator('.browser-panel').last()
-    for (const dir of ['tmp', 'tmp.web-server-01', 'etc', 'nginx']) {
-      await browserPanel.getByText(dir, { exact: true }).click()
-      await expect(browserPanel.locator('.path-crumbs')).toContainText(dir)
-    }
-    await page.getByRole('button', { name: 'Compare nginx.conf with another archive' }).click()
+    for (const dir of ['tmp', 'tmp.web-server-01', 'etc', 'nginx'])
+      await openFolder(browserPanel, dir)
+    // A file's comparison and history act on it once it is the one ticked.
+    await browserPanel.getByRole('checkbox', { name: 'Select nginx.conf' }).check()
+    await page.getByTestId('compare-file').click()
     await page.getByTestId('file-diff-against').selectOption(nginx.base)
     await expect(page.getByTestId('file-diff-body'), 'the nginx.conf comparison').toBeVisible({
       timeout: 60_000,
@@ -408,7 +460,7 @@ test.describe('signed in', () => {
 
     // The same file's history, opened on the newest seeded archive against
     // the edited copy start-agent.sh leaves on web-server-01.
-    await page.getByRole('button', { name: 'History of nginx.conf' }).click()
+    await page.getByTestId('file-history').click()
     const history = page.getByRole('dialog', { name: 'History of nginx.conf' })
     await history
       .locator(`[data-archives~="${nginx.target}"]`)
@@ -425,7 +477,7 @@ test.describe('signed in', () => {
     // the dialog is captured with one typed in, never submitted.
     const imported = await seededIdByName(page, '/api/repos', 'offsite-imported')
     await visit(page, `/repos/${imported}`)
-    await page.locator('.overflow-toggle').click()
+    await page.getByRole('button', { name: 'More repository actions' }).click()
     await page.getByRole('menuitem', { name: 'Set passphrase' }).click()
     const dialog = page.locator('.modal-dialog')
     await dialog.getByLabel('Passphrase').fill('demo-passphrase-123')
@@ -453,11 +505,10 @@ test.describe('signed in', () => {
   test('archive growth', async ({ page }) => {
     const { repoId, name } = await seededGrowthArchive(page)
     await visit(page, `/repos/${repoId}?tab=archives`)
-    await page.getByText('Flat', { exact: true }).first().click()
-    await page.getByPlaceholder('Search name, host or repository').fill(name)
-    await settle(page)
-    await page.locator('.archive-row-body:visible').first().click()
-    await page.locator('.browser-view .segmented-option', { hasText: 'Growth' }).click()
+    await flatArchiveList(page)
+    await searchArchives(page, name)
+    await page.getByRole('button', { name: `Open archive ${name}`, exact: true }).click()
+    await page.locator('.browser-panel').getByRole('tab', { name: 'Growth' }).click()
     await expect(page.getByTestId('archive-growth-total'), 'the seeded breakdown').toBeVisible({
       timeout: 60_000,
     })
@@ -482,7 +533,7 @@ test.describe('signed in', () => {
     await shot(page, 'schedule-fs-snapshots')
 
     await visit(page, `/schedules/${dual}?tab=backups`)
-    await page.locator('.archive-row-body').first().click()
+    await archiveRows(page).first().click()
     await waitForIndex(page)
     await shot(page, 'schedule-backups')
 
@@ -499,36 +550,46 @@ test.describe('signed in', () => {
     await visit(page, '/notifications')
     await shot(page, 'notifications')
 
-    // Seeded channels: Ops Webhook and Admin Email. Clicking a row opens its
-    // editor; a channel failing to deliver sorts first, so rows go by name.
-    const row = (name: string): Locator => page.locator('.channel-row').filter({ hasText: name })
-    await row('Admin Email').locator('.list-row-name').click()
-    await shot(page, 'notification-edit-email')
-    await page.keyboard.press('Escape')
+    // A channel's own page, which replaced the edit dialog and the row's
+    // overflow menu: delivery, events, scope, content and its history, each a
+    // section opened from `?section=`. Seeded channels: Ops Webhook and Admin
+    // Email, looked up by name.
+    const channelsApi = '/api/notifications/channels'
+    const email = await seededIdByName(page, channelsApi, 'Admin Email')
+    const webhook = await seededIdByName(page, channelsApi, 'Ops Webhook')
+    await visit(page, `/notifications/channels/${webhook}`)
+    await expect(page.locator('.detail-name')).toBeVisible()
+    await shot(page, 'notification-channel-detail')
 
-    await row('Ops Webhook').locator('.list-row-name').click()
-    await shot(page, 'notification-edit-webhook')
-    await page.keyboard.press('Escape')
-
-    // Events and scope are edited from the row's overflow menu.
-    const fromMenu = async (name: string, action: string): Promise<void> => {
-      await row(name)
-        .getByRole('button', { name: `More actions for ${name}` })
-        .click()
-      await row(name).getByRole('menuitem', { name: action }).click()
+    // Delivery settings, opened for editing.
+    for (const [id, name] of [
+      [email, 'notification-edit-email'],
+      [webhook, 'notification-edit-webhook'],
+    ] as const) {
+      await visit(page, `/notifications/channels/${id}?section=settings`)
+      await page.locator('#acc-body-settings').getByRole('button', { name: 'Edit' }).click()
+      await shot(page, name)
     }
-    await fromMenu('Ops Webhook', 'Edit events')
-    await shot(page, 'notifications-events-modal')
-    await page.keyboard.press('Escape')
 
-    await fromMenu('Ops Webhook', 'Edit scope')
-    await shot(page, 'notifications-scope-modal')
-    await page.keyboard.press('Escape')
+    for (const [section, name] of [
+      ['events', 'notifications-events-modal'],
+      ['scope', 'notifications-scope-modal'],
+    ] as const) {
+      await visit(page, `/notifications/channels/${webhook}?section=${section}`)
+      await shotOf(
+        page
+          .locator('.accordion-list > section')
+          .filter({ has: page.locator(`#acc-body-${section}`) }),
+        name,
+      )
+    }
 
-    await page.getByRole('button', { name: 'New', exact: true }).click()
+    // New opens the channel wizard on a page of its own, not a dialog.
+    await visit(page, '/notifications/new')
+    await expect(page.getByRole('navigation', { name: 'Channel steps' })).toBeVisible()
     await shot(page, 'notifications-wizard-step1')
-    await page.keyboard.press('Escape')
 
+    await visit(page, '/notifications')
     await page.getByRole('tab', { name: 'History' }).click()
     await settle(page)
     await page.getByText('Backup Failed').first().click()
@@ -556,6 +617,14 @@ test.describe('signed in', () => {
       await shot(page, name)
     }
 
+    // A seeded user's own page, which replaced the edit dialog: role,
+    // groups, repository permissions and password as collapsible sections.
+    const usersRes = await page.request.get('/api/users')
+    const users = (await usersRes.json()) as Array<{ id: number }>
+    await visit(page, `/users/${users[users.length - 1]?.id ?? 1}`)
+    await expect(page.locator('.detail-name')).toBeVisible()
+    await shot(page, 'user-detail')
+
     // The seeded loopback tunnel's own page: its status, route, settings and
     // Delete, which the tunnels list's rows used to keep in a menu.
     const tunnelsRes = await page.request.get('/api/tunnels')
@@ -569,15 +638,19 @@ test.describe('signed in', () => {
     await expect(page.getByTestId('restore-runs')).toBeVisible()
     await shot(page, 'activity-restores')
 
-    // The settings form runs well past one screen; the docs show all of it.
+    // The settings run well past one screen; the docs show all of them open.
     await visit(page, '/system')
+    await page.getByRole('button', { name: 'Expand all' }).click()
     await shot(page, 'system', { fullPage: true })
 
-    // The Prometheus panel the seed enabled, with its example network.
-    const metricsPanel = page.locator('.panel', {
-      has: page.getByRole('heading', { name: 'Prometheus metrics' }),
-    })
-    await expect(page.locator('#metrics-enabled')).toBeChecked()
+    // The Prometheus section the seed enabled, with its example network.
+    const metricsPanel = page
+      .locator('.accordion-list > section')
+      .filter({ has: page.locator('#acc-body-metrics') })
+    await expect(metricsPanel.getByRole('switch', { name: 'Serve /metrics' })).toHaveAttribute(
+      'aria-checked',
+      'true',
+    )
     await expect(page.locator('#metrics-networks')).toHaveValue(/192\.0\.2\.0\/24/)
     await shotOf(metricsPanel, 'system-metrics')
   })
@@ -591,18 +664,19 @@ test.describe('signed in', () => {
       (route) => route.fulfill({ status: 500, body: 'Internal Server Error' }),
     )
     await visit(page, '/activity')
-    const tab = (label: string): Locator => page.locator('.segmented-option', { hasText: label })
+    const tab = (label: string): Locator =>
+      page.getByRole('group', { name: 'Activity type' }).getByRole('button', { name: label })
     await tab('Server Logs').click()
-    await expect(page.locator('.state-msg')).toBeVisible()
+    await expect(page.locator('.empty-state, .error-banner').first()).toBeVisible()
     await page.evaluate(() => {
       setTimeout(() => {
         throw new TypeError("Cannot read properties of undefined (reading 'hostname')")
       }, 0)
     })
     await tab('Browser logs').click()
-    const table = page.locator('.log-panel')
+    const table = page.getByTestId('log-entries')
     await expect(table.getByText('fetchLogs failed')).toBeVisible()
-    await expect(table.locator('.cell-msg-log').getByText(/reading 'hostname'/)).toBeVisible()
+    await expect(table.locator('.log-row-title').getByText(/reading 'hostname'/)).toBeVisible()
     await shot(page, 'activity-browser-logs')
   })
 })
@@ -622,24 +696,23 @@ test.describe('website', () => {
     await waitForLiveAgents(page)
     const daily = await seededIdByName(page, '/api/repos', 'server-daily')
     await visit(page, `/repos/${daily}?tab=archives`)
-    await page.getByText('Flat', { exact: true }).first().click()
-    await page.getByPlaceholder('Search name, host or repository').fill('web-server-01-backup')
-    await settle(page)
-    await page.locator('.archive-row-body:visible').first().click()
+    await flatArchiveList(page)
+    await searchArchives(page, 'web-server-01-backup')
+    await archiveRows(page).first().click()
     await waitForIndex(page)
 
     // The demo agent archives a temporary directory, so the interesting
     // folders sit a couple of levels down: open single folders until a level
     // lists more than one entry.
-    const rows = page.locator('.archive-browser-layout table tbody tr')
+    const rows = page.locator('.archive-browser-layout').getByTestId('browser-entry')
     for (let depth = 0; depth < 5; depth++) {
-      // The name has its own element: the first cell is the row's checkbox.
-      const names = (await rows.locator('.name-text').allInnerTexts())
+      // The name has its own element: the row also holds a checkbox and facts.
+      const names = (await rows.locator('.browser-row-title').allInnerTexts())
         .map((name) => name.trim())
         .filter((name) => name.length > 0 && name !== '.' && name !== '..')
       if (names.length !== 1) break
       const only = names[0] as string
-      await rows.filter({ hasText: only }).first().getByText(only, { exact: true }).click()
+      await rows.locator('.browser-open').getByText(only, { exact: true }).click()
       await settle(page)
     }
     await shotOfTo(page.locator('.archive-browser-layout').first(), WEBSITE_DIR, 'restore-dark')
@@ -651,21 +724,13 @@ test.describe('website', () => {
   test('dependency skip', async ({ page }) => {
     await loginAsAdmin(page)
     await waitForLiveAgents(page)
-    await visit(page, '/agents/media-store-01?tab=logs')
-    // Exactly one row: the skipped run of the schedule that needs nas-media.
-    const skipped = page
-      .locator('.agent-row')
-      .filter({ has: page.locator('.badge', { hasText: /^skipped$/i }) })
-      .filter({ hasText: 'Media share nightly' })
-    await expect(skipped).toHaveCount(1)
-    await skipped.getByRole('button', { name: 'Show detail' }).click()
-    await settle(page)
-    // The row's detail renders as its next sibling, not inside the row.
-    const detail = skipped.locator('xpath=following-sibling::*[1]')
-    await detail
-      .getByText(/nas-media/)
-      .first()
-      .scrollIntoViewIfNeeded()
+    // The skipped run of the schedule that needs nas-media, opened in that
+    // schedule's Recent runs.
+    const share = await seededIdByName(page, '/api/schedules', 'Media share nightly')
+    await openScheduleRunShowing(page, [share], /nas-media/, /Skipped$/)
+    const reason = page.locator('.runs-detail').getByText(/nas-media/)
+    await expect(reason.first(), 'the seeded skipped run').toBeVisible()
+    await reason.first().scrollIntoViewIfNeeded()
     await shotTo(page, WEBSITE_DIR, 'dependency-skip')
   })
 

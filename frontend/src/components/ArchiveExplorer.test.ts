@@ -26,10 +26,21 @@ vi.mock('./ArchiveFileBrowser.vue', () => ({
       'deleting',
       'pathQueryKey',
       'routeArchiveName',
+      'reveal',
+      'archiveKey',
     ],
-    emits: ['delete-archive', 'back'],
+    emits: ['delete-archive', 'back', 'revealed'],
     template:
       '<div class="stub-browser"><button class="stub-delete" @click="$emit(\'delete-archive\', archive)" /></div>',
+  },
+}))
+
+vi.mock('./FileSearch.vue', () => ({
+  default: {
+    name: 'FileSearch',
+    props: ['query', 'archives'],
+    emits: ['close', 'open'],
+    template: '<div class="stub-file-search" />',
   },
 }))
 
@@ -68,6 +79,25 @@ function explorer(props: Record<string, unknown> = {}) {
   })
 }
 
+/** The list row of the archive named `name`. */
+function rowFor(wrapper: { findAll: ReturnType<typeof mount>['findAll'] }, name: string) {
+  const row = wrapper
+    .findAll('[data-testid="archive-row"]')
+    .find((r) => r.attributes('aria-label') === `Open archive ${name}`)
+  expect(row).toBeDefined()
+  return row!
+}
+
+/**
+ * Asks to delete the open archive the way the reader does: from the open
+ * archive's menu, which the stubbed browser stands in for. Rows carry no
+ * delete of their own.
+ */
+async function requestDelete(wrapper: ReturnType<typeof explorer>): Promise<void> {
+  await wrapper.find('.stub-delete').trigger('click')
+  await flushPromises()
+}
+
 function confirmButton(): HTMLButtonElement | null {
   return document.body.querySelector<HTMLButtonElement>('.modal-dialog button.btn-danger')
 }
@@ -80,7 +110,7 @@ describe('ArchiveExplorer', () => {
 
   it('hands the picked archive to the file browser', async () => {
     const wrapper = explorer()
-    await wrapper.findAll('.archive-row-select')[0].trigger('click')
+    await rowFor(wrapper, ARCHIVE.name).trigger('click')
 
     expect(wrapper.emitted('update:selected')?.[0]).toEqual([ARCHIVE])
   })
@@ -102,9 +132,15 @@ describe('ArchiveExplorer', () => {
     expect(vm.unmatchedHostnames).toEqual(['nas-01'])
   })
 
-  it('offers deletion only to an admin', () => {
-    expect(explorer().find('.archive-row-delete').exists()).toBe(true)
-    expect(explorer({ isAdmin: false }).find('.archive-row-delete').exists()).toBe(false)
+  it('offers deletion only through the open archive, which gates it on admin', () => {
+    // The list rows only open archives; deleting is the open archive's menu.
+    const list = explorer()
+    expect(rowFor(list, ARCHIVE.name).element.querySelectorAll('button')).toHaveLength(0)
+
+    const browser = (props: Record<string, unknown>) =>
+      explorer({ selected: ARCHIVE, ...props }).findComponent({ name: 'ArchiveFileBrowser' })
+    expect(browser({}).props('isAdmin')).toBe(true)
+    expect(browser({ isAdmin: false }).props('isAdmin')).toBe(false)
   })
 
   it('gates the browser on the same rule, so restore needs an admin too', () => {
@@ -136,12 +172,63 @@ describe('ArchiveExplorer', () => {
     expect(wrapper.find('.archive-browser-layout').classes()).not.toContain('layout-detail-open')
   })
 
-  it("closes the open archive when the browser's back button asks to", async () => {
+  it('closes the open archive from the phone layout’s way back to the list', async () => {
     const wrapper = explorer({ selected: ARCHIVE })
 
-    await wrapper.findComponent({ name: 'ArchiveFileBrowser' }).vm.$emit('back')
+    const back = wrapper.get('.explorer-back')
+    expect(back.text()).toBe('All archives')
+    await back.trigger('click')
 
     expect(wrapper.emitted('update:selected')).toEqual([[null]])
+  })
+
+  describe('file search', () => {
+    async function searchFor(wrapper: ReturnType<typeof explorer>, query: string): Promise<void> {
+      wrapper.findComponent({ name: 'ArchiveSelector' }).vm.$emit('search-files', query, [ARCHIVE])
+      await flushPromises()
+    }
+
+    it('shows the search in place of the open archive, and closes it', async () => {
+      const wrapper = explorer()
+      await searchFor(wrapper, 'nginx')
+
+      const search = wrapper.findComponent({ name: 'FileSearch' })
+      expect(search.props('query')).toBe('nginx')
+      expect(search.props('archives')).toEqual([ARCHIVE])
+      expect(wrapper.findComponent({ name: 'ArchiveFileBrowser' }).exists()).toBe(false)
+      expect(wrapper.find('.archive-browser-layout').classes()).toContain('layout-detail-open')
+
+      search.vm.$emit('close')
+      await flushPromises()
+
+      expect(wrapper.findComponent({ name: 'FileSearch' }).exists()).toBe(false)
+      expect(wrapper.findComponent({ name: 'ArchiveFileBrowser' }).exists()).toBe(true)
+    })
+
+    it('opens a match in its archive, revealed and ticked, until the browser has shown it', async () => {
+      const wrapper = explorer()
+      await searchFor(wrapper, 'nginx')
+
+      wrapper
+        .findComponent({ name: 'FileSearch' })
+        .vm.$emit('open', ARCHIVE, { type: '-', path: '/etc/nginx/nginx.conf', size: 10 })
+      await flushPromises()
+
+      expect(wrapper.emitted('update:selected')).toEqual([[ARCHIVE]])
+      await wrapper.setProps({ selected: ARCHIVE })
+      const browser = wrapper.findComponent({ name: 'ArchiveFileBrowser' })
+      // The leading slash a cross-archive hit carries is dropped for the archive path.
+      expect(browser.props('reveal')).toEqual({
+        archiveKey: `${REPO_ID}/${ARCHIVE.name}`,
+        path: 'etc/nginx/nginx.conf',
+        isDir: false,
+      })
+      expect(wrapper.findComponent({ name: 'FileSearch' }).exists()).toBe(false)
+
+      browser.vm.$emit('revealed')
+      await flushPromises()
+      expect(wrapper.findComponent({ name: 'ArchiveFileBrowser' }).props('reveal')).toBeNull()
+    })
   })
 
   it("hands the browser the caller's directory query key, or none for the default", () => {
@@ -153,9 +240,8 @@ describe('ArchiveExplorer', () => {
   })
 
   it('names the archive and the repository in the confirmation', async () => {
-    const wrapper = explorer()
-    await wrapper.find('.archive-row-delete').trigger('click')
-    await flushPromises()
+    const wrapper = explorer({ selected: ARCHIVE })
+    await requestDelete(wrapper)
 
     const message = document.body.querySelector('.archive-delete-message')?.textContent ?? ''
     expect(message).toContain(ARCHIVE.name)
@@ -165,45 +251,45 @@ describe('ArchiveExplorer', () => {
   })
 
   it('queues the delete against the repository the archive belongs to', async () => {
-    const wrapper = explorer()
-    await wrapper.find('.archive-row-delete').trigger('click')
-    await flushPromises()
+    const wrapper = explorer({ selected: ARCHIVE })
+    await requestDelete(wrapper)
 
     confirmButton()!.click()
     await flushPromises()
 
     expect(mockRequestArchiveDelete).toHaveBeenCalledWith(7, ARCHIVE.name)
     expect(toastSuccess).toHaveBeenCalled()
-    expect(wrapper.find('.archive-row-pending').exists()).toBe(true)
+    // The row says the delete is under way, and the archive it removes closes.
+    expect(rowFor(wrapper, ARCHIVE.name).find('.archive-row-deleting').exists()).toBe(true)
+    expect(wrapper.emitted('update:selected')?.at(-1)).toEqual([null])
   })
 
   it('rolls the in-flight marker back when the request is rejected', async () => {
     mockRequestArchiveDelete.mockRejectedValue(new Error('Connection refused'))
 
-    const wrapper = explorer()
-    await wrapper.find('.archive-row-delete').trigger('click')
-    await flushPromises()
+    const wrapper = explorer({ selected: ARCHIVE })
+    await requestDelete(wrapper)
     confirmButton()!.click()
     await flushPromises()
 
     expect(toastError).toHaveBeenCalledWith('Connection refused')
-    expect(wrapper.find('.archive-row-pending').exists()).toBe(false)
-    expect(wrapper.find('button[title="Delete archive"]').exists()).toBe(true)
+    expect(wrapper.find('.archive-row-deleting').exists()).toBe(false)
+    // The open archive offers the delete again.
+    expect(wrapper.findComponent({ name: 'ArchiveFileBrowser' }).props('deleting')).toBe(false)
   })
 
   it('refreshes what the delete invalidated', async () => {
     const refreshAfterDelete = vi.fn().mockResolvedValue(undefined)
-    const wrapper = explorer({ refreshAfterDelete })
+    const wrapper = explorer({ refreshAfterDelete, selected: ARCHIVE })
 
-    await wrapper.find('.archive-row-delete').trigger('click')
-    await flushPromises()
+    await requestDelete(wrapper)
     confirmButton()!.click()
     await flushPromises()
 
     expect(refreshAfterDelete).toHaveBeenCalled()
   })
 
-  it('opens the same confirmation from the file browser as from the row', async () => {
+  it('opens the confirmation from the file browser', async () => {
     const wrapper = explorer({ selected: ARCHIVE })
     await wrapper.find('.stub-delete').trigger('click')
     await flushPromises()
@@ -216,39 +302,38 @@ describe('ArchiveExplorer', () => {
   })
 
   it('clears the marker when the server reports the archive gone', async () => {
-    const wrapper = explorer()
-    await wrapper.find('.archive-row-delete').trigger('click')
-    await flushPromises()
+    const wrapper = explorer({ selected: ARCHIVE })
+    await requestDelete(wrapper)
     confirmButton()!.click()
     await flushPromises()
-    expect(wrapper.find('.archive-row-pending').exists()).toBe(true)
+    expect(wrapper.find('.archive-row-deleting').exists()).toBe(true)
 
     wrapper.vm.onArchiveDeleted(ARCHIVE.name, REPO_ID)
     await flushPromises()
 
-    expect(wrapper.find('.archive-row-pending').exists()).toBe(false)
+    expect(wrapper.find('.archive-row-deleting').exists()).toBe(false)
   })
 
   it('sweeps stale markers once the repository queue goes idle', async () => {
     const reload = vi.fn().mockResolvedValue(undefined)
-    const wrapper = explorer({ reload })
+    const wrapper = explorer({ reload, selected: ARCHIVE })
 
-    await wrapper.find('.archive-row-delete').trigger('click')
-    await flushPromises()
+    await requestDelete(wrapper)
     confirmButton()!.click()
     await flushPromises()
+    expect(wrapper.find('.archive-row-deleting').exists()).toBe(true)
 
     wrapper.vm.onRepoIdle(REPO_ID)
     await flushPromises()
 
     expect(reload).toHaveBeenCalledWith(true)
-    expect(wrapper.find('.archive-row-pending').exists()).toBe(false)
+    expect(wrapper.find('.archive-row-deleting').exists()).toBe(false)
   })
 
   // The open archive lives in the route next to the browser's directory, so
   // picking one is a history entry and a link can name both.
   describe('route', () => {
-    const SECOND: ArchiveEntry = { ...ARCHIVE, name: 'web-01-2026-03-02' }
+    const SECOND: RepoArchive = { ...ARCHIVE, name: 'web-01-2026-03-02' }
 
     async function mountAt(url: string, props: Record<string, unknown> = {}) {
       // A router that has already navigated, as the app's is before any view
@@ -280,13 +365,13 @@ describe('ArchiveExplorer', () => {
 
     function selections(wrapper: ReturnType<typeof mount>): unknown[] {
       return (wrapper.emitted('update:selected') ?? []).map(
-        ([a]) => (a as ArchiveEntry | null)?.name ?? null,
+        ([a]) => (a as RepoArchive | null)?.name ?? null,
       )
     }
 
     it('pushes a pick as a history entry that opens the archive at its root', async () => {
       const { wrapper, router } = await mountAt('/repos/7?tab=archives&path=%2Fetc')
-      await wrapper.findAll('.archive-row-select')[0].trigger('click')
+      await rowFor(wrapper, ARCHIVE.name).trigger('click')
       await flushPromises()
 
       expect(selections(wrapper)).toEqual([ARCHIVE.name])
@@ -295,10 +380,10 @@ describe('ArchiveExplorer', () => {
 
     it('follows Back to the archive picked before', async () => {
       const { wrapper, router } = await mountAt('/repos/7?tab=archives')
-      await wrapper.findAll('.archive-row-select')[0].trigger('click')
+      await rowFor(wrapper, ARCHIVE.name).trigger('click')
       await flushPromises()
       await wrapper.setProps({ selected: ARCHIVE })
-      await wrapper.findAll('.archive-row-select')[1].trigger('click')
+      await rowFor(wrapper, SECOND.name).trigger('click')
       await flushPromises()
       await wrapper.setProps({ selected: SECOND })
 
@@ -314,13 +399,13 @@ describe('ArchiveExplorer', () => {
 
     it('keeps the directory Back restores in the archive picked before', async () => {
       const { wrapper, router } = await mountAt('/repos/7?tab=archives')
-      await wrapper.findAll('.archive-row-select')[0].trigger('click')
+      await rowFor(wrapper, ARCHIVE.name).trigger('click')
       await flushPromises()
       await wrapper.setProps({ selected: ARCHIVE })
       // The file browser pushes the directory it opens.
       await router.push({ query: { ...router.currentRoute.value.query, path: '/etc' } })
       await flushPromises()
-      await wrapper.findAll('.archive-row-select')[1].trigger('click')
+      await rowFor(wrapper, SECOND.name).trigger('click')
       await flushPromises()
       await wrapper.setProps({ selected: SECOND })
 
@@ -371,7 +456,7 @@ describe('ArchiveExplorer', () => {
         pathQueryKey: 'path-7',
         archiveQueryKey: 'browse-7',
       })
-      await wrapper.findAll('.archive-row-select')[0].trigger('click')
+      await rowFor(wrapper, ARCHIVE.name).trigger('click')
       await flushPromises()
 
       expect(router.currentRoute.value.query).toEqual({ browse: 'other', 'browse-7': ARCHIVE.name })

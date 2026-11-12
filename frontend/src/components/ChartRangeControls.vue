@@ -42,19 +42,24 @@ const days = defineModel<T>('days', { required: true })
 </template>
 
 <style scoped>
+/* Wraps wherever the card is narrow, not only on a phone: on the dashboard
+   the card is half the page, and the range buttons ran past its edge. */
 .chart-range-controls {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: var(--space-4);
+  max-width: 100%;
+  min-width: 0;
 }
 
 .chart-range-select {
   width: auto;
   padding: var(--space-2) var(--space-4);
   font-size: var(--fs-xs);
-  border: 1px solid var(--border);
+  border: 1px solid transparent;
   border-radius: var(--radius-sm);
-  background: var(--bg-base);
+  background: var(--bg-field);
   color: var(--text-primary);
 }
 
@@ -63,7 +68,6 @@ const days = defineModel<T>('days', { required: true })
    row and overflow the panel on a phone. */
 @media (max-width: 640px) {
   .chart-range-controls {
-    flex-wrap: wrap;
     width: 100%;
   }
 

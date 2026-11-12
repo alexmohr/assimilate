@@ -170,7 +170,7 @@ function navigateToActivity(status?: string): void {
 </script>
 
 <template>
-  <section class="panel">
+  <section class="panel panel--sectioned">
     <div class="panel-header">
       <h2 class="panel-title">Backup stats</h2>
       <ChartRangeControls
@@ -183,13 +183,13 @@ function navigateToActivity(status?: string): void {
     </div>
     <div
       v-if="loading"
-      class="state-msg state-msg--inline"
+      class="state-msg state-msg--inline stats-loading"
     >
       Loading...
     </div>
     <div
       v-else
-      class="stats-grid"
+      class="tile-grid stats-grid"
     >
       <div
         class="mini-stat mini-stat-link"
@@ -289,13 +289,18 @@ function navigateToActivity(status?: string): void {
 .stats-actions {
   display: flex;
   justify-content: flex-end;
-  margin-top: var(--space-5);
+  padding: var(--space-4) var(--space-7);
+  border-top: 1px solid var(--border);
 }
 
+/* Flush with the card's edges, so the cells' hairlines meet its border
+   instead of drawing a second frame inside it. */
 .stats-grid {
-  display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: var(--space-5);
+}
+
+.stats-loading {
+  padding: var(--space-6) var(--space-7);
 }
 
 .mini-stat {
@@ -304,8 +309,7 @@ function navigateToActivity(status?: string): void {
   align-items: center;
   gap: var(--space-1);
   padding: var(--space-4);
-  background: var(--bg-base);
-  border-radius: var(--radius-sm);
+  background: var(--bg-card);
 }
 
 .mini-stat-link {

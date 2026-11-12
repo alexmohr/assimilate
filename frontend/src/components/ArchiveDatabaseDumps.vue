@@ -5,7 +5,7 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { Database, RotateCcw } from '@lucide/vue'
+import { Database } from '@lucide/vue'
 import { listArchiveDatabases } from '../api/archives'
 import type { ArchiveEntry } from '../composables/useArchiveBrowser'
 import type { ArchiveDatabaseDump } from '../types/generated'
@@ -14,6 +14,7 @@ import { dumpPlace } from '../utils/databaseRestore'
 import { KIND_LABELS, RUNTIME_LABELS, sourceName } from '../utils/databaseRuntimes'
 import { extractError } from '../utils/error'
 import BaseSpinner from './BaseSpinner.vue'
+import BrowserRow from './BrowserRow.vue'
 import DatabaseRestoreDialog from './DatabaseRestoreDialog.vue'
 import EmptyState from './EmptyState.vue'
 
@@ -56,6 +57,13 @@ async function load(): Promise<void> {
   }
 }
 
+/** Where the dump came from, after its source's name: runtime, kind and place. */
+function dumpFacts(dump: ArchiveDatabaseDump): string[] {
+  return [RUNTIME_LABELS[dump.runtime], KIND_LABELS[dump.kind], dumpPlace(dump)].filter(
+    (fact): fact is string => typeof fact === 'string' && fact.length > 0,
+  )
+}
+
 watch(
   () => [props.repoId, props.archive.name],
   () => {
@@ -67,7 +75,7 @@ watch(
 </script>
 
 <template>
-  <div class="archive-db-dumps">
+  <div>
     <div
       v-if="loading"
       class="loading-row"
@@ -89,52 +97,50 @@ watch(
       title="No database dumps"
       description="This archive holds no database dumps."
     />
-    <div
-      v-else
-      class="table-wrap"
-    >
-      <table
-        class="data-table"
-        data-testid="archive-database-dumps"
-      >
-        <thead>
-          <tr>
-            <th>Database</th>
-            <th>Source</th>
-            <th v-if="canRestore" />
-          </tr>
-        </thead>
-        <tbody>
-          <tr
-            v-for="dump in dumps"
-            :key="dump.archive_path"
+    <template v-else>
+      <div data-testid="archive-database-dumps">
+        <BrowserRow
+          v-for="dump in dumps"
+          :key="dump.archive_path"
+          :title="dump.database"
+          data-testid="database-dump"
+        >
+          <template #lead>
+            <Database
+              :size="16"
+              class="db-dump-icon"
+            />
+          </template>
+          <template #facts>
+            <span>{{ sourceName(dump) }}</span>
+            <template
+              v-for="fact in dumpFacts(dump)"
+              :key="fact"
+            >
+              <span aria-hidden="true">&middot;</span>
+              <span>{{ fact }}</span>
+            </template>
+          </template>
+          <template
+            v-if="canRestore"
+            #end
           >
-            <td class="cell-mono">{{ dump.database }}</td>
-            <td>
-              <div class="cell-mono nowrap">{{ sourceName(dump) }}</div>
-              <div class="cell-muted">
-                {{
-                  [RUNTIME_LABELS[dump.runtime], KIND_LABELS[dump.kind], dumpPlace(dump)]
-                    .filter(Boolean)
-                    .join(' · ')
-                }}
-              </div>
-            </td>
-            <td v-if="canRestore">
-              <button
-                type="button"
-                class="btn btn-sm btn-ghost nowrap"
-                :title="`Restore ${dump.database}`"
-                @click="restoring = dump"
-              >
-                <RotateCcw :size="14" />
-                Restore
-              </button>
-            </td>
-          </tr>
-        </tbody>
-      </table>
-    </div>
+            <button
+              type="button"
+              class="btn btn-sm btn-ghost db-dump-restore"
+              :title="`Restore ${dump.database}`"
+              @click="restoring = dump"
+            >
+              Restore...
+            </button>
+          </template>
+        </BrowserRow>
+      </div>
+      <p class="db-dump-note">
+        The agent dumps each database just before the backup starts and stores the dump inside this
+        archive.
+      </p>
+    </template>
 
     <DatabaseRestoreDialog
       :open="restoring !== null"
@@ -149,11 +155,20 @@ watch(
 </template>
 
 <style scoped>
-.archive-db-dumps {
-  padding: var(--space-5) var(--space-6);
+.db-dump-icon {
+  flex: none;
+  color: var(--text-muted);
 }
 
-.nowrap {
-  white-space: nowrap;
+.db-dump-restore {
+  flex: none;
+}
+
+.db-dump-note {
+  margin: 0;
+  padding: var(--space-4) var(--space-7);
+  border-top: 1px solid var(--border-subtle);
+  font-size: var(--fs-xs);
+  color: var(--text-muted);
 }
 </style>

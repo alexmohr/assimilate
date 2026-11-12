@@ -25,8 +25,29 @@ async function mountPanel(): Promise<ReturnType<typeof mount>> {
   return wrapper
 }
 
+/** Each row's closed summary: dot, host, archive and facts, time. */
 function rows(wrapper: ReturnType<typeof mount>): string[] {
-  return wrapper.findAll('tbody tr').map((r) => r.text())
+  return wrapper.findAll('[data-testid="restore-runs"] .log-row').map((r) => r.text())
+}
+
+/** Opens row `i`'s detail, which every row has, so a test can read or act on it. */
+async function open(wrapper: ReturnType<typeof mount>, i: number): Promise<void> {
+  const row = wrapper.findAll('.log-row')[i]!
+  if (!row.classes().includes('log-row--open')) {
+    await row.find('.log-row-summary').trigger('click')
+  }
+}
+
+/** Row `i`'s status, as its open detail names it. */
+async function statusOf(wrapper: ReturnType<typeof mount>, i: number): Promise<string> {
+  await open(wrapper, i)
+  const detail = wrapper.findAll('.log-row')[i]!.find('.log-row-detail')
+  const terms = detail.findAll('dt').map((dt) => dt.text())
+  return detail.findAll('dd')[terms.indexOf('Status')]!.text()
+}
+
+function dotOf(wrapper: ReturnType<typeof mount>, i: number): string[] {
+  return wrapper.findAll('.log-row')[i]!.find('.status-dot').classes()
 }
 
 describe('RestoreRunsPanel', () => {
@@ -52,17 +73,25 @@ describe('RestoreRunsPanel', () => {
     const [failed, whole] = rows(wrapper)
     expect(failed).toContain('web-01')
     expect(failed).toContain('web-01-2026-05-30')
-    expect(failed).toContain('nas-daily')
     expect(failed).toContain('etc/hosts')
-    expect(failed).toContain('/restore')
-    expect(failed).toContain('Failed')
+    // A failed restore's facts line says why instead of where it went.
     expect(failed).toContain('Permission denied')
-    // The cells clip long text; the whole of it is in their titles.
-    const failedRow = wrapper.findAll('tbody tr')[0]!
-    expect(failedRow.find('[title="Permission denied"]').exists()).toBe(true)
-    expect(failedRow.find('[title="etc/hosts into /restore"]').exists()).toBe(true)
+    expect(failed).toContain('by admin')
+    expect(dotOf(wrapper, 0)).toContain('status-dot--danger')
     expect(whole).toContain('the whole archive')
-    expect(whole).toContain('Restored')
+    expect(whole).toContain('into /restore')
+    expect(dotOf(wrapper, 1)).toContain('status-dot--success')
+    // The title and subtitle clip; the whole of each is in its tooltip.
+    const failedRow = wrapper.findAll('.log-row')[0]!
+    expect(failedRow.find('[title="web-01-2026-05-30"]').exists()).toBe(true)
+
+    // The detail holds the rest: status, repository, where it went, the error.
+    expect(await statusOf(wrapper, 0)).toBe('Failed')
+    const detail = wrapper.findAll('.log-row')[0]!.find('.log-row-detail').text()
+    expect(detail).toContain('nas-daily')
+    expect(detail).toContain('/restore')
+    expect(wrapper.findAll('.log-row')[0]!.find('.error-pre').text()).toBe('Permission denied')
+    expect(await statusOf(wrapper, 1)).toBe('Restored')
   })
 
   it('says what a database restore restored and where, with no target path', async () => {
@@ -74,13 +103,16 @@ describe('RestoreRunsPanel', () => {
 
     const [copy, replaced] = rows(wrapper)
     expect(copy).toContain('orders into orders_restored on shop/orders-db')
-    expect(copy).toContain('Database')
     expect(copy).not.toContain('into null')
     expect(replaced).toContain('orders (replaced) on shop/orders-db')
-    const copyRow = wrapper.findAll('tbody tr')[0]!
-    expect(copyRow.find('[title="orders into orders_restored on shop/orders-db"]').exists()).toBe(
-      true,
-    )
+
+    await open(wrapper, 0)
+    const detail = wrapper.findAll('.log-row')[0]!.find('.log-row-detail')
+    const terms = detail.findAll('dt').map((dt) => dt.text())
+    expect(terms).toContain('Database')
+    expect(terms).not.toContain('Into')
+    expect(detail.text()).toContain('orders into orders_restored on shop/orders-db')
+    expect(detail.text()).not.toContain('null')
   })
 
   it('keeps the list current from pushes', async () => {
@@ -98,10 +130,11 @@ describe('RestoreRunsPanel', () => {
     for (const run of now) pushWs('RestoreRunChanged', { id: run.id, status: run.status })
     await flushPromises()
 
-    const [newest, updated] = rows(wrapper)
-    expect(newest).toContain('Waiting for agent')
-    expect(updated).toContain('Restored')
     expect(rows(wrapper)).toHaveLength(2)
+    expect(wrapper.findAll('.log-row')[0]!.attributes('data-restore-id')).toBe('new')
+    expect(await statusOf(wrapper, 0)).toBe('Waiting for agent')
+    expect(await statusOf(wrapper, 1)).toBe('Restored')
+    expect(dotOf(wrapper, 1)).toContain('status-dot--success')
   })
 
   it('does not reopen a finished restore when an older re-read resolves last', async () => {
@@ -115,12 +148,13 @@ describe('RestoreRunsPanel', () => {
     pushWs('RestoreRunChanged', { id: makeRestoreRun().id, status: 'running' })
     pushWs('RestoreRunChanged', { id: makeRestoreRun().id, status: 'success' })
     await flushPromises()
-    expect(rows(wrapper)[0]).toContain('Restored')
+    expect(await statusOf(wrapper, 0)).toBe('Restored')
 
     // The hand-over's re-read, read while the restore was still running.
     resolveRunning(makeRestoreRun({ status: 'running' }))
     await flushPromises()
-    expect(rows(wrapper)[0]).toContain('Restored')
+    expect(await statusOf(wrapper, 0)).toBe('Restored')
+    expect(dotOf(wrapper, 0)).toContain('status-dot--success')
   })
 
   it('keeps showing the list when a pushed restore cannot be re-read', async () => {
@@ -155,14 +189,19 @@ describe('RestoreRunsPanel', () => {
     vi.mocked(cancelRestoreRun).mockResolvedValue(makeRestoreRun({ status: 'cancelled' }))
     const wrapper = await mountPanel()
 
-    const buttons = wrapper.findAll('button')
+    // The running restore offers no cancel in its detail.
+    await open(wrapper, 1)
+    expect(wrapper.findAll('[data-testid="restore-cancel"]')).toHaveLength(0)
+
+    await open(wrapper, 0)
+    const buttons = wrapper.findAll('[data-testid="restore-cancel"]')
     expect(buttons).toHaveLength(1)
     await buttons[0]!.trigger('click')
     await flushPromises()
 
     expect(cancelRestoreRun).toHaveBeenCalledWith(makeRestoreRun().id)
-    expect(rows(wrapper)[0]).toContain('Cancelled')
-    expect(wrapper.findAll('button')).toHaveLength(0)
+    expect(await statusOf(wrapper, 0)).toBe('Cancelled')
+    expect(wrapper.findAll('[data-testid="restore-cancel"]')).toHaveLength(0)
   })
 
   it('says why a cancel or the list failed', async () => {
@@ -170,7 +209,8 @@ describe('RestoreRunsPanel', () => {
     vi.mocked(cancelRestoreRun).mockRejectedValue(new Error('already running'))
     const wrapper = await mountPanel()
 
-    await wrapper.find('button').trigger('click')
+    await open(wrapper, 0)
+    await wrapper.find('[data-testid="restore-cancel"]').trigger('click')
     await flushPromises()
     expect(toastError).toHaveBeenCalledWith('already running')
 

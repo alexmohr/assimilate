@@ -18,9 +18,9 @@ The settings belong to the **host**, because the staging directory is shared by 
 
 ## Configure a host
 
-Open the agent, then **Settings → Virtual machines**.
+Open the agent, then its **Sources** tab and the **Virtual machines** section.
 
-![The Virtual machines settings pane, listing a host's domains with their staged size against each limit](assets/screenshots/agent-vms.png)
+![The Virtual machines section, listing a host's domains with their staged size against each limit](assets/screenshots/agent-vms.png)
 
 1. Turn on **Allow schedules to back up virtual machines**. This is a permission, not an action: it lets schedules that target this host include its domains, and blocks every schedule while it is off. Nothing is staged until a schedule asks for it.
 2. Choose **which domains** to stage. **All except excluded** backs up every domain on the host and lets you drop individual ones; **Only selected** backs up nothing until you pick the domains you want. See [Choosing which domains to stage](#choosing-which-domains-to-stage).
@@ -158,7 +158,7 @@ A domain whose disks alone are larger than its limit can never be staged, and ev
 
 ## Restore a domain
 
-Restoring happens in two stages, in the order they actually occur: borg puts the staged files back on disk, then the agent builds a domain out of them. Open the agent's **Virtual machines** section and click **Restore** on the domain's row.
+Restoring happens in two stages, in the order they actually occur: borg puts the staged files back on disk, then the agent builds a domain out of them. Open the **Virtual machines** section of the agent's **Sources** tab and click **Restore** on the domain's row.
 
 ![The restore wizard, picking the archive to restore a domain from](assets/screenshots/vm-restore.png)
 

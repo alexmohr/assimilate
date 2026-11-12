@@ -273,6 +273,42 @@ describe('NotificationContentEditor', () => {
     expect(wrapper.emitted('updated')).toBeUndefined()
   })
 
+  it('cancel drops the unsaved edits and the save error', async () => {
+    mockUpdateChannel.mockRejectedValueOnce(new Error('network error'))
+    const saved = channel({
+      config: {
+        smtp_host: 'smtp.example.com',
+        smtp_port: 587,
+        smtp_user: 'user',
+        smtp_password: 'pass',
+        from_address: 'alerts@example.com',
+        to_addresses: ['ops@example.com'],
+        security: 'starttls',
+        title_template: 'saved title',
+        body_template: 'saved body',
+      },
+    })
+    const wrapper = mount({ channel: saved })
+    await wrapper.find('button.content-toggle').trigger('click')
+    const titleInput = wrapper.find<HTMLInputElement>('input[type="text"]')
+    const bodyInput = wrapper.find<HTMLTextAreaElement>('textarea')
+    await titleInput.setValue('edited title')
+    await bodyInput.setValue('edited body')
+    await findSaveButton(wrapper).trigger('click')
+    await flushPromises()
+    expect(wrapper.find('.form-error').exists()).toBe(true)
+
+    const cancelButton = wrapper.findAll('button').find((b) => b.text() === 'Cancel')!
+    await cancelButton.trigger('click')
+
+    expect(titleInput.element.value).toBe('saved title')
+    expect(bodyInput.element.value).toBe('saved body')
+    expect(wrapper.find('.form-error').exists()).toBe(false)
+    // Back to what is saved, so there is nothing left to save or cancel.
+    expect(findSaveButton(wrapper).attributes('disabled')).toBeDefined()
+    expect(cancelButton.attributes('disabled')).toBeDefined()
+  })
+
   describe('server-rendered preview', () => {
     afterEach(() => {
       vi.useRealTimers()

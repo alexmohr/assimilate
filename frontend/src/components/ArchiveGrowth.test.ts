@@ -182,9 +182,13 @@ describe('ArchiveGrowth', () => {
 
     const rows = wrapper.findAll('[data-testid="archive-growth-files"] tbody tr')
     expect(rows.map((row) => row.findAll('td').map((cell) => cell.text()))).toEqual([
-      ['home/alex/ubuntu.iso', '1.5 GB', '6.0 GB'],
-      ['var/log/syslog', '1.0 GB', '2.0 GB'],
+      ['home/alex/ubuntu.iso', '1.5 GB', '6.0 GB', ''],
+      ['var/log/syslog', '1.0 GB', '2.0 GB', ''],
     ])
+    // The compare button sits in a column of its own at the row's end.
+    expect(
+      rows.map((row) => row.find('td:last-child [data-testid="growth-compare-file"]').exists()),
+    ).toEqual([true, true])
   })
 
   it('compares a file of the folder view with another archive', async () => {

@@ -15,7 +15,7 @@ Navigate to **Settings → Access Control → Audit Log**. The log is available 
 
 ## Log Entries
 
-Each entry includes:
+Each entry is one row: a status dot, the user and the action, under them the resource and the IP address, and the time on the right. Click a row to open it. An entry includes:
 
 | Field | Description |
 |-------|-------------|
@@ -24,7 +24,7 @@ Each entry includes:
 | **IP Address** | Source IP of the request |
 | **Action** | What was done (see [Recorded Actions](#recorded-actions)) |
 | **Resource** | Type and identifier of the affected resource (e.g. `archive:3`, `repo:7`) |
-| **Details** | The action's own details, when it records any; expand a row to see them |
+| **Details** | The action's own details, when it records any; open a row to see them |
 
 ## Recorded Actions
 
@@ -97,23 +97,15 @@ A login is recorded only once it completes, so an account with two-factor authen
 
 Use the filter bar at the top of the page to narrow results by:
 
-- **Date range** — start and end date/time
-- **User** — filter to a specific username
-- **Action** — show only one action, e.g. `delete_archive`
-- **Resource** — enter a resource type or identifier
+- **Action** — part of an action name, e.g. `create`, `update` or `delete`
+- **User** — a username
+- **From** / **To** — a date range
 
-Filters are combined with AND logic.
+Click **Apply** to filter, and **Clear** to reset the filters. Filters are combined with AND logic. Under the list, **Rows per page** sets how many entries a page shows, with buttons to page through the rest.
 
 ## Retention
 
-Audit log entries are retained for 90 days by default. Configure the retention period in **Settings → Audit Log**. Entries older than the retention period are deleted on a nightly cleanup job.
-
-!!! warning
-    Reducing the retention period permanently deletes older entries. This action is irreversible.
-
-## Exporting
-
-Click **Export CSV** to download a filtered view of the audit log as a CSV file. The export respects the currently active filters.
+Audit log entries are kept until they are deleted from the database by hand; no setting prunes them.
 
 ## Related Pages
 

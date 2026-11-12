@@ -218,7 +218,8 @@ pub async fn get_activity_feed_days(
          IS NULL OR w.acknowledged = $6) )) AND ($2::bigint IS NULL OR br.repo_id = $2) AND \
          ($3::text IS NULL OR a.hostname = $3) AND ($4::bigint IS NULL OR br.schedule_id = $4) \
          AND ($5::text IS NULL OR br.run_id = $5) AND ($6::bool IS NULL OR br.acknowledged = $6) \
-         ) reports ) ranked WHERE $7::bigint IS NULL OR run_rank <= $7 ORDER BY started_at DESC",
+         AND ($8::bigint IS NULL OR br.id = $8) ) reports ) ranked WHERE $7::bigint IS NULL OR \
+         run_rank <= $7 ORDER BY started_at DESC",
         i32::try_from(days).unwrap_or(14),
         filters.repo_id,
         filters.hostname,
@@ -226,6 +227,7 @@ pub async fn get_activity_feed_days(
         filters.run_id,
         filters.acknowledged.as_sql_predicate(),
         per_schedule_limit,
+        filters.report_id,
     )
     .fetch_all(pool)
     .await

@@ -40,9 +40,9 @@ Like [VM snapshots](vm-snapshots.md), the settings belong to the **host**, becau
 
 ## Configure a host
 
-Open the agent, then **Settings → Databases**. Only admins see this pane: its settings name the host's engine socket, OS user and directories.
+Open the agent, then its **Sources** tab and the **Databases** section. Only admins see this tab: its settings name the host's engine socket, OS user and directories.
 
-![The Databases settings pane, listing a host's database sources and their databases](assets/screenshots/agent-databases.png)
+![The Databases section, listing a host's database sources and their databases](assets/screenshots/agent-databases.png)
 
 1. Turn on **Allow schedules to dump databases**. Like the VM setting, this is a permission rather than an action: nothing is dumped until a schedule asks for it.
 2. Choose **which sources** to dump. **All except excluded** dumps every source the agent finds, including one deployed after the last scan; **Only selected** dumps nothing until you pick the sources you want.
@@ -60,7 +60,9 @@ Open the agent, then **Settings → Databases**. Only admins see this pane: its 
 
 Every place you turn on must be reachable when a backup runs: a backup whose cluster or container engine cannot be reached fails with the reason, rather than leaving databases out.
 
-Then turn on **Dump databases** in a schedule's **Advanced** tab.
+Then turn on **Dump databases** in a schedule's **Settings → Advanced** section, or on the **Advanced** step of a new schedule.
+
+Both switches have to be on. A schedule that asks for dumps on a host where **Allow schedules to dump databases** is off backs that host up without them, and says so: the schedule's form and its page name every such host with a link to its database settings, the host's database settings name the schedules asking, and each such run is reported as a **warning** in the Activity Log with the reason. The same applies to [virtual machines](vm-snapshots.md) a schedule asks for on a host with staging turned off.
 
 ## How sources are found
 
@@ -330,7 +332,7 @@ If borg never opened a dump's pipe, usually because an exclude pattern matches t
 
 ## Restore a database
 
-Restore a dump from the archive that holds it. Open the archive in the archive browser (a repository's **Archives** tab, a schedule's **Backups** tab or the **Archives** page) and switch it from **Files** to **Databases**. The view lists every dump in the archive: the database, the source it came from, where that source ran and its runtime. **Restore** on a row opens the restore dialog; it is shown to the users who may restore files.
+Restore a dump from the archive that holds it. Open the archive in the archive browser (a repository's **Archives** tab, an agent's or a schedule's **Backups** tab or the **Archives** page) and switch it from **Files** to its **Databases** tab. The view lists every dump in the archive: the database, the source it came from, where that source ran and its runtime. **Restore** on a row opens the restore dialog; it is shown to the users who may restore files.
 
 ![Database dumps in an archive](assets/screenshots/archive-databases.png)
 
@@ -343,7 +345,7 @@ Choose where the dump goes:
 
 Redis, Valkey and InfluxDB 2 dump their whole server, so their dump can only **replace** it: the dialog offers no new database for them, and the server refuses a request for one. InfluxDB 1 restores a database next to the original like the SQL engines (`influxd restore -portable -db <database> -newdb <name>`), while replacing it drops the database first, because InfluxDB 1 refuses to restore into one that exists. A restore that then fails leaves the database missing until you restore it again.
 
-The restore runs on the host the archive came from unless you name another one under **Restore with host**; that host must run the same source. The agent finds the source again by its name, the same way a backup does, so a pod or container replaced since the backup is no problem; a source that no longer runs on the host cannot be restored into. The source's runtime must be turned on for that host in **Settings → Databases**.
+The restore runs on the host the archive came from unless you name another one under **Restore with host**; that host must run the same source. The agent finds the source again by its name, the same way a backup does, so a pod or container replaced since the backup is no problem; a source that no longer runs on the host cannot be restored into. The source's runtime must be turned on for that host in the **Databases** section of its **Sources** tab.
 
 The agent streams the dump straight out of the archive into the engine's restore client, without writing it to disk, as the same database user the backup dumped as.
 

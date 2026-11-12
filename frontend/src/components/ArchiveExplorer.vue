@@ -4,12 +4,15 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 -->
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, toRef, useTemplateRef, watch } from 'vue'
-import { Trash2 } from '@lucide/vue'
+import { computed, onBeforeUnmount, ref, toRef, useTemplateRef, watch } from 'vue'
+import { ChevronLeft, Trash2 } from '@lucide/vue'
 import ArchiveBrowserLayout from './ArchiveBrowserLayout.vue'
-import ArchiveFileBrowser from './ArchiveFileBrowser.vue'
+import ArchiveFileBrowser, { type ArchiveReveal } from './ArchiveFileBrowser.vue'
 import ArchiveSelector from './ArchiveSelector.vue'
 import BaseModal from './BaseModal.vue'
+import FileSearch from './FileSearch.vue'
+import { isDirectoryEntry } from '../utils/archiveSelection'
+import type { CrossSearchEntryResponse } from '../types/generated'
 import { requestArchiveDelete } from '../composables/useArchiveBrowser'
 import { useArchiveDeletion } from '../composables/useArchiveDeletion'
 import {
@@ -21,9 +24,10 @@ import { archiveKey, sameArchive, type RepoArchive } from '../utils/repoArchive'
 
 /**
  * The archive screen: a list of archives on the left, the selected archive's
- * files on the right, and one deletion flow shared by both panes. On a phone
- * the two take turns: opening an archive replaces the list, and the browser's
- * back button brings it back.
+ * card on the right, and one deletion flow shared by both panes. The list's
+ * search can also look for files across the archives; the matches then take
+ * the right-hand card until one is opened. On a phone the two take turns:
+ * opening an archive replaces the list, and "All archives" brings it back.
  *
  * Every screen that browses borg archives renders this - the repository's
  * Archives tab, a schedule's and an agent's Backups tab and the standalone
@@ -75,6 +79,38 @@ const props = withDefaults(
 )
 
 const selected = defineModel<RepoArchive | null>('selected', { required: true })
+
+/** A search for files across the archives, shown instead of the open archive. */
+interface FileSearchState {
+  query: string
+  archives: RepoArchive[]
+}
+
+const fileSearch = ref<FileSearchState | null>(null)
+
+/** A file the search found, to show and tick once its archive is open. */
+const reveal = ref<ArchiveReveal | null>(null)
+
+function openFileSearch(query: string, archives: RepoArchive[]): void {
+  fileSearch.value = { query, archives }
+}
+
+/** Opens a match in the newest archive that holds it, at its folder, ticked. */
+function openHit(archive: RepoArchive, entry: CrossSearchEntryResponse): void {
+  fileSearch.value = null
+  reveal.value = {
+    archiveKey: archiveKey(archive),
+    path: entry.path.replace(/^\/+/, ''),
+    isDir: isDirectoryEntry(entry),
+  }
+  pick(archive)
+}
+
+/** The phone layout's way back from an open archive or a search to the list. */
+function backToList(): void {
+  fileSearch.value = null
+  pick(null)
+}
 
 const selector = useTemplateRef<InstanceType<typeof ArchiveSelector>>('selector')
 
@@ -140,6 +176,12 @@ function pick(archive: RepoArchive | null): void {
     archiveRoute.push(pushedName)
   }
   selected.value = archive
+}
+
+/** A row picked in the list opens its archive, closing a file search if one is shown. */
+function openFromList(archive: RepoArchive | null): void {
+  fileSearch.value = null
+  pick(archive)
 }
 
 // Back, Forward and links name the archive, so the selection follows the
@@ -263,7 +305,7 @@ defineExpose({
 <template>
   <ArchiveBrowserLayout
     narrow-list
-    :detail-open="selected !== null"
+    :detail-open="selected !== null || fileSearch !== null"
   >
     <template #list>
       <ArchiveSelector
@@ -272,13 +314,15 @@ defineExpose({
         :archives="archives"
         :loading="loading"
         :error="error"
-        :can-delete="isAdmin"
         :deleting-keys="deletingList"
         :hide-controls="hideControls"
+        :file-search="!hideControls"
+        refreshable
         :empty-title="emptyTitle"
         :empty-description="emptyDescription"
-        @update:selected="pick"
-        @delete="request"
+        @update:selected="openFromList"
+        @search-files="openFileSearch"
+        @refresh="reload(false)"
       >
         <template
           v-if="$slots.actions"
@@ -296,19 +340,41 @@ defineExpose({
     </template>
 
     <template #browser>
-      <div class="panel panel--sectioned browser-panel">
-        <ArchiveFileBrowser
-          :repo-id="selected?.repo_id ?? null"
-          :repo-name="selected?.repo_name ?? ''"
-          :archive="selected"
-          :archives="sameRepoArchives"
-          :is-admin="isAdmin"
-          :deleting="selectedDeleting"
-          :path-query-key="pathQueryKey"
-          :route-archive-name="routeArchiveName"
-          @delete-archive="selected !== null && request(selected)"
-          @back="pick(null)"
+      <div class="explorer-detail">
+        <button
+          class="btn btn-sm btn-ghost explorer-back"
+          type="button"
+          @click="backToList"
+        >
+          <ChevronLeft :size="14" />
+          All archives
+        </button>
+        <FileSearch
+          v-if="fileSearch !== null"
+          :query="fileSearch.query"
+          :archives="fileSearch.archives"
+          @close="fileSearch = null"
+          @open="openHit"
         />
+        <div
+          v-else
+          class="panel panel--sectioned browser-panel"
+        >
+          <ArchiveFileBrowser
+            :repo-id="selected?.repo_id ?? null"
+            :repo-name="selected?.repo_name ?? ''"
+            :archive="selected"
+            :archive-key="selected === null ? null : archiveKey(selected)"
+            :archives="sameRepoArchives"
+            :is-admin="isAdmin"
+            :deleting="selectedDeleting"
+            :path-query-key="pathQueryKey"
+            :route-archive-name="routeArchiveName"
+            :reveal="reveal"
+            @delete-archive="selected !== null && request(selected)"
+            @revealed="reveal = null"
+          />
+        </div>
       </div>
     </template>
   </ArchiveBrowserLayout>
@@ -354,8 +420,34 @@ defineExpose({
 </template>
 
 <style scoped>
+.explorer-detail {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--space-4);
+}
+
+/* Only the phone layout shows one pane at a time, so only there is there a
+   list to go back to. */
+.explorer-back {
+  display: none;
+}
+
+@media (max-width: 768px) {
+  .explorer-back {
+    display: inline-flex;
+    align-self: flex-start;
+    padding-left: 0;
+    border-color: transparent;
+    background: none;
+    color: var(--accent);
+  }
+}
+
+/* The card's menu drops out of its header, so the card must not clip it. */
 .browser-panel {
   min-height: 18rem;
+  overflow: visible;
 }
 
 .archive-delete-message {

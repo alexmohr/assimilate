@@ -10,7 +10,7 @@ import { useMobile } from '../composables/useMobile'
 import { useListSort } from '../composables/useListSort'
 import { useWebSocket } from '../composables/useWebSocket'
 import { logger } from '../utils/logger'
-import { formatBytes } from '../utils/format'
+import { formatBytes, relativeTime } from '../utils/format'
 import { useAsyncAction } from '../composables/useAsyncAction'
 import { Plus, Download, SlidersHorizontal, Database } from '@lucide/vue'
 import RepoCreateDialog from '../components/RepoCreateDialog.vue'
@@ -70,6 +70,10 @@ interface HostGroup {
   repoHostId: number
   /** Whether that host is marked as not always online. */
   intermittent: boolean
+  /** Whether it answered its last reachability check; null before the first. */
+  reachable: boolean | null
+  /** When it was last checked. */
+  checkedAt: string | null
   entries: HostGroupEntry[]
   totalDeduplicated: number
   serverQuota: ServerQuotaResponse | null
@@ -234,6 +238,8 @@ const hostGroups = computed<HostGroup[]>(() => {
         sshHost,
         repoHostId: first.repo_host.id,
         intermittent: first.repo_host.intermittent,
+        reachable: first.repo_host.last_check_reachable,
+        checkedAt: first.repo_host.last_checked_at,
         entries,
         totalDeduplicated: offset,
         serverQuota,
@@ -266,13 +272,26 @@ function hostWarnMarkPercent(group: HostGroup): number | null {
   return (warnBytes / group.boxMaxBytes) * 100
 }
 
-function hostPoolNote(group: HostGroup): string {
-  const count = `${group.entries.length} repo${group.entries.length === 1 ? '' : 's'}`
-  if (group.visibleCount === 0) return 'No matching repos'
+/**
+ * The one fact the host line adds after "Intermittent", or null for none: a
+ * filter hiding some of its repositories, or where its pooled quota stands.
+ * The count of repositories is left out, since they are listed right below.
+ */
+interface PoolNote {
+  text: string
+  /** How far the pool is below its warning mark: the bar shows that too. */
+  belowWarning: boolean
+}
+
+function hostPoolNote(group: HostGroup): PoolNote | null {
+  if (group.visibleCount === 0) return { text: 'No matching repos', belowWarning: false }
   if (group.visibleCount < group.entries.length) {
-    return `Showing ${group.visibleCount} of ${group.entries.length} repos`
+    return {
+      text: `Showing ${group.visibleCount} of ${group.entries.length} repos`,
+      belowWarning: false,
+    }
   }
-  if (!group.serverQuota?.configured) return `${count} · no host quota configured`
+  if (!group.serverQuota?.configured) return null
 
   const health = quotaHealth(group.serverQuota, group.totalDeduplicated)
   if (health === 'critical' || health === 'warning') {
@@ -281,14 +300,68 @@ function hostPoolNote(group: HostGroup): string {
       group.serverQuota.warn_action,
       group.serverQuota.critical_action,
     )
-    const state = health === 'critical' ? 'over critical' : 'over warn threshold'
-    return `${count} · ${state}${action ? ` · ${actionLabel(action)}` : ''}`
+    const state = health === 'critical' ? 'Over critical' : 'Over warning'
+    return { text: `${state}${action ? ` · ${actionLabel(action)}` : ''}`, belowWarning: false }
   }
   const warnBytes = group.serverQuota.warn_bytes
   if (warnBytes !== null && warnBytes > group.totalDeduplicated) {
-    return `${count} · ${formatBytes(warnBytes - group.totalDeduplicated)} below warn`
+    return {
+      text: `${formatBytes(warnBytes - group.totalDeduplicated)} below warning`,
+      belowWarning: true,
+    }
   }
-  return `${count} · healthy`
+  return null
+}
+
+/** The host's stored total, against its quota when it has one. */
+function hostTotalText(group: HostGroup): string {
+  const used = formatBytes(group.totalDeduplicated)
+  return group.boxMaxBytes ? `${used} / ${formatBytes(group.boxMaxBytes)}` : used
+}
+
+/**
+ * The host line's facts after its name. A phone also carries the total there,
+ * since a long host name leaves no room beside it, and leaves out how far the
+ * pool is below its warning mark, which the bar under the line already shows.
+ */
+function hostFacts(group: HostGroup, width: 'wide' | 'narrow'): string {
+  const note = hostPoolNote(group)
+  const facts = [
+    group.intermittent ? 'Intermittent' : null,
+    note === null || (width === 'narrow' && note.belowWarning) ? null : note.text,
+    width === 'narrow' ? hostTotalText(group) : null,
+  ]
+  return facts.filter((fact): fact is string => fact !== null).join(' · ')
+}
+
+/** What "Intermittent" means, for its tooltip. */
+const INTERMITTENT_HINT =
+  'Can be offline at any time, even when a backup is due. Missed backups run once it is back.'
+
+/** The host's dot: what its last reachability check found. */
+interface HostState {
+  dot: string | null
+  label: string
+}
+
+function hostState(group: HostGroup): HostState {
+  const checked = group.checkedAt ? ` · checked ${relativeTime(group.checkedAt)}` : ''
+  if (group.reachable === null) return { dot: null, label: 'Not checked yet' }
+  if (group.reachable) return { dot: 'status-dot--success', label: `Online${checked}` }
+  // Away is expected of an intermittent host; only one that should always
+  // answer is a problem when it does not.
+  return group.intermittent
+    ? { dot: 'status-dot--hollow', label: `Offline${checked}` }
+    : { dot: 'status-dot--danger', label: `Not answering${checked}` }
+}
+
+/** The pool bar stays in the accent colour until the host passes its warning mark. */
+function hostPoolTone(group: HostGroup): string | null {
+  if (!group.serverQuota?.configured) return null
+  const health = quotaHealth(group.serverQuota, group.totalDeduplicated)
+  if (health === 'critical') return 'pool-track--danger'
+  if (health === 'warning') return 'pool-track--warning'
+  return null
 }
 
 /** Grouping by tag is only offered once there is a tag to group by. */
@@ -408,6 +481,7 @@ function openRepoDialog(mode: AddTab): void {
  * straight away in its importing state rather than waiting for a refetch.
  */
 function onRepoImported(created: Repo): void {
+  const sameHost = repos.value.find((r) => r.repo_host.id === created.repo_host_id)
   repos.value = [
     ...repos.value,
     {
@@ -451,9 +525,9 @@ function onRepoImported(created: Repo): void {
       repo_host: {
         id: created.repo_host_id,
         machine_id: created.machine_id,
-        intermittent: repos.value.some(
-          (r) => r.repo_host.id === created.repo_host_id && r.repo_host.intermittent,
-        ),
+        intermittent: sameHost?.repo_host.intermittent ?? false,
+        last_check_reachable: sameHost?.repo_host.last_check_reachable ?? null,
+        last_checked_at: sameHost?.repo_host.last_checked_at ?? null,
       },
       power: created.power,
     },
@@ -641,6 +715,13 @@ onMounted(loadRepos)
           :class="{ 'pool-header-empty': group.host.visibleCount === 0 }"
         >
           <span class="pool-host">
+            <span
+              class="status-dot"
+              :class="hostState(group.host).dot"
+              :title="hostState(group.host).label"
+              role="img"
+              :aria-label="hostState(group.host).label"
+            ></span>
             <h2 class="list-group-title">
               <RouterLink
                 v-if="authStore.isAdmin"
@@ -650,23 +731,21 @@ onMounted(loadRepos)
               </RouterLink>
               <template v-else>{{ group.host.sshHost }}</template>
             </h2>
-            <span
-              v-if="group.host.intermittent"
-              class="badge badge--warning"
-            >
-              Not always online
-            </span>
           </span>
-          <span class="list-group-count pool-note">{{ hostPoolNote(group.host) }}</span>
-          <span class="list-group-aside pool-total">
-            {{ formatBytes(group.host.totalDeduplicated) }}
-            <template v-if="group.host.boxMaxBytes">
-              / {{ formatBytes(group.host.boxMaxBytes) }}
-            </template>
+          <span
+            class="list-group-count pool-note"
+            :title="group.host.intermittent ? INTERMITTENT_HINT : undefined"
+          >
+            <span class="list-wide-only">{{ hostFacts(group.host, 'wide') }}</span>
+            <span class="list-narrow-only">{{ hostFacts(group.host, 'narrow') }}</span>
+          </span>
+          <span class="list-group-aside pool-total list-wide-only">
+            {{ hostTotalText(group.host) }}
           </span>
           <div
             v-if="group.host.boxMaxBytes"
             class="pool-track"
+            :class="hostPoolTone(group.host)"
             role="img"
             :aria-label="`${formatBytes(group.host.totalDeduplicated)} used of ${formatBytes(group.host.boxMaxBytes)} across ${group.host.entries.length} repositories`"
           >
@@ -701,20 +780,11 @@ onMounted(loadRepos)
         </header>
 
         <template v-if="group.rows.length > 0">
-          <div class="list-cols">
-            <span>Repository</span>
-            <span>Status</span>
-            <span>Archives</span>
-            <span>Last backup</span>
-            <span>Size of quota</span>
-            <span></span>
-          </div>
           <RepoListRow
             v-for="row in group.rows"
             :key="`${group.key}-${row.repo.id}`"
             :repo="row.repo"
             :dim="row.dim"
-            :pooled="group.host !== null"
           />
         </template>
       </section>
@@ -743,7 +813,7 @@ onMounted(loadRepos)
 }
 
 .repos-list .list-group {
-  --list-cols: minmax(0, 2.6fr) minmax(0, 1.3fr) 4.5rem 6.5rem minmax(0, 1.6fr) 1rem;
+  --list-cols: minmax(0, 1fr) minmax(0, 13rem) 1rem;
 }
 
 .tag-group-dot {
@@ -794,12 +864,36 @@ onMounted(loadRepos)
   border-radius: var(--radius-pill);
 }
 
+/* Accent while the host is below its warning mark, the quota's tone past it.
+   Two steps, so neighbouring repositories' slices stay apart. */
 .pool-seg-step-0 {
-  background: var(--warning);
+  background: var(--accent);
 }
 
 .pool-seg-step-1 {
+  background: color-mix(in oklab, var(--accent) 62%, var(--bg-card));
+}
+
+.pool-track--warning .pool-seg-step-0 {
+  background: var(--warning);
+}
+
+.pool-track--warning .pool-seg-step-1 {
   background: color-mix(in oklab, var(--warning) 62%, var(--bg-card));
+}
+
+.pool-track--danger .pool-seg-step-0 {
+  background: var(--danger);
+}
+
+.pool-track--danger .pool-seg-step-1 {
+  background: color-mix(in oklab, var(--danger) 62%, var(--bg-card));
+}
+
+/* An intermittent host that is away, as expected: the dot's outline only. */
+.status-dot--hollow {
+  background: transparent;
+  box-shadow: inset 0 0 0 1.5px var(--text-muted);
 }
 
 .pool-seg-dim {
@@ -816,10 +910,11 @@ onMounted(loadRepos)
 }
 
 @media (max-width: 640px) {
-  /* Name and usage on the first line, the bar, then the summary under it. */
+  /* The host on the first line, its facts and total under it, then the bar:
+     a long host name leaves no room beside it for the total. */
   .pool-note {
-    order: 1;
     flex-basis: 100%;
+    padding-left: calc(8px + var(--space-4));
   }
 }
 </style>

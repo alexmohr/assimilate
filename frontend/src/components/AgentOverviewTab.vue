@@ -4,6 +4,8 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 -->
 
 <script setup lang="ts">
+import type { RouteLocationRaw } from 'vue-router'
+import { runLogLink } from '../utils/activityLink'
 import { computed } from 'vue'
 import { CircleAlert, CircleCheck, CircleHelp, CircleX } from '@lucide/vue'
 import { formatBytes, formatDateShort, formatDuration, relativeTime } from '../utils/format'
@@ -11,7 +13,6 @@ import { byFinishedDesc, normalizeBackupStatus, filterSettledReports } from '../
 import { backupStatusBadgeClass } from '../utils/badge'
 import { buildRepoOverview, type RepoOverviewState } from '../utils/repoOverview'
 import BackupProgressCard from './BackupProgressCard.vue'
-import AgentRunStrip from './AgentRunStrip.vue'
 import type { ScheduleHealthEntry } from '../utils/scheduleHealth'
 import type { ScheduleRow } from '../types/schedule'
 import type { ReportRow } from '../types/report'
@@ -34,9 +35,6 @@ export interface LiveBackup {
   elapsedSecs: number
   progress: { nfiles: number; originalSize: number; currentPath: string } | null
 }
-
-/** Runs drawn in each repository's own strip. */
-const REPO_STRIP_RUNS = 10
 
 const props = defineProps<{
   agent: AgentRow
@@ -183,6 +181,18 @@ const verdict = computed<{ tone: Tone; title: string; detail: string | null }>((
 /** How many runs the verdict's summary line looks back over. */
 const RUN_WINDOW = 20
 
+/** A repository whose last run failed or warned: where that run is read. */
+function runLogFor(row: (typeof repoRows.value)[number]): RouteLocationRaw | null {
+  const run = row.lastRun
+  if (!run || (row.state !== 'failed' && row.state !== 'warning')) return null
+  return runLogLink({ hostname: props.agent.hostname, target: row.name, reportId: run.id })
+}
+
+const lastBackupProblem = computed<boolean>(() => {
+  const status = lastBackup.value ? normalizeBackupStatus(lastBackup.value.status) : null
+  return status === 'failed' || status === 'warning'
+})
+
 const REPO_STATE_LABEL: Record<RepoOverviewState, string> = {
   running: 'Running now',
   failed: 'Last run failed',
@@ -295,10 +305,25 @@ const REPO_STATE_TONE: Record<RepoOverviewState, Tone | 'info'> = {
         <span class="stat-label">Last backup</span>
         <span
           v-if="lastBackup"
-          class="stat-value stat-value--lg"
+          class="stat-value stat-value--lg last-backup-value"
         >
           {{ relativeTime(lastBackup.finished_at) }}
+          <!-- A run that did not succeed links to its output in the log. -->
+          <RouterLink
+            v-if="lastBackupProblem"
+            class="badge"
+            :class="backupStatusBadgeClass(lastBackup.status)"
+            :to="
+              runLogLink({
+                hostname: agent.hostname,
+                reportId: lastBackup.id,
+                target: lastBackup.repo_name,
+              })
+            "
+            >{{ normalizeBackupStatus(lastBackup.status) }}</RouterLink
+          >
           <span
+            v-else
             class="badge"
             :class="backupStatusBadgeClass(lastBackup.status)"
             >{{ normalizeBackupStatus(lastBackup.status) }}</span
@@ -342,11 +367,13 @@ const REPO_STATE_TONE: Record<RepoOverviewState, Tone | 'info'> = {
         <h2 class="section-title">Repositories</h2>
       </div>
       <div class="rows">
-        <RouterLink
+        <!-- The name's link stretches over the whole row, so the row opens
+             the repository; only a failed or warned run's pill sits above it
+             and opens that run in the Activity log instead. -->
+        <div
           v-for="row in repoRows"
           :key="row.id"
           class="repo-row"
-          :to="`/repos/${row.id}`"
           :data-repo-id="row.id"
         >
           <span
@@ -354,17 +381,27 @@ const REPO_STATE_TONE: Record<RepoOverviewState, Tone | 'info'> = {
             :class="`repo-dot--${REPO_STATE_TONE[row.state]}`"
             aria-hidden="true"
           />
-          <span class="repo-name">{{ row.name }}</span>
+          <RouterLink
+            class="repo-name repo-row-link"
+            :to="`/repos/${row.id}`"
+            >{{ row.name }}</RouterLink
+          >
+          <RouterLink
+            v-if="runLogFor(row)"
+            class="badge repo-pill repo-state-link"
+            :class="`badge--${REPO_STATE_TONE[row.state]}`"
+            :to="runLogFor(row)!"
+            :title="`Open this run in the Activity log`"
+            >{{ REPO_STATE_LABEL[row.state] }}</RouterLink
+          >
+          <!-- The dot already says healthy; the badge only speaks up when
+               there is something else to say. -->
           <span
-            class="badge"
+            v-else-if="row.state !== 'success'"
+            class="badge repo-pill"
             :class="`badge--${REPO_STATE_TONE[row.state]}`"
             >{{ REPO_STATE_LABEL[row.state] }}</span
           >
-          <AgentRunStrip
-            compact
-            :reports="row.reports"
-            :limit="REPO_STRIP_RUNS"
-          />
           <span class="repo-meta">
             <span v-if="row.lastRun">last {{ relativeTime(row.lastRun.finished_at) }}</span>
             <span v-if="row.lastGood && row.lastRun?.id !== row.lastGood.id">
@@ -375,7 +412,7 @@ const REPO_STATE_TONE: Record<RepoOverviewState, Tone | 'info'> = {
             </span>
             <span v-if="row.nextRunAt">next {{ formatDateShort(row.nextRunAt) }}</span>
           </span>
-        </RouterLink>
+        </div>
       </div>
     </section>
   </div>
@@ -457,11 +494,18 @@ const REPO_STATE_TONE: Record<RepoOverviewState, Tone | 'info'> = {
   color: var(--accent);
 }
 
+/* Both actions travel together at the right edge; each taking its own
+   auto margin split the free space and left the first one mid-row. */
+.attention-action ~ .attention-link {
+  margin-left: 0;
+}
+
 .facts {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   border: 1px solid var(--border);
   border-radius: var(--radius);
+  background: var(--bg-card);
 }
 
 .fact {
@@ -474,6 +518,13 @@ const REPO_STATE_TONE: Record<RepoOverviewState, Tone | 'info'> = {
 
 .fact + .fact {
   border-left: 1px solid var(--border);
+}
+
+/* The time and the outcome pill beside it, with room between them. */
+.last-backup-value {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-5);
 }
 
 .stat-value--empty {
@@ -489,7 +540,8 @@ const REPO_STATE_TONE: Record<RepoOverviewState, Tone | 'info'> = {
 
 .repo-row {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  position: relative;
+  grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
   gap: var(--space-3) var(--space-5);
   padding: var(--space-5) var(--space-6);
@@ -537,12 +589,39 @@ const REPO_STATE_TONE: Record<RepoOverviewState, Tone | 'info'> = {
   white-space: nowrap;
 }
 
+/* The repository link covers the row; the run pill stays clickable above it. */
+.repo-row-link {
+  color: inherit;
+  text-decoration: none;
+}
+
+.repo-row-link::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+}
+
+.repo-state-link {
+  position: relative;
+  z-index: 1;
+  text-decoration: none;
+}
+
+.repo-state-link:hover {
+  filter: brightness(1.15);
+}
+
+.repo-pill {
+  grid-column: 3;
+  grid-row: 1 / span 2;
+  align-self: center;
+}
+
 .repo-meta {
-  grid-column: 1 / -1;
+  grid-column: 2;
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-2) var(--space-6);
-  padding-left: var(--space-7);
   font-size: var(--fs-xs);
   color: var(--text-muted);
   font-variant-numeric: tabular-nums;

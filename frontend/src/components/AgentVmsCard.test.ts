@@ -95,15 +95,19 @@ describe('AgentVmsCard', () => {
     expect(text).toContain('42.0 GB of 200.0 GB')
   })
 
+  // The limit box says "Host default" once, as its placeholder, while the
+  // domain inherits; an override fills the box with its own figure instead.
   it('says a domain inherits the host default until it is overridden', async () => {
     const wrapper = await mount()
-    expect(wrapper.text()).toContain('Host default')
+    const inherited = wrapper.get<HTMLInputElement>('input.vm-limit')
+    expect(inherited.element.value).toBe('')
+    expect(inherited.attributes('placeholder')).toBe('Host default')
 
     vi.mocked(apiClient.get).mockResolvedValue({
       data: response([vm({ limit_bytes: 500 * GIB, effective_limit_bytes: 500 * GIB })]),
     } as never)
     const overridden = await mount()
-    expect(overridden.text()).toContain('Overridden')
+    expect(overridden.get<HTMLInputElement>('input.vm-limit').element.value).toBe('500')
   })
 
   it('shows the reason a domain failed its last run', async () => {
@@ -248,7 +252,11 @@ describe('AgentVmsCard', () => {
     } as never)
     const wrapper = await mount()
 
-    expect(wrapper.text()).toContain('No limit')
+    // The staged size stands alone: there is no budget to be "of".
+    const staged = wrapper.get('td[data-label="Staged size"]').text()
+    expect(staged).toContain('42.0 GB')
+    expect(staged).not.toContain(' of ')
+    expect(wrapper.get<HTMLInputElement>('input.vm-limit').element.value).toBe('0')
     // Nothing to be a share of, so there is no bar to fill.
     expect(wrapper.find('.progress-track').exists()).toBe(false)
   })

@@ -24,28 +24,29 @@ The agent refuses to start without a server key. See [Encrypted connection](#enc
 
 ![Agents](assets/screenshots/hosts.png)
 
-The Agents list page shows every agent as a row in a grouped list. The toolbar above it provides:
+The Agents list page shows every agent as a row in a grouped list. Above it sit a search box and a **Filters** button, with the status pills under them:
 
-- **Text filter** — search by hostname, display name, domain, or tag
-- **Status pills** — **All**, **Needs attention**, **Online**, and **Offline**, each with a count of the agents it leaves given the other filters. **Online** and **Offline** go by the connection alone; **Needs attention** keeps the agents that carry a **Failed**, **Overdue**, or **No schedules** chip. The choice is remembered for the next visit.
-- **Coverage filter** — show protected, unassigned, never-succeeded, or disabled-only agents; dashboard coverage links set this filter automatically
-- **Tag filter** — filter by one or more tags
-- **Show hidden toggle** — reveal hidden imported agents (admin-only)
-- **Group control** — group the rows by **Status** (the default) or **Version**; the choice is remembered
-- **Sort buttons** — sort by Name, Status, Last seen, or Version within each group
+- **Search** — filter by hostname, display name, domain, or tag
+- **Status pills** — **All**, **Needs attention**, **Online**, and **Offline**, each with a count of the agents it leaves given the other filters. **Online** and **Offline** go by the connection alone; **Needs attention** keeps the agents that carry a **failed**, **overdue**, or **No schedules** chip. The choice is remembered for the next visit.
+- **Filters** — opens a card with the rest of the controls, below. The button shows how many of them are narrowing the list.
 
-On a phone, the status pills stay in view and the other controls sit behind the filter button.
+| Control | What it does |
+|---|---|
+| **Coverage** | Show protected, unassigned, never-succeeded, or disabled-only agents; dashboard coverage links set this filter automatically |
+| **Tags** | Filter by one or more tags |
+| **Group by** | Group the rows by **Status** (the default) or **Version**; the choice is remembered |
+| **Sort by** | Sort by Name, Status, Last seen, or Version within each group |
+| **Show hidden agents** | Reveal hidden imported agents (admin-only) |
 
-A strip of four figures above the list rolls up the whole fleet:
+A strip of three figures above the list rolls up the whole fleet:
 
 | Figure | Shows |
 |---|---|
 | Agents | Total agent count, with the number of schedules under it |
 | Online | Connected agents, with how many are backing up right now |
 | Needs attention | Agents with an issue chip, split into failing, overdue, and (when any) unprotected |
-| Versions | One badge per agent version in use with its count: green for the version matching the server's binary, amber for one behind it, grey when there is nothing to compare against |
 
-The strip counts the whole fleet, not the filtered list — narrowing the rows below it does not change what the fleet is.
+The strip counts the whole fleet, not the filtered list — narrowing the rows below it does not change what the fleet is. To see which versions are in use, group the list by **Version**.
 
 The **Dependencies** page, listed below **Agents** in the sidebar, lists the [dependency hosts](dependency-hosts.md): machines a backup needs besides its agent and repository, such as the server whose share a pre-backup command mounts.
 
@@ -55,15 +56,15 @@ By default the list has up to three groups, each in its own panel with a header 
 
 | Group | Contains |
 |---|---|
-| Needs attention | Agents with a **Failed**, **Overdue**, or **No schedules** chip, online or not. Failing agents come first. |
-| Online | Connected agents with nothing to look at |
+| Needs attention | Agents with a **failed**, **overdue**, or **No schedules** chip, online or not. Failing agents come first. |
+| Online | Connected agents with nothing to look at; the header says how many are backing up now |
 | Offline | Disconnected agents with nothing due |
 
 The **Offline** group shows its first five agents. Click **Show N more offline agents** under it to list the rest, and **Show fewer** to fold them again.
 
 ### Grouping by version
 
-Choose **Version** in the group control to group agents by the version each one reports, newest first, with agents that have never reported a version last under **Unknown**. When the server has an agent binary available, each group header says how it stands against it — **Current** or **Behind**; without one, the UI makes no claim beyond naming the versions.
+Choose **Version** under **Group by** to group agents by the version each one reports, newest first, with agents that have never reported a version last under **Unknown**. When the server has an agent binary available, each group header says how it stands against it — **Current** or **Behind**; without one, the UI makes no claim beyond naming the versions.
 
 ### Agent rows
 
@@ -71,27 +72,27 @@ Column heads appear once per group. Each row shows:
 
 | Column | Shows |
 |---|---|
-| Agent | A status dot, the hostname (with its domain when set), and the display name under it |
-| Status | The status chips described below, plus the agent's tags |
+| Agent | A status dot, the hostname (with its domain when set), and under it the display name, plus **Imported** or **Hidden** for those agents |
+| Status | At most one item: the agent's most pressing issue chip, or, while a backup runs, where it is backing up to |
 | Schedules | How many schedules target the agent |
 | Last backup | The most recent completed backup |
 | Last seen | When the agent was last connected |
 | Version | The agent version it reports |
 
-The status dot is red for an agent with a failed backup, blue while a backup is running, amber for any other issue, green for a healthy online agent, and grey for an offline one. Offline and hidden agents are dimmed.
+The status dot is red for an agent with a failed backup, blue while a backup is running, amber for any other issue, green for a healthy online agent, and grey for an offline one. Offline and hidden agents are dimmed; an offline agent has no chip of its own, its dimmed row and its **Last seen** time say it. Tags are not shown on the row; filter by them, or see them in the agent's header.
 
-Click a row to open the agent's detail page. On a phone, each row stacks into three lines: the hostname with its last backup time, then the display name, schedule count, and version, then the status chips.
+Click a row to open the agent's detail page. On a phone, each row stacks into three lines: the hostname with its last backup time, then the display name, schedule count, and version, then the status item.
 
 Two of the figures take a colour of their own:
 
 - **Last backup** reads green when the agent's schedules are on track, amber when one is overdue or its last run failed, and red when the agent has never completed a backup.
 - **Last seen** reads amber for an agent that has just gone offline and red once it has been gone for more than a day.
 
-A **Failed** or **Overdue** chip appears when a backup on that agent needs attention — click it to jump straight to the filtered backup history or schedule that needs a look. A **No schedules** chip marks an agent nothing is scheduled to back up at all; it opens that agent's Schedules tab. The chip is only shown once the server has actually answered with schedule counts — a failed request leaves the row silent rather than accusing every agent of having none. An **Offline** pill marks a disconnected agent, and **Hidden** and **Imported** badges mark those agents.
+The issue chips are **N failed**, **No schedules**, and **N overdue**, and a row shows only the first that applies, in that order. **failed** opens the [Activity log](activity.md) filtered to that agent's failed runs, where their output is; **overdue** opens the agent's Schedules tab with the overdue schedules highlighted. **No schedules** marks an agent nothing is scheduled to back up at all; it opens that agent's Schedules tab. The chip is only shown once the server has actually answered with schedule counts — a failed request leaves the row silent rather than accusing every agent of having none.
 
 Every row ends in an arrow and opens the agent's page. Actions such as **Deploy agent**, **Upgrade agent**, **Adopt**, **Merge into...** and **Unhide agent** are in that page's [header](#header-actions), not on the list.
 
-**Last backup** is the most recent backup that actually completed on that agent, across all of its schedules — a failed run is not one, however recently it reported. When an agent's latest run failed, the row shows the successful (or warning) run before it, so a single failure never makes a backed-up agent read as unprotected. An agent that has never completed a backup reads **Never**. Whether an agent has fallen *behind* is a separate question, answered by the **Overdue** chip, which counts the agent's schedules the server considers overdue; the row does not estimate it a second time from the cron cadence.
+**Last backup** is the most recent backup that actually completed on that agent, across all of its schedules — a failed run is not one, however recently it reported. When an agent's latest run failed, the row shows the successful (or warning) run before it, so a single failure never makes a backed-up agent read as unprotected. An agent that has never completed a backup reads **Never**. Whether an agent has fallen *behind* is a separate question, answered by the **overdue** chip, which counts the agent's schedules the server considers overdue; the row does not estimate it a second time from the cron cadence.
 
 ## Duplicate Hostnames
 
@@ -336,15 +337,15 @@ The failure count is tracked per schedule, not per target agent. For a schedule 
 
 A schedule can also back off and auto-disable for a local/data problem unrelated to connectivity — for example a corrupted encrypted repo passphrase that fails to decrypt on every attempt. That case is *not* cleared by the agent reconnecting, since reconnecting says nothing about whether the underlying problem was fixed: it stays disabled until you fix the cause and re-enable it yourself.
 
-A schedule the scheduler disabled itself is never just labeled "Disabled" — its status pill on the schedules list and its detail page reads "Auto-disabled · agent unreachable" or "Auto-disabled · error", so it's distinguishable at a glance from a schedule you (or [quota enforcement](quotas.md)) turned off. Both the auto-disable and the later reconnect re-enable are also recorded on the [Activity page](activity.md)'s System Events tab.
+A schedule the scheduler disabled itself is never just labeled "Disabled" — its health on the Schedules list and the status badge in its detail page's header read "Auto-disabled · agent unreachable" or "Auto-disabled · error", so it's distinguishable at a glance from a schedule you (or [quota enforcement](quotas.md)) turned off. Both the auto-disable and the later reconnect re-enable are also recorded on the [Activity page](activity.md)'s System Events tab.
 
-Before a schedule reaches its threshold, each miss shows as `N/threshold missed` in the schedule's health chip on the Schedules list, so a struggling agent is visible well before the schedule actually goes down. See [Schedule Configuration](configuration.md#schedule-configuration) for the `missed_backup_threshold` field.
+Before a schedule reaches its threshold, each miss shows as `N/threshold missed` in the schedule's **Health** column on the Schedules list, so a struggling agent is visible well before the schedule actually goes down. See [Schedule Configuration](configuration.md#schedule-configuration) for the `missed_backup_threshold` field.
 
-While a backup is running for an agent, its row on the Agents list shows a **Running** pill naming the target repository and a blue status dot. This reflects persisted running-operation state, so it appears immediately on page load rather than only after a live event.
+While a backup is running for an agent, its row on the Agents list shows a blue status dot and names the target repository (*Backing up: ...*) in its Status column. This reflects persisted running-operation state, so it appears immediately on page load rather than only after a live event.
 
 ## Agent Detail View
 
-The agent detail page opens on a persistent header — hostname, connection status, and a meta strip carrying the agent version, revision, build time, registration date and last-seen time — followed by five tabs.
+The agent detail page opens on a persistent header — hostname, connection status, and a meta strip carrying the agent version, revision, build time, registration date and last-seen time — followed by five tabs: **Overview**, **Schedules** (with a count), **Backups**, **Sources** (admins only) and **Settings**. Admins also see and edit the agent's [tags](#agent-tags) in the header.
 
 ![Agent Detail](assets/screenshots/host-detail.png)
 
@@ -355,8 +356,7 @@ Actions are graded by how often and how safely they are used:
 | Placement | Actions |
 |-----------|---------|
 | Primary button | **Deploy agent** / **Upgrade agent**, when a newer build is available. On an imported host, **Adopt** and **Merge into...** instead |
-| Secondary button | **Activity log** |
-| Overflow menu (**...**) | **Edit identity**, **Deploy SSH key**, **Regenerate token**, **Restart agent**, and for admins **Delete agent** — or **Hide agent** and **Delete archives and remove** on an imported host. A hidden host offers admins **Unhide agent** in place of **Hide agent** |
+| Overflow menu (**...**) | **Activity log**, **Clean up failed backups (N)** for admins when there are any, **Edit identity**, **Deploy SSH key**, **Redeploy agent**, **Regenerate token**, **Restart agent**, and for admins **Delete agent** — or **Hide agent** and **Delete archives and remove** on an imported host. A hidden host offers admins **Unhide agent** in place of **Hide agent** |
 
 Edit identity and Deploy SSH key open dialogs rather than expanding inline, so the page below them does not move.
 
@@ -365,62 +365,59 @@ Edit identity and Deploy SSH key open dialogs rather than expanding inline, so t
 The landing tab answers one question — are this agent's backups OK — and then shows the evidence. Schedules and archives have tabs of their own, so they are not previewed here:
 
 - A **progress card** for each backup currently running on this agent, linking to the target repository and offering a **Cancel backup** action. Files/data processed and the current file are shown as they stream in; the current-file path is clamped to two lines and ellipsized if it still doesn't fit, so the card stays a fixed size.
-- A **verdict**, always present, that changes with the agent's state: *All backups are healthy* with a one-line summary of the recent runs, *Needs attention* when something is wrong, or *No backups yet* for an agent that has never run. When something is wrong it lists each problem under the verdict: an overdue schedule (with a link to it), a repository whose last run failed, one entry per repository (each with **View error**, which opens the run on the **Logs** tab with its output already expanded), or an offline agent. The verdict is red when a run failed and amber otherwise.
-- Two facts side by side: **Last backup** with its outcome, and **Next run** across every enabled schedule.
-- A **Repositories** list with one row per repository the agent backs up to. Each row shows the repository's own state (*Healthy*, *Warnings*, *Last run failed*, *Overdue*, *Running now* or *Never ran*), its own [recent runs](#recent-runs) strip, when it last ran, how much new data that run added, and when it next runs. A repository whose last run failed also shows when it last succeeded. Select a row to open the repository.
+- A **verdict**, always present, that changes with the agent's state: *All backups are healthy* with a one-line summary of the recent runs, *Needs attention* when something is wrong, or *No backups yet* for an agent that has never run. When something is wrong it lists each problem under the verdict: an overdue schedule (with **Open schedule**), a repository whose last run failed, one entry per repository (each with **View error**, which opens the run in the [Activity log](activity.md) with its output already open), or an offline agent. The verdict is red when a run failed and amber otherwise.
+- Two facts side by side: **Last backup** with its outcome, and **Next run** across every enabled schedule. When the last backup failed or warned, its **Failed** or **Warning** badge opens that run in the [Activity log](activity.md), with its output open.
+- A **Repositories** list with one row per repository the agent backs up to. Each row's dot shows the repository's own state, and anything but healthy is named next to the name (*Warnings*, *Last run failed*, *Overdue*, *Running now* or *Never ran*), followed by when it last ran, how much new data that run added, and when it next runs. A repository whose last run failed also shows when it last succeeded. Select a row to open the repository. On a row whose last run failed or warned, the *Last run failed* or *Warnings* label opens that run in the Activity log instead.
 
-### Recent runs
-
-Each repository's row on the Overview draws that repository's last 10 runs as one cell per run — green for success, amber for a warning, red for a failure — oldest on the left. The verdict's summary line looks back over the last 20 runs across all repositories.
-
-This is a count of runs, not a span of days, because a fixed calendar window means something different at every backup cadence: 30 days is four samples for a weekly schedule, where a single miss reads as 75%, and over 700 for an hourly one, where a whole night's outage rounds away to nothing. It also shows whether failures were one incident or a standing pattern, which a percentage cannot.
+The verdict's summary line looks back over the last 20 runs across all repositories. This is a count of runs, not a span of days, because a fixed calendar window means something different at every backup cadence: 30 days is four samples for a weekly schedule, where a single miss reads as 75%, and over 700 for an hourly one, where a whole night's outage rounds away to nothing.
 
 !!! note
     Fleet-wide success *rates* over a selectable window live on the [Dashboard](dashboard.md), where every agent shares one window and the comparison is meaningful.
 
 ### Schedules
 
-The Schedules tab renders one line per schedule that targets this agent: a status stripe, a name, a time, and stats aligned to the right. Rows carry **Run now**, which triggers the schedule for this agent only — not for the other hosts a shared schedule targets.
+The Schedules tab is a table of the schedules that target this agent: a status dot, the name over its cadence and repository, the last run and the next one. **All**, **Failing** and **Healthy** pills above it narrow the table, and **Add schedule** starts a new [schedule](scheduling.md#creating-a-schedule) for this agent. A failing schedule shows its last error in place of its cadence line; that error and the row's last-run outcome open the run in the [Activity log](activity.md). Click a row to open the schedule. Each row's play button is **Run now**, which triggers the schedule for this agent only — not for the other hosts a shared schedule targets.
 
 The tab label carries a count, including zero.
 
 ### Backups
 
-The Backups tab is the archive browser: every archive this agent has, in every repository it backs up to, in one list — the same archive list and file browser the [repository](archives.md) and [schedule](scheduling.md#backups-tab) Backups tabs render, pre-filtered to this agent's own archives. The list starts grouped by day. With more than one repository each row carries a tag naming its repository and a **Repository** filter narrows the list to one; with a single repository the list header names it. Select an archive to browse its file contents, navigate directories via breadcrumbs, download individual files or directories, and [pick files to restore](archives.md#picking-files-to-restore-or-download) — onto this agent by default, or [anywhere else](archives.md#where-to-restore). **Growth** shows where an archive's deduplicated size went, compared with this agent's usual growth in that repository — see [Archive growth](archives.md#archive-growth).
+The Backups tab is the archive browser: every archive this agent has, in every repository it backs up to, in one list — the same archive list and file browser the [repository](archives.md) and [schedule](scheduling.md#backups-tab) Backups tabs render, pre-filtered to this agent's own archives. The list starts grouped by day. With more than one repository each row names its repository and repository pills above the list narrow it to one; with a single repository the list header names it. Select an archive to browse its file contents, navigate directories via the folder path, download files or directories, and [pick files to restore](archives.md#picking-files-to-restore-or-download) — onto this agent by default, or [anywhere else](archives.md#where-to-restore). The archive's **Growth** tab shows where its deduplicated size went, compared with this agent's usual growth in that repository — see [Archive growth](archives.md#archive-growth).
 
 ![Agent Backups tab](assets/screenshots/agent-backups.png)
 
-### Logs Tab
+### Run history
 
-The Logs tab is the flat run history — every backup this agent has attempted, any status, oldest failures included, one line each: a status stripe, the target repository and schedule, and stats aligned to the right. A run that produced an archive links straight to it in the Backups tab; a warned or failed run expands its warning or error output in place. The tab label carries the true total, and the list itself loads the 50 most recent runs at a time, with a **Load N more** button for the rest rather than silently stopping at that first page.
+The agent page has no run list of its own: every backup the agent has attempted, any status, is in the [Activity log](activity.md). **Activity log** in the header's **...** menu opens it filtered to this agent, and every failed or warned badge on the page opens the run it is about there, with its output open.
 
 A failed run usually produced no borg archive, so there is nothing on disk to lose by clearing its history — and the rare failed run that did produce one (e.g. a prune or post-backup hook failing after a successful `borg create`) is left alone rather than deleted. When there are one or more archive-less failed runs, an admin can clear them via **Clean up failed backups (N)** in the header's overflow menu; it deletes every such failed report for this agent after a confirmation dialog. This is a manual, on-demand action for this agent alone — independent of the [`failed_report_retention_days`](configuration.md#system-settings) setting, which prunes failed reports for *every* agent automatically by age.
 
-#### Retrying a failed run
+### Sources
 
-A failed run of a schedule carries a **Retry** button, as long as it is still the latest run of that host and repository. Pressing it runs the schedule again right away for that one host and that one repository only: on a schedule that writes to several repositories, the copies that succeeded are not written a second time. Otherwise it behaves exactly like **Run now**: the schedule's hooks, power management and **On failure** setting apply. **View error** / **Open in Logs** on a schedule's Overview land on this row, so a failure is two clicks from being retried.
+Admins only. What the agent backs up besides plain files, as two collapsible sections:
 
-![A failed run on the Logs tab with its Retry button](assets/screenshots/run-log-retry.png)
+| Section | Contents |
+|---------|----------|
+| **Virtual machines** | Staging this host's libvirt/QEMU domains before a backup, and what each may occupy — see [VM Snapshots](vm-snapshots.md) |
+| **Databases** | The database servers on this host and their dumps — see [Database Dumps](database-dumps.md) |
 
-Once the retry is queued its run appears at the top of the log and the failed row stops offering a second one. A host that is offline gets the run when it reconnects. A failure that a later run has already replaced, a run that only warned or was skipped, and a run that belongs to no schedule have no Retry button. Retrying needs the same permission as **Run now**: *Modify schedules* on the schedule's primary repository and on the repository being retried.
+The open section is recorded in the URL (`?tab=sources&section=databases`).
 
 ### Settings
 
-Everything that configures the agent lives here, behind a sub-nav:
+Everything that configures the agent lives here, as collapsible sections stacked in one card. Several can be open at once, and **Expand all** / **Collapse all** opens or folds every one:
 
 | Section | Contents |
 |---------|----------|
 | **Identity** | Hostname, domain, display name, agent build details, registration and last-seen times, token regeneration, and hostname aliases — glob patterns for archive matching (see below) |
 | **Backup defaults** | Backup paths, exclude patterns, file change patterns and pre/post hook commands, as one form saved in a single request. Hook commands set here run on every schedule targeting this host and carry their own optional per-command timeout — see [Pre- and Post-Backup Commands](scheduling.md#pre-and-post-backup-commands) |
 | **Power & dependencies** | Admins only. The host's [machine](power-management.md#machines) — waking it, shutting it down, whether it is always online — then starting the agent process before a backup, and the [dependency hosts](dependency-hosts.md#requiring-a-dependency) every schedule on this agent needs, for a share its default commands mount — see [Power Management](power-management.md) |
-| **Virtual machines** | Staging this host's libvirt/QEMU domains before a backup, and what each may occupy, admins only — see [VM Snapshots](vm-snapshots.md) |
-| **Tags** | Agent tags, for filtering the Agents list |
 
-The chosen tab and section are both recorded in the URL (`?tab=settings&section=defaults`), so a specific section can be linked to directly.
+The chosen tab and the last section opened are both recorded in the URL (`?tab=settings&section=defaults`), so a specific section can be linked to directly; it starts open.
 
 ### Imported hosts
 
-An imported host keeps all five tabs. It has archives but no agent, so its Schedules tab is empty — and explains why, offering **Adopt** and **Merge into...** rather than leaving you to work it out. The header omits the agent version, revision and build time, since there is no agent to report them, and the Settings tab hides the sections that need one.
+An imported host keeps its tabs. It has archives but no agent, so its Schedules tab is empty — and explains why, pointing you to **Adopt** and **Merge into...** in the header rather than leaving you to work it out. The header omits the agent version, revision and build time, since there is no agent to report them, and its Settings and Sources tabs are read-only, with no token to regenerate.
 
 ## Hostname Aliases (Glob Patterns)
 
@@ -431,7 +428,7 @@ When importing an existing borg repository, archives may have hostnames that don
 1. Open the agent detail page.
 2. Open **Settings > Identity** and scroll to **Hostname aliases**.
 3. Enter a glob pattern (e.g. `webserver-*`, `prod-web-??.example.com`).
-4. Click **Add**.
+4. Click **Add pattern**.
 
 Patterns use standard glob syntax:
 
@@ -457,7 +454,7 @@ After adding patterns, you can re-scan a repository to match previously unmatche
 
 ## Merging Imported Agents
 
-When a repository is imported, placeholder agents are created for archive hostnames that don't match any existing agent. These appear in the Agents list with an **Imported** badge.
+When a repository is imported, placeholder agents are created for archive hostnames that don't match any existing agent. These appear in the Agents list marked **Imported** under the hostname.
 
 To merge a placeholder into a real agent:
 
@@ -472,8 +469,8 @@ Merging transfers all backup reports from the placeholder to the target agent an
 
 Tags let you organize agents for filtering on the Agents list page.
 
-- Add tags when creating or editing an agent.
-- Filter the agent list by one or more tags using the tag filter bar.
+- Admins add and remove tags in the agent detail page's header.
+- Filter the agent list by one or more tags under **Filters > Tags**.
 - Tags are free-form strings; no predefined taxonomy is enforced.
 
 ## Deleting an Agent
@@ -514,8 +511,8 @@ Hidden agents are excluded from:
 ### Viewing and Unhiding Hidden Agents
 
 1. Navigate to **Agents** in the sidebar.
-2. Enable the **Show hidden** toggle (admin-only).
-3. Hidden agents appear dimmed with a **Hidden** badge.
+2. Open **Filters** and enable **Show hidden agents** (admin-only).
+3. Hidden agents appear dimmed and marked **Hidden** under the hostname.
 4. Open the hidden agent and choose **Unhide agent** from the header's **...** menu (admins only) to restore it to normal visibility. The page stays open; the agent shows up in every view again.
 
 !!! note

@@ -23,8 +23,13 @@ export async function listTokens(): Promise<ApiToken[]> {
 export async function createToken(
   name: string,
   scope: ApiTokenScope = 'full',
+  expiresAt: string | null = null,
 ): Promise<CreateApiTokenResponse> {
-  const body = scope === 'full' ? { name } : { name, scope }
+  const body = {
+    name,
+    ...(scope === 'full' ? {} : { scope }),
+    ...(expiresAt === null ? {} : { expires_at: expiresAt }),
+  }
   const response = await apiClient.post<CreateApiTokenResponse>('/tokens', body)
   return response.data
 }

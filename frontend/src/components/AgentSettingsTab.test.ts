@@ -58,6 +58,15 @@ function mount(props: Record<string, unknown> = {}, mode: 'server' | 'desktop' |
   })
 }
 
+function sectionTitles(wrapper: ReturnType<typeof mount>): string[] {
+  return wrapper.findAll('.accordion-title').map((t) => t.text())
+}
+
+/** The sections whose body is showing. */
+function openSections(wrapper: ReturnType<typeof mount>): string[] {
+  return wrapper.findAll('.accordion-head[aria-expanded="true"]').map((h) => h.text())
+}
+
 function clickButton(wrapper: ReturnType<typeof mount>, label: string) {
   const button = wrapper.findAll('button').find((b) => b.text().trim() === label)
   if (!button) throw new Error(`no "${label}" button`)
@@ -78,29 +87,15 @@ describe('AgentSettingsTab', () => {
       }) as never)
   })
 
+  // Virtual machines and databases moved to the Sources tab and tags into
+  // the page header, so Settings holds only what configures the agent.
   it('lists every settings section for an admin', () => {
-    expect(
-      mount()
-        .findAll('.settings-nav-item')
-        .map((b) => b.text()),
-    ).toEqual([
-      'Identity',
-      'Backup defaults',
-      'Power & dependencies',
-      'Virtual machines',
-      'Databases',
-      'Tags',
-    ])
+    expect(sectionTitles(mount())).toEqual(['Identity', 'Backup defaults', 'Power & dependencies'])
   })
 
-  // Power, virtual machines and tags are admin-only, so they are absent
-  // rather than present-and-disabled.
+  // Power is admin-only, so it is absent rather than present-and-disabled.
   it('hides the admin-only sections from everyone else', () => {
-    expect(
-      mount({ isAdmin: false })
-        .findAll('.settings-nav-item')
-        .map((b) => b.text()),
-    ).toEqual(['Identity', 'Backup defaults'])
+    expect(sectionTitles(mount({ isAdmin: false }))).toEqual(['Identity', 'Backup defaults'])
   })
 
   // Hiding the nav button is not gating: `?section=` comes straight from the
@@ -117,15 +112,19 @@ describe('AgentSettingsTab', () => {
   it('falls back to Identity when the requested section is not on offer', () => {
     const wrapper = mount({ isAdmin: false, section: 'tags' })
     expect(wrapper.text()).toContain('Hostname')
-    const current = wrapper
-      .findAll('.settings-nav-item')
-      .find((b) => b.attributes('aria-current') === 'true')
-    expect(current!.text()).toBe('Identity')
+    expect(openSections(wrapper)).toEqual(['Identity'])
   })
 
-  it('still renders those panes for an admin', () => {
-    expect(mount({ section: 'tags' }).findComponent({ name: 'EntityTags' }).exists()).toBe(true)
+  it('still renders the power pane for an admin', () => {
     expect(mount({ section: 'power' }).findComponent({ name: 'MachinePane' }).exists()).toBe(true)
+  })
+
+  // Tags live in the page header now, so even an admin asking for the old
+  // section by URL lands on Identity rather than an empty pane.
+  it('opens Identity for a stale tags link, since tags left Settings', () => {
+    const wrapper = mount({ section: 'tags' })
+    expect(wrapper.findComponent({ name: 'EntityTags' }).exists()).toBe(false)
+    expect(openSections(wrapper)).toEqual(['Identity'])
   })
 
   describe('Power & dependencies', () => {
@@ -185,20 +184,18 @@ describe('AgentSettingsTab', () => {
 
   it('marks the current section', () => {
     const wrapper = mount({ section: 'defaults' })
-    const current = wrapper
-      .findAll('.settings-nav-item')
-      .find((b) => b.attributes('aria-current') === 'true')
-    expect(current!.text()).toBe('Backup defaults')
+    expect(openSections(wrapper)).toEqual(['Backup defaults'])
   })
 
   it('asks the view to record the chosen section', async () => {
     const wrapper = mount()
     await wrapper
-      .findAll('.settings-nav-item')
-      .find((b) => b.text() === 'Tags')!
+      .findAll('.accordion-head')
+      .find((b) => b.text() === 'Power & dependencies')!
       .trigger('click')
 
-    expect(wrapper.emitted('update:section')).toEqual([['tags']])
+    expect(wrapper.emitted('update:section')).toEqual([['power']])
+    expect(openSections(wrapper)).toEqual(['Identity', 'Power & dependencies'])
   })
 
   // Deleting and hiding the host moved to the header's overflow menu.
@@ -215,10 +212,10 @@ describe('AgentSettingsTab', () => {
       expect(text).toContain('abc1234')
     })
 
-    it('discloses the host naming explanation behind its HelpHint', async () => {
+    // A pane's lede is no longer a lone help icon: it is the pane's opening line.
+    it('opens the identity pane with the host naming explanation', () => {
       const wrapper = mount()
-      await wrapper.find('[aria-label="Help: host naming"]').trigger('click')
-      expect(wrapper.find('.help-hint-pop').text()).toBe(
+      expect(wrapper.find('.pane-lede').text()).toBe(
         'How this host names itself, and what the server knows about it.',
       )
     })

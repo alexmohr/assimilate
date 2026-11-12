@@ -17,8 +17,8 @@ Each row shows:
 
 | Column | Content |
 |--------|---------|
-| **Dependency** | A status dot, the name, and what the last check found — **Answering**, **Not answering**, or **Not checked yet** — over the protocol and `address:port`, and **Same machine as** the repository host it shares a machine with |
-| **Availability** | **Always online** or **Not always online**, and **Wake** (**Wake on demand** on a machine that is not always online) when the machine is woken before a backup |
+| **Dependency** | A status dot for what the last check found — green when it answered, yellow when it did not, grey before it was ever checked; hover it for the words — then the name over the protocol and `address:port`, and **Same machine as** the repository host it shares a machine with |
+| **Availability** | **Always online**, or **Intermittent** for a machine marked as not always online, followed by **woken** (**woken on demand** when intermittent) when the machine is woken before a backup |
 | **Used by** | How many schedules and how many agents' backup defaults require it. Each count opens the dependency's [Used by](#used-by) section |
 | **Last checked** | When it was last checked; **Never** when it has not been |
 
@@ -63,11 +63,11 @@ A check or verify schedule never checks dependencies: it reads the repository, n
 ## Adding a Dependency
 
 1. Open **Dependencies** in the sidebar.
-2. Select **New**.
-3. Enter a **Name** and the **Address** — a hostname or IP address, as the Assimilate server reaches it.
-4. Pick the **Check**: **SMB** (port 445), **NFS** (port 2049), **SSH** (port 22), or **Other port**.
-5. If the machine is also a [repository host](repository-hosts.md), pick it under **Same machine as**. The dependency is then on that host's [machine](power-management.md#machines) and shares its settings.
-6. Select **Test connection** to check the address now, then **Create dependency**.
+2. Select **New**. The new-dependency wizard opens on its own page, with its steps in a numbered rail; the foot of each step says what it still needs.
+3. **Host** — enter a **Name** and the **Address** — a hostname or IP address, as the Assimilate server reaches it — and optionally a **Description**.
+4. **Check** — pick the **Check**: **SMB** (port 445), **NFS** (port 2049), **SSH** (port 22), or **Other port**. Select **Test connection** to check the address now.
+5. **Machine** — if the machine is also a [repository host](repository-hosts.md), pick it under **Same machine as**. The dependency is then on that host's [machine](power-management.md#machines) and shares its settings.
+6. **Review** — check the summary, where each block has an **Edit** link back to its step, then select **Create dependency**.
 
 Wake-on-LAN and **Host is not always online** are set on the dependency's **Power & dependencies** section once it exists.
 
@@ -85,16 +85,15 @@ A dependency an agent's defaults require is shown on the schedule as **from agen
 
 ## The Dependency Page
 
-Open a dependency from its row on the Dependencies page. The page has four sections:
+Open a dependency from its row on the Dependencies page. The page's sections are collapsible, stacked in one card:
 
 | Section | Content |
 |---------|---------|
 | **Connection** | Name, address, the port that is checked, and a description |
 | **Power & dependencies** | The machine it is on, how that machine is woken, and [when the host is offline](power-management.md#when-the-host-is-offline) |
 | **Used by** | Every schedule and agent that needs it, and where the need comes from: set on the schedule, from agent defaults, or from its repository host |
-| **Danger zone** | **Remove**. Schedules and agent defaults stop needing it, and runs waiting on it stop waiting |
 
-**Test connection** in the page header checks the dependency now without waking it or starting anything.
+**Test connection** in the page header checks the dependency now without waking it or starting anything. **Remove dependency**, in the header's **...** menu, removes it after a confirmation: schedules and agent defaults stop needing it, and runs waiting on it stop waiting.
 
 ### Power & Dependencies
 

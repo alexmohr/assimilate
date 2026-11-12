@@ -7,18 +7,46 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 import { computed, ref, onMounted } from 'vue'
 import { getExcludes, setExcludes } from '../api/excludes'
 import { useAsyncAction } from '../composables/useAsyncAction'
-import { useTimeout } from '../composables/useTimeout'
 import BaseSpinner from '../components/BaseSpinner.vue'
 import BorgPatternReference from '../components/BorgPatternReference.vue'
+import EditableSection from '../components/EditableSection.vue'
 import { excludePatternWarnings } from '../utils/excludePatterns'
 
+/**
+ * The patterns every backup leaves out unless its schedule opts out of
+ * them. Read as a list, like every other settings card, and edited as text
+ * behind Edit, so a long list can still be pasted in one go and keep its
+ * `#` comments.
+ */
 const { loading, error, run } = useAsyncAction()
-const text = ref('')
 const { loading: saving, error: saveError, run: runSave } = useAsyncAction()
-const saveOk = ref(false)
-const saveOkTimeout = useTimeout()
+/** The saved text, as the server has it. */
+const text = ref('')
+/** The text being edited. */
+const draft = ref('')
+const editing = ref(false)
 const refOpen = ref(false)
-const warnings = computed(() => excludePatternWarnings(text.value))
+const warnings = computed(() => excludePatternWarnings(draft.value))
+
+/** One line of the saved text: a `#` comment, shown as a heading, or a pattern. */
+interface PatternLine {
+  kind: 'comment' | 'pattern'
+  text: string
+}
+
+const lines = computed<PatternLine[]>(() =>
+  text.value
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0)
+    .map((line) =>
+      line.startsWith('#')
+        ? { kind: 'comment', text: line.replace(/^#+\s*/, '') }
+        : { kind: 'pattern', text: line },
+    ),
+)
+
+const patternCount = computed(() => lines.value.filter((l) => l.kind === 'pattern').length)
 
 async function loadData(): Promise<void> {
   await run(async () => {
@@ -27,14 +55,16 @@ async function loadData(): Promise<void> {
   })
 }
 
+function startEdit(): void {
+  draft.value = text.value
+  editing.value = true
+}
+
 async function save(): Promise<void> {
-  saveOk.value = false
   await runSave(async () => {
-    await setExcludes({ raw_text: text.value })
-    saveOk.value = true
-    saveOkTimeout.start(() => {
-      saveOk.value = false
-    }, 2500)
+    await setExcludes({ raw_text: draft.value })
+    text.value = draft.value
+    editing.value = false
   })
 }
 
@@ -45,14 +75,6 @@ onMounted(loadData)
   <div class="excludes-view">
     <div class="page-header">
       <h1 class="page-title">Global Excludes</h1>
-      <div class="header-actions">
-        <button
-          class="btn btn-ghost btn-sm"
-          @click="refOpen = !refOpen"
-        >
-          {{ refOpen ? 'Close Reference' : 'Pattern Reference' }}
-        </button>
-      </div>
     </div>
 
     <BaseSpinner
@@ -70,52 +92,82 @@ onMounted(loadData)
       v-else
       class="layout"
     >
-      <div class="panels">
-        <section class="panel panel--sectioned">
-          <div class="panel-header">
-            <span class="panel-title">Patterns</span>
-            <span class="field-hint">Applied to all schedules unless overridden</span>
-          </div>
-          <textarea
-            v-model="text"
-            class="input pattern-area"
-            placeholder="One pattern per line&#10;# Lines starting with # are comments&#10;e.g. *.cache&#10;*/__pycache__"
-            spellcheck="false"
-          />
-          <ul
-            v-if="warnings.length > 0"
-            class="pattern-warnings"
-            aria-label="Pattern warnings"
-          >
-            <li
-              v-for="warning in warnings"
-              :key="warning.line"
+      <section class="panel excludes-card">
+        <EditableSection
+          lede="Paths every backup leaves out, unless its schedule opts out of the global excludes."
+          :editing="editing"
+          can-edit
+          :saving="saving"
+          :error="saveError"
+          @edit="startEdit"
+          @cancel="editing = false"
+          @save="save"
+        >
+          <template #view>
+            <p
+              v-if="patternCount === 0"
+              class="muted"
             >
-              <span class="pattern-warning-line">Line {{ warning.line }}</span>
-              {{ warning.message }}
-            </li>
-          </ul>
-          <div class="panel-footer">
-            <span
-              v-if="saveOk"
-              class="save-ok"
-              >Saved</span
+              No global excludes yet. Every backup reads all of its sources.
+            </p>
+            <ul
+              v-else
+              class="pattern-list"
+              aria-label="Global exclude patterns"
             >
-            <span
-              v-if="saveError"
-              class="save-err"
-              >{{ saveError }}</span
+              <li
+                v-for="(line, i) in lines"
+                :key="i"
+                :class="line.kind === 'comment' ? 'pattern-comment' : 'pattern-row mono'"
+              >
+                {{ line.text }}
+              </li>
+            </ul>
+            <p class="pattern-foot">
+              <span>{{ patternCount }} {{ patternCount === 1 ? 'pattern' : 'patterns' }}</span>
+              <button
+                type="button"
+                class="pattern-ref-link"
+                @click="refOpen = !refOpen"
+              >
+                {{ refOpen ? 'Close pattern reference' : 'Pattern reference' }}
+              </button>
+            </p>
+          </template>
+          <template #edit>
+            <textarea
+              v-model="draft"
+              class="input pattern-area"
+              aria-label="Global exclude patterns"
+              placeholder="One pattern per line&#10;# Lines starting with # are comments&#10;e.g. *.cache&#10;*/__pycache__"
+              spellcheck="false"
+            />
+            <ul
+              v-if="warnings.length > 0"
+              class="pattern-warnings"
+              aria-label="Pattern warnings"
             >
-            <button
-              class="btn btn-primary btn-sm"
-              :disabled="saving"
-              @click="save"
-            >
-              {{ saving ? 'Saving...' : 'Save' }}
-            </button>
-          </div>
-        </section>
-      </div>
+              <li
+                v-for="warning in warnings"
+                :key="warning.line"
+              >
+                <span class="pattern-warning-line">Line {{ warning.line }}</span>
+                {{ warning.message }}
+              </li>
+            </ul>
+            <p class="pattern-foot">
+              <span>One pattern per line; lines starting with # are comments.</span>
+              <button
+                type="button"
+                class="pattern-ref-link"
+                @click="refOpen = !refOpen"
+              >
+                {{ refOpen ? 'Close pattern reference' : 'Pattern reference' }}
+              </button>
+            </p>
+          </template>
+        </EditableSection>
+      </section>
 
       <BorgPatternReference
         v-if="refOpen"
@@ -131,18 +183,6 @@ onMounted(loadData)
 </template>
 
 <style scoped>
-.panel {
-  display: flex;
-  flex-direction: column;
-}
-
-/* Header carries a label plus inline controls, packed left rather than
-   pushed to the edges. */
-.panel .panel-header {
-  justify-content: flex-start;
-  gap: var(--space-5);
-}
-
 .excludes-view {
   max-width: 1200px;
   color: var(--text-primary);
@@ -154,60 +194,87 @@ onMounted(loadData)
   align-items: flex-start;
 }
 
-.panels {
+/* A settings card like the others: padded, its content inside. */
+.excludes-card {
   flex: 1;
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-7);
   min-width: 0;
+  padding: var(--space-7) var(--space-8);
 }
 
-.panel-hint {
+/* At rest the patterns read as a list split by hairlines; a # comment
+   heads the patterns under it. */
+.pattern-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.pattern-row {
+  padding: var(--space-3) 0;
+  border-top: 1px solid var(--border-subtle);
+  font-size: var(--fs-sm);
+  overflow-wrap: anywhere;
+}
+
+.pattern-row:first-child,
+.pattern-comment + .pattern-row {
+  border-top: none;
+}
+
+.pattern-comment {
+  padding: var(--space-6) 0 var(--space-2);
   font-size: var(--fs-xs);
   color: var(--text-muted);
-  margin-left: auto;
+}
+
+.pattern-comment:first-child {
+  padding-top: 0;
+}
+
+.pattern-foot {
+  display: flex;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--space-3) var(--space-6);
+  margin: 0;
+  font-size: var(--fs-xs);
+  color: var(--text-muted);
+}
+
+.pattern-ref-link {
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: var(--accent);
+  cursor: pointer;
+}
+
+.pattern-ref-link:hover {
+  text-decoration: underline;
 }
 
 .pattern-area {
-  background: var(--bg-input);
-  border: none;
-  color: var(--text-primary);
   font-family: var(--mono);
   font-size: var(--fs-sm);
   line-height: 1.6;
-  padding: var(--space-5) var(--space-7);
   resize: vertical;
-  min-height: 200px;
-  width: 100%;
-  box-sizing: border-box;
-  outline: none;
-}
-
-.pattern-area::placeholder {
-  color: var(--text-muted);
-}
-
-.panel-footer {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: var(--space-5);
-  padding: var(--space-5) var(--space-7);
-  border-top: 1px solid var(--border-subtle);
-  background: var(--bg-base);
+  min-height: 240px;
 }
 
 .pattern-warnings {
   list-style: none;
   margin: 0;
-  padding: var(--space-5) var(--space-7);
+  padding: var(--space-4) var(--space-5);
   display: flex;
   flex-direction: column;
   gap: var(--space-3);
   font-size: var(--fs-sm);
   color: var(--warning);
   background: var(--warning-subtle);
-  border-top: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
 }
 
 .pattern-warning-line {
@@ -215,14 +282,14 @@ onMounted(loadData)
   margin-right: var(--space-3);
 }
 
-.save-ok {
-  font-size: var(--fs-sm);
-  color: var(--success);
-}
+@media (max-width: 768px) {
+  .layout {
+    flex-direction: column;
+  }
 
-.save-err {
-  font-size: var(--fs-sm);
-  color: var(--danger);
-  flex: 1;
+  .excludes-card {
+    width: 100%;
+    padding: var(--space-6);
+  }
 }
 </style>

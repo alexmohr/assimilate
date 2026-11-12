@@ -18,9 +18,9 @@ Use browser download to retrieve individual files or a directory tree directly t
 
 1. Navigate to **Repos**, select a repository, and open the **Archives** tab — or open an agent's **Backups** tab.
 2. Click the archive you want to restore from.
-3. Navigate to the file or directory you want.
-4. Click **Download** on its row to save it locally, or tick several entries — from any folder of the archive — and use **Download** in the selection bar to get them as one `tar.lz4`.
-5. Use **Download** in the browser header to download the whole archive.
+3. Navigate to the file or directory you want and tick it.
+4. Click **Download** in the selection bar to save it locally. Tick several entries — from any folder of the archive — to get them as one `tar.lz4`.
+5. Choose **Download** in the archive's **...** menu to download the whole archive.
 
 The server streams data live from the borg repository. For details on the export format, see [Exporting as tar.lz4](archives.md#exporting-as-tarlz4).
 
@@ -31,17 +31,17 @@ The server streams data live from the borg repository. For details on the export
 
 ## Virtual Machines
 
-A staged virtual machine is restored in two stages: the file restore below puts its directory back on disk, then the agent merges the increment chain and defines the domain. Both stages are driven from the agent's **Virtual machines** section - see [VM Snapshots](vm-snapshots.md#restore-a-domain).
+A staged virtual machine is restored in two stages: the file restore below puts its directory back on disk, then the agent merges the increment chain and defines the domain. Both stages are driven from the **Virtual machines** section of the agent's **Sources** tab - see [VM Snapshots](vm-snapshots.md#restore-a-domain).
 
 ## Databases
 
-A database dump in an archive is restored straight into its database server, without restoring the dump file first: switch the archive browser to **Databases** - see [Database Dumps](database-dumps.md#restore-a-database). A database restore is tracked like a file restore below.
+A database dump in an archive is restored straight into its database server, without restoring the dump file first: open the archive's **Databases** tab - see [Database Dumps](database-dumps.md#restore-a-database). A database restore is tracked like a file restore below.
 
 ## Agent-Side Restore
 
 Agent-side restore extracts files directly on the agent machine — no data passes through the Assimilate server or your browser. This is the right approach for large restores or when the destination is the agent's own filesystem.
 
-In the archive browser, tick the files and directories to restore and click **Restore** in the selection bar, or use **Restore** in the browser header for the whole archive. The [Where to restore](archives.md#where-to-restore) dialog then asks which agent to restore onto — the machine the archive came from, to begin with — and whether to put everything back at its original paths or under a folder, and shows where each item will land before you start.
+In the archive browser, tick the files and directories to restore and click **Restore...** in the selection bar, or choose **Restore whole archive...** in the archive's **...** menu. The [Where to restore](archives.md#where-to-restore) dialog then asks which agent to restore onto — the machine the archive came from, to begin with — and whether to put everything back at its original paths or under a folder, and shows where each item will land before you start.
 
 Every picked path is restored by one `borg extract` run, at most 1000 paths per restore; a ticked folder counts as one path however much it holds. A folder to restore under must be an absolute path without `.` or `..` components. The server refuses any other folder before the restore is recorded, and the agent checks it again before it writes anything. The restore dialog takes POSIX paths (`/srv/restore`); the [API](api-reference.md#archives) also takes a Windows drive path (`C:\restore`) for a Windows agent, which any other agent refuses.
 

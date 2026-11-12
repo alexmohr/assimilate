@@ -26,6 +26,10 @@ export type ApiTokenResponse = {
    */
   last_used_at: string | null;
   /**
+   * When the token stops working; `None` for one that never expires.
+   */
+  expires_at: string | null;
+  /**
    * Timestamp of when the created occurred.
    */
   created_at: string;

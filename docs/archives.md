@@ -10,61 +10,68 @@ You can also browse archives per schedule: open a schedule's detail view and swi
 
 All four places — the repository's **Archives** tab, a schedule's **Backups** tab, an agent's **Backups** tab and the standalone **Archives** page — use the same archive selector and file browser, so the controls, the row layout and the available actions are identical wherever you reach them from.
 
-Above the list are these controls:
+The list sits in a card headed **Archives** with the number of archives it holds. Above the rows are:
 
 | Control | What it does |
 |---------|--------------|
-| Search | Narrows the list to archives whose **name, host or repository** contains what you type |
-| Sort | Orders by **date**, **original size**, or **deduplicated size**, ascending or descending |
-| By day / By host / Flat | Groups the archives under **Today**, **Yesterday**, **This week** and then one heading per month; under one header per host; or lists them flat |
-| Repository | Only when the list holds archives from more than one repository: **All**, or one repository, each with how many archives it holds |
+| Search | Narrows the list to archives whose **name, host or repository** contains what you type. From two characters on, the first row offers **Find files named "..."** instead — see [Finding files across archives](#finding-files-across-archives) |
+| Repository pills | Only when the list holds archives from more than one repository: **All**, or one repository, each with how many archives it holds |
+
+Grouping, sorting and **Refresh archives** are in the card's **...** menu:
+
+| Menu entry | What it does |
+|---------|--------------|
+| Group | **By day** puts the archives under **Today**, **Yesterday**, **This week** and then one heading per month; **By host** under one header per host; **Flat list** lists them under one heading |
+| Sort | **Date**, **Size** (original size) or **Dedup** (deduplicated size), each newest/largest or oldest/smallest first |
+| Refresh archives | Fetches the list again |
 
 The grouping starts on **By host** when the archives come from more than one host, and on **By day** when they are all one machine's, such as on an agent's Backups tab. **By host** is only offered when there is more than one host to group by. Picking another one keeps it.
 
 In **By host** mode each group header carries the hostname, the number of archives it holds and their **total original size**, so a collapsed group still tells you something. The hostname itself is a link to that host's [agent page](agents.md); clicking anywhere else on the header collapses or expands the group. Groups start open; on a repository holding archives from more than three hosts they start collapsed instead, and you click a header to expand one.
 
-Each row shows the archive name and its original size on the first line, then the host, the backup's start time and the deduplicated size underneath. The host is a link to that host's [agent page](agents.md), so you can jump to it without selecting the archive first; a list of one machine's archives leaves the host out. When the list spans several repositories, each row also carries a tag naming the repository the archive is in, since the same archive name can exist in each of them. A host that borg recorded but no agent claims is marked with an amber stripe — see [Re-scanning Unmatched Archives](repositories.md#re-scanning-unmatched-archives).
+Each row shows the archive name over a line of facts — the host, the repository when the list spans several, and how much new data it added (*+1.2 GB new*) — with its original size and start time on the right. A list of one machine's archives leaves the host out. A host that borg recorded but no agent claims is shown in amber — see [Re-scanning Unmatched Archives](repositories.md#re-scanning-unmatched-archives).
 
-Click a row to open the archive in the file browser on the right. On a phone the two take turns: the open archive replaces the list, and **Archives** at the top of the browser goes back to it. Administrators also get a **delete** button on every row; it is always visible, not revealed on hover.
+Click a row to open the archive in the card on the right. Nothing on a row acts on the archive itself: downloading, comparing and deleting are in the open archive's menu, so a stray click on a long list can only open an archive. On a phone the two take turns: the open archive replaces the list, and **All archives** at the top goes back to it.
 
 ![Archives](assets/screenshots/archives.png)
 
 ### Viewing a Single Archive
 
-Links that point at one specific archive (for example from a host's backup history) open the **Archives** tab with an `?archive=<name>` query parameter. In this mode the page shows only a **Showing only `<name>`** banner and the file browser for that archive — the archive list, search box, sort selector, and group toggle are hidden, since none of them apply to a single result.
+Links that point at one specific archive (for example from a host's backup history) open the **Archives** tab with an `?archive=<name>` query parameter. In this mode the list shows a **Showing only `<name>`** banner and that one archive — the search box, the repository pills and the list's menu are hidden, since none of them apply to a single result.
 
 Click **Show all archives** in the banner to clear the filter and return to the full list.
 
 ## Archive Details
 
-The header above the file list names the archive, its host and the repository it lives in, followed by its date and sizes. The repository matters whenever a schedule writes several copies: the same archive name exists in each of its target repositories, and **Download**, **Restore** and **Delete** in that header all act on the one named there. The repository name links to the repository itself.
+The open archive is one card. Its head names the archive, followed by one line of facts: its host (a link to that host's agent page), the repository it lives in (a link to the repository), its start time, its original size, and how much new data it added. The repository matters whenever a schedule writes several copies: the same archive name exists in each of its target repositories, and everything in the archive's **...** menu acts on the one named there.
 
-The detail view shows statistics reported by `borg info`:
+The **...** menu holds what acts on the whole archive:
 
-| Stat | Description |
-|------|-------------|
-| Original size | Total uncompressed size of all backed-up files |
-| Compressed size | Size after compression |
-| Deduplicated size | Actual new data written to the repository (after deduplication across all archives) |
-| File count | Number of files included |
-| Duration | Elapsed time from start to end |
-| Start / End | Timestamps for the backup window |
+| Entry | What it does |
+|-------|--------------|
+| **Restore whole archive...** | Administrators only. Asks [where to restore](#where-to-restore) the archive |
+| **Download** | Downloads the whole archive as `tar.lz4` |
+| **Compare with another archive** | Opens the **Changes** tab |
+| **Copy archive name** | Copies the name to the clipboard |
+| **Delete archive...** | Administrators only. Deletes the archive after a confirmation |
+
+Under the head, four tabs show different sides of the archive: **Files** (the [file browser](#browsing-archive-contents)), **Changes** (see [Changed files](#changed-files)), **Databases** (the [database dumps](database-dumps.md#restore-a-database) it holds) and **Growth** (see [Archive growth](#archive-growth)).
 
 The deduplicated size is typically much smaller than the original size because borg shares identical chunks across archives. This is the number that matters for storage capacity planning.
 
 ## Archive Growth
 
-The **Growth** view shows where an archive's deduplicated size went: per folder and per file, the data that no other archive in the repository holds. Use it when one backup adds far more than usual and you want to know what it was — a downloaded ISO, a new container image layer, a log that grew. It sits next to **Files** and **Databases** in the archive browser, so it is on every screen that browses archives: the repository's **Archives** tab, an agent's and a schedule's **Backups** tab, and the **Archives** page.
+The **Growth** view shows where an archive's deduplicated size went: per folder and per file, the data that no other archive in the repository holds. Use it when one backup adds far more than usual and you want to know what it was — a downloaded ISO, a new container image layer, a log that grew. It is a tab next to **Files**, **Changes** and **Databases** in the open archive, so it is on every screen that browses archives: the repository's **Archives** tab, an agent's and a schedule's **Backups** tab, and the **Archives** page.
 
 ![Where an archive's deduplicated size went](assets/screenshots/archive-growth.png)
 
 1. Select an archive.
-2. Click **Growth** above the file list.
+2. Open the **Growth** tab.
 3. Click a folder to open it, and a segment of the path above the table to go back up. **Largest files** lists the files holding the most of it across the whole archive.
 
 The server works an archive's growth out in the background with `borg list`, which reads every chunk of the archive against the repository's chunk index. It starts as soon as the archive is indexed live: right after a backup finishes, and the first time an archive that has not been indexed yet is browsed. Archives that are only indexed in bulk, such as by a full resync, are worked out the first time their growth is opened. On a large archive this takes a few minutes; the view updates by itself once it is done, and the result is kept in the database, so reloading the page or opening the archive again shows it, or the progress, at once.
 
-A file in the table, or in **Largest files**, has a **Compare with another archive** button. It opens the same line-by-line comparison as the file browser, against the host's previous archive by default, so a suspicious file can be checked without leaving the view.
+A file in the table, or in **Largest files**, has a **Compare with another archive** button. It opens the same line-by-line comparison as [comparing a file](#comparing-a-file-between-archives), against the host's previous archive by default, so a suspicious file can be checked without leaving the view.
 
 | Value | Description |
 |-------|-------------|
@@ -82,50 +89,43 @@ Small entries are folded into one **N files more** row per folder, and a folder 
 
 Archives can be browsed from three places in the UI, all of them the same component:
 
-**Repositories page:** From the archive list on a repository detail view, click an archive to open the file tree browser in the right panel.
+**Repositories page:** From the archive list on a repository's **Archives** tab, click an archive to open it in the right panel.
 
-**Schedule detail page (Backups tab):** For backup-type schedules, the **Backups** tab lists every archive produced by the schedule. Select an archive from the left panel to browse its contents in the right panel. This lets you find the most recent backup of a file without leaving the schedule view. Because it is the same selector, a schedule that targets several hosts groups its archives by host here too, and administrators can delete an archive from this tab. A schedule that writes into several repositories lists every target's archives in one list, each tagged with its repository — see [Backups tab](scheduling.md#backups-tab).
+**Schedule detail page (Backups tab):** For backup-type schedules, the **Backups** tab lists every archive produced by the schedule. Select an archive from the list to browse its contents in the right panel. This lets you find the most recent backup of a file without leaving the schedule view. Because it is the same selector, a schedule that targets several hosts groups its archives by host here too, and administrators can delete an archive from this tab. A schedule that writes into several repositories lists every target's archives in one list, each tagged with its repository — see [Backups tab](scheduling.md#backups-tab).
 
 **Agent detail page (Backups tab):** Every archive the agent has, in every repository it backs up to, in one list — see [Backups](agents.md#backups).
 
-**Archives page:** The standalone **Archives** page adds a repository picker and the archive diff above the same two panes. Restores start from the archive browser, as everywhere else.
+**Archives page:** The standalone **Archives** page adds a repository picker, and **Show Passphrase**, above the same two panes. Restores start from the archive browser, as everywhere else.
 
 ![Archive Browser](assets/screenshots/archive-browse.png)
 
-The browser starts at the repository root (`/`). Each entry shows:
+The **Files** tab starts at the archive root (`/`), with the folder path above the rows. Each row shows:
 
-- **Type** — file (`-`), directory (`d`) or symbolic link (`l`)
-- **Path** — full path within the archive
-- **Size** — file size in bytes
-- **Modified** — last-modified timestamp
-- **Mode** — Unix permission bits (e.g. `rwxr-xr-x`)
+- A checkbox, to [pick](#picking-files-to-restore-or-download) the entry
+- An icon for a folder, a file, or a symbolic link
+- The name, and under it a line of facts: for a folder, how many files it holds; for a file, when it was last modified
+- The size, on the right
 
-Click a directory to navigate into it. Use the breadcrumb path at the top to jump back up the tree. The browser loads up to 100 entries per directory by default; very large directories may be truncated.
+Click a folder's name or row to open it, and a segment of the path above the rows to jump back up. Clicking a file's row ticks it.
 
 Each archive and directory you open is also a step in your browser's history. The web browser's **Back** button returns to the directory you were in before, one step at a time, until it reaches the archive root; from there **Back** returns to the archive you had open before (or closes the archive), and only then leaves the page as usual. **Forward** opens them again. Both are kept in the URL: the open archive as a `browse` query parameter and the directory in it as `path` (for example `?tab=archives&browse=web-01-2026-03-01&path=/etc/nginx`), so a bookmark or a shared link opens that archive at that directory. Selecting a different archive opens it at its root. Where the list spans several repositories — a host's or a schedule's **Backups** tab — one name can be an archive in each, so `browse` names the repository too, as `<repository id>/<archive name>`.
 
 The **Archives** page keeps the selected repository in the URL as well (`repo`), with that repository's archive and directory under the same per-repository parameters, so **Back** after switching repositories returns to the repository and archive open before.
 
-The table fits the width of the file pane rather than of the window. When the pane is too narrow for every column — on a phone, or on a laptop-sized window where the archive list sits beside it — the **Modified** column is hidden and **Size** narrows, so each row's checkbox and buttons stay in view without scrolling sideways. Drag a column's edge to resize it; a column widened past the pane makes the table scroll horizontally.
+A folder's row shows what is inside it, everything below it included: how many files it holds, and their size. Both are read from the archive's content index, so they appear once the archive has been indexed and never touch the repository.
 
-The browser header names the archive and carries the actions that apply to the whole of it: **Download**, and for administrators **Restore** and **Delete**. Under it, a bar of chips reports the archive's host (a link to that host), its start time and both its original and deduplicated sizes.
-
-Each table row has its own **Download** and, for a text file, **Compare** action. The `.` row is the directory you are currently looking at, so downloading it takes that whole subtree.
-
-A folder's row shows what is inside it, everything below it included: how many files it holds next to its name, and their size in the **Size** column. Both are read from the archive's content index, so they appear once the archive has been indexed and never touch the repository.
-
-A file that differs from the previous archive of the same machine and schedule carries a badge: **New** when that archive did not hold it in the same folder, **Changed** when its size or modification time is different. Hovering the badge names the archive it is compared with. The comparison reads that archive's content index one folder at a time as you open folders; while its index is still being built, files stay unmarked until you open the folder again. When two schedules back up different folders of one machine into the same repository, each schedule's archives are compared only with its own: the server records which schedule created each archive. Archives it has no schedule for, such as ones created outside Assimilate, are matched by name instead, the archive name without its trailing start time. The oldest archive of a series has nothing to compare with, so nothing in it is marked.
+A file that differs from the previous archive of the same machine and schedule is marked in its facts line with a dot: **new** (green) when that archive did not hold it in the same folder, **changed** (amber) when its size or modification time is different. Hovering the mark names the archive it is compared with. The comparison reads that archive's content index one folder at a time as you open folders; while its index is still being built, files stay unmarked until you open the folder again. When two schedules back up different folders of one machine into the same repository, each schedule's archives are compared only with its own: the server records which schedule created each archive. Archives it has no schedule for, such as ones created outside Assimilate, are matched by name instead, the archive name without its trailing start time. The oldest archive of a series has nothing to compare with, so nothing in it is marked.
 
 ### Symbolic links
 
-A symbolic link is marked in the file table with a link icon and a **Link** badge after its name, followed by where it points, exactly as the link stores it (`releases/2026-10-25`, `/usr/share/zoneinfo/UTC`). Its **Size** column shows `-`. Hover the name to see the link's full path and its target.
+A symbolic link is marked with a link icon, and its facts line reads **link** followed by where it points, exactly as the link stores it (`releases/2026-10-25`, `/usr/share/zoneinfo/UTC`). It shows no size. Hover the name to see the link's full path and its target.
 
 ![Symbolic links in the archive browser](assets/screenshots/archive-symlinks.png)
 
 The browser looks the target up in the archive's content index:
 
 - **In the archive** — the target is a link you can click. A link to a folder opens that folder, and so does clicking the link's row; a link to a file opens the folder that holds the file.
-- **Not in the archive** — the target is grey and marked *not in archive*. Nothing was backed up at that path: it lies outside the backup's sources, it was excluded, or it did not exist when the backup ran. The link itself is still in the archive.
+- **Not in the archive** — the target is plain text, marked *(not in archive)*. Nothing was backed up at that path: it lies outside the backup's sources, it was excluded, or it did not exist when the backup ran. The link itself is still in the archive.
 
 The target is worked out from its text, the way the system would follow it from the link's folder: a relative target starts in that folder, an absolute one at the root of the archive. Links are not followed through other links: a target path that runs through another link can read as not in the archive even though following the links would reach it, and a link whose target is itself a link counts as a link to a file, so opening it opens the folder holding that second link.
 
@@ -135,11 +135,15 @@ Archives indexed before link targets were recorded still mark their links, witho
 
 ### Searching the open archive
 
-The search box above the file table searches the whole archive you have open, not just the folder on screen. Results appear as you type: every file and folder whose path contains the text, ignoring case, with the match highlighted. **Filters** narrows them by type (files or folders), by size in MiB and by the day a file was last modified; a dot on the button shows that a filter is set, and **Reset filters** clears them. A filter works without any text too, for example every file over 100 MiB.
+The search button at the end of the folder path opens a search of the whole archive you have open, not just the folder on screen. Results replace the folder's rows as you type: every file and folder whose path contains the text, ignoring case. Three rows of pills narrow them: **Type** (**Any**, **Files**, **Folders**), **Size** (**Any**, **Over 10 MB**, **Over 100 MB**, **Over 1 GB**) and **Modified** (**Any time**, **Last 7 days**, **Last 30 days**, **Last year**). A filter works without any text too, for example every file over 1 GB. Click the button again to close the search.
 
 The search reads the archive's content index, so it never locks the repository, and it works once the archive has been indexed. It shows the first 200 matches and says when there are more; narrow the search to see them.
 
-Tick a result to pick it, the same as ticking it in its folder. The folder button on a result opens the folder it sits in, or the folder itself, and clears the search.
+Tick a result to pick it, the same as ticking it in its folder. The folder button on a result opens the folder it sits in, or the folder itself, and closes the search.
+
+### Finding files across archives
+
+Type at least two characters into the archive list's search box, and its first row offers **Find files named "..."** in every archive the list holds (or the ones the repository pills leave). Select it, or press Enter when no archive name matches, and the matches take the right-hand card: each path once, with its size, from the newest archive that holds it. The search matches part of a name, such as `nginx` or `.pdf`, or a glob such as `*.sql`. Open a result to browse it in that archive, at its folder, with it ticked. The close button returns to the archive.
 
 ### Picking files to restore or download
 
@@ -147,17 +151,20 @@ Tick the checkbox on any row to pick that file or directory; the checkbox in the
 
 A picked folder covers everything inside it: open it and every entry is ticked. Unticking one of them keeps the rest of the folder picked, so you can take a whole folder except a few things. A folder with only some of its contents picked shows a partly filled checkbox, in the folder above it and in the column header. When every entry of a folder is ticked, the folder itself takes their place, so a restore names as few paths as it can.
 
-A bar at the bottom of the browser counts what is picked, with how much it is and how many files once the content index has added up every picked folder, and offers:
+A bar at the bottom of the browser counts what is picked, with how much it is and how many files once the content index has added up every picked folder. For administrators it says where a restore goes by default (*Restores to host, at the original paths or elsewhere*). It offers:
 
-- **Download** — one file downloads as itself, anything more as one `tar.lz4` the server streams. While it runs, **Cancel download** stops it.
-- **Restore to *host*** (administrators) — opens **Where to restore**, below.
 - **Clear** — drops the selection. Opening another archive drops it too.
+- **History** and **Compare** — when the one thing picked is a file; see [File history](#file-history) and [Comparing a file between archives](#comparing-a-file-between-archives).
+- **Download** — one file downloads as itself, anything more as one `tar.lz4` the server streams. While it runs, **Cancel download** stops it.
+- **Restore...** (administrators) — opens **Where to restore**, below.
+
+Until something is picked, the bar's place says how: tick files or folders to restore or download them.
 
 ![Picked files in the archive browser](assets/screenshots/archive-selection.png)
 
 ### Where to restore
 
-**Restore** in the selection bar, and **Restore** in the browser header for the whole archive, open the same dialog. It asks two things and spells out the answer before anything starts:
+**Restore...** in the selection bar, and **Restore whole archive...** in the archive's **...** menu, open the same dialog. It asks two things and spells out the answer before anything starts:
 
 - **Agent** — every registered agent, with whether it is online. The machine the archive was backed up from is listed first and picked to begin with. An offline agent can be picked too; its restore starts when it next connects.
 - **Location** — **Original paths** puts every file back where it was backed up from, replacing what is there. **Into a folder** restores under an absolute folder of your choice, each path keeping its full path inside it: `etc/nginx/nginx.conf` restored into `/srv/restore` lands at `/srv/restore/etc/nginx/nginx.conf`. A relative path, or one with `.` or `..` segments, is refused.
@@ -187,17 +194,17 @@ A background job checks once an hour. Every browse counts as a use, so an archiv
 
 To download a file from an archive:
 
-1. Browse to the file in the archive contents view.
-2. Click the **Download** icon next to the file.
+1. Browse to the file in the **Files** tab and tick it.
+2. Click **Download** in the selection bar.
 3. The server streams the file directly from borg and your browser saves it with the original filename.
 
 If borg fails before it has sent much of the file (wrong passphrase, repository locked, archive or path not found, SSH connection refused), the download fails with borg's error instead of starting. If borg fails partway through, for example because the SSH connection drops, the server breaks off the transfer. The browser then reports the download as failed instead of saving a truncated or empty file that looks complete.
 
-To download the whole archive as `tar.lz4`, click **Download** in the browser header. To restore files or directories, pick them and use **Restore** in the selection bar; to restore the whole archive, use **Restore** in the header. Both ask [where to restore](#where-to-restore) first.
+To download the whole archive as `tar.lz4`, choose **Download** in the archive's **...** menu. To restore files or directories, pick them and use **Restore...** in the selection bar; to restore the whole archive, use **Restore whole archive...** in the menu. Both ask [where to restore](#where-to-restore) first.
 
-Administrators can permanently remove an archive from either **Delete** in the browser header or the delete button on its row in the archive list. Both open the same confirmation and delete the borg archive itself, the imported report, and any archive tags.
+Administrators can permanently remove an archive with **Delete archive...** in its **...** menu. It asks for confirmation, then deletes the borg archive itself, the imported report, and any archive tags.
 
-The `borg delete` runs in the background on the server so the UI is never blocked while it works. The repository detail page shows a **Deleting archive** indicator while the operation is in progress, and the archive disappears from the list once borg finishes. If the deletion fails, the archive remains in the list and a `archive_delete_failed` system event records the reason.
+The `borg delete` runs in the background on the server so the UI is never blocked while it works. The repository detail page shows a **Deleting archive** indicator while the operation is in progress, the archive's row and head read **Deleting**, and the archive disappears from the list once borg finishes. If the deletion fails, the archive remains in the list and a `archive_delete_failed` system event records the reason.
 
 All server-side borg operations for a repository (backup, sync, content indexing, and archive deletion) run **sequentially** through a per-repository queue, so they never contend for the borg repository lock. Deleting several archives at once no longer returns a conflict — each deletion is queued and runs in turn, and the indicator shows how many operations are waiting (for example, *Deleting archive (+3 queued)*). Once the deletion queue drains, the archive list and the repository's total archive count are reconciled from borg (without re-reading file contents), so the count stays accurate.
 
@@ -231,38 +238,17 @@ The schedule id keeps schedules apart when they back up the same host into the s
 
 ## File Search
 
-Assimilate can search for files by name within a single archive or across all archives in a repository. To find something in the archive you are browsing, use the search box above its file table instead — see [Searching the open archive](#searching-the-open-archive).
-
-### Search Within an Archive
-
-From the archive detail view, click **Search** and enter a file name or glob pattern (e.g. `*.log`, `config.yaml`). The results list matching paths with their size and modification time.
-
-### Cross-Archive Search
-
-From the repository's **Archives** tab, click **Search All Archives**. Enter a file name or glob pattern. The results show every archive that contains a matching path, allowing you to locate which backup snapshot holds a particular file version.
-
-!!! tip
-    Cross-archive search scans the index for each archive and may take a few seconds on repositories with many archives. The search is read-only and does not extract file data.
+To find something in the archive you have open, use its search — see [Searching the open archive](#searching-the-open-archive). To find which archives hold a file, search the archive list — see [Finding files across archives](#finding-files-across-archives).
 
 ## Archive Diff
 
-Compare two archives to see what changed between backup runs.
+Compare two archives of the same machine to see what changed between backup runs. Open an archive and its **Changes** tab, or choose **Compare with another archive** in its **...** menu.
 
-1. On the repository's **Archives** tab, select two archives using the checkboxes.
-2. Click **Diff**.
-3. The diff view lists every path that was added, removed, or modified between the two archives.
+1. Choose what to compare with: **Previous** (the machine's archive before this one, the default), **A week earlier**, or **Other archive**, which offers a list of the machine's other archives.
+2. The tab lists every path that was added, changed or removed, with a count of each above the list and the archive it compares with.
+3. Click a changed file to see what changed inside it — see [Changed files](#changed-files).
 
-Each row in the diff shows:
-
-| Column | Description |
-|--------|-------------|
-| **Status** | `added`, `removed`, or `modified` |
-| **Path** | Full path within the archive |
-| **Old size** | File size in the older archive (blank for added files) |
-| **New size** | File size in the newer archive (blank for removed files) |
-
-!!! note
-    The diff compares path-level metadata. To see what changed inside a text file, compare the file itself, as described below.
+The comparison reads path-level metadata. To see what changed inside a text file, compare the file itself, as described below.
 
 ### Comparing a file between archives
 
@@ -270,8 +256,8 @@ For a text file such as a configuration file or a script, you can see exactly wh
 
 ![Comparing nginx.conf with an older archive](assets/screenshots/file-diff.png)
 
-1. Open an archive in the file browser and navigate to the file.
-2. Click the **Compare** button on the file's row. It only appears for regular files, and only when the list holds another archive from the same machine: the same path on another host is a different file.
+1. Open an archive in the file browser and tick the file.
+2. Click **Compare** in the selection bar. It only appears when the one thing picked is a regular file, and only when the list holds another archive from the same machine: the same path on another host is a different file.
 3. The comparison opens against the most recent archive before this one, so it reads as what changed in this archive. Pick any other archive under **Compare with**. If the other archive does not hold the file, for example because a schedule with different sources wrote it, the comparison says the path was not found there; pick another archive.
 
 Lines only in the other archive are marked `-` on a red background, lines only in this archive `+` on a green one, and the part of a changed line that actually differs is highlighted. The header totals the added and removed lines.
@@ -284,14 +270,21 @@ A file that is not UTF-8 text, or is larger than 1 MB in either archive, cannot 
 !!! note
     Comparing a file reads both versions with `borg extract`, so it needs the same extract permission on the repository as downloading the file.
 
+### Changed files
+
+The open archive's **Changes** tab (see [Archive Diff](#archive-diff)) lists what it added, changed and removed against another archive of the same machine. A changed file's row reads *show diff* or *compare images* and opens its comparison:
+
+- A text file opens the comparison above, against the archive the tab compares with.
+- An image (PNG, JPEG, GIF, WebP, AVIF, BMP, SVG or ICO) opens an image comparison with three views: **2-up** shows both side by side, the older with a red frame and the newer with a green one, each with its dimensions and size; **Swipe** lays the newer over the older with a slider that wipes between them; **Onion skin** fades the newer over the older with a slider. Transparent parts show as a checkerboard. The images are read with `borg extract`, so this needs the extract permission too.
+
 ### File history
 
 A file's history lists every version of it across the archives its host wrote into the repository, newest first, together with the file as it is on the host now. Compare any two of them, or compare a backup with the file now to see what changed since it was backed up.
 
 ![The history of nginx.conf, comparing the newest backup with the file now](assets/screenshots/file-history.png)
 
-1. Open an archive in the file browser and navigate to the file.
-2. Click the **History** button on the file's row. It appears for every regular file, even in a host's only archive: the file now is always one more version.
+1. Open an archive in the file browser and tick the file.
+2. Click **History** in the selection bar. It appears whenever the one thing picked is a regular file, even in a host's only archive: the file now is always one more version.
 3. The history opens on the newest stored version against the file as it is now. With the host offline it opens on the two newest stored versions instead.
 4. Pick another pair with each row's **From** and **To** buttons. **From** is the side whose lines show as removed, **To** the side whose lines show as added.
 
@@ -312,10 +305,9 @@ The **Now** row reads the file on the host that wrote the archives, through its 
 
 To download an entire archive or a subtree as a compressed tar archive:
 
-1. Open the archive detail view.
-2. Click **Export**.
-3. Optionally specify a sub-path to export only part of the archive tree.
-4. Click **Download tar.lz4**. The server pipes `borg export-tar` output through lz4 compression and streams it to your browser.
+1. Open the archive. For the whole archive, choose **Download** in its **...** menu and skip the next step.
+2. For part of it, tick the folders and files you want and click **Download** in the selection bar.
+3. The server pipes `borg export-tar` output through lz4 compression and streams it to your browser.
 
 !!! note "Large exports"
     Exporting a full archive streams all data live from the borg repository and is not time-limited by the server. Exports of large archives (multi-GB) may take several minutes. For very large restores, run `borg export-tar` directly on the agent machine.
@@ -330,22 +322,14 @@ lz4 -d <archive-name>.tar.lz4 | tar -x
 
 ## Archive Tags
 
-Tags are short labels you can attach to archives to mark significant snapshots (e.g. `pre-upgrade`, `weekly-baseline`, `release-1.2`).
+Tags are short labels you can attach to archives to mark significant snapshots (e.g. `pre-upgrade`, `weekly-baseline`, `release-1.2`). The web UI does not show or edit them; use the API:
 
-### Adding Tags
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` / `POST` | `/api/repos/{repo_id}/archives/{archive_name}/tags` | List or add archive tags |
+| `DELETE` | `/api/repos/{repo_id}/archives/{archive_name}/tags/{tag}` | Remove an archive tag |
 
-From the archive detail view, click **Edit Tags** and enter one or more comma-separated tags. Tags are stored as archive metadata and persist across retention-policy runs — tagged archives are never pruned automatically.
-
-!!! warning
-    Pinned archives consume repository space indefinitely. Remove tags from archives you no longer need to retain.
-
-### Filtering by Tag
-
-On the repository's **Archives** tab, use the **Tag** filter dropdown to show only archives with a specific tag. This is useful for locating baseline snapshots among a long list of daily archives.
-
-### Removing Tags
-
-Open the archive detail view, click **Edit Tags**, remove the desired tag, and save. Once all tags are removed the archive is subject to normal retention-policy pruning on the next backup run.
+Deleting an archive deletes its tags too.
 
 ## Pruning Archives
 
@@ -353,7 +337,7 @@ Old archives are removed automatically after each successful backup run accordin
 
 Retention settings are per-schedule. See [Scheduling](scheduling.md) for how to configure `keep_daily`, `keep_weekly`, `keep_monthly`, and `keep_yearly`.
 
-Manual pruning through the UI is not available. To prune outside of the normal schedule, run `borg prune` directly on the repository host or trigger a backup run (which includes pruning) from the [Repositories](repositories.md) page.
+Manual pruning through the UI is not available. To prune outside of the normal schedule, run `borg prune` directly on the repository host or start a backup run (which includes pruning) with **Run now** on the [schedule](scheduling.md#manual-trigger).
 
 ## Archive Integrity
 

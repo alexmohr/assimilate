@@ -32,6 +32,13 @@ describe('NotificationEventToggles', () => {
     ])
   })
 
+  it('names each switch after its event, for assistive tech', () => {
+    expect(switches(mount()).map((s) => s.getAttribute('aria-label'))).toEqual([
+      'label:backup_success',
+      'label:backup_failed',
+    ])
+  })
+
   it('reflects which events are on', () => {
     expect(switches(mount()).map((s) => s.getAttribute('aria-checked'))).toEqual(['false', 'true'])
   })

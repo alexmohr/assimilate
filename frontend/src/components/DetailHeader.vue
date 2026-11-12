@@ -55,6 +55,12 @@ defineProps<{
       >
         <slot name="meta" />
       </div>
+      <div
+        v-if="$slots.tags"
+        class="detail-tags"
+      >
+        <slot name="tags" />
+      </div>
     </div>
 
     <div class="detail-actions">
@@ -64,3 +70,9 @@ defineProps<{
     <slot name="footer" />
   </header>
 </template>
+
+<style scoped>
+.detail-tags {
+  margin-top: var(--space-3);
+}
+</style>

@@ -62,19 +62,36 @@ test.describe('Filesystem snapshots', () => {
 
   test("a run's snapshot steps are on its timeline", async ({ page }) => {
     await loginAsAdmin(page)
-    await page.goto('/agents/web-server-01?tab=logs')
+    const id = await scheduleIdByName(page, 'Web server dual-target')
+    await page.goto(`/schedules/${id}`)
     await page.waitForLoadState('networkidle')
 
-    // The schedule's newest copy on server-daily is the seeded snapshot run.
-    // Opened by its row rather than by position: other specs add runs above it.
-    const run = page
-      .locator('.agent-row', { hasText: /web-server-01-dual-/ })
-      .filter({ has: page.getByRole('button', { name: 'server-daily' }) })
+    // The schedule's newest copy on server-daily is the seeded snapshot run;
+    // a run the agent page's Logs tab used to list is opened from the
+    // schedule's Recent runs now. Other specs can add runs after it, so each
+    // of server-daily's runs is opened from the newest until one shows the
+    // snapshot, with its host rows expanded.
+    const taken = page
+      .locator('.runs-detail')
+      .getByText('Snapshotted LVM volume vg0/www (/var/www)')
       .first()
-    await run.getByRole('button', { name: 'Show detail' }).click()
+    const strip = page.locator('.runs-row').filter({ hasText: 'server-daily' })
+    const pills = strip.locator('.run-pill')
+    await expect(pills.first()).toBeVisible()
+    for (let i = (await pills.count()) - 1; i >= 0; i--) {
+      await pills.nth(i).click()
+      const rows = page.locator('.runs-detail .log-row-summary--button')
+      for (let r = 0; r < (await rows.count()); r++) {
+        if ((await rows.nth(r).getAttribute('aria-expanded')) !== 'true') await rows.nth(r).click()
+      }
+      const shown = await taken
+        .waitFor({ state: 'visible', timeout: 5_000 })
+        .then(() => true)
+        .catch(() => false)
+      if (shown) break
+    }
 
-    const taken = page.getByText('Snapshotted LVM volume vg0/www (/var/www)').first()
-    await expect(taken, 'the seeded snapshot run is in the log').toBeVisible()
+    await expect(taken, 'the seeded snapshot run is in Recent runs').toBeVisible()
     await expect(
       page.getByText(/^LVM snapshot vg0\/assimilate-www-schedule-/).first(),
     ).toBeVisible()

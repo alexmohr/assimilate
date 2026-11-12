@@ -402,8 +402,8 @@ watch(() => props.modelValue, schedulePreview)
   font-family: var(--mono);
   font-size: var(--fs-base);
   letter-spacing: 0.03em;
-  background: var(--bg-input);
-  border: 1px solid var(--border);
+  background: var(--bg-field);
+  border: 1px solid transparent;
   border-radius: var(--radius-sm);
   color: var(--text-primary);
   padding: var(--space-4) var(--space-5);
@@ -479,8 +479,8 @@ watch(() => props.modelValue, schedulePreview)
 }
 
 .helper-select {
-  background: var(--bg-input);
-  border: 1px solid var(--border);
+  background: var(--bg-field);
+  border: 1px solid transparent;
   border-radius: var(--radius-sm);
   color: var(--text-primary);
   padding: var(--space-3) var(--space-4);
@@ -493,8 +493,8 @@ watch(() => props.modelValue, schedulePreview)
 }
 
 .helper-input {
-  background: var(--bg-input);
-  border: 1px solid var(--border);
+  background: var(--bg-field);
+  border: 1px solid transparent;
   border-radius: var(--radius-sm);
   color: var(--text-primary);
   padding: var(--space-3) var(--space-4);
@@ -596,10 +596,8 @@ watch(() => props.modelValue, schedulePreview)
 
 .cron-preview {
   margin-top: var(--space-2);
-  padding: var(--space-3) var(--space-5);
-  background: var(--bg-input);
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--border-subtle);
+  padding: var(--space-3) 0 0;
+  border-top: 1px solid var(--border-subtle);
   display: flex;
   flex-direction: column;
   gap: var(--space-2);

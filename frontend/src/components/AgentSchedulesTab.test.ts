@@ -48,9 +48,7 @@ function mount(props: Record<string, unknown> = {}) {
 }
 
 async function clickRunNow(wrapper: ReturnType<typeof mount>) {
-  const button = wrapper.findAll('button').find((b) => b.text().trim() === 'Run now')
-  if (!button) throw new Error('no Run now button')
-  await button.trigger('click')
+  await wrapper.get('button[title="Run now"]').trigger('click')
   await flushPromises()
 }
 
@@ -61,8 +59,9 @@ describe('AgentSchedulesTab', () => {
   })
 
   it('renders one row per schedule', () => {
-    expect(mount().findAll('.rows .agent-row')).toHaveLength(1)
-    expect(mount().text()).toContain('Nightly')
+    const rows = mount().findAll('.sched-row[data-schedule-id]')
+    expect(rows).toHaveLength(1)
+    expect(rows[0].get('.sched-title').text()).toBe('Nightly')
   })
 
   // A schedule can target several hosts. "Run now" pressed on one host's page
@@ -74,21 +73,31 @@ describe('AgentSchedulesTab', () => {
     expect(apiClient.post).toHaveBeenCalledWith('/schedules/100/run', { agent_ids: [7] })
   })
 
-  it.each([['Open'], ['Nightly']])('opens the schedule from %s', async (label) => {
+  // The row itself is the link to the schedule; there is no separate Open
+  // button any more.
+  it.each([
+    ['a click', 'click'],
+    ['Enter', 'keydown.enter'],
+  ])('opens the schedule from the row on %s', async (_label, event) => {
     const wrapper = mount()
-    const target =
-      label === 'Open'
-        ? wrapper.findAll('button').find((b) => b.text().trim() === 'Open')
-        : wrapper.find('.agent-row-name')
-    await target!.trigger('click')
+    await wrapper.get('.sched-row[data-schedule-id="100"]').trigger(event)
 
-    expect(wrapper.emitted('open')).toHaveLength(1)
+    expect(wrapper.emitted('open')).toEqual([[expect.objectContaining({ id: 100 })]])
+  })
+
+  it('does not open the schedule when Run now is pressed', async () => {
+    const wrapper = mount()
+    await clickRunNow(wrapper)
+    expect(wrapper.emitted('open')).toBeUndefined()
   })
 
   // An unnamed schedule is identified by the repository it writes to.
   it('falls back to the repository name for an unnamed schedule', () => {
     const wrapper = mount({ schedules: [schedule({ name: '' })] })
-    expect(wrapper.find('.agent-row-name').text()).toBe('server-daily')
+    expect(wrapper.get('.sched-title').text()).toBe('server-daily')
+    expect(wrapper.get('button[title="Run now"]').attributes('aria-label')).toBe(
+      'Run server-daily now',
+    )
   })
 
   it('surfaces a failed run request', async () => {
@@ -101,8 +110,7 @@ describe('AgentSchedulesTab', () => {
 
   it('cannot run a disabled schedule', () => {
     const wrapper = mount({ schedules: [schedule({ enabled: false })] })
-    const button = wrapper.findAll('button').find((b) => b.text().trim() === 'Run now')
-    expect(button!.attributes('disabled')).toBeDefined()
+    expect(wrapper.get('button[title="Run now"]').attributes('disabled')).toBeDefined()
   })
 
   it('offers a way to add a schedule when there are none', () => {

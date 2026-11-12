@@ -13,6 +13,7 @@ import {
   updateAgentDatabaseSource,
 } from '../api/databases'
 import { useAsyncAction } from '../composables/useAsyncAction'
+import { useSchedulesAskingForDumps } from '../composables/useHostDumpSettings'
 import { extractError } from '../utils/error'
 import { formatDate } from '../utils/format'
 import {
@@ -39,6 +40,7 @@ import EmptyState from './EmptyState.vue'
 import PaneRow from './PaneRow.vue'
 import ToggleSwitch from './ToggleSwitch.vue'
 import type { AgentRow } from '../types/agent'
+import type { ScheduleRow } from '../types/schedule'
 import type {
   AgentDatabaseSourceResponse,
   AgentDatabasesResponse,
@@ -56,11 +58,19 @@ import type {
  * only opts in. The source table is what the agent last found, so it is empty
  * until the host has been scanned once.
  */
-const props = defineProps<{
-  agent: AgentRow
-  /** False for imported hosts, which have no agent to scan or push to. */
-  canEdit: boolean
-}>()
+const props = withDefaults(
+  defineProps<{
+    agent: AgentRow
+    /** False for imported hosts, which have no agent to scan or push to. */
+    canEdit: boolean
+    /** The schedules that target this host. */
+    schedules?: readonly ScheduleRow[]
+  }>(),
+  { schedules: () => [] },
+)
+
+/** This host's schedules that ask for database dumps, which a blocked host ignores. */
+const { schedulesAskingForDumps } = useSchedulesAskingForDumps(() => props.schedules)
 
 const loading = ref(true)
 const loadError = ref<string | null>(null)
@@ -243,6 +253,44 @@ onMounted(load)
           <dt>Dump directory</dt>
           <dd class="mono">{{ dumpDir }}</dd>
         </dl>
+        <!-- The other half of the schedule's warning: they ask, this host says no. -->
+        <div
+          v-if="!enabled && schedulesAskingForDumps.length > 0"
+          class="notice-bar"
+          role="status"
+          data-testid="database-dump-asked"
+        >
+          <div class="notice-bar-text">
+            <span class="notice-bar-title">
+              {{
+                schedulesAskingForDumps.length === 1
+                  ? '1 schedule asks for database dumps here'
+                  : `${schedulesAskingForDumps.length} schedules ask for database dumps here`
+              }}
+            </span>
+            <span>
+              <template
+                v-for="(schedule, i) in schedulesAskingForDumps"
+                :key="schedule.id"
+              >
+                <RouterLink
+                  :to="`/schedules/${schedule.id}`"
+                  class="dump-asked-link"
+                  >{{ schedule.name || `Schedule #${schedule.id}` }}</RouterLink
+                >{{
+                  i < schedulesAskingForDumps.length - 2
+                    ? ', '
+                    : i === schedulesAskingForDumps.length - 2
+                      ? ' and '
+                      : ''
+                }}
+              </template>
+              {{ schedulesAskingForDumps.length === 1 ? 'asks' : 'ask' }} for database dumps, but
+              they are blocked on this host, so their archives hold none. Allow them here to include
+              them.
+            </span>
+          </div>
+        </div>
       </template>
 
       <template #edit>
@@ -728,7 +776,7 @@ onMounted(load)
         class="table-wrap"
       >
         <table
-          class="data-table"
+          class="data-table data-table--stack"
           data-testid="database-sources"
         >
           <thead>
@@ -760,7 +808,7 @@ onMounted(load)
                   {{ source.last_error }}
                 </div>
               </td>
-              <td>
+              <td data-label="Found as">
                 <span class="badge badge--neutral">{{ kindLabel(source) }}</span>
                 <div
                   v-if="source.engine"
@@ -769,11 +817,19 @@ onMounted(load)
                   {{ ENGINE_LABELS[source.engine] }}
                 </div>
               </td>
-              <td class="cell-mono">{{ databaseList(source) }}</td>
-              <td class="cell-date">
+              <td
+                data-label="Databases"
+                class="cell-mono"
+              >
+                {{ databaseList(source) }}
+              </td>
+              <td
+                data-label="Last scanned"
+                class="cell-date"
+              >
                 {{ source.last_scanned_at ? formatDate(source.last_scanned_at) : 'Never' }}
               </td>
-              <td>
+              <td data-label="Backed up">
                 <ToggleSwitch
                   :model-value="source.included"
                   :disabled="!canEdit || rowSaving === sourceKey(source)"
@@ -796,5 +852,9 @@ onMounted(load)
 
 .scan-warning {
   color: var(--color-warning);
+}
+.dump-asked-link {
+  font-weight: 600;
+  color: var(--accent);
 }
 </style>

@@ -327,7 +327,7 @@ export async function mockSystemVersion(page: Page): Promise<void> {
 // archives fetch to resolve.
 export async function expandAllArchiveGroups(page: Page): Promise<void> {
   // The list renders skeleton rows while it loads, so waiting for "any of
-  // archive-group / archive-row-detailed / empty-state" can resolve on a
+  // archive row / host group / empty state" can resolve on a
   // transient placeholder and leave the groups collapsed for the rest of the
   // test. Wait the placeholders out explicitly first.
   await page
@@ -336,7 +336,14 @@ export async function expandAllArchiveGroups(page: Page): Promise<void> {
     .catch(() => {})
 
   await page
-    .locator('.archive-group, .archive-row-detailed, .empty-state, .error-banner')
+    .locator(
+      [
+        '.archives-panel [data-testid="archive-row"]',
+        '.archives-panel .group-header',
+        '.archives-panel .empty-state',
+        '.archives-panel .error-banner',
+      ].join(', '),
+    )
     .first()
     .waitFor({ state: 'visible', timeout: 20_000 })
     .catch(() => {})
@@ -387,6 +394,9 @@ export function opsWebhookWithRules(eventTypes: string[]): { channels: object[];
         config: { url: 'https://hooks.example.com/assimilate' },
         enabled: true,
         scope: {},
+        link: { target: 'automatic', url: null },
+        has_password: false,
+        webhook_headers: [],
         created_at: '2026-01-01T00:00:00Z',
         updated_at: '2026-01-01T00:00:00Z',
       },
@@ -432,7 +442,7 @@ export async function openNotificationHistory(page: Page): Promise<Locator> {
   await page.goto('/notifications')
   await page.waitForLoadState('networkidle')
   await page.getByRole('tab', { name: 'History' }).click()
-  const rows = page.locator('.delivery-row')
+  const rows = page.getByTestId('delivery-history').locator('.log-row')
   await expect(rows.first()).toBeVisible({ timeout: 10_000 })
   return rows
 }
@@ -543,6 +553,33 @@ export async function seededNginxComparison(
 }
 
 /**
+ * Signs in and opens the newest seeded web-server-01 archive in server-daily
+ * (flat list, found by name), waiting for its contents to be indexed, and
+ * returns it with the older archive `seededNginxComparison` pairs it with:
+ * start-agent.sh changes nginx.conf and logo.png between the two.
+ */
+export async function openSeededComparisonArchive(
+  page: Page,
+): Promise<{ target: string; base: string }> {
+  await loginAsAdmin(page)
+  const repoId = await seededIdByName(page, '/api/repos', 'server-daily')
+
+  await page.goto(`/repos/${repoId}?tab=archives`)
+  await page.waitForLoadState('networkidle')
+  await page.getByRole('button', { name: 'List options' }).click()
+  await page.getByRole('menuitemradio', { name: 'Flat list' }).click()
+  const { target, base } = await seededNginxComparison(page, repoId)
+  await page.getByLabel('Search archives').fill(target)
+  await page.getByRole('button', { name: `Open archive ${target}`, exact: true }).click()
+
+  // Indexing an archive's contents on first access can take a while.
+  await expect(
+    page.locator('.browser-panel').last().getByTestId('browser-entry').first(),
+  ).toBeVisible({ timeout: 120_000 })
+  return { target, base }
+}
+
+/**
  * The seeded web-server-01 archive in server-daily that grew: start-agent.sh
  * gives it a release tarball and a debug log no other archive has, so it
  * added the most of all of them, and seed-demo.sh works out its breakdown.
@@ -568,10 +605,24 @@ export async function openSeededWebArchive(page: Page): Promise<void> {
   await loginAsAdmin(page)
   await page.goto('/agents/web-server-01?tab=backups')
   await page.waitForLoadState('networkidle')
-  await page.getByPlaceholder('Search name, host or repository').fill('web-server-01-backup')
-  await page.locator('.archive-row-body:visible').first().click()
+  await page.getByLabel('Search archives').fill('web-server-01-backup')
+  await page.locator('[data-testid="archive-row"]:visible').first().click()
   // Indexing an archive's contents on first access can take a while.
-  await expect(page.locator('.browser-panel table.browser-table')).toBeVisible({
+  await expect(page.locator('.browser-panel').getByTestId('browser-entry').first()).toBeVisible({
     timeout: 120_000,
   })
+}
+
+/**
+ * Opens one of a settings page's collapsible section cards (SettingsRail) by
+ * its heading, unless it is open already, and returns its body. The cards
+ * replaced the settings tabs and side navigation; any number can be open at
+ * once, and the last one opened is in the URL's `?section=`.
+ */
+export async function openSettingsSection(page: Page, label: string): Promise<Locator> {
+  const head = page.locator('.accordion-head').filter({ hasText: label }).first()
+  await expect(head).toBeVisible({ timeout: 15_000 })
+  if ((await head.getAttribute('aria-expanded')) !== 'true') await head.click()
+  await expect(head).toHaveAttribute('aria-expanded', 'true')
+  return page.getByRole('region', { name: label, exact: true })
 }

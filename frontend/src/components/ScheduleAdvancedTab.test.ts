@@ -64,11 +64,13 @@ function mount(props: Record<string, unknown> = {}) {
 }
 
 describe('ScheduleAdvancedTab', () => {
-  it('discloses the pane-head hint describing what the tab covers', async () => {
+  it('says in the pane head what the tab covers, not behind a help icon', () => {
     const wrapper = mount()
-    await wrapper.find('[aria-label="Help: bandwidth, patterns and commands"]').trigger('click')
-    expect(wrapper.find('.help-hint-pop').text()).toContain(
+    expect(wrapper.find('.pane-head .pane-lede').text()).toContain(
       'Settings most schedules leave alone: bandwidth and verification',
+    )
+    expect(wrapper.find('[aria-label="Help: bandwidth, patterns and commands"]').exists()).toBe(
+      false,
     )
   })
 

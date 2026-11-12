@@ -51,13 +51,12 @@ defineEmits<{
 </template>
 
 <style scoped>
+/* Left-aligned like the rest of the page, so its button is never centred. */
 .empty-state {
   display: flex;
   flex-direction: column;
-  align-items: center;
-  justify-content: center;
+  align-items: flex-start;
   padding: var(--space-10) var(--space-8);
-  text-align: center;
   gap: var(--space-5);
 }
 

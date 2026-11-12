@@ -99,12 +99,12 @@ function labels(wrapper: ReturnType<typeof mount>): string[] {
 }
 
 describe('SchedulePowerTab', () => {
-  it('discloses the pane-head hint describing what waking hosts does', async () => {
+  it('says in the pane head what waking hosts does, not behind a help icon', () => {
     const wrapper = mount('host_default')
-    await wrapper.find('[aria-label="Help: waking hosts"]').trigger('click')
-    expect(wrapper.find('.help-hint-pop').text()).toContain(
+    expect(wrapper.find('.pane-lede').text()).toContain(
       'Whether this job wakes the hosts it needs before it runs.',
     )
+    expect(wrapper.find('[aria-label="Help: waking hosts"]').exists()).toBe(false)
   })
 
   it('offers the three states, with the host default selected by default', () => {

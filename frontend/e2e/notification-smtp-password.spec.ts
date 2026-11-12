@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
-import { expect, loginAsAdmin, mockNotificationsApi, test } from './fixtures'
+import { expect, loginAsAdmin, mockNotificationsApi, openSettingsSection, test } from './fixtures'
 import type { Page } from '@playwright/test'
 
 // Against the real demo server: the seeded email channel has a stored SMTP
@@ -41,6 +41,7 @@ const EMAIL_CHANNEL = {
   webhook_headers: [],
   enabled: true,
   scope: {},
+  link: { target: 'automatic', url: null },
   created_at: '2026-01-01T00:00:00Z',
   updated_at: '2026-01-01T00:00:00Z',
 }
@@ -70,19 +71,21 @@ test('editing an email channel keeps its saved password when the field is left b
 
   await page.goto('/notifications')
   await page.waitForLoadState('networkidle')
-  // A channel row opens its editor when clicked.
-  const row = page.locator('.channel-row').filter({ hasText: 'Ops Email' })
+  // A channel row opens the channel's own page.
+  const row = page.locator('.list-row[data-channel="Ops Email"]')
   await expect(row).toBeVisible({ timeout: 10_000 })
-  await row.locator('.list-row-name').click()
+  await row.click()
 
-  const dialog = page.locator('.modal-dialog')
-  const password = dialog.getByTestId('smtp-password')
+  // The channel's page opens on its delivery settings, edited behind Edit.
+  const settings = await openSettingsSection(page, 'Delivery')
+  await settings.getByRole('button', { name: 'Edit' }).click()
+  const password = settings.getByTestId('smtp-password')
   await expect(password).toHaveValue('')
   await expect(password).toHaveAttribute('placeholder', /leave blank to keep it/)
-  await expect(dialog).toContainText('A password is saved for this channel')
+  await expect(settings).toContainText('A password is saved for this channel')
 
-  await dialog.getByRole('button', { name: 'Save' }).click()
-  await expect(dialog).toBeHidden()
+  await settings.getByRole('button', { name: 'Save', exact: true }).click()
+  await expect(settings.getByRole('button', { name: 'Edit' })).toBeVisible()
 
   expect(validateBody).toMatchObject({ smtp_password: '', channel_id: 1 })
   expect(savedBody?.config).toMatchObject({ smtp_host: 'smtp.example.com', smtp_password: '' })

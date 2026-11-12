@@ -111,6 +111,11 @@ export type AgentResponse = {
    */
   machine_id: number;
   /**
+   * Whether the host allows database dumps. A schedule that asks for them
+   * dumps nothing on a host where this is off.
+   */
+  database_backup_enabled: boolean;
+  /**
    * Power-management settings: waking this agent's host before a backup,
    * and starting/stopping the agent process itself over SSH.
    */

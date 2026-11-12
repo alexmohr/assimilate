@@ -19,7 +19,7 @@ test.describe('transport failure retry', () => {
     await page.waitForLoadState('networkidle')
     await expandAllArchiveGroups(page)
 
-    await expect(page.locator('.archive-row').first()).toBeVisible({ timeout: 30_000 })
+    await expect(page.getByTestId('archive-row').first()).toBeVisible({ timeout: 30_000 })
     expect(attempts).toBeGreaterThanOrEqual(2)
   })
 })

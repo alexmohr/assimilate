@@ -253,9 +253,7 @@ onMounted(checkHostKey)
 <template>
   <div>
     <div class="pane-head">
-      <HelpHint label="connection details">
-        Where this repository lives and how borg writes to it.
-      </HelpHint>
+      <p class="pane-lede">Where this repository lives and how borg writes to it.</p>
       <button
         v-if="isAdmin && !isEditing"
         class="btn btn-sm btn-ghost"

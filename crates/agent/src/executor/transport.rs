@@ -81,6 +81,18 @@ pub(super) fn write_known_hosts(
     Ok(Some(file))
 }
 
+/// The run's warning when its schedule asks for virtual machines that this
+/// host does not stage.
+pub(crate) const VMS_OFF_WARNING: &str =
+    "This schedule asks for virtual machines, but this host has virtual machine staging turned \
+     off, so none were included. Turn it on in the host's virtual machine settings.";
+
+/// The run's warning when its schedule asks for database dumps that this
+/// host has turned off.
+pub(crate) const DATABASES_OFF_WARNING: &str =
+    "This schedule asks for database dumps, but this host has database dumps turned off, so none \
+     were included. Turn them on in the host's database settings.";
+
 pub fn backup_target_from_repo(
     repo: &RepoConfig,
     hostname: &str,
@@ -93,6 +105,7 @@ pub fn backup_target_from_repo(
         .or_else(|| repo.schedules.first());
     // Staging needs both halves: the schedule opting in, and the host having
     // it switched on at all.
+    let mut setup_warnings = Vec::new();
     let schedule_wants_vms = schedule.is_some_and(|s| s.vm_snapshot_enabled);
     let stages_vms = schedule_wants_vms && vm_snapshot.enabled;
     if schedule_wants_vms && !vm_snapshot.enabled {
@@ -104,6 +117,7 @@ pub fn backup_target_from_repo(
             "the schedule asks for virtual machines but this host has staging turned off, so \
              none will be included"
         );
+        setup_warnings.push(VMS_OFF_WARNING.to_owned());
     }
     let schedule_wants_databases = schedule.is_some_and(|s| s.database_backup_enabled);
     let dumps_databases = schedule_wants_databases && database_backup.enabled;
@@ -116,6 +130,7 @@ pub fn backup_target_from_repo(
             "the schedule asks for databases but this host has database dumps turned off, so none \
              will be included"
         );
+        setup_warnings.push(DATABASES_OFF_WARNING.to_owned());
     }
     let mut backup_sources = schedule.map_or_else(Vec::new, |s| s.backup_sources.clone());
     // The staging directory is part of the backup by virtue of staging, so the
@@ -175,6 +190,7 @@ pub fn backup_target_from_repo(
         ssh_auth_sock: None,
         canary_enabled: schedule.is_some_and(|s| s.canary_enabled),
         accept_relocation: repo.accept_relocation,
+        setup_warnings,
     }
 }
 

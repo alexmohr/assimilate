@@ -6,9 +6,10 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { formatBytes, formatDuration } from '../utils/format'
-import { backupStatusBadgeClass } from '../utils/badge'
+import type { BadgeTone } from '../utils/badge'
 import { runOutcome, type RunOutcome } from '../utils/scheduleRuns'
 import { useRunEvents } from '../composables/useRunEvents'
+import LogRow from './LogRow.vue'
 import RunReportDetail from './RunReportDetail.vue'
 import type { ReportRow } from '../types/report'
 
@@ -26,21 +27,19 @@ const props = defineProps<{
   repoLabel: string | null
 }>()
 
-const NO_VALUE = '–'
+const NO_VALUE: string | null = null
 
 const expanded = ref(false)
 const status = computed(() => runOutcome(props.report.status))
 const warnings = computed(() => props.report.warnings ?? [])
 
-const STRIPES: Record<RunOutcome, 'success' | 'warning' | 'danger' | 'muted'> = {
+const TONES: Record<RunOutcome, BadgeTone> = {
   success: 'success',
   warning: 'warning',
   skipped: 'warning',
   failed: 'danger',
-  cancelled: 'muted',
+  cancelled: 'neutral',
 }
-
-const stripe = computed(() => STRIPES[status.value])
 
 /**
  * The line beside the name. A skipped or failed run gets the first line of its
@@ -87,70 +86,28 @@ const { runEvents, loadingEvents, eventsFetched, eventsError } = useRunEvents(
 </script>
 
 <template>
-  <div class="agent-row">
-    <i
-      class="agent-row-stripe"
-      :class="`agent-row-stripe--${stripe}`"
-      aria-hidden="true"
-    />
-    <div class="agent-row-line">
-      <span class="agent-row-name mono">{{ hostLabel }}</span>
-      <span
-        v-if="repoLabel"
-        class="meta-pill"
-        >{{ repoLabel }}</span
-      >
-      <span
-        v-if="status !== 'success'"
-        class="badge"
-        :class="backupStatusBadgeClass(report.status)"
-        >{{ status }}</span
-      >
-      <span
-        v-if="note"
-        class="agent-row-sub run-report-note"
-        :title="note"
-        >{{ note }}</span
-      >
-    </div>
-    <div class="agent-row-line">
-      <span class="agent-row-stats">
-        <span>{{ sizeText }}</span>
-        <span>{{ durationText }}</span>
-      </span>
-      <div
-        v-if="hasDetail"
-        class="agent-row-actions"
-      >
-        <button
-          class="btn btn-sm btn-ghost"
-          type="button"
-          :aria-expanded="expanded"
-          @click="expanded = !expanded"
-        >
-          {{ expanded ? 'Hide detail' : 'Show detail' }}
-        </button>
-      </div>
-    </div>
-  </div>
-  <RunReportDetail
-    v-if="expanded"
-    :report="report"
-    :run-events="runEvents"
-    :loading-events="loadingEvents"
-    :events-fetched="eventsFetched"
-    :events-error="eventsError"
-    flush
-  />
+  <!-- The same row as every other log list: dot, host, one line of facts. -->
+  <LogRow
+    :tone="TONES[status]"
+    :title="hostLabel"
+    :subtitle="repoLabel"
+    :facts="[note, sizeText, durationText]"
+    mono
+    :expanded="expanded"
+    @toggle="expanded = !expanded"
+  >
+    <template
+      v-if="hasDetail"
+      #detail
+    >
+      <RunReportDetail
+        :report="report"
+        :run-events="runEvents"
+        :loading-events="loadingEvents"
+        :events-fetched="eventsFetched"
+        :events-error="eventsError"
+        flush
+      />
+    </template>
+  </LogRow>
 </template>
-
-<style scoped>
-/* One line, however long the reason: the whole message is a click away. */
-.run-report-note {
-  min-width: 0;
-  max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-</style>

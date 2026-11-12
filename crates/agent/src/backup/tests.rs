@@ -58,6 +58,7 @@ pub(crate) fn test_target() -> BackupTarget {
         canary_enabled: false,
         accept_relocation: false,
         file_change_patterns: Vec::new(),
+        setup_warnings: Vec::new(),
     }
 }
 

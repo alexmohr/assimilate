@@ -33,6 +33,7 @@ import ConfirmDeleteDialog from '../components/ConfirmDeleteDialog.vue'
 import DependencyConnectionCard from '../components/DependencyConnectionCard.vue'
 import DependencyMachineCard from '../components/DependencyMachineCard.vue'
 import DetailHeader from '../components/DetailHeader.vue'
+import OverflowMenu from '../components/OverflowMenu.vue'
 import MachinePane from '../components/MachinePane.vue'
 import SettingsRail, { type SettingsSections } from '../components/SettingsRail.vue'
 
@@ -66,14 +67,12 @@ const section = computed<DependencyHostSection>({
   },
 })
 
-const sections = computed<SettingsSections<DependencyHostSection>>(() => {
-  const base: SettingsSections<DependencyHostSection> = [
-    { id: 'connection', label: 'Connection' },
-    { id: 'power', label: 'Power & dependencies' },
-    { id: 'used-by', label: 'Used by' },
-  ]
-  return isAdmin.value ? [...base, { id: 'danger', label: 'Danger zone', danger: true }] : base
-})
+/** Removing the dependency lives in the header's overflow menu. */
+const sections: SettingsSections<DependencyHostSection> = [
+  { id: 'connection', label: 'Connection' },
+  { id: 'power', label: 'Power & dependencies' },
+  { id: 'used-by', label: 'Used by' },
+]
 
 const subtitle = computed(() =>
   host.value
@@ -205,9 +204,9 @@ async function confirmDelete(): Promise<void> {
           <span
             v-if="host.intermittent"
             class="badge badge--neutral"
+            title="Can be offline at any time, even when a backup is due. Missed backups run once it is back."
+            >Intermittent</span
           >
-            Not always online
-          </span>
         </template>
         <template
           v-if="isAdmin"
@@ -225,6 +224,19 @@ async function confirmDelete(): Promise<void> {
             />
             {{ testing ? 'Testing...' : 'Test connection' }}
           </button>
+          <OverflowMenu
+            v-slot="{ run: runAction }"
+            label="More dependency actions"
+          >
+            <button
+              class="overflow-menu-item overflow-menu-item--danger"
+              role="menuitem"
+              type="button"
+              @click="runAction(() => (showDelete = true))"
+            >
+              Remove dependency
+            </button>
+          </OverflowMenu>
         </template>
       </DetailHeader>
 
@@ -263,8 +275,8 @@ async function confirmDelete(): Promise<void> {
               v-if="usage.length === 0"
               class="field-hint"
             >
-              No schedule needs this dependency yet. Add it under a schedule's Settings, in
-              Dependencies, or an agent's Backup defaults.
+              No schedule needs this dependency yet. Add it under a schedule's Settings, in Power
+              &amp; dependencies, or an agent's Backup defaults.
             </p>
             <div
               v-else
@@ -284,25 +296,6 @@ async function confirmDelete(): Promise<void> {
                 <span class="meta-pill">{{ entry.hostname }}</span>
                 <span class="agent-row-stats">{{ usageSourceText(entry) }}</span>
               </RouterLink>
-            </div>
-          </template>
-
-          <template v-else-if="current === 'danger'">
-            <div class="danger-body">
-              <div class="danger-info">
-                <span class="danger-heading">Remove dependency</span>
-                <span class="danger-desc">
-                  Forget this dependency and its settings. Schedules and agent defaults stop needing
-                  it, and runs waiting on it stop waiting.
-                </span>
-              </div>
-              <button
-                class="btn btn-sm btn-danger"
-                type="button"
-                @click="showDelete = true"
-              >
-                Remove dependency
-              </button>
             </div>
           </template>
         </SettingsRail>

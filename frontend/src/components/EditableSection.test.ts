@@ -30,36 +30,33 @@ function editingButtons(wrapper: ReturnType<typeof mount>) {
 }
 
 describe('EditableSection', () => {
-  it('shows the view slot and discloses the lede and hint behind their own HelpHints', async () => {
+  it('shows the view slot with the lede and hint said in words, not behind HelpHints', () => {
     const wrapper = mount()
     expect(wrapper.find('.view-body').exists()).toBe(true)
     expect(wrapper.find('.edit-body').exists()).toBe(false)
 
-    await wrapper.find('[aria-label="Help: backup defaults"]').trigger('click')
-    expect(wrapper.find('.help-hint-pop').text()).toBe(
+    expect(wrapper.find('.pane-lede').text()).toBe(
       'What a schedule uses when it sets none of its own.',
     )
-
-    await wrapper.find('[aria-label="Help: command inheritance"]').trigger('click')
-    const hintPop = wrapper
-      .findAll('.help-hint-pop')
-      .find((p) => p.text() === 'what this setting does')
-    expect(hintPop).toBeDefined()
+    expect(wrapper.find('.field-hint').text()).toBe('what this setting does')
+    // Neither one hides behind a lone "?".
+    expect(wrapper.find('.help-hint-btn').exists()).toBe(false)
   })
 
   it('shows the edit slot and hides the hint when editing', () => {
     const wrapper = mount({ editing: true })
     expect(wrapper.find('.edit-body').exists()).toBe(true)
     expect(wrapper.find('.view-body').exists()).toBe(false)
-    expect(wrapper.find('[aria-label="Help: command inheritance"]').exists()).toBe(false)
+    expect(wrapper.find('.field-hint').exists()).toBe(false)
+    expect(wrapper.text()).not.toContain('what this setting does')
   })
 
-  it('omits the hint HelpHint entirely when no hint slot is given', () => {
+  it('omits the hint entirely when no hint slot is given', () => {
     const wrapper = renderWithPlugins(EditableSection, {
       props: { editing: false },
       slots: { view: '<span />' },
     })
-    expect(wrapper.find('[aria-label="Help: this section"]').exists()).toBe(false)
+    expect(wrapper.find('.field-hint').exists()).toBe(false)
   })
 
   it('renders no pane head at all when there is neither a lede nor an Edit button', () => {
@@ -134,7 +131,7 @@ describe('EditableSection', () => {
     expect(editing.emitted('save')).toHaveLength(1)
   })
 
-  it('shows the error and disables both editing buttons while saving, leaving the lede HelpHint usable', () => {
+  it('shows the error and disables both editing buttons while saving, leaving the lede readable', () => {
     const wrapper = mount({ editing: true, saving: true, error: 'SSH unreachable' })
     expect(wrapper.find('.form-error').text()).toBe('SSH unreachable')
 
@@ -146,6 +143,8 @@ describe('EditableSection', () => {
     expect(buttons[1].text()).toBe('Saving...')
 
     // Reading the explanation does not require the ability to save.
-    expect(wrapper.find('.help-hint-btn').attributes('disabled')).toBeUndefined()
+    expect(wrapper.find('.pane-lede').text()).toBe(
+      'What a schedule uses when it sets none of its own.',
+    )
   })
 })

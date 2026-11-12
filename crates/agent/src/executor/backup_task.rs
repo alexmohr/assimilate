@@ -14,7 +14,7 @@ use super::{
     vms::stage_configured_machines,
 };
 use crate::{
-    backup::{BackupEngine, BackupError, BackupResult, BackupTarget, CanaryResult},
+    backup::{BackupEngine, BackupError, BackupResult, BackupTarget, CanaryResult, CanaryToken},
     database::{PreparedDumps, RuntimeClients},
 };
 
@@ -104,67 +104,62 @@ pub(super) async fn run_backup_task(
         Ok(dumps) => dumps,
         Err(reason) => {
             error!(repo_id = ?repo_id, reason = %reason, "backup could not be prepared");
-            report_backup_failure(
-                repo_id,
-                schedule_id,
-                started_at,
-                reason,
-                run_id,
-                borg_command,
-                outbound_tx,
-            )
-            .await;
+            let report = failed_with_setup_warnings(
+                make_failed_report(
+                    repo_id,
+                    schedule_id,
+                    started_at,
+                    reason,
+                    run_id,
+                    Some(borg_command),
+                ),
+                &target.setup_warnings,
+            );
+            report_backup_failure(report, outbound_tx).await;
             return;
         }
     };
 
     let _ssh_forward = setup_ssh_forward(&mut target, &hostname, &server).await;
 
-    let canary = if target.canary_enabled {
-        match BackupEngine::write_canary(&target.backup_sources).await {
-            Ok(c) => Some(c),
-            Err(e) => {
-                warn!(repo_id = ?repo_id, error = %e, "canary write failed, proceeding without");
-                None
-            }
-        }
-    } else {
-        None
-    };
+    let canary = write_canary_if_enabled(repo_id, &target).await;
 
     let (log_tx, log_forwarder) = spawn_log_forwarder(repo_id, schedule_id, outbound_tx.clone());
     let completed: CompletedBackup = match engine
         .run_backup_with_dumps(&target, canary.as_ref(), Some(log_tx), dumps.as_ref())
         .await
     {
-        Ok(result) => build_backup_report(repo_id, schedule_id, started_at, run_id.clone(), result),
-        Err(BackupError::Skipped(reason)) => {
-            error!(repo_id = ?repo_id, reason = %reason, "backup skipped, treating as failure");
-            make_failed_report(
+        Ok(result) => build_backup_report(
+            repo_id,
+            schedule_id,
+            started_at,
+            run_id.clone(),
+            with_setup_warnings(result, &target.setup_warnings),
+        ),
+        Err(e) => {
+            let (reason, command) = match e {
+                BackupError::Skipped(reason) => {
+                    error!(repo_id = ?repo_id, reason = %reason, "backup skipped, treating as failure");
+                    (reason, Some(borg_command))
+                }
+                e => {
+                    error!(repo_id = ?repo_id, error = %e, "backup failed");
+                    let command = e
+                        .borg_command()
+                        .map(ToOwned::to_owned)
+                        .or(Some(borg_command));
+                    (e.to_string(), command)
+                }
+            };
+            let report = make_failed_report(
                 repo_id,
                 schedule_id,
                 started_at,
                 reason,
                 run_id.clone(),
-                Some(borg_command),
-            )
-            .into()
-        }
-        Err(e) => {
-            error!(repo_id = ?repo_id, error = %e, "backup failed");
-            let failed_command = e
-                .borg_command()
-                .map(std::borrow::ToOwned::to_owned)
-                .or_else(|| Some(borg_command.clone()));
-            make_failed_report(
-                repo_id,
-                schedule_id,
-                started_at,
-                e.to_string(),
-                run_id.clone(),
-                failed_command,
-            )
-            .into()
+                command,
+            );
+            failed_with_setup_warnings(report, &target.setup_warnings).into()
         }
     };
 
@@ -205,22 +200,9 @@ async fn prepare_run(
 /// Reports a backup that failed before borg was even reached, so the run shows
 /// up with its reason instead of silently never finishing.
 pub(super) async fn report_backup_failure(
-    repo_id: RepoId,
-    schedule_id: Option<i64>,
-    started_at: chrono::DateTime<Utc>,
-    reason: String,
-    run_id: Option<String>,
-    borg_command: String,
+    report: shared::types::BackupReport,
     outbound_tx: &mpsc::Sender<AgentToServer>,
 ) {
-    let report = make_failed_report(
-        repo_id,
-        schedule_id,
-        started_at,
-        reason,
-        run_id,
-        Some(borg_command),
-    );
     send_outbound(
         outbound_tx,
         AgentToServer::BackupCompleted {
@@ -278,6 +260,44 @@ impl From<shared::types::BackupReport> for CompletedBackup {
     }
 }
 
+/// Writes the canary file a canary-enabled target checks after the backup;
+/// a failure to write it is logged and the backup goes on without one.
+async fn write_canary_if_enabled(repo_id: RepoId, target: &BackupTarget) -> Option<CanaryToken> {
+    if !target.canary_enabled {
+        return None;
+    }
+    match BackupEngine::write_canary(&target.backup_sources).await {
+        Ok(c) => Some(c),
+        Err(e) => {
+            warn!(repo_id = ?repo_id, error = %e, "canary write failed, proceeding without");
+            None
+        }
+    }
+}
+
+/// A run that left out what its schedule asked for says so on its report,
+/// and reads as a warning rather than a clean success.
+fn with_setup_warnings(mut result: BackupResult, setup_warnings: &[String]) -> BackupResult {
+    if !setup_warnings.is_empty() {
+        result.warnings.extend(setup_warnings.iter().cloned());
+        if result.status == shared::types::BackupStatus::Success {
+            result.status = shared::types::BackupStatus::Warning;
+        }
+    }
+    result
+}
+
+/// A failed or skipped run still says what it left out by the host's own
+/// settings: the operator reading why it failed should also learn that, say,
+/// its database dumps were never going to run on this host.
+fn failed_with_setup_warnings(
+    mut report: shared::types::BackupReport,
+    setup_warnings: &[String],
+) -> shared::types::BackupReport {
+    report.warnings.extend(setup_warnings.iter().cloned());
+    report
+}
+
 pub(super) fn build_backup_report(
     repo_id: RepoId,
     schedule_id: Option<i64>,
@@ -311,5 +331,95 @@ pub(super) fn build_backup_report(
         report,
         warning_kind: result.warning_kind,
         canary_result: result.canary_result,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use shared::types::BackupStatus;
+
+    use super::*;
+
+    fn result(status: BackupStatus, warnings: &[&str]) -> BackupResult {
+        BackupResult {
+            status,
+            original_size: 0,
+            compressed_size: 0,
+            deduplicated_size: 0,
+            repo_unique_csize: 0,
+            files_processed: 0,
+            duration_secs: 0,
+            error_message: None,
+            warnings: warnings.iter().map(|w| (*w).to_owned()).collect(),
+            warning_kind: BackupWarningKind::General,
+            archive_name: None,
+            borg_command: None,
+            canary_result: None,
+        }
+    }
+
+    #[test]
+    fn setup_warnings_turn_a_clean_success_into_a_warning() {
+        let out = with_setup_warnings(
+            result(BackupStatus::Success, &[]),
+            &["database dump skipped".to_owned()],
+        );
+        assert_eq!(out.status, BackupStatus::Warning);
+        assert_eq!(out.warnings, vec!["database dump skipped".to_owned()]);
+    }
+
+    #[test]
+    fn setup_warnings_are_added_without_masking_a_worse_status() {
+        let out = with_setup_warnings(
+            result(BackupStatus::Failed, &["borg: file vanished"]),
+            &["vm skipped".to_owned()],
+        );
+        assert_eq!(out.status, BackupStatus::Failed);
+        assert_eq!(
+            out.warnings,
+            vec!["borg: file vanished".to_owned(), "vm skipped".to_owned()]
+        );
+    }
+
+    #[test]
+    fn no_setup_warnings_leave_the_result_as_it_was() {
+        let out = with_setup_warnings(result(BackupStatus::Success, &[]), &[]);
+        assert_eq!(out.status, BackupStatus::Success);
+        assert_eq!(out.warnings, Vec::<String>::new());
+    }
+
+    fn failed(reason: &str) -> shared::types::BackupReport {
+        make_failed_report(
+            RepoId(1),
+            Some(2),
+            Utc::now(),
+            reason.to_owned(),
+            Some("run-1".to_owned()),
+            None,
+        )
+    }
+
+    #[test]
+    fn a_failed_run_still_carries_what_the_host_left_out() {
+        let out = failed_with_setup_warnings(
+            failed("borg exited with code 2"),
+            &[crate::executor::transport::DATABASES_OFF_WARNING.to_owned()],
+        );
+        assert_eq!(out.status, BackupStatus::Failed);
+        assert_eq!(
+            out.error_message.as_deref(),
+            Some("borg exited with code 2")
+        );
+        assert_eq!(
+            out.warnings,
+            vec![crate::executor::transport::DATABASES_OFF_WARNING.to_owned()]
+        );
+    }
+
+    #[test]
+    fn a_failed_run_without_setup_warnings_has_none() {
+        let out = failed_with_setup_warnings(failed("staging failed"), &[]);
+        assert_eq!(out.status, BackupStatus::Failed);
+        assert_eq!(out.warnings, Vec::<String>::new());
     }
 }

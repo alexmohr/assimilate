@@ -55,6 +55,8 @@ const props = withDefaults(
     error?: string | null
     /** Archives whose borg delete is already queued, by `archiveKey`. */
     deletingKeys?: readonly string[]
+    /** Archives waiting for their append-only repository's maintenance, by `archiveKey`. */
+    queuedKeys?: readonly string[]
     /** Replaces the toolbar and rows, for a caller that filters the list to one archive. */
     hideControls?: boolean
     /** Whether the search offers to look for files across the archives. */
@@ -68,6 +70,7 @@ const props = withDefaults(
     loading: false,
     error: null,
     deletingKeys: () => [],
+    queuedKeys: () => [],
     hideControls: false,
     fileSearch: false,
     refreshable: false,
@@ -150,6 +153,12 @@ const deleting = computed(() => new Set(props.deletingKeys))
 
 function isDeleting(archive: RepoArchive): boolean {
   return deleting.value.has(archiveKey(archive))
+}
+
+const queued = computed(() => new Set(props.queuedKeys))
+
+function isQueued(archive: RepoArchive): boolean {
+  return queued.value.has(archiveKey(archive))
 }
 
 function groupSize(archives: RepoArchive[]): string {
@@ -372,6 +381,7 @@ defineExpose({ reset, unmatchedCount, unmatchedHostnames })
               :repo-name="showRepo ? archive.repo_name : null"
               :clock="RECENT_PERIODS.has(group.key)"
               :deleting="isDeleting(archive)"
+              :queued="isQueued(archive)"
               @select="select(archive)"
             />
           </template>
@@ -426,6 +436,7 @@ defineExpose({ reset, unmatchedCount, unmatchedHostnames })
                 :selected="isSelected(archive)"
                 :repo-name="showRepo ? archive.repo_name : null"
                 :deleting="isDeleting(archive)"
+                :queued="isQueued(archive)"
                 @select="select(archive)"
               />
             </template>
@@ -441,6 +452,7 @@ defineExpose({ reset, unmatchedCount, unmatchedHostnames })
             :show-host="multiHost"
             :repo-name="showRepo ? archive.repo_name : null"
             :deleting="isDeleting(archive)"
+            :queued="isQueued(archive)"
             @select="select(archive)"
           />
         </template>

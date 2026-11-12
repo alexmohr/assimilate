@@ -21,6 +21,11 @@ vi.mock('../api/client', () => ({
   },
 }))
 
+vi.mock('../api/appendOnly', async () => {
+  const { appendOnlyStatusFixture } = await import('../test-utils/appendOnlyFixtures')
+  return { getAppendOnlyStatus: vi.fn().mockResolvedValue(appendOnlyStatusFixture()) }
+})
+
 const REPO = repoFixture({
   power: {
     wake_enabled: false,
@@ -50,6 +55,31 @@ describe('RepoSettingsTab', () => {
         .findAll('.accordion-head .accordion-title')
         .map((b) => b.text()),
     ).toContain('Power & dependencies')
+  })
+
+  it('lists the Append-only section for an admin only', () => {
+    const labels = (props: Record<string, unknown>): string[] =>
+      mount(props)
+        .findAll('.accordion-head .accordion-title')
+        .map((b) => b.text())
+    expect(labels({})).toContain('Append-only')
+    expect(labels({ isAdmin: false })).not.toContain('Append-only')
+  })
+
+  it('renders the append-only pane for its section', async () => {
+    const wrapper = mount({ section: 'append-only' })
+    await flushPromises()
+
+    expect(wrapper.findComponent({ name: 'RepoAppendOnlyPane' }).exists()).toBe(true)
+  })
+
+  it('reports a change made in the append-only pane', async () => {
+    const wrapper = mount({ section: 'append-only' })
+    await flushPromises()
+
+    wrapper.findComponent({ name: 'RepoAppendOnlyPane' }).vm.$emit('changed')
+
+    expect(wrapper.emitted('changed')).toHaveLength(1)
   })
 
   it('hides the Power & dependencies section from a non-admin', () => {

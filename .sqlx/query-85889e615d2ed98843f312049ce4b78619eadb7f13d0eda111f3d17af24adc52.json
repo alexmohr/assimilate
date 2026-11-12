@@ -1,0 +1,26 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT h.ssh_host, l.ssh_user FROM append_only_logins l\n         JOIN repo_hosts h ON h.id = l.repo_host_id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "ssh_host",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 1,
+        "name": "ssh_user",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "85889e615d2ed98843f312049ce4b78619eadb7f13d0eda111f3d17af24adc52"
+}

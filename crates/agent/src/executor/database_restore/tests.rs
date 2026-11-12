@@ -475,6 +475,7 @@ mod requests {
             compression: shared::types::Compression::Lz4,
             enabled: true,
             accept_relocation: false,
+            append_only: false,
             schedules: Vec::new(),
         };
         *executor.current_config.lock().await = Some(AgentConfig {

@@ -14,7 +14,7 @@ use tracing::{error, warn};
 
 use crate::{
     ServerEndpoint,
-    backup::{BackupTarget, Retention},
+    backup::{BackupTarget, Pruning, Retention},
     ssh_forward::{SshForwardError, SshForwardSocket, run_ssh_forward},
 };
 
@@ -173,7 +173,13 @@ pub fn backup_target_from_repo(
             })
             .reduce(Retention::union)
             .unwrap_or_default(),
-        compact_enabled: schedule.is_none_or(|s| s.compact_enabled),
+        pruning: if repo.append_only {
+            Pruning::Server
+        } else {
+            Pruning::Agent {
+                compact: schedule.is_none_or(|s| s.compact_enabled),
+            }
+        },
         vm_snapshot: stages_vms.then(|| vm_snapshot.clone()),
         database_backup: dumps_databases.then(|| database_backup.clone()),
         fs_snapshot: schedule.map_or(FsSnapshotMode::Off, |s| s.fs_snapshot),

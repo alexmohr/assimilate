@@ -60,6 +60,29 @@ pub(super) async fn run_borg_info(
     run_borg_info_once(repo_url, &env, task_registry).await
 }
 
+/// What `borg info` says about a repository that is being added, or `None`
+/// when it cannot say yet: it took longer than `timeout`, or another operation
+/// holds the repository's lock. The repository is then added anyway and its
+/// details are filled in by the import that follows.
+///
+/// # Errors
+///
+/// Returns the error of any other failure, since a repository borg cannot
+/// open should not be added.
+pub(super) async fn run_borg_info_if_available(
+    repo_url: &str,
+    passphrase: &str,
+    task_registry: &shared::task_registry::TaskRegistry,
+    timeout: Duration,
+) -> Result<Option<BorgInfoResult>, ApiError> {
+    match tokio::time::timeout(timeout, run_borg_info(repo_url, passphrase, task_registry)).await {
+        Err(_) => Ok(None),
+        Ok(Ok(info)) => Ok(Some(info)),
+        Ok(Err(ApiError::BadGateway(ref msg))) if is_lock_error(msg) => Ok(None),
+        Ok(Err(e)) => Err(e),
+    }
+}
+
 pub(super) const LOCK_RETRY_INTERVAL: Duration = Duration::from_secs(30);
 pub(super) const LOCK_RETRY_MAX_ATTEMPTS: u32 = 60;
 pub(super) const DEFAULT_BORG_LIST_STAGE_TIMEOUT_SECS: u64 = 1800;
@@ -1292,5 +1315,75 @@ mod tests {
             matches!(event, shared::protocol::ServerToUi::ImportProgress { message: Some(ref msg), .. } if msg == "Waiting for lock\u{2026}"),
             "{event:?}"
         );
+    }
+
+    #[tokio::test]
+    async fn borg_info_if_available_reads_the_encryption_mode() {
+        let _gate = crate::borg::acquire_test_binary_gate().await;
+        let (_dir, _guard) =
+            install_fake_script("#!/bin/sh\nprintf '{\"encryption\":{\"mode\":\"repokey\"}}'\n")
+                .await;
+
+        let info = run_borg_info_if_available(
+            REPO_URL,
+            "pw",
+            &shared::task_registry::TaskRegistry::default(),
+            Duration::from_secs(30),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(info.unwrap().encryption, BorgEncryption::Repokey);
+    }
+
+    #[tokio::test]
+    async fn borg_info_if_available_has_nothing_to_say_for_a_locked_repository() {
+        let _gate = crate::borg::acquire_test_binary_gate().await;
+        let (_dir, _guard) = install_fake_script(LOCKED).await;
+
+        let info = run_borg_info_if_available(
+            REPO_URL,
+            "pw",
+            &shared::task_registry::TaskRegistry::default(),
+            Duration::from_secs(30),
+        )
+        .await
+        .unwrap();
+
+        assert!(info.is_none());
+    }
+
+    #[tokio::test]
+    async fn borg_info_if_available_has_nothing_to_say_when_borg_is_too_slow() {
+        let _gate = crate::borg::acquire_test_binary_gate().await;
+        let (_dir, _guard) = install_fake_script("#!/bin/sh\nsleep 5\n").await;
+
+        let info = run_borg_info_if_available(
+            REPO_URL,
+            "pw",
+            &shared::task_registry::TaskRegistry::default(),
+            Duration::from_millis(100),
+        )
+        .await
+        .unwrap();
+
+        assert!(info.is_none());
+    }
+
+    #[tokio::test]
+    async fn borg_info_if_available_refuses_a_repository_borg_cannot_open() {
+        let _gate = crate::borg::acquire_test_binary_gate().await;
+        let (_dir, _guard) =
+            install_fake_script("#!/bin/sh\necho 'passphrase was incorrect' >&2\nexit 2\n").await;
+
+        let result = run_borg_info_if_available(
+            REPO_URL,
+            "pw",
+            &shared::task_registry::TaskRegistry::default(),
+            Duration::from_secs(30),
+        )
+        .await;
+
+        assert!(result.is_err());
     }
 }

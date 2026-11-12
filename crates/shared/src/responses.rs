@@ -666,6 +666,8 @@ pub struct RepoWithStatsResponse {
     pub last_op_by: Option<String>,
     /// Currently active operation, if any.
     pub current_op: Option<crate::protocol::ActiveRepoOp>,
+    /// Set when the repository's login is append-only.
+    pub append_only: Option<crate::append_only::RepoAppendOnlyResponse>,
     /// This repository's own storage quota, if one is configured.
     pub quota: Option<RepoQuotaSummaryResponse>,
     /// The repository host this repository lives on. `ssh_host`,

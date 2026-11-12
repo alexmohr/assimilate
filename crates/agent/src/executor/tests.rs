@@ -11,6 +11,7 @@ use super::{
     transport::{backup_target_from_repo, write_known_hosts},
     *,
 };
+use crate::backup::Pruning;
 
 #[test]
 fn restore_args_select_the_whole_archive_when_paths_are_empty() {
@@ -232,6 +233,7 @@ fn make_repo(schedules: Vec<shared::types::ScheduleConfig>) -> shared::types::Re
         compression: shared::types::Compression::Lz4,
         enabled: true,
         accept_relocation: false,
+        append_only: false,
         schedules,
     }
 }
@@ -274,6 +276,29 @@ fn backup_target_pools_every_schedules_retention_for_legacy_archives() {
     assert_eq!(target.keep_monthly, 0);
     assert_eq!(target.legacy_retention.daily, 2);
     assert_eq!(target.legacy_retention.monthly, 12);
+}
+
+#[test]
+fn backup_target_carries_the_repositorys_append_only_flag() {
+    let mut repo = make_repo(vec![make_schedule(10, vec!["/var"])]);
+    let regular = backup_target_from_repo(
+        &repo,
+        "hostname",
+        None,
+        &VmSnapshotConfig::default(),
+        &DatabaseBackupConfig::default(),
+    );
+    assert_eq!(regular.pruning, Pruning::Agent { compact: true });
+
+    repo.append_only = true;
+    let append_only = backup_target_from_repo(
+        &repo,
+        "hostname",
+        None,
+        &VmSnapshotConfig::default(),
+        &DatabaseBackupConfig::default(),
+    );
+    assert_eq!(append_only.pruning, Pruning::Server);
 }
 
 #[test]

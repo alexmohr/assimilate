@@ -133,6 +133,49 @@ pub async fn get_repo_env(
     Ok((borg_repo, env))
 }
 
+/// Like [`get_repo_env`], but for an operation that deletes: on an append-only
+/// repository the server connects with its maintenance key and without the SSH
+/// agent, whose key the host restricts to `borg serve --append-only` and so
+/// would only pretend to delete. Any other repository is reached the usual way.
+///
+/// # Errors
+///
+/// Returns an error if the repository or its credentials cannot be read, or if
+/// the maintenance key cannot be used.
+pub async fn get_repo_env_privileged(
+    pool: &PgPool,
+    encryption_key: &[u8; 32],
+    repo_id: i64,
+) -> Result<(String, HashMap<String, String>), ApiError> {
+    let (borg_repo, mut env) = get_repo_env(pool, encryption_key, repo_id).await?;
+    if !db::append_only::is_repo_append_only(pool, repo_id).await? {
+        return Ok((borg_repo, env));
+    }
+
+    crate::ssh::keys::ensure_maintenance_key()
+        .await
+        .map_err(|e| ApiError::Internal(format!("the maintenance key is not usable: {e}")))?;
+    // Only the maintenance key may be offered; the agent also holds the
+    // restricted key. The child inherits the server's own SSH_AUTH_SOCK, so
+    // the variable is blanked rather than left out, and ssh is told not to
+    // use an agent at all.
+    env.insert("SSH_AUTH_SOCK".to_owned(), String::new());
+    let rsh = env.remove("BORG_RSH").unwrap_or_else(shared::ssh::borg_rsh);
+    env.insert(
+        "BORG_RSH".to_owned(),
+        maintenance_rsh(&rsh, &crate::ssh::keys::maintenance_key_path()),
+    );
+    Ok((borg_repo, env))
+}
+
+/// `rsh` with the maintenance key as its only identity and no SSH agent.
+fn maintenance_rsh(rsh: &str, key_path: &std::path::Path) -> String {
+    format!(
+        "{rsh} -o IdentityAgent=none -o IdentitiesOnly=yes -i {}",
+        crate::ssh::shell_escape(&key_path.to_string_lossy())
+    )
+}
+
 /// Classify a borg exit code and stderr into an [`ApiError`].
 #[must_use]
 pub fn classify_borg_error(exit_code: i32, stderr: &str) -> ApiError {
@@ -884,6 +927,9 @@ pub async fn delete_archive(
     AxumPath((repo_id, archive_name)): AxumPath<(i64, String)>,
 ) -> Result<(StatusCode, Json<SharedDeleteArchiveResponse>), ApiError> {
     check_repo_permission(&state.pool, &auth, repo_id, |p| p.can_delete).await?;
+    if db::append_only::is_repo_append_only(&state.pool, repo_id).await? {
+        return queue_archive_deletion(&state, &auth, repo_id, archive_name).await;
+    }
     // Resolve credentials up front so authorisation/borg-config errors surface
     // synchronously; the slow `borg delete` itself runs in the background so the
     // UI is never blocked waiting for it.
@@ -934,6 +980,53 @@ pub async fn delete_archive(
     );
     background_task_tracker.spawn_tracked(deletion);
 
+    Ok((
+        StatusCode::ACCEPTED,
+        Json(SharedDeleteArchiveResponse {
+            success: true,
+            archive_name,
+        }),
+    ))
+}
+
+/// On an append-only repository the agents' key cannot delete, so a deletion
+/// waits for the next maintenance run, which has the key that can.
+async fn queue_archive_deletion(
+    state: &AppState,
+    auth: &AuthUser,
+    repo_id: i64,
+    archive_name: String,
+) -> Result<(StatusCode, Json<SharedDeleteArchiveResponse>), ApiError> {
+    if !db::list_archive_names_for_repo(&state.pool, repo_id)
+        .await?
+        .contains(&archive_name)
+    {
+        return Err(ApiError::NotFound(format!(
+            "archive {archive_name} not found"
+        )));
+    }
+    let _login = super::append_only::lock_repo_login(state, repo_id).await?;
+    // Append-only may have been turned off while this waited for the lock,
+    // and then nothing would ever carry the deletion out.
+    if !db::append_only::is_repo_append_only(&state.pool, repo_id).await? {
+        return Err(ApiError::Conflict(
+            "append-only was just turned off for this repository; delete the archive again"
+                .to_owned(),
+        ));
+    }
+    db::append_only::queue_deletion(&state.pool, repo_id, &archive_name, &auth.username).await?;
+
+    audit_archive_deletion(
+        &state.pool,
+        auth.user_id,
+        &auth.username,
+        &archive_name,
+        repo_id,
+    )
+    .await;
+    state
+        .ui_broadcast
+        .send(shared::protocol::ServerToUi::DataChanged);
     Ok((
         StatusCode::ACCEPTED,
         Json(SharedDeleteArchiveResponse {
@@ -1108,6 +1201,34 @@ async fn execute_borg_delete(
     }
 }
 
+/// Records that an archive was deleted (or queued for deletion) in the audit
+/// log. A failure is logged, not returned: the deletion itself has happened.
+async fn audit_archive_deletion(
+    pool: &sqlx::PgPool,
+    user_id: i64,
+    username: &str,
+    archive_name: &str,
+    repo_id: i64,
+) {
+    if let Err(e) = db::audit::insert_audit_entry(
+        pool,
+        &db::audit::NewAuditEntry {
+            user_id: Some(user_id),
+            username,
+            event: AuditEvent::DeleteArchive {
+                archive: archive_name.to_owned(),
+            },
+            target_type: Some("archive"),
+            target_id: Some(repo_id),
+            ip_address: None,
+        },
+    )
+    .await
+    {
+        tracing::warn!("failed to write audit log: {e}");
+    }
+}
+
 /// Deletes the local archive records, writes an audit log entry, and (once
 /// the deletion queue for this repo has drained) reconciles the archive list
 /// and repo stats by reusing the metadata import path. Content indexing is
@@ -1125,23 +1246,7 @@ async fn finalize_archive_deletion(
         tracing::error!(repo_id, archive = %archive_name, error = %e, "failed to delete archive record");
     }
 
-    if let Err(e) = db::audit::insert_audit_entry(
-        &state.pool,
-        &db::audit::NewAuditEntry {
-            user_id: Some(user_id),
-            username,
-            event: AuditEvent::DeleteArchive {
-                archive: archive_name.to_owned(),
-            },
-            target_type: Some("archive"),
-            target_id: Some(repo_id),
-            ip_address: None,
-        },
-    )
-    .await
-    {
-        tracing::warn!("failed to write audit log: {e}");
-    }
+    audit_archive_deletion(&state.pool, user_id, username, archive_name, repo_id).await;
 
     if state.repo_op_tracker.queued_count(repo_id).await == 0 {
         if let Err(e) = crate::api::repos::sync_existing_archives(
@@ -1670,6 +1775,37 @@ pub async fn extract_file(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn finishing_a_deletion_survives_a_database_that_cannot_be_written(pool: sqlx::PgPool) {
+        let state =
+            crate::test_support::build_test_state(pool.clone(), b"archives-test-key-material");
+        pool.close().await;
+
+        // The deletion has happened on the host; none of the bookkeeping
+        // after it may stop the rest, or panic.
+        finalize_archive_deletion(&state, 1, "a-1", 1, "admin").await;
+    }
+
+    #[test]
+    fn the_maintenance_rsh_offers_only_the_maintenance_key() {
+        let rsh = maintenance_rsh(
+            "ssh -o BatchMode=yes",
+            std::path::Path::new("/ssh-keys/id_ed25519_maintenance"),
+        );
+        assert_eq!(
+            rsh,
+            "ssh -o BatchMode=yes -o IdentityAgent=none -o IdentitiesOnly=yes -i \
+             '/ssh-keys/id_ed25519_maintenance'"
+        );
+    }
+
+    #[test]
+    fn the_maintenance_rsh_quotes_a_key_path_with_a_space() {
+        let rsh = maintenance_rsh("ssh", std::path::Path::new("/my keys/id"));
+        assert!(rsh.ends_with("-i '/my keys/id'"), "{rsh}");
+    }
 
     #[tokio::test]
     async fn stream_export_tar_lz4_registers_its_pump_task_with_the_given_registry() {

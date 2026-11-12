@@ -363,6 +363,8 @@ Pruning is automatic and runs as part of the backup lifecycle:
 
 Pruning only removes archives whose names match the prefix used by this schedule. Archives created outside Assimilate are not touched.
 
+An [append-only](append-only.md) repository is not pruned or compacted by the backup: the agent's key cannot delete from it. The server applies every schedule's retention, once per agent, during the repository's maintenance run. A schedule's retention settings table lists where retention runs for each target repository.
+
 ## Timezone Handling
 
 All cron expressions are evaluated in the **timezone configured in system settings** (default `UTC`). This is a single server-wide value; there is no per-schedule timezone setting. With the default UTC, `0 2 * * *` fires at 02:00 UTC every day.

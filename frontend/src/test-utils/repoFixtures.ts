@@ -2,6 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 import type { RepoWithStats } from '../types/repo'
+import type { RepoAppendOnlyResponse } from '../types/generated'
 
 /**
  * One repository fixture for the specs that render one. The header and the
@@ -33,7 +34,15 @@ const REPO = {
   last_op_kind: 'agent_backup',
   last_op_at: '2026-03-01T02:00:00Z',
   last_op_by: 'web-01',
+  append_only: null,
 } as unknown as RepoWithStats
+
+/** The summary of a repository whose login is append-only. */
+export function appendOnly(
+  overrides: Partial<RepoAppendOnlyResponse> = {},
+): RepoAppendOnlyResponse {
+  return { maintenance_stopped: false, pending_deletion_count: 0, ...overrides }
+}
 
 export function repoFixture(overrides: Partial<RepoWithStats> = {}): RepoWithStats {
   return { ...REPO, ...overrides }

@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE repo_maintenance SET stopped_at = NULL, next_run_at = $2 WHERE repo_id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "826855dacfc15a01b77288f3db7542feb6f86dc899458f6f88020ecb46e366cf"
+}

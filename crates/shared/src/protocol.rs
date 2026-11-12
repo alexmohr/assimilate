@@ -46,6 +46,9 @@ pub enum RepoOpKind {
     /// Compact the repository, reclaiming space freed by a prior operation
     /// (e.g. an archive deletion).
     CompactRepo,
+    /// Server-side maintenance of an append-only repository: check, prune and
+    /// compact with the maintenance key.
+    Maintenance,
 }
 
 /// An active operation on a repository, including its queued depth.
@@ -1313,6 +1316,7 @@ mod tests {
             RepoOpKind::BreakLock,
             RepoOpKind::DeleteArchive,
             RepoOpKind::CompactRepo,
+            RepoOpKind::Maintenance,
         ];
         for variant in variants {
             let name = variant.to_string();

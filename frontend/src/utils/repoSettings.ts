@@ -10,6 +10,7 @@
 export const REPO_SETTINGS_SECTIONS = [
   'repository',
   'power',
+  'append-only',
   'quota',
   'tags',
   'console',

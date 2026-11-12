@@ -11,6 +11,7 @@ import CronBuilder from './CronBuilder.vue'
 import DurationField from './DurationField.vue'
 import PaneRow from './PaneRow.vue'
 import ScheduleRepoTargets from './ScheduleRepoTargets.vue'
+import ScheduleRetentionPlacement from './ScheduleRetentionPlacement.vue'
 import ToggleSwitch from './ToggleSwitch.vue'
 import PerAgentFields from './PerAgentFields.vue'
 import ScheduleAdvancedTab from './ScheduleAdvancedTab.vue'
@@ -436,6 +437,7 @@ const catchUpSourceLinks = computed(() => {
           />
         </PaneRow>
       </div>
+      <ScheduleRetentionPlacement :repo-ids="repoTargets.map((t) => t.repo_id)" />
     </template>
 
     <template v-else-if="currentSection === 'power'">

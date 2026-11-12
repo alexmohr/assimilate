@@ -26,6 +26,7 @@ describe('repoOpLabel', () => {
     ['agent_check', 'Integrity check in progress by web-01'],
     ['agent_verify', 'Verify in progress by web-01'],
     ['compact_repo', 'Compacting repository (started by web-01)'],
+    ['maintenance', 'Running maintenance (started by web-01)'],
   ] as const)('labels %s', (kind, label) => {
     expect(repoOpLabel(op(kind))).toBe(label)
   })

@@ -475,6 +475,12 @@ test.describe('signed in', () => {
 
     // offsite-imported arrives from a config import without its passphrase;
     // the dialog is captured with one typed in, never submitted.
+    // vault-offsite is the demo's append-only repository: its settings section
+    // shows the keys, the connection check and the maintenance state.
+    const vault = await seededIdByName(page, '/api/repos', 'vault-offsite')
+    await visit(page, `/repos/${vault}?tab=settings&section=append-only`)
+    await shot(page, 'repo-append-only', { fullPage: true })
+
     const imported = await seededIdByName(page, '/api/repos', 'offsite-imported')
     await visit(page, `/repos/${imported}`)
     await page.getByRole('button', { name: 'More repository actions' }).click()

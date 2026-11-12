@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT archive_name FROM repo_vanished_archives WHERE repo_id = $1 ORDER BY archive_name",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "archive_name",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "d83a50abd5eb23783b11cdb433cecad73ed623312662fa68ec77d9786f45f470"
+}

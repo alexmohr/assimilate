@@ -22,6 +22,7 @@ import {
   FolderSymlink,
   History,
   RotateCcw,
+  Undo2,
   Search,
   Trash2,
   X,
@@ -136,6 +137,13 @@ const props = withDefaults(
     // entry stays clickable for an archive that's already being removed.
     deleting?: boolean
     /**
+     * Whether `archive` is waiting for its append-only repository's next
+     * maintenance run: the menu then offers to keep it instead of deleting it.
+     */
+    queued?: boolean
+    /** A Keep is in flight. */
+    keeping?: boolean
+    /**
      * The route query parameter the open directory is kept under, so Back
      * walks back up the directories visited. A page that shows more than one
      * browser at once gives each its own.
@@ -164,6 +172,8 @@ const props = withDefaults(
     repoName: '',
     isAdmin: false,
     deleting: false,
+    queued: false,
+    keeping: false,
     pathQueryKey: DEFAULT_ARCHIVE_PATH_QUERY_KEY,
     archives: () => [],
     reveal: null,
@@ -173,6 +183,8 @@ const props = withDefaults(
 
 const emit = defineEmits<{
   'delete-archive': [archive: ArchiveEntry]
+  /** Takes the queued deletion of `archive` back. */
+  'keep-archive': [archive: ArchiveEntry]
   /** `reveal` has been shown, so the caller can let go of it. */
   revealed: []
 }>()
@@ -672,6 +684,10 @@ function handleDeleteWholeArchive(): void {
   if (props.archive && !props.deleting) emit('delete-archive', props.archive)
 }
 
+function handleKeepWholeArchive(): void {
+  if (props.archive && !props.keeping) emit('keep-archive', props.archive)
+}
+
 async function copyName(): Promise<void> {
   if (props.archive === null) return
   try {
@@ -746,6 +762,10 @@ function rowFacts(entry: DisplayEntry): string | null {
                 Deleting
               </span>
             </template>
+            <template v-else-if="queued">
+              <span aria-hidden="true">&middot;</span>
+              <span class="archive-head-queued">Removed at next maintenance</span>
+            </template>
           </p>
         </div>
         <!--
@@ -796,7 +816,18 @@ function rowFacts(entry: DisplayEntry): string | null {
             Copy archive name
           </button>
           <button
-            v-if="isAdmin"
+            v-if="isAdmin && queued"
+            class="overflow-menu-item archive-menu-item"
+            role="menuitem"
+            type="button"
+            :disabled="keeping"
+            @click="run(handleKeepWholeArchive)"
+          >
+            <Undo2 :size="14" />
+            Keep archive
+          </button>
+          <button
+            v-else-if="isAdmin"
             class="overflow-menu-item overflow-menu-item--danger archive-menu-item"
             role="menuitem"
             type="button"
@@ -1227,6 +1258,10 @@ function rowFacts(entry: DisplayEntry): string | null {
   align-items: center;
   gap: var(--space-3);
   color: var(--danger);
+}
+
+.archive-head-queued {
+  color: var(--violet);
 }
 
 .archive-menu-item {

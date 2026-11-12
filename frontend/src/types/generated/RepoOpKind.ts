@@ -10,4 +10,5 @@ export type RepoOpKind =
   | "server_sync"
   | "break_lock"
   | "delete_archive"
-  | "compact_repo";
+  | "compact_repo"
+  | "maintenance";

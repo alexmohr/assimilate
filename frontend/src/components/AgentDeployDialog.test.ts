@@ -369,9 +369,13 @@ describe('AgentDeployDialog', () => {
       expect(document.body.textContent).toContain('API error')
     })
 
-    // A proxy can drop the connection after the server finished the upgrade;
-    // axios then reports a bare "Network Error" with no response.
-    it('treats a dropped connection as success when the agent runs the new version', async () => {
+    /**
+     * Fills the form for an upgrade to 1.2.0, then submits it with a request
+     * that dies without a response while the agent list reports `reported`.
+     */
+    async function submitDroppedUpgrade(
+      reported: string,
+    ): Promise<VueWrapper<ComponentPublicInstance>> {
       const w = mountDialog({
         hostname: 'web-server-01',
         agentVersion: '1.0.0',
@@ -383,9 +387,16 @@ describe('AgentDeployDialog', () => {
 
       postMock.mockRejectedValueOnce(new AxiosError('Network Error', AxiosError.ERR_NETWORK))
       getMock.mockResolvedValue({
-        data: [{ hostname: 'web-server-01', domain: null, agent_version: '1.2.0' }],
+        data: [{ hostname: 'web-server-01', domain: null, agent_version: reported }],
       })
       await submit()
+      return w
+    }
+
+    // A proxy can drop the connection after the server finished the upgrade;
+    // axios then reports a bare "Network Error" with no response.
+    it('treats a dropped connection as success when the agent runs the new version', async () => {
+      const w = await submitDroppedUpgrade('1.2.0')
 
       expect(w.emitted('deployed')).toEqual([['1.2.0']])
       expect(document.body.textContent).toContain('Upgraded to 1.2.0')
@@ -395,20 +406,7 @@ describe('AgentDeployDialog', () => {
     it('keeps the error when the agent did not reach the new version', async () => {
       vi.useFakeTimers()
       try {
-        const w = mountDialog({
-          hostname: 'web-server-01',
-          agentVersion: '1.0.0',
-          availableVersion: '1.2.0',
-        })
-        await flushPromises()
-        await setField('SSH host', '10.0.0.5')
-        await setField('Server URL', 'https://assimilate.example.com')
-
-        postMock.mockRejectedValueOnce(new AxiosError('Network Error', AxiosError.ERR_NETWORK))
-        getMock.mockResolvedValue({
-          data: [{ hostname: 'web-server-01', domain: null, agent_version: '1.0.0' }],
-        })
-        await submit()
+        const w = await submitDroppedUpgrade('1.0.0')
         await vi.runAllTimersAsync()
         await flushPromises()
 

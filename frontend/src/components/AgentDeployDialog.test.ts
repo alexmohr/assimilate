@@ -2,16 +2,19 @@
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { AxiosError } from 'axios'
 import { mount, flushPromises, type VueWrapper } from '@vue/test-utils'
 import type { ComponentPublicInstance } from 'vue'
 import AgentDeployDialog from './AgentDeployDialog.vue'
 import BaseModal from './BaseModal.vue'
 
 const postMock = vi.fn()
+const getMock = vi.fn()
 
 vi.mock('../api/client', () => ({
   apiClient: {
     post: (...args: unknown[]): unknown => postMock(...args),
+    get: (...args: unknown[]): unknown => getMock(...args),
   },
 }))
 
@@ -37,6 +40,7 @@ function mountDialog(props: {
 describe('AgentDeployDialog', () => {
   beforeEach(() => {
     postMock.mockReset()
+    getMock.mockReset()
     postMock.mockResolvedValue({ data: { content: null } })
   })
 
@@ -363,6 +367,56 @@ describe('AgentDeployDialog', () => {
       expect(w.emitted('deployed')).toBeUndefined()
       // extractError is stubbed to a fixed string in this file's mocks.
       expect(document.body.textContent).toContain('API error')
+    })
+
+    // A proxy can drop the connection after the server finished the upgrade;
+    // axios then reports a bare "Network Error" with no response.
+    it('treats a dropped connection as success when the agent runs the new version', async () => {
+      const w = mountDialog({
+        hostname: 'web-server-01',
+        agentVersion: '1.0.0',
+        availableVersion: '1.2.0',
+      })
+      await flushPromises()
+      await setField('SSH host', '10.0.0.5')
+      await setField('Server URL', 'https://assimilate.example.com')
+
+      postMock.mockRejectedValueOnce(new AxiosError('Network Error', AxiosError.ERR_NETWORK))
+      getMock.mockResolvedValue({
+        data: [{ hostname: 'web-server-01', domain: null, agent_version: '1.2.0' }],
+      })
+      await submit()
+
+      expect(w.emitted('deployed')).toEqual([['1.2.0']])
+      expect(document.body.textContent).toContain('Upgraded to 1.2.0')
+      expect(document.querySelector('.modal-footer .form-error')).toBeNull()
+    })
+
+    it('keeps the error when the agent did not reach the new version', async () => {
+      vi.useFakeTimers()
+      try {
+        const w = mountDialog({
+          hostname: 'web-server-01',
+          agentVersion: '1.0.0',
+          availableVersion: '1.2.0',
+        })
+        await flushPromises()
+        await setField('SSH host', '10.0.0.5')
+        await setField('Server URL', 'https://assimilate.example.com')
+
+        postMock.mockRejectedValueOnce(new AxiosError('Network Error', AxiosError.ERR_NETWORK))
+        getMock.mockResolvedValue({
+          data: [{ hostname: 'web-server-01', domain: null, agent_version: '1.0.0' }],
+        })
+        await submit()
+        await vi.runAllTimersAsync()
+        await flushPromises()
+
+        expect(w.emitted('deployed')).toBeUndefined()
+        expect(document.body.textContent).toContain('API error')
+      } finally {
+        vi.useRealTimers()
+      }
     })
 
     it('renders the failure in the footer so it stays beside the buttons', async () => {

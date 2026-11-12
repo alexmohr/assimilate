@@ -16059,6 +16059,10 @@ esac
         )
         .await;
         assert_eq!(resp.status(), StatusCode::ACCEPTED);
+        // The answer says it was queued, so a client that guessed otherwise can
+        // correct itself.
+        let body = body_json(resp).await;
+        assert_eq!(body.get("queued"), Some(&json!(true)), "{body}");
 
         assert_eq!(
             borg.calls().await,

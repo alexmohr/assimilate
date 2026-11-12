@@ -94,6 +94,9 @@ export function useQueuedDeletions(options: UseQueuedDeletionsOptions): UseQueue
 
   function markQueued(archive: Pick<RepoArchive, 'repo_id' | 'name'>): void {
     generation++
+    // The server only queues for an append-only repository, so this is also
+    // its word that the repository is one, whatever was cached.
+    appendOnlyIds.value = new Set(appendOnlyIds.value).add(archive.repo_id)
     const next = new Map(queued.value)
     next.set(archive.repo_id, new Set(next.get(archive.repo_id)).add(archive.name))
     queued.value = next

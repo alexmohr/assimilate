@@ -118,6 +118,18 @@ describe('useQueuedDeletions', () => {
     expect(queued.queuedKeys.value).toEqual(['1/old', '1/new'])
   })
 
+  it('takes a queued deletion as the server saying the repository is append-only', async () => {
+    // The cached list was read before repository 2 turned append-only.
+    const { queued } = setup()
+    await flushPromises()
+    expect(queued.isAppendOnly(2)).toBe(false)
+
+    queued.markQueued({ repo_id: 2, name: 'late' })
+
+    expect(queued.isAppendOnly(2)).toBe(true)
+    expect(queued.isQueued({ repo_id: 2, name: 'late' })).toBe(true)
+  })
+
   it('keeps an archive and refreshes the queue', async () => {
     const { queued } = setup()
     await flushPromises()

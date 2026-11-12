@@ -365,6 +365,11 @@ async fn disable(
 ) -> Result<Option<AppendOnlySetupFailure>, ApiError> {
     // Turning it off forgets what maintenance kept for every repository on the
     // login, and takes the key a run uses off the host, so no run may be going.
+    //
+    // Archives marked vanished do not refuse it, unlike a move off the login:
+    // this is the admin's own act on the whole login, the pane warns that it
+    // discards those marks like Accept and resume, and a refusal would leave a
+    // login whose maintenance has stopped impossible to turn off.
     let mut not_during_maintenance = Vec::with_capacity(ctx.repos.len());
     for repo in &ctx.repos {
         not_during_maintenance.push(lock_unless_busy(state, repo.id).await?);

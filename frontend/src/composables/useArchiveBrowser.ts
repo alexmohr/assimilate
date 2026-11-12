@@ -94,11 +94,12 @@ interface UseArchiveBrowserReturn {
  * a resolved promise means "queued", not "gone". The archive leaves the list
  * when an `ArchiveDeleted` event confirms it.
  */
-export async function requestArchiveDelete(repoId: number, archiveName: string): Promise<void> {
+export async function requestArchiveDelete(repoId: number, archiveName: string): Promise<boolean> {
   const response = await deleteArchiveRequest(repoId, archiveName)
   if (!response.success) {
     throw new Error('Archive delete failed')
   }
+  return response.queued
 }
 
 export function useArchiveBrowser(repoId: Ref<number>): UseArchiveBrowserReturn {

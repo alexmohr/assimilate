@@ -323,6 +323,41 @@ describe('useArchiveDeletion', () => {
       expect(deletion.isDeleting(archive('one', OTHER))).toBe(true)
     })
 
+    it("follows the server's word when the repository turned append-only after the guess", async () => {
+      const onQueued = vi.fn()
+      const { deletion, onDeleted } = setup({
+        willBeQueued: () => false,
+        deleteArchiveByName: vi.fn().mockResolvedValue(true),
+        onQueued,
+      })
+
+      deletion.request(archive('one'))
+      await deletion.confirm()
+
+      // Not left as "deleting", and treated as queued.
+      expect(deletion.isDeleting(archive('one'))).toBe(false)
+      expect(onQueued).toHaveBeenCalledWith(archive('one'))
+      expect(onDeleted).not.toHaveBeenCalled()
+      expect(toastSuccess).toHaveBeenCalledWith(expect.stringContaining('Deletion queued'))
+    })
+
+    it("follows the server's word when the repository stopped being append-only", async () => {
+      const onQueued = vi.fn()
+      const { deletion, onDeleted } = setup({
+        willBeQueued: () => true,
+        deleteArchiveByName: vi.fn().mockResolvedValue(false),
+        onQueued,
+      })
+
+      deletion.request(archive('one'))
+      await deletion.confirm()
+
+      expect(deletion.isDeleting(archive('one'))).toBe(true)
+      expect(onDeleted).toHaveBeenCalled()
+      expect(onQueued).not.toHaveBeenCalled()
+      expect(toastSuccess).toHaveBeenCalledWith(expect.stringContaining('deletion started'))
+    })
+
     it('reports a rejected request as an error', async () => {
       const { deletion, onDeleted } = setup({
         willBeQueued: () => true,

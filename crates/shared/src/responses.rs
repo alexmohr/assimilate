@@ -1420,6 +1420,9 @@ pub struct DeleteArchiveResponse {
     pub success: bool,
     /// Name of the archive.
     pub archive_name: String,
+    /// Whether the deletion is only queued for the repository's next
+    /// maintenance run (an append-only repository), rather than started now.
+    pub queued: bool,
 }
 
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]

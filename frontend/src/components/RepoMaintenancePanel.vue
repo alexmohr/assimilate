@@ -165,7 +165,8 @@ function keep(archiveName: string): Promise<void> {
         </ul>
         <p class="muted">
           Nothing was written, so they can still be rolled back from the repository's transaction
-          log on the host.
+          log on the host. Turning append-only off discards these records, the same as accepting
+          them below, so look into why they vanished first.
         </p>
         <button
           type="button"

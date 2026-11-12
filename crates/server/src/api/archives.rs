@@ -985,6 +985,7 @@ pub async fn delete_archive(
         Json(SharedDeleteArchiveResponse {
             success: true,
             archive_name,
+            queued: false,
         }),
     ))
 }
@@ -1032,6 +1033,7 @@ async fn queue_archive_deletion(
         Json(SharedDeleteArchiveResponse {
             success: true,
             archive_name,
+            queued: true,
         }),
     ))
 }

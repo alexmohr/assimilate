@@ -394,7 +394,6 @@ onMounted(load)
     <EditableSection
       lede="Stage this host's virtual machines into a directory before a backup runs, so borg
           picks them up as ordinary files. Schedules opt in one by one."
-      lede-label="VM staging"
       :editing="editing"
       :can-edit="canEdit"
       :saving="saving"

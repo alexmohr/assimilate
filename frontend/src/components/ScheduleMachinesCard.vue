@@ -182,7 +182,6 @@ async function save(): Promise<void> {
       label="Per machine"
       lede="Override the setting above for one machine, or wait for a machine without waking it:
         its targets run last, and are skipped and caught up if it is still down."
-      lede-label="per-machine choices"
       :editing="editing"
       :can-edit="canEdit && machines.length > 0"
       :saving="saving"

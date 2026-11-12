@@ -94,7 +94,6 @@ async function save(): Promise<void> {
       label="Agent process"
       lede="Start the agent over SSH before a backup when it runs on demand rather than as a
         background service."
-      lede-label="starting the agent"
       :editing="editing"
       :can-edit="canEdit"
       :saving="saving"

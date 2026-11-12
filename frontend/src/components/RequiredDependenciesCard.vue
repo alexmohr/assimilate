@@ -119,7 +119,6 @@ async function saveDraft(): Promise<void> {
       v-else
       label="Required dependencies"
       :lede="lede"
-      lede-label="required dependencies"
       :editing="editing"
       :can-edit="canEdit && hosts.length > 0"
       :saving="saving"

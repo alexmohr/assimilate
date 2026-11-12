@@ -228,7 +228,6 @@ onMounted(load)
       lede="Dump the databases this host runs, in its Kubernetes cluster, in Docker or Podman
           containers or installed on the host itself, into its backups, streamed straight into the
           archive without staging them on disk. Schedules opt in one by one."
-      lede-label="Database dumps"
       :editing="editing"
       :can-edit="canEdit"
       :saving="saving"

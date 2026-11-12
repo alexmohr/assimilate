@@ -115,7 +115,6 @@ async function save(): Promise<void> {
     label="Wake and shut down"
     lede="Wake this machine before a backup that needs it, and power it back down when the run is
       done."
-    lede-label="waking this machine"
     :editing="editing"
     :can-edit="canEdit"
     :saving="saving"

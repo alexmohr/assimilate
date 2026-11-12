@@ -204,7 +204,6 @@ pub async fn update_repo_host(
     helpers::validate_max_len(ssh_host, "ssh_host", helpers::MaxLen::Hostname)?;
     validate_port(req.ssh_port)?;
 
-    db::repo_hosts::get_repo_host(&state.pool, repo_host_id).await?;
     let host =
         db::repo_hosts::update_repo_host_address(&state.pool, repo_host_id, ssh_host, req.ssh_port)
             .await?;

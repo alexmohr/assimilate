@@ -173,10 +173,22 @@ fn lines_of(existing: &str) -> Vec<String> {
     existing.lines().map(str::to_owned).collect()
 }
 
-/// Adds the maintenance key's line unless the file already holds the key.
+/// Whether `line` carries the comment Assimilate gives its maintenance key,
+/// whichever key that is.
+fn names_maintenance_key(line: &str) -> bool {
+    line.trim_end()
+        .strip_suffix(MAINTENANCE_COMMENT)
+        .is_some_and(|before| before.ends_with(char::is_whitespace))
+}
+
+/// Adds the maintenance key's line unless the file already holds the key, and
+/// drops the lines of an older maintenance key: when the server's key is
+/// regenerated, its predecessor's private half is gone but its line would
+/// otherwise keep full access to the host.
 #[must_use]
 pub fn with_maintenance_key(existing: &str, maintenance: &PublicKey) -> String {
     let mut lines = lines_of(existing);
+    lines.retain(|line| !names_maintenance_key(line) || holds_key(line, maintenance));
     if !lines.iter().any(|line| holds_key(line, maintenance)) {
         lines.push(maintenance_line(maintenance));
     }
@@ -206,13 +218,13 @@ pub fn with_restricted_line(existing: &str, backup: &PublicKey, restricted: &str
 }
 
 /// Turns append-only off: the agents' key becomes a plain line again and the
-/// maintenance key's line is removed.
+/// maintenance key's line, and any older one, is removed.
 #[must_use]
 pub fn without_append_only(existing: &str, backup: &PublicKey, maintenance: &PublicKey) -> String {
     let plain = replace_key_lines(existing, backup, &key_line(backup));
     let kept: Vec<String> = plain
         .lines()
-        .filter(|line| !holds_key(line, maintenance))
+        .filter(|line| !holds_key(line, maintenance) && !names_maintenance_key(line))
         .map(str::to_owned)
         .collect();
     join(&kept)
@@ -528,6 +540,61 @@ mod tests {
         let twice = with_maintenance_key(&once, &maintenance);
         assert_eq!(once, twice);
         assert_eq!(once.lines().count(), 2);
+    }
+
+    #[test]
+    fn a_regenerated_maintenance_key_replaces_its_predecessors_line() {
+        let old_key = key("m");
+        let new_key = key("m");
+        let alice = key_line(&key("alice"));
+        let existing = format!("{alice}\n{}\n", maintenance_line(&old_key));
+
+        let updated = with_maintenance_key(&existing, &new_key);
+
+        assert!(!updated.contains(&maintenance_line(&old_key)), "{updated}");
+        assert!(updated.contains(&maintenance_line(&new_key)), "{updated}");
+        assert!(updated.contains(&alice));
+        assert_eq!(updated.lines().count(), 2);
+        // Settled: nothing further changes.
+        assert_eq!(with_maintenance_key(&updated, &new_key), updated);
+    }
+
+    #[test]
+    fn only_a_line_ending_in_the_maintenance_comment_counts_as_a_maintenance_key() {
+        assert!(names_maintenance_key(
+            "ssh-ed25519 AAAA assimilate-maintenance"
+        ));
+        assert!(names_maintenance_key(
+            "ssh-ed25519 AAAA assimilate-maintenance  "
+        ));
+        assert!(!names_maintenance_key(
+            "ssh-ed25519 AAAA not-assimilate-maintenance"
+        ));
+        assert!(!names_maintenance_key(
+            "ssh-ed25519 AAAA assimilate-maintenance-2"
+        ));
+        assert!(!names_maintenance_key("assimilate-maintenance"));
+        assert!(!names_maintenance_key("ssh-ed25519 AAAA bob"));
+    }
+
+    #[test]
+    fn turning_append_only_off_also_drops_an_older_maintenance_key() {
+        let backup = key("assimilate-server");
+        let old_key = key("m");
+        let current = key("m");
+        let alice = key_line(&key("alice"));
+        let existing = format!(
+            "{alice}\n{}\n{}\n{}\n",
+            maintenance_line(&old_key),
+            maintenance_line(&current),
+            key_line(&backup)
+        );
+
+        let off = without_append_only(&existing, &backup, &current);
+
+        assert!(!off.contains(MAINTENANCE_COMMENT), "{off}");
+        assert!(off.contains(&alice));
+        assert!(off.contains(&key_line(&backup)));
     }
 
     #[test]

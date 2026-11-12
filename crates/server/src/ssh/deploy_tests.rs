@@ -185,19 +185,7 @@ fn ok(id: u32) -> Status {
 }
 
 impl russh_sftp::server::Handler for Files {
-    type Error = StatusCode;
-
-    fn unimplemented(&self) -> Self::Error {
-        StatusCode::OpUnsupported
-    }
-
-    fn init(
-        &mut self,
-        _version: u32,
-        _extensions: HashMap<String, String>,
-    ) -> impl Future<Output = Result<Version, Self::Error>> + Send {
-        std::future::ready(Ok(Version::new()))
-    }
+    sftp_handler_basics!();
 
     fn open(
         &mut self,

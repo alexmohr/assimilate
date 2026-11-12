@@ -9,7 +9,7 @@ use std::{
 
 use russh::{
     client,
-    keys::{PrivateKey, PublicKey, key::PrivateKeyWithHashAlg},
+    keys::{PrivateKey, PublicKey, PublicKeyOrCertificate, key::PrivateKeyWithHashAlg},
 };
 use russh_sftp::{
     client::SftpSession,
@@ -105,6 +105,15 @@ pub struct DeployKeyResponse {
     pub error: Option<String>,
 }
 
+/// Plain host key offered by the server; host certificates are not supported
+/// because host keys are pinned by their OpenSSH public key.
+pub(crate) fn plain_host_key(offered: &PublicKeyOrCertificate) -> Option<&PublicKey> {
+    match offered {
+        PublicKeyOrCertificate::PublicKey { key, .. } => Some(key),
+        PublicKeyOrCertificate::Certificate(_) => None,
+    }
+}
+
 pub(crate) struct SshClientHandler {
     pub expected_host_key: Option<String>,
 }
@@ -114,12 +123,16 @@ impl client::Handler for SshClientHandler {
 
     fn check_server_key(
         &mut self,
-        server_public_key: &PublicKey,
+        server_public_key: &PublicKeyOrCertificate,
     ) -> impl std::future::Future<Output = Result<bool, Self::Error>> {
         let Some(expected) = &self.expected_host_key else {
             return std::future::ready(Ok(true));
         };
-        let actual = server_public_key.to_openssh().unwrap_or_default();
+        let Some(key) = plain_host_key(server_public_key) else {
+            tracing::error!("SSH host certificates are not supported");
+            return std::future::ready(Ok(false));
+        };
+        let actual = key.to_openssh().unwrap_or_default();
         if actual.trim() == expected.trim() {
             std::future::ready(Ok(true))
         } else {
@@ -138,10 +151,11 @@ impl client::Handler for HostKeyCaptureHandler {
 
     fn check_server_key(
         &mut self,
-        server_public_key: &PublicKey,
+        server_public_key: &PublicKeyOrCertificate,
     ) -> impl std::future::Future<Output = Result<bool, Self::Error>> {
+        let offered = plain_host_key(server_public_key).and_then(|key| key.to_openssh().ok());
         if let Ok(mut host_key) = self.host_key.lock() {
-            *host_key = server_public_key.to_openssh().ok();
+            *host_key = offered;
         }
         std::future::ready(Ok(true))
     }
@@ -1432,6 +1446,63 @@ mod deploy_tests;
     reason = "tests use std::fs for simple synchronous setup/assertions"
 )]
 mod tests {
+    const HOST_KEY_B64: &str =
+        "AAAAC3NzaC1lZDI1NTE5AAAAINwxkbeQjd0zydveueMhRPJE+cxoP0DNuUcYAwqmOs6S";
+
+    fn offered_key() -> PublicKeyOrCertificate {
+        PublicKeyOrCertificate::from(russh::keys::parse_public_key_base64(HOST_KEY_B64).unwrap())
+    }
+
+    fn offered_certificate() -> PublicKeyOrCertificate {
+        PublicKeyOrCertificate::Certificate(crate::test_support::generate_test_host_certificate())
+    }
+
+    #[test]
+    fn plain_host_key_yields_keys_but_not_certificates() {
+        assert!(plain_host_key(&offered_key()).is_some());
+        assert!(plain_host_key(&offered_certificate()).is_none());
+    }
+
+    #[tokio::test]
+    async fn client_handler_rejects_certificates_when_a_key_is_pinned() {
+        use russh::client::Handler as _;
+
+        let pinned = russh::keys::parse_public_key_base64(HOST_KEY_B64)
+            .unwrap()
+            .to_openssh()
+            .unwrap();
+        let mut handler = SshClientHandler {
+            expected_host_key: Some(pinned),
+        };
+        assert!(handler.check_server_key(&offered_key()).await.unwrap());
+        assert!(
+            !handler
+                .check_server_key(&offered_certificate())
+                .await
+                .unwrap()
+        );
+    }
+
+    #[tokio::test]
+    async fn host_key_capture_records_keys_but_not_certificates() {
+        use russh::client::Handler as _;
+
+        let captured = Arc::new(Mutex::new(None));
+        let mut handler = HostKeyCaptureHandler {
+            host_key: Arc::clone(&captured),
+        };
+        assert!(handler.check_server_key(&offered_key()).await.unwrap());
+        assert!(captured.lock().unwrap().is_some());
+
+        assert!(
+            handler
+                .check_server_key(&offered_certificate())
+                .await
+                .unwrap()
+        );
+        assert!(captured.lock().unwrap().is_none());
+    }
+
     use super::*;
 
     #[test]

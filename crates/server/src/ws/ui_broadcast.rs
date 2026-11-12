@@ -249,6 +249,24 @@ mod tests {
     }
 
     #[test]
+    fn stopping_all_active_backups_announces_and_clears_each() {
+        let broadcast = UiBroadcast::new();
+        seed_running_backup(&broadcast);
+        let mut rx = broadcast.subscribe();
+
+        broadcast.stop_all_active_backups();
+
+        assert!(broadcast.current_active_backups().is_empty());
+        let stopped = rx.try_recv().unwrap();
+        assert!(matches!(
+            stopped,
+            ServerToUi::BackupStopped { hostname, target_name, repo_id: 20, schedule_id: Some(8) }
+                if hostname == "web-server-01" && target_name == "server-daily"
+        ));
+        assert!(rx.try_recv().is_err());
+    }
+
+    #[test]
     fn import_progress_events_update_snapshots() {
         let broadcast = UiBroadcast::new();
         broadcast.send(ServerToUi::ImportProgress {

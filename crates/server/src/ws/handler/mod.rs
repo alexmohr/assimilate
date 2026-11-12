@@ -5121,6 +5121,71 @@ exit 0
         ));
     }
 
+    /// A "nothing running" answer the database cannot record is logged, and
+    /// the cancellation is left unacknowledged so the next reconnect asks
+    /// again.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn backup_not_running_that_cannot_be_recorded_is_logged(pool: PgPool) {
+        let (agent, repo, _schedule) = create_agent_repo_schedule(&pool).await;
+        crate::db::insert_backup_started(&pool, agent.id, repo.id, None, Utc::now(), None, None)
+            .await
+            .expect("insert started backup");
+        reject_writes(&pool, WriteRejecting::BackupReports).await;
+        let state = build_test_state(pool);
+
+        let msg = wire(&AgentToServer::BackupNotRunning {
+            repo_id: RepoId(repo.id),
+        });
+        let ((), logs) = crate::test_support::formatted_logs_while(Box::pin(handle_agent_message(
+            &msg,
+            &agent.hostname,
+            agent.id,
+            &state,
+        )))
+        .await;
+
+        assert!(
+            logs.contains("failed to settle a backup the agent is not running"),
+            "{logs}"
+        );
+        assert!(
+            !logs.contains("failed to acknowledge cancellation"),
+            "{logs}"
+        );
+    }
+
+    /// When a restarted agent's lost backups cannot be failed, the new
+    /// session carries on and the failure is logged.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_restarted_agent_survives_a_database_that_rejects_the_cleanup(pool: PgPool) {
+        let agent = socket_agent(&pool, "restarted-db-host").await;
+        let (_owner, repo, _schedule) = create_agent_repo_schedule(&pool).await;
+        crate::db::insert_backup_started(&pool, agent.id, repo.id, None, Utc::now(), None, None)
+            .await
+            .expect("insert started backup");
+        reject_writes(&pool, WriteRejecting::BackupReports).await;
+        let state = build_test_state(pool);
+        state
+            .registry
+            .record_instance(agent.id, Some("instance-0"))
+            .await;
+
+        let (sink, _sent) = recording_sink();
+        let ((), logs) = crate::test_support::formatted_logs_while(Box::pin(serve_agent(
+            sink,
+            frames(vec![hello_frame("restarted-db-host", SOCKET_TOKEN)]),
+            state,
+        )))
+        .await;
+
+        assert!(
+            logs.contains("failed to abandon the previous agent process's backups"),
+            "{logs}"
+        );
+    }
+
     /// The system reset asks every agent to cancel every repository, so most
     /// answers name a repository with nothing in flight, or one the agent is
     /// not even assigned. Those change nothing and raise no alarm.

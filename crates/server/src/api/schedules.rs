@@ -1619,28 +1619,13 @@ pub async fn cancel_running_backup(
                     "agent not connected for cancel_running_backup"
                 );
                 // Agent is offline - cancel the backup directly in the DB
-                if let Err(e) = crate::ws::stopped_backup::cancel(
+                crate::ws::stopped_backup::cancel_or_log(
                     &state,
                     target.agent_id,
                     *repo_id,
                     crate::ws::stopped_backup::Announce::Always,
                 )
-                .await
-                {
-                    tracing::error!(
-                        hostname = %target.hostname,
-                        repo_id = *repo_id,
-                        error = %e,
-                        "failed to cancel backup in DB after agent not connected"
-                    );
-                    crate::ws::stopped_backup::announce_stopped(
-                        &state,
-                        target.agent_id,
-                        *repo_id,
-                        None,
-                    )
-                    .await;
-                }
+                .await;
             }
         }
     }

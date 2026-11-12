@@ -50,6 +50,21 @@ pub async fn cancel(
     Ok(cancelled)
 }
 
+/// Cancels as [`cancel`] does, but never fails: a report that cannot be
+/// updated is logged, and the backup's end is announced all the same, since
+/// whatever waits on it must still hear that it is over.
+pub async fn cancel_or_log(state: &AppState, agent_id: i64, repo_id: i64, announce: Announce) {
+    if let Err(e) = cancel(state, agent_id, repo_id, announce).await {
+        tracing::error!(
+            agent_id,
+            repo_id,
+            error = %e,
+            "failed to update cancelled backup report"
+        );
+        announce_stopped(state, agent_id, repo_id, None).await;
+    }
+}
+
 /// Announces that `agent_id`'s backup of `repo_id` is over without a
 /// completion: wakes anything waiting on it, releases the repository's op
 /// tracker entry if this backup still holds it, and tells the UI to drop it.
@@ -249,6 +264,78 @@ mod tests {
                 .iter()
                 .any(|e| matches!(e, ServerToUi::BackupStopped { .. }))
         );
+    }
+
+    /// A report the database will not update is logged, and the backup's end
+    /// is still announced.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn cancel_or_log_announces_even_when_the_report_cannot_be_updated(pool: PgPool) {
+        let state = build_test_state(pool.clone());
+        let (agent_id, repo_id) = agent_and_repo(&pool).await;
+        db::insert_backup_started(
+            &pool,
+            agent_id,
+            repo_id,
+            None,
+            chrono::Utc::now(),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        sqlx::query!(
+            "ALTER TABLE backup_reports ADD CONSTRAINT test_rejects_writes CHECK (false) NOT VALID"
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        let mut outcomes = state.completion_bus.subscribe();
+        let mut ui = state.ui_broadcast.subscribe();
+
+        let ((), logs) = crate::test_support::formatted_logs_while(cancel_or_log(
+            &state,
+            agent_id,
+            repo_id,
+            Announce::IfReportCancelled,
+        ))
+        .await;
+
+        assert!(
+            logs.contains("failed to update cancelled backup report"),
+            "{logs}"
+        );
+        assert!(!outcomes.try_recv().unwrap().success);
+        let events: Vec<ServerToUi> = std::iter::from_fn(|| ui.try_recv().ok()).collect();
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, ServerToUi::BackupStopped { .. }))
+        );
+    }
+
+    /// A backup whose agent or repository is gone cannot be named for the UI;
+    /// it is cleared from the active backups without an event of its own.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn announce_clears_a_backup_it_cannot_name(pool: PgPool) {
+        let state = build_test_state(pool);
+        state.ui_broadcast.set_active_backup(snapshot(77));
+        let mut ui = state.ui_broadcast.subscribe();
+
+        let ((), logs) =
+            crate::test_support::formatted_logs_while(announce_stopped(&state, 9999, 77, None))
+                .await;
+
+        assert!(logs.contains("failed to name a stopped backup"), "{logs}");
+        assert!(state.ui_broadcast.current_active_backups().is_empty());
+        let events: Vec<ServerToUi> = std::iter::from_fn(|| ui.try_recv().ok()).collect();
+        assert!(
+            !events
+                .iter()
+                .any(|e| matches!(e, ServerToUi::BackupStopped { .. }))
+        );
+        assert!(events.iter().any(|e| matches!(e, ServerToUi::DataChanged)));
     }
 
     #[ignore = "requires DATABASE_URL"]

@@ -212,19 +212,8 @@ pub(super) async fn handle_backup_cancelled(
     {
         return;
     }
-    if let Err(e) =
-        stopped_backup::cancel(state, agent_id, repo_id.0, stopped_backup::Announce::Always).await
-    {
-        tracing::error!(
-            hostname = %hostname,
-            repo_id = ?repo_id,
-            error = %e,
-            "failed to update cancelled backup report"
-        );
-        // The agent has stopped the backup either way; whatever waits on it
-        // must still hear so, or it waits forever.
-        stopped_backup::announce_stopped(state, agent_id, repo_id.0, None).await;
-    }
+    stopped_backup::cancel_or_log(state, agent_id, repo_id.0, stopped_backup::Announce::Always)
+        .await;
     acknowledge_cancellation(hostname, agent_id, state, repo_id).await;
     // An archive written before the abort, or one a prune removed, has
     // changed the repository as much as a run that finished.

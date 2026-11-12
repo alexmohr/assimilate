@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
+import { flushPromises } from '@vue/test-utils'
 import { describe, expect, it } from 'vitest'
 import { renderWithPlugins } from '../test-utils'
 import BackupProgressCard from './BackupProgressCard.vue'
@@ -75,6 +76,24 @@ describe('BackupProgressCard', () => {
     })
     expect(wrapper.text()).toContain('Files')
     expect(wrapper.find('.hook-output-log').text()).toContain('ready')
+  })
+
+  it('scrolls the script output to the newest line as lines arrive', async () => {
+    const first = {
+      type: 'hook_output',
+      phase: 'pre_backup',
+      stream: 'stdout',
+      line: 'first',
+    } as const
+    const wrapper = mount({ progress: null, hookOutput: [first] })
+    const log = wrapper.find('.hook-output-log').element as HTMLElement
+    Object.defineProperty(log, 'scrollHeight', { value: 480, configurable: true })
+    expect(log.scrollTop).toBe(0)
+
+    await wrapper.setProps({ hookOutput: [first, { ...first, line: 'second' }] })
+    await flushPromises()
+
+    expect(log.scrollTop).toBe(480)
   })
 
   it('has no script output section when no script printed anything', () => {

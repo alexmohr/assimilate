@@ -751,11 +751,20 @@ onMessage('BackupStarted', (payload) => {
 })
 
 onMessage('BackupCompleted', (payload) => {
-  if (payload.hostname === props.hostname) {
-    activeBackups.value = activeBackups.value.filter((b) => b.targetName !== payload.target_name)
-  }
+  dropActiveBackup(payload.hostname, payload.target_name)
   refreshAgent()
 })
+
+// A backup that was cancelled, or lost with an agent that restarted, never
+// completes - this is the only event that ends its progress card.
+onMessage('BackupStopped', (payload) => {
+  dropActiveBackup(payload.hostname, payload.target_name)
+})
+
+function dropActiveBackup(hostname: string, targetName: string): void {
+  if (hostname !== props.hostname) return
+  activeBackups.value = activeBackups.value.filter((b) => b.targetName !== targetName)
+}
 
 onMessage('BackupLog', (payload) => {
   if (payload.hostname !== props.hostname) return

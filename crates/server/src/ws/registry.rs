@@ -30,6 +30,11 @@ pub struct AgentConnection {
 #[derive(Debug, Clone, Default)]
 pub struct AgentRegistry {
     connections: Arc<RwLock<HashMap<i64, AgentConnection>>>,
+    /// The agent process each agent last connected as, kept after it
+    /// disconnects so its next connection can tell a restart (a new process,
+    /// which lost whatever the old one was running) from a reconnect of the
+    /// same process (which carried on).
+    last_instances: Arc<RwLock<HashMap<i64, String>>>,
 }
 
 impl AgentRegistry {
@@ -38,6 +43,7 @@ impl AgentRegistry {
     pub fn new() -> Self {
         Self {
             connections: Arc::new(RwLock::new(HashMap::new())),
+            last_instances: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
@@ -67,6 +73,22 @@ impl AgentRegistry {
             .await
             .insert(agent_id, connection)
             .is_some()
+    }
+
+    /// Records `instance_id` as the agent process `agent_id` now runs as, and
+    /// returns whether that replaces a different process this server saw it
+    /// connect as before - the agent restarted, so anything the earlier
+    /// process had running died with it. `false` for the first connection
+    /// since this server started, and for an agent that names no instance.
+    pub async fn record_instance(&self, agent_id: i64, instance_id: Option<&str>) -> bool {
+        let Some(instance_id) = instance_id else {
+            return false;
+        };
+        self.last_instances
+            .write()
+            .await
+            .insert(agent_id, instance_id.to_owned())
+            .is_some_and(|previous| previous != instance_id)
     }
 
     /// Remove a disconnected agent from the registry.
@@ -197,6 +219,25 @@ mod tests {
     use tokio::sync::mpsc;
 
     use super::AgentRegistry;
+
+    #[tokio::test]
+    async fn record_instance_reports_a_restart_only_for_a_new_process() {
+        let registry = AgentRegistry::new();
+
+        assert!(!registry.record_instance(1, Some("instance-a")).await);
+        assert!(!registry.record_instance(1, Some("instance-a")).await);
+        assert!(registry.record_instance(1, Some("instance-b")).await);
+        assert!(!registry.record_instance(2, Some("instance-b")).await);
+    }
+
+    #[tokio::test]
+    async fn record_instance_ignores_an_agent_that_names_no_instance() {
+        let registry = AgentRegistry::new();
+        assert!(!registry.record_instance(1, Some("instance-a")).await);
+
+        assert!(!registry.record_instance(1, None).await);
+        assert!(!registry.record_instance(1, Some("instance-a")).await);
+    }
 
     #[tokio::test]
     async fn send_to_instance_reaches_only_the_named_process() {

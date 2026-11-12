@@ -9,7 +9,10 @@ use shared::protocol::ServerToUi;
 use super::validate_agent_repo;
 use crate::{
     AppState, archive_growth, archive_index, db,
-    ws::{completion_bus::OperationOutcome, post_backup_sync, ui_broadcast::ActiveBackupSnapshot},
+    ws::{
+        completion_bus::OperationOutcome, post_backup_sync, stopped_backup,
+        ui_broadcast::ActiveBackupSnapshot,
+    },
 };
 
 fn extract_archive_name(borg_command: &str) -> Option<String> {
@@ -209,19 +212,77 @@ pub(super) async fn handle_backup_cancelled(
     {
         return;
     }
-    state.completion_bus.publish(OperationOutcome {
-        agent_id,
-        repo_id: repo_id.0,
-        success: false,
-    });
-    if let Err(e) = db::cancel_backup_report(&state.pool, agent_id, repo_id.0).await {
+    if let Err(e) =
+        stopped_backup::cancel(state, agent_id, repo_id.0, stopped_backup::Announce::Always).await
+    {
         tracing::error!(
             hostname = %hostname,
             repo_id = ?repo_id,
             error = %e,
             "failed to update cancelled backup report"
         );
+        // The agent has stopped the backup either way; whatever waits on it
+        // must still hear so, or it waits forever.
+        stopped_backup::announce_stopped(state, agent_id, repo_id.0, None).await;
     }
+    acknowledge_cancellation(hostname, agent_id, state, repo_id).await;
+    // An archive written before the abort, or one a prune removed, has
+    // changed the repository as much as a run that finished.
+    post_backup_sync::spawn(
+        state,
+        post_backup_sync::cancelled(agent_id, hostname, repo_id.0),
+    );
+}
+
+/// The agent's answer to a cancel when it has no backup running for the
+/// repository - it was stopped or restarted after the run was handed to it,
+/// so the run will never report anything. Settles the run as cancelled.
+///
+/// Not checked against the agent's repository assignments the way its other
+/// reports are: the update only ever touches this agent's own reports, and
+/// the system reset asks every agent to cancel every repository, so each one
+/// answers this for repositories it was never assigned.
+pub(super) async fn handle_backup_not_running(
+    hostname: &str,
+    agent_id: i64,
+    state: &AppState,
+    repo_id: shared::types::RepoId,
+) {
+    match stopped_backup::cancel(
+        state,
+        agent_id,
+        repo_id.0,
+        stopped_backup::Announce::IfReportCancelled,
+    )
+    .await
+    {
+        Ok(true) => tracing::info!(
+            hostname = %hostname,
+            repo_id = ?repo_id,
+            "agent had no backup running to cancel; settled the run as cancelled"
+        ),
+        Ok(false) => {}
+        Err(e) => {
+            tracing::error!(
+                hostname = %hostname,
+                repo_id = ?repo_id,
+                error = %e,
+                "failed to settle a backup the agent is not running"
+            );
+            return;
+        }
+    }
+    acknowledge_cancellation(hostname, agent_id, state, repo_id).await;
+}
+
+/// Records that the agent has seen the cancellation, so the reconnect
+/// catch-up stops repeating it.
+async fn acknowledge_cancellation(
+    hostname: &str,
+    agent_id: i64,
+    state: &AppState,
+    repo_id: shared::types::RepoId,
+) {
     if let Err(e) = db::acknowledge_cancellation(&state.pool, agent_id, repo_id.0).await {
         tracing::error!(
             hostname = %hostname,
@@ -230,11 +291,4 @@ pub(super) async fn handle_backup_cancelled(
             "failed to acknowledge cancellation"
         );
     }
-    // An archive written before the abort, or one a prune removed, has
-    // changed the repository as much as a run that finished.
-    post_backup_sync::spawn(
-        state,
-        post_backup_sync::cancelled(agent_id, hostname, repo_id.0),
-    );
-    state.ui_broadcast.send(ServerToUi::DataChanged);
 }

@@ -503,6 +503,15 @@ pub enum AgentToServer {
         /// The repository whose backup was cancelled.
         repo_id: RepoId,
     },
+    /// Answer to [`ServerToAgent::CancelBackup`] when this agent process has
+    /// no backup running for the repository - typically because it was
+    /// stopped or restarted after the server handed it the run. There is
+    /// nothing left to abort, so the server can settle the run's report
+    /// instead of waiting for a [`Self::BackupCancelled`] that never comes.
+    BackupNotRunning {
+        /// The repository the cancel request named.
+        repo_id: RepoId,
+    },
     /// Log line emitted during a backup operation.
     BackupLog {
         /// The repository the log line relates to.
@@ -665,6 +674,22 @@ pub enum ServerToUi {
         target_name: String,
         /// The backup result report.
         report: Box<BackupReport>,
+    },
+    /// Notification that a backup ended without a report of its own: it was
+    /// cancelled, or abandoned because the agent running it restarted. A
+    /// backup that finishes sends [`Self::BackupCompleted`] instead.
+    BackupStopped {
+        /// The hostname of the agent the backup was on.
+        hostname: String,
+        /// The name of the backup target (repository).
+        target_name: String,
+        /// The repository the backup wrote to.
+        #[ts(type = "number")]
+        repo_id: i64,
+        /// The schedule that triggered this backup, if any.
+        #[serde(default)]
+        #[ts(type = "number | null")]
+        schedule_id: Option<i64>,
     },
     /// Notification that a repository check has completed.
     CheckCompleted {
@@ -1141,6 +1166,14 @@ mod tests {
     }
 
     #[test]
+    fn agent_to_server_backup_not_running_round_trips() {
+        let msg = AgentToServer::BackupNotRunning {
+            repo_id: RepoId(42),
+        };
+        assert_round_trips(&msg);
+    }
+
+    #[test]
     fn agent_to_server_backup_log_round_trips() {
         let msg = AgentToServer::BackupLog {
             repo_id: RepoId(7),
@@ -1171,6 +1204,17 @@ mod tests {
             archive_name: Some("server-daily-2026-06-27T00:00:00".to_owned()),
             schedule_id: Some(3),
             started_at: Utc::now(),
+        };
+        assert_round_trips(&msg);
+    }
+
+    #[test]
+    fn server_to_ui_backup_stopped_round_trips() {
+        let msg = ServerToUi::BackupStopped {
+            hostname: "web-01".to_owned(),
+            target_name: "server-daily".to_owned(),
+            repo_id: 7,
+            schedule_id: Some(3),
         };
         assert_round_trips(&msg);
     }

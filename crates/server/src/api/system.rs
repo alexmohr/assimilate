@@ -684,6 +684,7 @@ pub async fn reset_system(
     }
 
     let cancelled_backups = db::cancel_all_active_backups(&state.pool).await?;
+    state.ui_broadcast.stop_all_active_backups();
 
     // Force-clear the in-memory op tracker so the UI stops showing stuck
     // spinners, then broadcast the idle state for every affected repo.

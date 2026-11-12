@@ -20,7 +20,7 @@ use tracing::{info, warn};
 use super::{
     KeyRole, SshClientHandler, SshError,
     authorized_keys::{self, AuthorizedKeysError, Restriction},
-    connect_as, connect_with_password, keys, open_sftp,
+    connect_as, connect_with_password_pinned, keys, open_sftp,
 };
 
 const AUTHORIZED_KEYS: &str = ".ssh/authorized_keys";
@@ -245,7 +245,7 @@ async fn editor(
             .await
             .map_err(needs_password_if_refused)?,
         Access::Password(password) => {
-            timed(connect_with_password(
+            timed(connect_with_password_pinned(
                 login.host,
                 login.user,
                 login.port,

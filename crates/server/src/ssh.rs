@@ -495,7 +495,7 @@ pub(crate) async fn connect_as(
     Ok(session)
 }
 
-pub(crate) async fn connect_with_password(
+pub(crate) async fn connect_with_password_pinned(
     host: &str,
     user: &str,
     port: u16,
@@ -519,6 +519,17 @@ pub(crate) async fn connect_with_password(
     }
 
     Ok(session)
+}
+
+/// [`connect_with_password_pinned`] for a host whose key is not pinned yet:
+/// deploying a key or the agent, or reading a file, before the host is scanned.
+async fn connect_with_password(
+    host: &str,
+    user: &str,
+    port: u16,
+    password: &str,
+) -> Result<client::Handle<SshClientHandler>, SshError> {
+    connect_with_password_pinned(host, user, port, password, None).await
 }
 
 pub(crate) async fn open_sftp(
@@ -675,24 +686,17 @@ pub async fn deploy_key(req: &DeployKeyRequest) -> DeployKeyResponse {
         }
     };
 
-    let session = match connect_with_password(
-        &req.ssh_host,
-        &req.ssh_user,
-        port,
-        &req.password,
-        None,
-    )
-    .await
-    {
-        Ok(s) => s,
-        Err(e) => {
-            return DeployKeyResponse {
-                success: false,
-                already_deployed: false,
-                error: Some(e.to_string()),
-            };
-        }
-    };
+    let session =
+        match connect_with_password(&req.ssh_host, &req.ssh_user, port, &req.password).await {
+            Ok(s) => s,
+            Err(e) => {
+                return DeployKeyResponse {
+                    success: false,
+                    already_deployed: false,
+                    error: Some(e.to_string()),
+                };
+            }
+        };
 
     let deploy_result = if req.use_sftp {
         deploy_key_sftp(&session, &our_key).await
@@ -1391,7 +1395,7 @@ pub async fn deploy_agent(params: &DeployAgentParams<'_>) -> Result<(), SshError
         |custom| inject_env_vars(custom, params.server_url, params.server_key),
     );
     let session = match params.password {
-        Some(pw) => connect_with_password(params.host, params.user, params.port, pw, None).await?,
+        Some(pw) => connect_with_password(params.host, params.user, params.port, pw).await?,
         None => connect_with_key(params.host, params.user, params.port, None).await?,
     };
     let sftp = open_sftp(&session).await?;
@@ -1558,7 +1562,7 @@ pub struct ReadFileParams<'a> {
 /// Returns an error if the underlying operation fails.
 pub async fn read_remote_file(params: &ReadFileParams<'_>) -> Result<Option<String>, SshError> {
     let session = match params.password {
-        Some(pw) => connect_with_password(params.host, params.user, params.port, pw, None).await?,
+        Some(pw) => connect_with_password(params.host, params.user, params.port, pw).await?,
         None => connect_with_key(params.host, params.user, params.port, None).await?,
     };
 

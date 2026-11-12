@@ -1838,11 +1838,12 @@ mod tests {
 
         // Not append-only yet: the deletion is left for borg to carry out.
         assert!(!queue_if_now_append_only(&state, repo.id, "a-1", 1, "admin").await);
-        assert!(
+        assert_eq!(
             db::append_only::list_pending_deletions(&pool, repo.id)
                 .await
                 .unwrap()
-                .is_empty()
+                .len(),
+            0
         );
 
         // Turned on while it waited for the repository lock.

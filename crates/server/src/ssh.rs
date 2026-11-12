@@ -413,6 +413,12 @@ pub fn replace_append_only_logins(logins: impl IntoIterator<Item = (String, Stri
 /// One lock per login, so that turning append-only on or off, reapplying it
 /// and letting a new repository in never rewrite the same `authorized_keys`
 /// at once.
+///
+/// Entries are never removed: the map holds one small mutex per distinct login
+/// ever locked, which is bounded by the logins the server has managed. It is
+/// kept apart from [`crate::repo_lock::RepoLock`] because a login is not a
+/// repository, and the locks it serialises are short, so they need none of
+/// that lock's long-wait diagnostics or its admin reset.
 static LOGIN_LOCKS: std::sync::LazyLock<std::sync::Mutex<LoginLocks>> =
     std::sync::LazyLock::new(Default::default);
 

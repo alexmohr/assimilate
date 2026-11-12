@@ -14,7 +14,7 @@ Storage quota configuration lives on the repository detail page, under **Setting
 ## Configuring a Quota
 
 1. Navigate to **Repos** and select the repository.
-2. In the **Storage Quota** panel, click **Configure Quota** (or **Edit** if one already exists).
+2. Open its **Settings** tab and the **Storage quota** section (admins only), then click **Configure quota** (or **Edit** if one already exists).
 3. Enter the **Warning** and **Critical** thresholds in GB.
 4. Choose the **action** for each threshold (see [Actions](#actions)).
 5. Toggle **Enabled** and click **Save**.
@@ -74,7 +74,7 @@ When several repositories share the same SSH host — for example, multiple repo
 
 The repository detail page shows current deduplicated size alongside the configured quota thresholds and a progress bar indicating percentage used.
 
-The [Repositories](repositories.md) list page shows a usage bar and the size against the ceiling in the **Size of quota** column of any repository row with a quota configured, and a **Near quota** or **Over quota** status once usage crosses a threshold. Its **At risk** / **No quota** filter pills find the repositories that need attention across the whole list. Grouped by host, each host's header additionally shows the repositories' shares of any [host quota](server-quotas.md) on that host.
+The [Repositories](repositories.md) list page shows a usage bar and the size against the ceiling at the right of any repository row with a quota configured, and a **Near quota** or **Over quota** status once usage crosses a threshold. Its **At risk** / **No quota** filter pills find the repositories that need attention across the whole list. Grouped by host, each host's header additionally shows the repositories' shares of any [host quota](server-quotas.md) on that host.
 
 The [Dashboard](dashboard.md) **Storage Breakdown** chart also reflects per-repository size, making it easy to identify repositories approaching their quota.
 

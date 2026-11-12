@@ -61,4 +61,21 @@ describe('useBytesLineChartOptions', () => {
     const scaleY = options.scales?.y as { ticks?: { callback?: (v: string | number) => string } }
     expect(scaleY.ticks?.callback?.(2048)).toBe('2048B')
   })
+
+  it('keeps the size axis from dipping below zero', () => {
+    const { bytesLineOptions } = mountOptions()
+    const y = bytesLineOptions(false).scales?.y as unknown as {
+      afterDataLimits: (scale: { min: number }) => void
+    }
+
+    // The 10% grace pushes the minimum below zero once a series touches it;
+    // that tick printed as "NaN undefined".
+    const graced = { min: -5 }
+    y.afterDataLimits(graced)
+    expect(graced.min).toBe(0)
+
+    const positive = { min: 12 }
+    y.afterDataLimits(positive)
+    expect(positive.min).toBe(12)
+  })
 })

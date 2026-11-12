@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
-import { expect, loginAsAdmin, test } from './fixtures'
+import { expect, loginAsAdmin, openSettingsSection, test } from './fixtures'
 
 test('admin enables metrics, creates a monitoring token and scrapes /metrics with it', async ({
   page,
@@ -11,12 +11,11 @@ test('admin enables metrics, creates a monitoring token and scrapes /metrics wit
 
   // Enable the endpoint on the System page.
   await page.goto('/system')
-  const metricsPanel = page.locator('.panel', {
-    has: page.getByRole('heading', { name: 'Prometheus metrics' }),
-  })
-  const enabled = metricsPanel.locator('#metrics-enabled')
+  const metricsPanel = await openSettingsSection(page, 'Prometheus metrics')
+  const enabled = metricsPanel.getByRole('switch', { name: 'Serve /metrics' })
   await expect(enabled).toBeVisible({ timeout: 10_000 })
-  await enabled.check()
+  if ((await enabled.getAttribute('aria-checked')) !== 'true') await enabled.click()
+  await expect(enabled).toHaveAttribute('aria-checked', 'true')
   await Promise.all([
     page.waitForResponse(
       (resp) =>

@@ -98,6 +98,10 @@ pub struct ActivityQuery {
     /// of the feed.
     #[serde(default)]
     pub acknowledged: AcknowledgedFilter,
+    /// Return only this one report, whatever its acknowledgment; every other
+    /// filter is ignored. A link to one run uses it to open a run that is
+    /// not on the feed's first page.
+    pub report_id: Option<i64>,
 }
 
 /// Health status of a repository's storage quota.
@@ -826,12 +830,22 @@ pub async fn activity(
     _auth: AuthUser,
     Query(query): Query<ActivityQuery>,
 ) -> Result<Json<Vec<db::ActivityRow>>, ApiError> {
+    if let Some(id) = query.report_id {
+        // One run by id, whatever its acknowledgment: the other filters are
+        // ignored, so a link to an old or acknowledged run still opens.
+        let filters = db::ActivityFeedFilters {
+            report_id: Some(id),
+            ..db::ActivityFeedFilters::default()
+        };
+        return Ok(Json(db::get_activity_feed(&state.pool, 1, filters).await?));
+    }
     let filters = db::ActivityFeedFilters {
         repo_id: query.repo_id,
         hostname: query.hostname.as_deref(),
         schedule_id: query.schedule_id,
         run_id: query.run_id.as_deref(),
         acknowledged: query.acknowledged,
+        report_id: None,
     };
     let rows = if let Some(days) = query.days {
         db::get_activity_feed_days(&state.pool, days, query.limit_per_schedule, filters).await?

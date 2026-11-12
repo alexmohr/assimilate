@@ -562,6 +562,14 @@ enum ContentType {
     Gif,
     #[strum(serialize = "image/svg+xml")]
     Svg,
+    #[strum(serialize = "image/webp")]
+    Webp,
+    #[strum(serialize = "image/avif")]
+    Avif,
+    #[strum(serialize = "image/bmp")]
+    Bmp,
+    #[strum(serialize = "image/x-icon")]
+    Icon,
     #[strum(serialize = "application/octet-stream")]
     OctetStream,
 }
@@ -583,6 +591,11 @@ impl From<&str> for ContentType {
             "jpg" | "jpeg" => Self::Jpeg,
             "gif" => Self::Gif,
             "svg" => Self::Svg,
+            // The image comparison shows these through `extract` too.
+            "webp" => Self::Webp,
+            "avif" => Self::Avif,
+            "bmp" => Self::Bmp,
+            "ico" => Self::Icon,
             _ => Self::OctetStream,
         }
     }
@@ -2349,6 +2362,18 @@ mod tests {
 
         for (filename, expected) in &cases {
             assert_eq!(content_type_for_extension(filename), *expected);
+        }
+    }
+
+    #[test]
+    fn content_type_names_every_image_the_comparison_shows() {
+        for (filename, expected) in [
+            ("photo.webp", "image/webp"),
+            ("photo.avif", "image/avif"),
+            ("scan.bmp", "image/bmp"),
+            ("favicon.ico", "image/x-icon"),
+        ] {
+            assert_eq!(content_type_for_extension(filename), expected);
         }
     }
 }

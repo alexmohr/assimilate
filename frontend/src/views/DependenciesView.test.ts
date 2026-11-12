@@ -15,7 +15,6 @@ import { useAuthStore } from '../stores/auth'
 import type { CurrentUserResponse } from '../stores/auth'
 import { routes } from '../router'
 import DependenciesView from './DependenciesView.vue'
-import { dialogButton } from '../test-utils/dom'
 
 vi.mock('../api/client', () => mockApiClientRw())
 
@@ -118,47 +117,30 @@ describe('DependenciesView', () => {
     expect(labels).not.toContain('Wake')
   })
 
-  it('makes New open the new-dependency dialog, then opens what it created', async () => {
+  it('makes New open the new-dependency wizard page', async () => {
     const { wrapper, router } = await mountPage('admin')
     await newButton(wrapper)!.trigger('click')
     await flushPromises()
 
-    const dialog = wrapper.findComponent({ name: 'DependencyCreateDialog' })
-    expect(dialog.props('open')).toBe(true)
-
-    dialog.vm.$emit('created', nasMedia)
-    await flushPromises()
-    expect(router.currentRoute.value.path).toBe('/dependency-hosts/3')
+    expect(router.currentRoute.value.path).toBe('/dependencies/new')
+    expect(apiClient.post).not.toHaveBeenCalled()
   })
 
   it('offers no New to a non-admin', async () => {
     const { wrapper } = await mountPage('viewer')
     expect(newButton(wrapper)).toBeUndefined()
-    expect(wrapper.findComponent({ name: 'DependencyCreateDialog' }).exists()).toBe(false)
+    expect(wrapper.find('.empty-action').exists()).toBe(false)
   })
 
-  it("opens the new-dependency dialog from the empty list's New", async () => {
-    const { wrapper } = await mountPage('admin', [])
+  it("opens the new-dependency wizard page from the empty list's New", async () => {
+    const { wrapper, router } = await mountPage('admin', [])
     const action = wrapper.get('.empty-action')
     expect(action.text()).toBe('New')
-    expect(wrapper.findComponent({ name: 'DependencyCreateDialog' }).props('open')).toBe(false)
+    expect(router.currentRoute.value.path).toBe('/dependencies')
 
     await action.trigger('click')
     await flushPromises()
-    expect(wrapper.findComponent({ name: 'DependencyCreateDialog' }).props('open')).toBe(true)
-  })
-
-  it('closes the new-dependency dialog on Cancel without creating anything', async () => {
-    const { wrapper, router } = await mountPage('admin')
-    await newButton(wrapper)!.trigger('click')
-    await flushPromises()
-
-    dialogButton('Cancel').click()
-    await flushPromises()
-
-    expect(wrapper.findComponent({ name: 'DependencyCreateDialog' }).props('open')).toBe(false)
-    expect(apiClient.post).not.toHaveBeenCalled()
-    expect(router.currentRoute.value.path).toBe('/dependencies')
+    expect(router.currentRoute.value.path).toBe('/dependencies/new')
   })
 
   it('reloads the list when the server says data changed', async () => {
@@ -181,6 +163,12 @@ describe('dependencies route', () => {
     const route = routes.find((r) => r.path === '/dependencies')
     expect(route?.name).toBe('dependencies')
     expect(route?.meta?.requiresAdmin).toBeUndefined()
+  })
+
+  it('routes the new-dependency wizard for admins only', () => {
+    const route = routes.find((r) => r.path === '/dependencies/new')
+    expect(route?.name).toBe('dependency-create')
+    expect(route?.meta?.requiresAdmin).toBe(true)
   })
 
   it("sends an old link to the Agents page's dependencies tab to the Dependencies page", async () => {

@@ -12,7 +12,7 @@ This means you can define patterns once (e.g., cache directories, temporary file
 
 ## Managing Patterns
 
-The Excludes page presents a plain-text editor — one pattern per line. Add, remove, or reorder patterns, then click **Save**.
+The Excludes page lists the patterns one per row, with each `#` comment shown as a heading over the patterns under it, and counts them. Click **Edit** to change them in a plain-text editor — one pattern per line, so a long list can be pasted in one go — then **Save**, or **Cancel** to leave them as they were. **Pattern reference** under the list opens a summary of borg's pattern syntax beside it.
 
 Patterns are evaluated in order. Borg checks each file path against the pattern list and skips the first match.
 

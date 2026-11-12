@@ -160,7 +160,6 @@ function waitDetail(wait: MachineWaitResponse): string {
     unmarked-hint="A backup that cannot reach this host fails like any other error, unless its schedule waits for it."
     lede="Off, a backup that cannot reach this machine fails. On, it is skipped and run again once
       the machine answers."
-    lede-label="an unreachable machine"
     :editing="editing"
     :can-edit="canEdit"
     :saving="saving"

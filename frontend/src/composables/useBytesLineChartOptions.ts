@@ -34,6 +34,11 @@ export function useBytesLineChartOptions(): {
         x: { grid: { display: false }, ticks: { color: textMuted.value, font: { size: 10 } } },
         y: {
           grace: '10%',
+          // A size is never negative, but the 10% grace pushes the axis below
+          // zero once a series touches it, and that tick printed as "NaN undefined".
+          afterDataLimits: (scale: { min: number }): void => {
+            if (scale.min < 0) scale.min = 0
+          },
           grid: { color: border.value },
           ticks: {
             color: textMuted.value,

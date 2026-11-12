@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
-import { expect, loginAsAdmin, test } from './fixtures'
+import { expect, loginAsAdmin, openSettingsSection, test } from './fixtures'
 import type { Locator } from '@playwright/test'
 
 /**
@@ -61,12 +61,16 @@ test.describe('Power management', () => {
     await page.waitForLoadState('networkidle')
 
     await page.getByRole('tab', { name: 'Settings' }).click()
-    await page.locator('.settings-nav-item', { hasText: 'Power' }).click()
+    await openSettingsSection(page, 'Power & dependencies')
     await page.waitForLoadState('networkidle')
 
     // Scoped to the view that owns each pane: following "Edit on host" leaves
-    // both detail views briefly mounted while the route transition runs.
-    const repoPane = page.locator('.repo-detail .settings-pane')
+    // both detail views briefly mounted while the route transition runs. The
+    // repository's other sections stay open beside it, so the pane is picked
+    // by its heading.
+    const repoPane = page
+      .locator('.repo-detail')
+      .getByRole('region', { name: 'Power & dependencies', exact: true })
     await expect(repoPane).toContainText('Wake host before backup')
     await expect(repoPane).toContainText('9C:B6:D0:1A:44:7F')
     await expect(repoPane.getByRole('button', { name: 'Edit' })).toHaveCount(0)
@@ -91,8 +95,8 @@ test.describe('Power management', () => {
     await page.locator('a.list-row').filter({ hasText: 'database-hourly' }).first().click()
     await page.waitForLoadState('networkidle')
     await page.getByRole('tab', { name: 'Settings' }).click()
-    await page.locator('.settings-nav-item', { hasText: 'Power' }).click()
-    await expect(page.locator('.settings-pane')).toContainText('360 seconds')
+    const power = await openSettingsSection(page, 'Power & dependencies')
+    await expect(power).toContainText('360 seconds')
   })
 
   /**

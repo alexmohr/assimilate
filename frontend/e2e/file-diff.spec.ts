@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
-import { expect, loginAsAdmin, seededNginxComparison, test } from './fixtures'
+import { expect, openSeededComparisonArchive, test } from './fixtures'
 import type { Page } from '@playwright/test'
 
 /**
@@ -11,36 +11,36 @@ import type { Page } from '@playwright/test'
  * `seededNginxComparison` picks hold different nginx.conf files.
  */
 async function openNginxDirectory(page: Page): Promise<{ target: string; base: string }> {
-  await loginAsAdmin(page)
-  const repos = (await (await page.request.get('/api/repos')).json()) as {
-    id: number
-    name: string
-  }[]
-  const daily = repos.find((repo) => repo.name === 'server-daily')
-  expect(daily, 'the seeded server-daily repository').toBeDefined()
-
-  await page.goto(`/repos/${daily?.id}?tab=archives`)
-  await page.waitForLoadState('networkidle')
-  await page.getByText('Flat', { exact: true }).first().click()
-  const { target, base } = await seededNginxComparison(page, daily?.id ?? 0)
-  await page.getByPlaceholder('Search name, host or repository').fill(target)
-  await page.locator('.archive-row-body:visible').first().click()
-
-  const browserPanel = page.locator('.browser-panel').last()
-  // Indexing an archive's contents on first access can take a while.
-  await expect(browserPanel.locator('table.browser-table')).toBeVisible({ timeout: 120_000 })
-  for (const dir of ['tmp', 'tmp.web-server-01', 'etc', 'nginx']) {
-    await browserPanel.getByText(dir, { exact: true }).click()
-    await expect(browserPanel.locator('.path-crumbs')).toContainText(dir)
-  }
+  const { target, base } = await openSeededComparisonArchive(page)
+  for (const dir of ['tmp', 'tmp.web-server-01', 'etc', 'nginx']) await openFolder(page, dir)
   return { target, base }
+}
+
+/** Opens a folder of the open archive by clicking its name. */
+async function openFolder(page: Page, name: string): Promise<void> {
+  const browserPanel = page.locator('.browser-panel').last()
+  await browserPanel.getByTestId('browser-entry').getByRole('button', { name, exact: true }).click()
+  await expect(browserPanel.locator('.path-crumbs')).toContainText(name)
+}
+
+/**
+ * Ticks one file of the open folder: a file's comparison and history are in
+ * the selection bar, and act on the file once it is the only one ticked.
+ */
+async function pickOnly(page: Page, name: string): Promise<void> {
+  await page
+    .locator('.browser-panel')
+    .last()
+    .getByRole('checkbox', { name: `Select ${name}`, exact: true })
+    .check()
 }
 
 test.describe('Comparing a file between archives', () => {
   test('nginx.conf is compared with an older archive, line by line', async ({ page }) => {
     const { base } = await openNginxDirectory(page)
 
-    await page.getByRole('button', { name: 'Compare nginx.conf with another archive' }).click()
+    await pickOnly(page, 'nginx.conf')
+    await page.getByTestId('compare-file').click()
 
     const dialog = page.getByRole('dialog', { name: 'Compare nginx.conf' })
     await expect(dialog).toBeVisible()
@@ -74,11 +74,10 @@ test.describe('Comparing a file between archives', () => {
 
   test('a file that did not change says so', async ({ page }) => {
     const { base } = await openNginxDirectory(page)
-    const browserPanel = page.locator('.browser-panel').last()
-    await browserPanel.getByText('conf.d', { exact: true }).click()
-    await expect(browserPanel.locator('.path-crumbs')).toContainText('conf.d')
+    await openFolder(page, 'conf.d')
 
-    await page.getByRole('button', { name: 'Compare default.conf with another archive' }).click()
+    await pickOnly(page, 'default.conf')
+    await page.getByTestId('compare-file').click()
 
     const dialog = page.getByRole('dialog', { name: 'Compare default.conf' })
     await dialog.getByTestId('file-diff-against').selectOption(base)
@@ -109,7 +108,8 @@ test.describe('A file history', () => {
       )
       .toBe(true)
 
-    await page.getByRole('button', { name: 'History of nginx.conf' }).click()
+    await pickOnly(page, 'nginx.conf')
+    await page.getByTestId('file-history').click()
 
     const dialog = page.getByRole('dialog', { name: 'History of nginx.conf' })
     await expect(dialog).toBeVisible()
@@ -139,7 +139,8 @@ test.describe('A file history', () => {
   test('indexing fills in the versions of every archive of the host', async ({ page }) => {
     const { target, base } = await openNginxDirectory(page)
 
-    await page.getByRole('button', { name: 'History of nginx.conf' }).click()
+    await pickOnly(page, 'nginx.conf')
+    await page.getByTestId('file-history').click()
     const dialog = page.getByRole('dialog', { name: 'History of nginx.conf' })
     // An earlier test may have indexed them already; otherwise start it.
     await expect(dialog.getByTestId('file-history-list')).toBeVisible({ timeout: 30_000 })

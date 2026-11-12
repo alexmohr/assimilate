@@ -40,37 +40,54 @@ Assimilate can notify you when backups succeed, fail, or produce warnings. Three
 
 ## Channels
 
-Navigate to **Notifications** in the sidebar to manage channels. Click the **New** button to add a channel.
+Navigate to **Notifications** in the sidebar to manage channels. The page has two tabs: **Channels**, with a count, and **History**.
+
+### Adding a channel
+
+Click **New** to open the new-channel wizard on its own page (`/notifications/new`). A numbered rail lists its steps, the foot of each step says what it still needs, and **Create channel** is offered on the last step only:
+
+![New channel wizard, Delivery step](assets/screenshots/notifications-wizard-step1.png)
+
+1. **Delivery** — the channel's type (Email, Webhook or Web Push), its name, and where it delivers; the fields for each type are described below.
+2. **Events** — which events the channel is told about (see [Supported Events](#supported-events)).
+3. **Scope** — the repositories, hosts and schedules it is limited to (see [Channel Scope](#channel-scope)).
+4. **Link** — where its notifications lead (see [Where a channel links to](#where-a-channel-links-to)).
+5. **Review** — a summary of every step, each with an **Edit** link back to it.
 
 ### The channel list
 
-The **Channels** tab lists every channel as one row in a single panel. The tab label shows how many channels there are. Each row has these columns:
+The **Channels** tab lists every channel as one row in a single panel. Each row has these columns:
 
 | Column            | Shows                                                                                                                                |
 | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
-| **Channel**       | The channel's name, its type, and where it delivers: the first recipient of an email channel, or only the host name of a webhook URL |
+| **Channel**       | A dot for the last delivery's outcome, the channel's name, its type, and where it delivers: the first recipient of an email channel, or only the host name of a webhook URL |
 | **Events**        | How many event types the channel is subscribed to, e.g. `9 of 14 events`                                                             |
 | **Scope**         | `All`, or what the channel is narrowed to, e.g. `2 repos, 1 host` — see [Channel Scope](#channel-scope)                              |
 | **Last delivery** | The newest delivery in the loaded history: `Sent 1d ago`, `Failed 2h ago` with a short error in red, or `Nothing sent yet`           |
-| **State**         | **On**, or **Paused** for a channel that sends nothing until it is resumed                                                           |
+| **State**         | **Paused** for a channel that sends nothing until it is resumed; empty for a channel that is on                                      |
 
 A row never shows a webhook's path, query string, credentials or header values, since any of them can carry a token.
 
-Click a row to open its **Edit channel** dialog. Every other action is in the row's **⋯** menu:
+A row has no buttons of its own: click it to open the [channel's page](#the-channel-page).
 
-- **Edit** — the same dialog as clicking the row.
-- **Edit content** — the channel's title and message templates, see [Custom Content](#custom-content).
-- **Edit events** — the event types that trigger the channel.
-- **Edit scope** — the repositories, hosts and schedules the channel is limited to.
-- **Send test** — a sample notification, see [Testing](#testing).
-- **Pause** / **Resume** — stop or restart deliveries without deleting the channel.
-- **Delete** — remove the channel and its rules.
-
-When a channel has failed deliveries in the recent history, a red notice above the list names it, for example **Ops Webhook failed 2 of its last 7 deliveries**, with its last error. Click **View history** to open the **History** tab narrowed to that channel. A failing channel is also listed first.
-
-Under the channels, **Recent deliveries** lists the five newest deliveries across all channels: the event, the channel, the outcome or error, and how long ago it was sent. Click **All history** to open the **History** tab.
+When a channel has failed deliveries in the recent history, a red notice above the list names it, for example **Ops Webhook failed 2 of its last 7 deliveries**, with its last error. Click **View history** to open that channel's page at its **Delivery history**. A failing channel is also listed first.
 
 On a phone each row stacks into short lines: the name and type, then the events and scope, then the last delivery.
+
+### The channel page
+
+Each channel has a page of its own. Its header names the channel, with its type, whether it is **On** or **Paused**, how many events it follows, its scope and its last delivery. The header's **...** menu holds **Send test** (see [Testing](#testing)), **Pause channel** / **Resume channel**, and **Delete channel**, which removes the channel and its rules after a confirmation.
+
+Below the header, the channel's settings are collapsible sections stacked in one card; several can be open at once, and the open one is kept in the URL (`?section=events`):
+
+| Section | Contents |
+|---------|----------|
+| **Delivery** | The name, type and delivery settings. Click **Edit** to change them, then **Save** |
+| **Events** | One switch per event; each applies at once |
+| **Scope** | The repositories, hosts and schedules the channel is limited to; each change applies at once |
+| **Link** | Where its notifications lead; **Edit** to change it |
+| **Content** | The title and message templates, see [Custom Content](#custom-content) |
+| **Delivery history** | This channel's recent deliveries, see [Delivery History](#delivery-history) |
 
 ### Email (SMTP)
 
@@ -88,11 +105,11 @@ Configure your SMTP server details:
 The SMTP password is encrypted at rest with AES-256-GCM, the same way as
 [repository passphrases](security.md#passphrase-encryption), and is decrypted only at
 the moment Assimilate logs in to your SMTP server. It is never sent back: the API and the
-**Edit channel** dialog only show whether a password is saved.
+channel's **Delivery** section only show whether a password is saved.
 
-![Edit channel dialog with a saved SMTP password](assets/screenshots/notification-edit-email.png)
+![Editing an email channel with a saved SMTP password](assets/screenshots/notification-edit-email.png)
 
-When you edit an email channel, the password field starts empty with the hint **Saved -
+When you edit an email channel's **Delivery** section, the password field starts empty with the hint **Saved -
 leave blank to keep it**:
 
 - Leave it empty to keep the saved password. **Test Connection** and **Save** both check
@@ -130,11 +147,11 @@ Every header value is treated as a secret, because it is usually an API token. H
 values are encrypted at rest with AES-256-GCM, the same way as
 [repository passphrases](security.md#passphrase-encryption), and are decrypted only at the
 moment Assimilate sends the webhook request. They are never sent back: the API and the
-**Edit channel** dialog only show each header's name.
+channel's **Delivery** section only show each header's name.
 
-![Edit channel dialog with a saved webhook header](assets/screenshots/notification-edit-webhook.png)
+![Editing a webhook channel with a saved webhook header](assets/screenshots/notification-edit-webhook.png)
 
-When you edit a webhook channel, each saved header is listed by name, with its value field
+When you edit a webhook channel's **Delivery** section, each saved header is listed by name, with its value field
 empty and the hint **Saved - leave blank to keep it**:
 
 - Leave a value empty to keep the saved value.
@@ -142,7 +159,7 @@ empty and the hint **Saved - leave blank to keep it**:
 - Remove a header with its delete button, or add another with **+ Add header**.
 - If you change the **URL** to a different host (or a different scheme or port), type every
   saved value again. Assimilate does not send a saved header to a different server than the
-  one it was entered for. The dialog names the headers it needs before you save. Changing
+  one it was entered for. The form names the headers it needs before you save. Changing
   only the path keeps the saved values.
 
 !!! note "Upgrading"
@@ -197,8 +214,8 @@ else opens the affected host or repository.
 
 ## Custom Content
 
-Every channel has its own **Title** and **Message** template. Open it with **Edit content**
-in the channel row's **⋯** menu -- editing it never affects any other channel, and there's
+Every channel has its own **Title** and **Message** template, in the **Content** section of
+the channel's page -- editing it never affects any other channel, and there's
 no separate toggle to switch on: the fields are always there, pre-filled with Assimilate's
 default content, ready to edit. Email and webhook channels start with the multi-line summary
 described above; Web Push channels start with a much shorter one-line default (repository
@@ -263,12 +280,30 @@ curl -s -X PUT http://localhost:8080/api/system/settings \
 Until `public_url` is configured, email and webhook notifications omit the link (everything
 else in this page still applies) -- Web Push is unaffected either way.
 
+### Where a channel links to
+
+Each channel chooses where its notifications lead, on the **Link** step of the new-channel
+wizard or in the **Link** section of the channel's page:
+
+| Link | Leads to |
+|------|----------|
+| **Where the event happened** (the default) | As described above: a failed or warned backup's run in the Activity Log, anything else its schedule, agent or repository |
+| **Activity log** | The Activity Log, filtered to the event |
+| **Agent**, **Schedule**, **Repository** | That page of the agent, schedule or repository the event is about; an event that names none of them falls back to where the event happened |
+| **Dashboard** | The dashboard |
+| **Your own address** | A fixed `http://` or `https://` address, such as a status page or a ticket queue; it needs no `public_url` |
+| **No link** | Nothing: emails and webhooks carry no link, and a push notification opens Assimilate's start page |
+
+The link is the one an email shows at its foot, the `activity_url` of a webhook payload (the
+payload also carries it as `link_url`, relative for a page of Assimilate) and the page a push
+notification opens.
+
 ## Channel Scope
 
 By default, a channel fires for **all** events system-wide. You can restrict a channel to specific repositories, hosts, or schedules. The **Scope** column of the channel list shows the current restriction.
 
-- Choose **Edit scope** in the channel row's **⋯** menu to open the scope options.
-- Select one or more **Repositories**, **Agents**, or **Schedules** to narrow the channel's scope.
+- Set it on the wizard's **Scope** step, or in the **Scope** section of the channel's page.
+- Tick one or more **Repositories**, **Agents**, or **Schedules** to narrow the channel's scope.
 - Only events matching the selected scope will be delivered through that channel.
 - Leaving a scope category empty means "all" — no filtering for that dimension.
 
@@ -281,15 +316,9 @@ A webhook channel scoped to the repository **server-backup** and the agent **web
 
 ## Rules
 
-Each channel can have multiple **rules** that determine which events trigger it. When adding rules, you can select multiple event types at once.
+Each channel has one **rule** per event type it is told about. The wizard's **Events** step and the **Events** section of the channel's page switch them on and off.
 
-Rules can optionally be scoped to:
-
-- A specific **repository** — only events from that repo trigger the rule
-- A specific **agent** — only events from that agent trigger the rule
-- A specific **schedule** — only events from that schedule trigger the rule
-
-If no scope is set on a rule, the rule matches all events (subject to channel-level scope).
+Through the API, a rule can also be scoped to a specific **repository** or **agent**, so only events from it trigger the rule. If no scope is set on a rule, the rule matches all events (subject to channel-level scope).
 
 ## VAPID Keys (Web Push)
 
@@ -345,20 +374,19 @@ No special volume mounts or environment variables are needed. VAPID keys are sto
 
 ## Testing
 
-Choose **Send test** in a channel row's **⋯** menu to send a sample notification and verify the configuration. A message at the bottom of the screen says whether the test was sent, or why it failed. Check the **History** tab to see delivery status and error messages for recent notifications.
+Choose **Send test** in the **...** menu of a channel's page to send a sample notification and verify the configuration. A message at the bottom of the screen says whether the test was sent, or why it failed. Check the channel's **Delivery history** to see delivery status and error messages for recent notifications.
 
 ## Delivery History
 
-The **History** tab shows the 20 most recent notification deliveries with:
+The Notifications page's **History** tab shows the 20 most recent notification deliveries across every channel; each channel's page shows its own under **Delivery history**. Each row shows:
 
-- Channel name and event type
-- Delivery status (sent / failed)
-- Error message (if failed)
-- Timestamp
+- The event type and the channel name
+- A status dot: sent or failed
+- When it was sent
 
-With more than one channel, pick a channel above the table to show only its deliveries. **View history** on a failure notice opens the tab with that channel already picked.
+With more than one channel, pick a channel above the list to show only its deliveries.
 
-Click a row to expand it and see the full error message and the raw event payload that was sent to the channel — useful when an error message is too long to read in the table, or when you need to see exactly which fields (hostname, repo, archive name, etc.) were included in the notification. On narrow screens the table switches to a stacked card layout instead of scrolling horizontally, so long error messages and payloads wrap in place.
+Click a row to open it and see the time, channel, status, the full error message and the raw event payload that was sent to the channel — useful when an error message is too long to read in the row, or when you need to see exactly which fields (hostname, repo, archive name, etc.) were included in the notification.
 
 ![Notification history with an expanded delivery row](assets/screenshots/notifications-history-expanded.png)
 

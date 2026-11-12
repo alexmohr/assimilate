@@ -25,7 +25,7 @@ pub mod webhook_header_migration;
 pub use shared::notifications::{
     ChannelConfig, ChannelType, DeliveryStatus, EventType, NotificationEvent, WebPushConfig,
 };
-use shared::task_registry::TaskRegistry;
+use shared::{notifications::NotificationLinkTarget, task_registry::TaskRegistry};
 use sqlx::{FromRow, PgPool};
 
 /// Errors that can occur during notification delivery.
@@ -125,6 +125,8 @@ struct MatchedChannel {
     channel_type: String,
     config: serde_json::Value,
     smtp_password_encrypted: Option<Vec<u8>>,
+    link_target: String,
+    link_url: Option<String>,
 }
 
 #[derive(Debug, FromRow)]
@@ -144,7 +146,13 @@ async fn build_absolute_activity_url(
 ) -> Option<String> {
     let payload = serde_json::to_value(event).ok()?;
     let path = build_activity_path(&payload)?;
+    let base_url = public_base_url(service).await?;
+    Some(format!("{base_url}{path}"))
+}
 
+/// The `public_url` system setting without its trailing slash, or `None` when
+/// it is not configured.
+async fn public_base_url(service: &NotificationService) -> Option<String> {
     let base_url = crate::db::get_setting(&service.pool, "public_url")
         .await
         .unwrap_or_else(|e| {
@@ -152,11 +160,99 @@ async fn build_absolute_activity_url(
             None
         })?;
     let base_url = base_url.trim_end_matches('/');
-    if base_url.is_empty() {
-        return None;
-    }
+    (!base_url.is_empty()).then(|| base_url.to_owned())
+}
 
-    Some(format!("{base_url}{path}"))
+/// The key in a channel's copy of the payload holding where its notifications
+/// lead: a path inside Assimilate, an absolute custom address, or an empty
+/// string for no link. Absent for a channel that links where the event
+/// happened, which keeps the behaviour from before the setting existed.
+const LINK_KEY: &str = "link_url";
+
+/// The path inside Assimilate that `target` leads to for `payload`, falling
+/// back to where the event happened when the event names no agent, schedule
+/// or repository to lead to. `None` for a custom link or no link.
+pub(crate) fn link_path(
+    target: NotificationLinkTarget,
+    payload: &serde_json::Value,
+) -> Option<String> {
+    let hostname = payload
+        .get("hostname")
+        .and_then(serde_json::Value::as_str)
+        .filter(|s| !s.is_empty());
+    let id = |key: &str| payload.get(key).and_then(serde_json::Value::as_i64);
+    match target {
+        NotificationLinkTarget::Automatic => Some(build_push_url(payload)),
+        NotificationLinkTarget::Activity => Some(
+            build_activity_path(payload).unwrap_or_else(|| "/activity?category=backup".to_owned()),
+        ),
+        NotificationLinkTarget::Agent => Some(hostname.map_or_else(
+            || build_push_url(payload),
+            |h| format!("/agents/{}", percent_encode_query_value(h)),
+        )),
+        NotificationLinkTarget::Schedule => Some(id("schedule_id").map_or_else(
+            || build_push_url(payload),
+            |sid| format!("/schedules/{sid}"),
+        )),
+        NotificationLinkTarget::Repository => Some(
+            id("repo_id").map_or_else(|| build_push_url(payload), |rid| format!("/repos/{rid}")),
+        ),
+        NotificationLinkTarget::Dashboard => Some("/".to_owned()),
+        NotificationLinkTarget::Custom | NotificationLinkTarget::None => None,
+    }
+}
+
+/// Points a channel's copy of `payload` where the channel's link setting says:
+/// `activity_url` (the link an email and a webhook carry) becomes that place,
+/// absolute against `base_url`, and [`LINK_KEY`] holds it for a push
+/// notification's click. A channel that links where the event happened is
+/// left as it is.
+pub(crate) fn apply_channel_link(
+    payload: &mut serde_json::Value,
+    target: NotificationLinkTarget,
+    custom_url: Option<&str>,
+    base_url: Option<&str>,
+) {
+    let (activity_url, link) = match target {
+        NotificationLinkTarget::Automatic => return,
+        NotificationLinkTarget::Custom => {
+            let url = custom_url.unwrap_or_default().to_owned();
+            (Some(url.clone()).filter(|u| !u.is_empty()), url)
+        }
+        NotificationLinkTarget::None => (None, String::new()),
+        other => {
+            let path = link_path(other, payload).unwrap_or_else(|| "/".to_owned());
+            (base_url.map(|base| format!("{base}{path}")), path)
+        }
+    };
+    if let Some(object) = payload.as_object_mut() {
+        object.insert(
+            "activity_url".to_owned(),
+            activity_url.map_or(serde_json::Value::Null, serde_json::Value::String),
+        );
+        object.insert(LINK_KEY.to_owned(), serde_json::Value::String(link));
+    }
+}
+
+/// `payload` as `channel` delivers it: pointed where the channel's link
+/// setting says (see [`apply_channel_link`]).
+fn channel_payload(
+    payload: &serde_json::Value,
+    channel: &MatchedChannel,
+    base_url: Option<&str>,
+) -> serde_json::Value {
+    let mut payload = payload.clone();
+    match channel.link_target.parse::<NotificationLinkTarget>() {
+        Ok(target) => {
+            apply_channel_link(&mut payload, target, channel.link_url.as_deref(), base_url);
+        }
+        Err(e) => tracing::warn!(
+            channel_id = channel.id,
+            error = %e,
+            "channel has an unknown link target; linking where the event happened"
+        ),
+    }
+    payload
 }
 
 /// # Errors
@@ -179,7 +275,8 @@ pub async fn dispatch(
     let channels: Vec<MatchedChannel> = sqlx::query_as!(
         MatchedChannel,
         r#"
-        SELECT DISTINCT nc.id, nc.channel_type, nc.config, nc.smtp_password_encrypted
+        SELECT DISTINCT nc.id, nc.channel_type, nc.config, nc.smtp_password_encrypted,
+               nc.link_target, nc.link_url
         FROM notification_channels nc
         INNER JOIN notification_rules nr ON nr.channel_id = nc.id
         WHERE nr.event_type = $1
@@ -208,10 +305,11 @@ pub async fn dispatch(
     .await?;
 
     let payload = serde_json::to_value(&event)?;
+    let base_url = public_base_url(service).await;
 
     for channel in channels {
         let service = service.clone();
-        let payload = payload.clone();
+        let payload = channel_payload(&payload, &channel, base_url.as_deref());
         let channel_id = channel.id;
         let channel_config = stored_channel_config(&channel.channel_type, channel.config);
         let smtp_password = channel
@@ -379,7 +477,7 @@ async fn deliver_web_push(
         "title": title,
         "body": body,
         "tag": tag,
-        "url": build_push_url(payload),
+        "url": push_link(payload),
     });
 
     push_to_all(
@@ -652,6 +750,16 @@ pub(crate) fn build_push_body(payload: &serde_json::Value) -> String {
     }
 }
 
+/// Where a push notification's click leads: the channel's link setting when
+/// it has one (see [`apply_channel_link`]), otherwise where the event happened.
+/// An empty string is no link; the browser then opens the app's start page.
+pub(crate) fn push_link(payload: &serde_json::Value) -> String {
+    payload
+        .get(LINK_KEY)
+        .and_then(serde_json::Value::as_str)
+        .map_or_else(|| build_push_url(payload), ToOwned::to_owned)
+}
+
 pub(crate) fn build_push_url(payload: &serde_json::Value) -> String {
     if let Some(path) = build_activity_path(payload) {
         return path;
@@ -662,7 +770,11 @@ pub(crate) fn build_push_url(payload: &serde_json::Value) -> String {
         .and_then(serde_json::Value::as_i64)
     {
         format!("/schedules/{schedule_id}")
-    } else if let Some(hostname) = payload.get("hostname").and_then(serde_json::Value::as_str) {
+    } else if let Some(hostname) = payload
+        .get("hostname")
+        .and_then(serde_json::Value::as_str)
+        .filter(|h| !h.is_empty())
+    {
         format!("/agents/{}", percent_encode_query_value(hostname))
     } else if let Some(repo_id) = payload.get("repo_id").and_then(serde_json::Value::as_i64) {
         format!("/repos/{repo_id}")
@@ -682,6 +794,202 @@ mod tests {
 
     fn payload(json: serde_json::Value) -> serde_json::Value {
         json
+    }
+
+    #[test]
+    fn a_channel_link_points_email_webhook_and_push_where_it_says() {
+        let event = || {
+            payload(serde_json::json!({
+                "event_type": "backup_failed",
+                "hostname": "bell",
+                "schedule_id": 4,
+                "repo_id": 2,
+                "run_id": "abc",
+                "activity_url": "https://b.example/activity?category=backup&run_id=abc",
+            }))
+        };
+        let base = Some("https://b.example");
+
+        let mut automatic = event();
+        apply_channel_link(
+            &mut automatic,
+            NotificationLinkTarget::Automatic,
+            None,
+            base,
+        );
+        assert_eq!(
+            automatic,
+            event(),
+            "where the event happened keeps today's links"
+        );
+        assert_eq!(
+            push_link(&automatic),
+            "/activity?category=backup&run_id=abc"
+        );
+
+        let mut repo = event();
+        apply_channel_link(&mut repo, NotificationLinkTarget::Repository, None, base);
+        assert_eq!(
+            repo.get("activity_url"),
+            Some(&serde_json::json!("https://b.example/repos/2"))
+        );
+        assert_eq!(push_link(&repo), "/repos/2");
+
+        let mut agent = event();
+        apply_channel_link(&mut agent, NotificationLinkTarget::Agent, None, None);
+        assert_eq!(
+            agent.get("activity_url"),
+            Some(&serde_json::Value::Null),
+            "no public URL, no absolute link"
+        );
+        assert_eq!(push_link(&agent), "/agents/bell");
+
+        let mut custom = event();
+        apply_channel_link(
+            &mut custom,
+            NotificationLinkTarget::Custom,
+            Some("https://status.example/backups"),
+            base,
+        );
+        assert_eq!(
+            custom.get("activity_url"),
+            Some(&serde_json::json!("https://status.example/backups"))
+        );
+        assert_eq!(push_link(&custom), "https://status.example/backups");
+
+        let mut none = event();
+        apply_channel_link(&mut none, NotificationLinkTarget::None, None, base);
+        assert_eq!(none.get("activity_url"), Some(&serde_json::Value::Null));
+        assert_eq!(push_link(&none), "");
+    }
+
+    #[test]
+    fn a_link_to_something_the_event_does_not_name_falls_back_to_where_it_happened() {
+        let event =
+            payload(serde_json::json!({ "event_type": "agent_disconnected", "hostname": "bell" }));
+        assert_eq!(
+            link_path(NotificationLinkTarget::Schedule, &event).as_deref(),
+            Some("/agents/bell")
+        );
+        assert_eq!(
+            link_path(NotificationLinkTarget::Dashboard, &event).as_deref(),
+            Some("/")
+        );
+    }
+
+    #[test]
+    fn an_empty_hostname_is_no_agent_to_link_to() {
+        let event = payload(serde_json::json!({ "hostname": "", "repo_id": 7 }));
+        assert_eq!(build_push_url(&event), "/repos/7");
+        assert_eq!(
+            link_path(NotificationLinkTarget::Agent, &event).as_deref(),
+            Some("/repos/7")
+        );
+    }
+
+    #[test]
+    fn each_link_target_leads_to_its_page_or_falls_back_to_where_the_event_happened() {
+        let full = payload(serde_json::json!({
+            "event_type": "backup_failed",
+            "hostname": "bell tower",
+            "schedule_id": 4,
+            "repo_id": 2,
+            "run_id": "abc",
+        }));
+        let path = |target, event: &serde_json::Value| link_path(target, event);
+
+        assert_eq!(
+            path(NotificationLinkTarget::Automatic, &full).as_deref(),
+            Some("/activity?category=backup&run_id=abc")
+        );
+        assert_eq!(
+            path(NotificationLinkTarget::Activity, &full).as_deref(),
+            Some("/activity?category=backup&run_id=abc")
+        );
+        assert_eq!(
+            path(NotificationLinkTarget::Agent, &full).as_deref(),
+            Some("/agents/bell%20tower")
+        );
+        assert_eq!(
+            path(NotificationLinkTarget::Schedule, &full).as_deref(),
+            Some("/schedules/4")
+        );
+        assert_eq!(
+            path(NotificationLinkTarget::Repository, &full).as_deref(),
+            Some("/repos/2")
+        );
+        assert_eq!(path(NotificationLinkTarget::Custom, &full), None);
+        assert_eq!(path(NotificationLinkTarget::None, &full), None);
+
+        // An event that is not a backup run has no run to show: the Activity
+        // link opens the backup activity list instead.
+        let repo_only = payload(serde_json::json!({
+            "event_type": "repo_check_failed",
+            "repo_id": 7,
+        }));
+        assert_eq!(
+            path(NotificationLinkTarget::Activity, &repo_only).as_deref(),
+            Some("/activity?category=backup")
+        );
+        assert_eq!(
+            path(NotificationLinkTarget::Automatic, &repo_only).as_deref(),
+            Some("/repos/7")
+        );
+        // No hostname and no schedule: both fall back to
+        // where the event happened.
+        assert_eq!(
+            path(NotificationLinkTarget::Agent, &repo_only).as_deref(),
+            Some("/repos/7")
+        );
+        assert_eq!(
+            path(NotificationLinkTarget::Schedule, &repo_only).as_deref(),
+            Some("/repos/7")
+        );
+        // No repository: falls back too, here to the agent.
+        let agent_only = payload(serde_json::json!({ "hostname": "bell" }));
+        assert_eq!(
+            path(NotificationLinkTarget::Repository, &agent_only).as_deref(),
+            Some("/agents/bell")
+        );
+        assert_eq!(
+            path(NotificationLinkTarget::Repository, &serde_json::json!({})).as_deref(),
+            Some("/")
+        );
+    }
+
+    fn matched_channel(link_target: &str, link_url: Option<&str>) -> MatchedChannel {
+        MatchedChannel {
+            id: 9,
+            channel_type: "webhook".to_owned(),
+            config: serde_json::json!({}),
+            smtp_password_encrypted: None,
+            link_target: link_target.to_owned(),
+            link_url: link_url.map(ToOwned::to_owned),
+        }
+    }
+
+    #[test]
+    fn a_channel_payload_follows_a_known_link_target_and_ignores_an_unknown_one() {
+        let event = payload(serde_json::json!({
+            "event_type": "agent_disconnected",
+            "hostname": "bell",
+            "repo_id": 2,
+        }));
+        let base = Some("https://b.example");
+
+        let repo = channel_payload(&event, &matched_channel("repository", None), base);
+        assert_eq!(
+            repo.get("activity_url"),
+            Some(&serde_json::json!("https://b.example/repos/2"))
+        );
+        assert_eq!(push_link(&repo), "/repos/2");
+
+        let unknown = channel_payload(&event, &matched_channel("somewhere-else", None), base);
+        assert_eq!(
+            unknown, event,
+            "an unknown link target leaves the payload linking where the event happened"
+        );
+        assert_eq!(push_link(&unknown), "/agents/bell");
     }
 
     /// A dispatched channel's delivery must be registered with `task_registry`
@@ -782,7 +1090,7 @@ mod tests {
             DeliveryStatus::Sent,
             DeliveryStatus::Failed,
         ] {
-            sqlx::query!(
+            let inserted = sqlx::query!(
                 "INSERT INTO notification_deliveries (channel_id, event_type, payload, status, \
                  attempted_at) VALUES ($1, $2, $3, $4, NOW())",
                 channel_id,
@@ -791,10 +1099,11 @@ mod tests {
                 status.to_string(),
             )
             .execute(&pool)
-            .await
-            .unwrap_or_else(|e| {
-                panic!("status {status} must satisfy the DB CHECK constraint: {e}")
-            });
+            .await;
+            assert!(
+                inserted.is_ok(),
+                "status {status} must satisfy the DB CHECK constraint: {inserted:?}"
+            );
         }
     }
 
@@ -1912,10 +2221,15 @@ mod tests {
         let mut config =
             stored_channel_config("web_push", serde_json::json!({ "user_id": 1 })).unwrap();
         template::apply_default_template(&mut config);
-        let ChannelConfig::WebPush(cfg) = config else {
-            panic!("a stored web push config parses as one");
+        // Backfilled with the push defaults, not the email/webhook ones.
+        let cfg = WebPushConfig {
+            user_id: 1,
+            settings: WebPushSettings {
+                title_template: Some(template::DEFAULT_TITLE_TEMPLATE.to_owned()),
+                body_template: Some(template::DEFAULT_PUSH_BODY_TEMPLATE.to_owned()),
+            },
         };
-
+        assert_eq!(config, ChannelConfig::WebPush(cfg.clone()));
         let p = payload(serde_json::json!({
             "event_type": "backup_failed",
             "hostname": "myhost",

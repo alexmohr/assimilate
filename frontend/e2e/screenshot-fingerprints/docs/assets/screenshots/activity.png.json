@@ -1,5 +1,5 @@
 {
   "test": "settings pages",
   "pages": ["frontend/src/views/ActivityLogView.vue"],
-  "fingerprint": "e786d3b567410bbcfe260c9bc9140936f64c32431e6711cd437b4bda1d40af3f"
+  "fingerprint": "381a529fed4e191f3d6a3df756061ee76f3f0144810d4f9cdf1276c9c4fe03c1"
 }

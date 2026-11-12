@@ -1278,6 +1278,11 @@ pub struct RepoWithStatsRow {
     pub host_intermittent: bool,
     /// The machine the repository's host is.
     pub host_machine_id: i64,
+    /// Whether that machine answered its last reachability check; `None`
+    /// before it was ever checked.
+    pub host_last_check_reachable: Option<bool>,
+    /// When that machine was last checked.
+    pub host_last_checked_at: Option<DateTime<Utc>>,
     /// Whether a quota row exists for this repo, and if so, whether it's enabled.
     /// `NULL` means no quota is configured at all.
     pub quota_enabled: Option<bool>,
@@ -1306,14 +1311,16 @@ pub async fn list_repos_with_stats(pool: &PgPool) -> Result<Vec<RepoWithStatsRow
          r.compression AS \"compression: Compression\", r.encryption AS \"encryption: \
          BorgEncryption\", r.enabled, r.owner_id, r.visibility AS \"visibility: Visibility\", \
          r.sync_schedule, r.repo_host_id, h.machine_id AS host_machine_id, hm.intermittent AS \
-         host_intermittent, hm.wake_enabled, hm.wake_mac_address, hm.wake_broadcast_address, \
-         hm.wake_timeout_seconds, hm.shutdown_after_backup, r.relocation_pending, \
-         COALESCE(rs.original_size, 0) AS \"total_original_size!\", COALESCE(rs.compressed_size, \
-         0) AS \"total_compressed_size!\", COALESCE(rs.deduplicated_size, 0) AS \
-         \"total_deduplicated_size!\", COALESCE(rs.archive_count::INT8, 0) AS \"archive_count!\", \
-         rs.last_synced_at AS \"last_synced_at?\", COALESCE(ris.importing, false) AS \
-         \"importing!\", ris.error AS \"import_error?\", COALESCE(ris.progress, 0) AS \
-         \"import_progress!\", COALESCE(ris.total, 0) AS \"import_total!\", ris.status_message AS \
+         host_intermittent, hm.last_check_reachable AS host_last_check_reachable, \
+         hm.last_checked_at AS host_last_checked_at, hm.wake_enabled, hm.wake_mac_address, \
+         hm.wake_broadcast_address, hm.wake_timeout_seconds, hm.shutdown_after_backup, \
+         r.relocation_pending, COALESCE(rs.original_size, 0) AS \"total_original_size!\", \
+         COALESCE(rs.compressed_size, 0) AS \"total_compressed_size!\", \
+         COALESCE(rs.deduplicated_size, 0) AS \"total_deduplicated_size!\", \
+         COALESCE(rs.archive_count::INT8, 0) AS \"archive_count!\", rs.last_synced_at AS \
+         \"last_synced_at?\", COALESCE(ris.importing, false) AS \"importing!\", ris.error AS \
+         \"import_error?\", COALESCE(ris.progress, 0) AS \"import_progress!\", \
+         COALESCE(ris.total, 0) AS \"import_total!\", ris.status_message AS \
          \"import_status_message?\", rlo.kind AS \"last_op_kind?: RepoOpKind\", rlo.at AS \
          \"last_op_at?\", rlo.by_text AS \"last_op_by?\", agg.last_backup_at AS \
          \"last_backup_at?\", COALESCE(agg.agent_count, 0) AS \"agent_count!\", \
@@ -1350,14 +1357,16 @@ pub async fn get_repo_with_stats(
          r.compression AS \"compression: Compression\", r.encryption AS \"encryption: \
          BorgEncryption\", r.enabled, r.owner_id, r.visibility AS \"visibility: Visibility\", \
          r.sync_schedule, r.repo_host_id, h.machine_id AS host_machine_id, hm.intermittent AS \
-         host_intermittent, hm.wake_enabled, hm.wake_mac_address, hm.wake_broadcast_address, \
-         hm.wake_timeout_seconds, hm.shutdown_after_backup, r.relocation_pending, \
-         COALESCE(rs.original_size, 0) AS \"total_original_size!\", COALESCE(rs.compressed_size, \
-         0) AS \"total_compressed_size!\", COALESCE(rs.deduplicated_size, 0) AS \
-         \"total_deduplicated_size!\", COALESCE(rs.archive_count::INT8, 0) AS \"archive_count!\", \
-         rs.last_synced_at AS \"last_synced_at?\", COALESCE(ris.importing, false) AS \
-         \"importing!\", ris.error AS \"import_error?\", COALESCE(ris.progress, 0) AS \
-         \"import_progress!\", COALESCE(ris.total, 0) AS \"import_total!\", ris.status_message AS \
+         host_intermittent, hm.last_check_reachable AS host_last_check_reachable, \
+         hm.last_checked_at AS host_last_checked_at, hm.wake_enabled, hm.wake_mac_address, \
+         hm.wake_broadcast_address, hm.wake_timeout_seconds, hm.shutdown_after_backup, \
+         r.relocation_pending, COALESCE(rs.original_size, 0) AS \"total_original_size!\", \
+         COALESCE(rs.compressed_size, 0) AS \"total_compressed_size!\", \
+         COALESCE(rs.deduplicated_size, 0) AS \"total_deduplicated_size!\", \
+         COALESCE(rs.archive_count::INT8, 0) AS \"archive_count!\", rs.last_synced_at AS \
+         \"last_synced_at?\", COALESCE(ris.importing, false) AS \"importing!\", ris.error AS \
+         \"import_error?\", COALESCE(ris.progress, 0) AS \"import_progress!\", \
+         COALESCE(ris.total, 0) AS \"import_total!\", ris.status_message AS \
          \"import_status_message?\", rlo.kind AS \"last_op_kind?: RepoOpKind\", rlo.at AS \
          \"last_op_at?\", rlo.by_text AS \"last_op_by?\", agg.last_backup_at AS \
          \"last_backup_at?\", COALESCE(agg.agent_count, 0) AS \"agent_count!\", \

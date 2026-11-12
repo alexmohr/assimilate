@@ -280,10 +280,13 @@ describe('DashboardView attention panel', () => {
     const wrapper = renderWithPlugins(DashboardView)
     await flushPromises()
 
-    const column = wrapper.findAll('.dashboard-column')[0]
-    expect(column.find('#needs-attention').exists()).toBe(true)
-    expect(column.findComponent({ name: 'BackupCalendar' }).exists()).toBe(true)
-    expect(column.findComponent({ name: 'RepositoryCapacity' }).exists()).toBe(true)
+    const [left, right] = wrapper.findAll('.dashboard-column')
+    expect(left.find('#needs-attention').exists()).toBe(true)
+    expect(left.findComponent({ name: 'BackupCalendar' }).exists()).toBe(true)
+    // Capacity sits under Recent activity, so the two columns end at about the same height.
+    expect(left.findComponent({ name: 'RepositoryCapacity' }).exists()).toBe(false)
+    expect(right.findComponent({ name: 'RecentActivityWidget' }).exists()).toBe(true)
+    expect(right.findComponent({ name: 'RepositoryCapacity' }).exists()).toBe(true)
   })
 
   it('hides NeedsAttention after dismiss when fetchOverview returns empty findings', async () => {
@@ -497,7 +500,9 @@ describe('DashboardView success ring', () => {
     expect(wrapper.text()).toContain('Backups in progress')
     expect(wrapper.text()).toContain('web-server-01')
     expect(wrapper.text()).toContain('server-daily')
-    expect(wrapper.text()).toContain('Active')
+    // The Next backup tile keeps its time and says how many are running on a line of its own.
+    expect(wrapper.text()).not.toContain('Active')
+    expect(wrapper.text()).toContain('1 running now')
   })
 
   it('renders live progress from a BackupLog stream for the matching backup', async () => {
@@ -955,23 +960,40 @@ describe('DashboardView chart legends', () => {
     }
   }
 
-  it.each([
-    ['legend-pass', 'success'],
-    ['legend-warn', 'warning'],
-    ['legend-fail', 'failed'],
-  ])('routes to the %s schedules filter from the success ring legend', async (cls, filter) => {
+  it('routes to the passed schedules filter from the success ring legend', async () => {
     vi.mocked(apiClient.get).mockImplementation(legendHandler())
 
     const wrapper = renderWithPlugins(DashboardView)
     await flushPromises()
 
-    await wrapper.find(`.${cls}`).trigger('click')
+    await wrapper.find('.legend-pass').trigger('click')
     await flushPromises()
 
     const route = wrapper.vm.$router.currentRoute.value
     expect(route.path).toBe('/schedules')
-    expect(route.query.filter).toBe(filter)
+    expect(route.query.filter).toBe('success')
   })
+
+  // A failed or warned run is read where its output is: the Activity log.
+  it.each([
+    ['legend-warn', 'warning'],
+    ['legend-fail', 'failed'],
+  ])(
+    'routes to the %s runs in the Activity log from the success ring legend',
+    async (cls, status) => {
+      vi.mocked(apiClient.get).mockImplementation(legendHandler())
+
+      const wrapper = renderWithPlugins(DashboardView)
+      await flushPromises()
+
+      await wrapper.find(`.${cls}`).trigger('click')
+      await flushPromises()
+
+      const route = wrapper.vm.$router.currentRoute.value
+      expect(route.path).toBe('/activity')
+      expect(route.query).toEqual({ category: 'backup', status })
+    },
+  )
 
   it('counts each run status once in the success ring legend', async () => {
     vi.mocked(apiClient.get).mockImplementation(legendHandler())

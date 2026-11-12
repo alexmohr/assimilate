@@ -476,8 +476,8 @@ SQL
 # and PostgreSQL and MariaDB servers of its own: database dumps allowed in all three
 # runtimes, and the sources a scan would have reported. Written directly, like
 # the VM rows, because a real scan needs a cluster, a container engine and a
-# server behind the agent. No demo schedule opts in: its runs would try to
-# reach them and fail.
+# server behind the agent. The one demo schedule that opts in stays disabled:
+# its runs would try to reach them and fail.
 echo "==> Configuring database dumps..."
 api PUT "/api/agents/db-server-01/database-backup" '{
     "enabled": true,
@@ -1155,6 +1155,25 @@ api POST "/api/schedules" "{
     ]
 }" > /dev/null
 
+# A schedule that asks for database dumps on two hosts, only one of which
+# allows them: web-server-01 has dumps turned off, so the schedule's page and
+# its Advanced tab warn that no databases will be dumped there
+# (docs/database-dumps.md). Left disabled so it never runs: a run would try to
+# reach db-server-01's database servers, which the demo does not have.
+api POST "/api/schedules" "{
+    \"name\": \"Database dumps\",
+    \"agent_ids\": [$WEB01_ID, $DB01_ID],
+    \"repo_id\": $REPO_DAILY_ID,
+    \"cron_expression\": \"30 1 * * *\",
+    \"enabled\": false,
+    \"database_backup_enabled\": true,
+    \"keep_hourly\": 0,
+    \"keep_daily\": 7,
+    \"keep_weekly\": 4,
+    \"keep_monthly\": 6,
+    \"backup_sources\": [\"/etc\"]
+}" > /dev/null
+
 api POST "/api/schedules" "{
     \"name\": \"Stale nightly report\",
     \"agent_ids\": [$STALE_REPORT_ID],
@@ -1402,14 +1421,16 @@ api POST "/api/notifications/channels" '{
         "headers": { "Authorization": "Bearer demo-token" },
         "title_template": "ALERT: {{event}} -- {{host}}",
         "body_template": "{{repository}} - {{duration}} - {{dedup_size}} new\n{{error}}"
-    }
+    },
+    "link": { "target": "custom", "url": "https://status.example.com/backups" }
 }' > /dev/null
 
 # Admin Email is created through the API, not inserted directly: the server encrypts its SMTP
 # password into notification_channels.smtp_password_encrypted and never returns it, so the
 # edit dialog shows "Saved - leave blank to keep it". SQL alone cannot produce that ciphertext.
 # It is left on the shared default content template (which already includes the deduplicated
-# size on a successful backup).
+# size on a successful backup), and on the automatic link: each message opens the page about
+# what it reports. Ops Webhook links to an own status page instead (docs/notifications.md).
 api POST "/api/notifications/channels" '{
     "name": "Admin Email",
     "channel_type": "email",
@@ -1702,9 +1723,8 @@ echo "==> Seeding a failed pre-backup hook command on media-store-01..."
 # Being newer than the warning run above, it is also the schedule's latest
 # completed run: the Agents list must still report that earlier warning run as
 # media-store-01's last backup (see docs/agents.md), not "Never". Being the
-# newest run of its (host, repository) copy is also what gives it the Logs
-# tab's Retry button (docs/agents.md#retrying-a-failed-run), the one row on
-# media-store-01's log that offers it, which the run-log-retry screenshot shows.
+# newest run of its (host, repository) copy is also what gives it a Retry
+# button once opened in the Activity log (docs/activity.md#retrying-a-failed-run).
 MEDIA_HOOK_FAILURE_REPORT_ID=$(PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -tAc "
 WITH inserted AS (
 INSERT INTO backup_reports

@@ -7,7 +7,7 @@ vi.mock('../composables/useTimezone', () => ({
   getConfiguredTimezone: (): string | undefined => undefined,
 }))
 
-import { filesLabel, formatBytes, formatDuration } from './format'
+import { filesLabel, formatBytes, formatDuration, listSeparator } from './format'
 
 describe('formatBytes', () => {
   it('returns "0 B" for zero', () => {
@@ -49,5 +49,21 @@ describe('filesLabel', () => {
   it('counts files in words', () => {
     expect(filesLabel(1)).toBe('1 file')
     expect(filesLabel(1284)).toBe(`${(1284).toLocaleString()} files`)
+  })
+})
+
+describe('listSeparator', () => {
+  const sentence = (items: string[], end?: string): string =>
+    items.map((item, i) => item + listSeparator(i, items.length, end)).join('')
+
+  it('joins items with commas and " and " before the last', () => {
+    expect(sentence(['a'])).toBe('a')
+    expect(sentence(['a', 'b'])).toBe('a and b')
+    expect(sentence(['a', 'b', 'c'])).toBe('a, b and c')
+  })
+
+  it('ends with the given text after the last item', () => {
+    expect(sentence(['a'], '.')).toBe('a.')
+    expect(sentence(['a', 'b', 'c'], '.')).toBe('a, b and c.')
   })
 })

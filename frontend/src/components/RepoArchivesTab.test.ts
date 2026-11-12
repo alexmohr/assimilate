@@ -4,6 +4,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises } from '@vue/test-utils'
 import { renderWithPlugins } from '../test-utils'
+import { clickMenuItemStartingWith } from '../test-utils/overflowMenu'
 import { apiClient } from '../api/client'
 import RepoArchivesTab from './RepoArchivesTab.vue'
 import BaseModal from './BaseModal.vue'
@@ -152,7 +153,12 @@ describe('RepoArchivesTab', () => {
     const wrapper = mount()
     await flushPromises()
 
-    await wrapper.find('.archive-row-delete').trigger('click')
+    // Deleting lives in the open archive's menu, not on the row.
+    await wrapper.find('[data-testid="archive-row"]').trigger('click')
+    await flushPromises()
+    await wrapper.find('[aria-label="Archive actions"]').trigger('click')
+    await flushPromises()
+    await clickMenuItemStartingWith(wrapper, 'Delete archive')
     await flushPromises()
     expect(wrapper.text()).toContain('cannot be recovered')
 

@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 import type { Route } from '@playwright/test'
-import { expect, loginAsAdmin, test } from './fixtures'
+import { expect, loginAsAdmin, openSettingsSection, test } from './fixtures'
 
 test.describe('Repositories management journey', () => {
   test('repo list page shows known demo repositories', async ({ page }) => {
@@ -44,35 +44,34 @@ test.describe('Repositories management journey', () => {
     expect(hasEncryption).toBe(true)
   })
 
-  // The five cards that used to stack on Overview now sit behind a settings
-  // sub-nav, so simply loading /repos/1 no longer mounts them - and no longer
-  // calls the endpoints they read. Walking the rail keeps that server-side
-  // path exercised (quota, tags, the repository record and its SSH host key)
-  // and covers the navigation itself, which only had the danger pane before.
-  test('the repository Settings rail opens each of its panes', async ({ page }) => {
+  // The five cards that used to stack on Overview now sit behind collapsible
+  // settings sections, so simply loading /repos/1 no longer mounts them - and
+  // no longer calls the endpoints they read. Opening each keeps that
+  // server-side path exercised (quota, tags, the repository record and its SSH
+  // host key) and covers the sections themselves, not only the danger zone.
+  test('the repository Settings open each of their section cards', async ({ page }) => {
     await loginAsAdmin(page)
     await page.goto('/repos/1?tab=settings&section=repository')
     await page.waitForLoadState('networkidle')
 
-    const rail = page.locator('.settings-nav')
-    const pane = page.locator('.settings-pane')
+    // The section the URL names is open; the others are cards to open.
+    const repository = page.getByRole('region', { name: 'Repository', exact: true })
+    await expect(page.getByRole('button', { name: 'Repository', exact: true })).toHaveAttribute(
+      'aria-expanded',
+      'true',
+    )
+    await expect(repository).toContainText('SSH user')
 
-    await expect(rail.locator('.settings-nav-item[aria-current="true"]')).toHaveText('Repository')
-    await expect(pane).toContainText('SSH user')
-
-    // The rail names each pane, so a pane proves it mounted by its own
-    // content rather than by a heading repeating the rail item.
-    await rail.getByRole('button', { name: 'Storage quota' }).click()
-    await pane.getByRole('button', { name: 'Help: space limits' }).click()
-    await expect(pane).toContainText('How much space this repository may use')
+    const quota = await openSettingsSection(page, 'Storage quota')
+    await expect(quota).toContainText('How much space this repository may use')
     await expect(page).toHaveURL(/section=quota/)
 
-    await rail.getByRole('button', { name: 'Tags' }).click()
-    await expect(pane.getByPlaceholder('New tag name')).toBeVisible()
+    const tags = await openSettingsSection(page, 'Tags')
+    await expect(tags.getByPlaceholder('New tag name')).toBeVisible()
     await expect(page).toHaveURL(/section=tags/)
 
-    await rail.getByRole('button', { name: 'Borg console' }).click()
-    await expect(pane.getByLabel('borg command')).toBeVisible()
+    const borgConsole = await openSettingsSection(page, 'Borg console')
+    await expect(borgConsole.getByLabel('borg command')).toBeVisible()
     await expect(page).toHaveURL(/section=console/)
   })
 
@@ -85,7 +84,7 @@ test.describe('Repositories management journey', () => {
     await page.goto('/repos')
     await page.getByText('offsite-imported').first().click()
     await page.waitForURL(/\/repos\/\d+/)
-    await page.locator('.overflow-toggle').click()
+    await page.getByRole('button', { name: 'More repository actions' }).click()
     await page.getByRole('menuitem', { name: 'Set passphrase' }).click()
 
     const dialog = page.locator('.modal-dialog')
@@ -153,7 +152,8 @@ test.describe('Repositories management journey', () => {
     await page.waitForLoadState('networkidle')
 
     const row = page.locator('a.list-row', { hasText: 'server-daily' }).first()
-    await expect(row.locator('.badge')).toHaveText('3 unmatched')
+    // The dot is the status; one other than healthy is named first in the facts.
+    await expect(row.locator('.repo-row-facts')).toContainText('3 unmatched')
 
     await row.click()
     await page.waitForLoadState('networkidle')
@@ -168,7 +168,7 @@ test.describe('Repositories management journey', () => {
     await page.goto('/repos/1?tab=settings&section=danger')
     await page.waitForLoadState('networkidle')
 
-    const dangerZone = page.locator('.settings-pane')
+    const dangerZone = page.getByRole('region', { name: 'Danger zone', exact: true })
     const breakLockBtn = dangerZone.getByRole('button', { name: 'Break lock', exact: true })
     await expect(breakLockBtn).toBeVisible()
     await breakLockBtn.click()
@@ -223,6 +223,6 @@ test.describe('Repositories management journey', () => {
     await page.waitForLoadState('networkidle')
     const atRisk = page.locator('a.list-row', { hasText: 'media-weekly' })
     await expect(atRisk).toBeVisible()
-    await expect(atRisk.locator('.badge')).toHaveText(/(Near|Over) quota/)
+    await expect(atRisk.locator('.repo-row-facts')).toContainText(/(Near|Over) quota/)
   })
 })

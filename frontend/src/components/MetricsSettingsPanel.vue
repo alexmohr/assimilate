@@ -15,7 +15,12 @@ import { useTimeout } from '../composables/useTimeout'
 import { extractError } from '../utils/error'
 import { formatNetworkList, parseNetworkList } from '../utils/apiToken'
 import BaseSpinner from './BaseSpinner.vue'
+import PaneRow from './PaneRow.vue'
+import ToggleSwitch from './ToggleSwitch.vue'
 import type { MetricsSettingsResponse } from '../types/generated'
+
+/** Inside a settings section, which already frames and names it. */
+defineProps<{ embedded?: boolean }>()
 
 const loading = ref(true)
 const error = ref('')
@@ -65,8 +70,11 @@ async function save(): Promise<void> {
 </script>
 
 <template>
-  <div class="panel">
-    <div class="panel-header">
+  <div :class="embedded ? 'settings-pane' : 'panel'">
+    <div
+      v-if="!embedded"
+      class="panel-header"
+    >
       <h2 class="panel-title">Prometheus metrics</h2>
     </div>
     <p class="pane-lede">
@@ -91,14 +99,14 @@ async function save(): Promise<void> {
         class="form-stack"
         @submit.prevent="save"
       >
-        <label class="field toggle-row">
-          <input
-            id="metrics-enabled"
-            v-model="form.enabled"
-            type="checkbox"
-          />
-          <span class="toggle-row-label">Serve <code>/metrics</code></span>
-        </label>
+        <div class="pane-rows">
+          <PaneRow title="Serve /metrics">
+            <ToggleSwitch
+              v-model="form.enabled"
+              label="Serve /metrics"
+            />
+          </PaneRow>
+        </div>
 
         <div class="field">
           <label

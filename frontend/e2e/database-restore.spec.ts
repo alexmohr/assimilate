@@ -35,9 +35,9 @@ async function openDatabasesView(page: Page): Promise<void> {
 
   await page.getByRole('tab', { name: 'Archives', exact: true }).click()
   await expandAllArchiveGroups(page)
-  await page.getByText(newest!.name, { exact: true }).first().click()
+  await page.getByRole('button', { name: `Open archive ${newest!.name}`, exact: true }).click()
 
-  await page.locator('.browser-view .segmented-option', { hasText: 'Databases' }).click()
+  await page.locator('.browser-panel').getByRole('tab', { name: 'Databases' }).click()
   await expect(page.getByTestId('archive-database-dumps')).toBeVisible({ timeout: 30_000 })
 }
 
@@ -47,7 +47,9 @@ test.describe('database restore', () => {
     await openDatabasesView(page)
 
     const dumps = page.getByTestId('archive-database-dumps')
-    await expect(page.locator('.browser-title-label')).toHaveText('Databases')
+    await expect(
+      page.locator('.browser-panel').getByRole('tab', { name: 'Databases' }),
+    ).toHaveAttribute('aria-selected', 'true')
     for (const text of [
       'orders',
       'payments',
@@ -102,8 +104,11 @@ test.describe('database restore', () => {
     await dialog.getByRole('button', { name: 'Done' }).click()
 
     await page.goto('/activity')
-    await page.locator('.segmented-option', { hasText: 'Restores' }).click()
-    const restore = page.getByTestId('restore-runs').locator(`tr[data-restore-id="${run.id}"]`)
+    await page
+      .getByRole('group', { name: 'Activity type' })
+      .getByRole('button', { name: 'Restores' })
+      .click()
+    const restore = page.getByTestId('restore-runs').locator(`[data-restore-id="${run.id}"]`)
     await expect(restore).toContainText('orders into orders_restored on shop/orders-db')
     await expect(restore).not.toContainText('null')
   })
@@ -138,7 +143,11 @@ test.describe('database restore', () => {
 
     const dumps = page.getByTestId('archive-database-dumps')
     await expect(dumps).toContainText('container cache')
-    await dumps.locator('tr', { hasText: 'container cache' }).getByRole('button').click()
+    await dumps
+      .getByTestId('database-dump')
+      .filter({ hasText: 'container cache' })
+      .getByRole('button')
+      .click()
 
     const dialog = page.getByRole('dialog', { name: 'Restore database' })
     await expect(dialog.locator('#db-restore-name')).toHaveCount(0)

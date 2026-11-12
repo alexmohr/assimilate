@@ -3,7 +3,7 @@
 
 import { createHmac } from 'node:crypto'
 import { type Page } from '@playwright/test'
-import { expect, loginAs, loginAsAdmin, submitLogin, test } from './fixtures'
+import { expect, loginAs, loginAsAdmin, openSettingsSection, submitLogin, test } from './fixtures'
 
 function generateTotpCode(secretHex: string, stepOffset = 0): string {
   const secret = Buffer.from(secretHex, 'hex')
@@ -29,7 +29,7 @@ async function enrollTotp(page: Page): Promise<{ secret: string; recovery_codes:
   await page.goto('/profile')
   await page.waitForLoadState('networkidle')
 
-  await page.getByRole('tab', { name: 'Two-factor auth' }).click()
+  await openSettingsSection(page, 'Two-factor auth')
   await page.getByRole('button', { name: 'Set up two-factor auth' }).click()
 
   const setupResponse = await page.waitForResponse(
@@ -74,11 +74,11 @@ async function disableTotpIfEnabled(page: Page): Promise<void> {
   try {
     await page.goto('/profile')
     await page.waitForLoadState('networkidle')
-    const tab = page.getByRole('tab', { name: 'Two-factor auth' })
-    if (!(await tab.isVisible().catch(() => false))) {
+    const section = page.locator('.accordion-head').filter({ hasText: 'Two-factor auth' })
+    if (!(await section.isVisible().catch(() => false))) {
       return
     }
-    await tab.click()
+    await openSettingsSection(page, 'Two-factor auth')
     const disableButton = page.getByRole('button', { name: 'Disable two-factor auth' })
     if (await disableButton.isVisible().catch(() => false)) {
       await page.locator('input[placeholder="Current password"]').fill('totpuser')
@@ -103,18 +103,18 @@ test.describe('TOTP / 2FA', () => {
     await page.goto('/profile')
     await page.waitForLoadState('networkidle')
 
-    await expect(page.getByRole('tab', { name: 'Two-factor auth' })).toBeVisible()
+    await expect(
+      page.locator('.accordion-head').filter({ hasText: 'Two-factor auth' }),
+    ).toBeVisible()
   })
 
-  test('Sessions tab on profile shows active sessions', async ({ page }) => {
+  test('Sessions section on profile shows active sessions', async ({ page }) => {
     await loginAsTotpUser(page)
     await page.goto('/profile')
     await page.waitForLoadState('networkidle')
 
-    const sessionsTab = page.getByRole('tab', { name: 'Sessions' })
-    await expect(sessionsTab).toBeVisible()
-    await sessionsTab.click()
-    await expect(page.locator('text=current').first()).toBeVisible()
+    const sessions = await openSettingsSection(page, 'Sessions')
+    await expect(sessions.locator('text=current').first()).toBeVisible()
   })
 
   test('TOTP enrollment and two-step login flow', async ({ page }) => {
@@ -175,9 +175,7 @@ test('can revoke another active session from the Sessions tab', async ({ page, r
   await page.goto('/profile')
   await page.waitForLoadState('networkidle')
 
-  const sessionsTab = page.getByRole('tab', { name: 'Sessions' })
-  await expect(sessionsTab).toBeVisible({ timeout: 10_000 })
-  await sessionsTab.click()
+  await openSettingsSection(page, 'Sessions')
 
   const revokeButtons = page.locator('button[title="Revoke session"]')
   await expect(revokeButtons.first()).toBeVisible({ timeout: 10_000 })
@@ -198,19 +196,21 @@ test.describe('Session idle timeout', () => {
     await page.goto('/system')
     await page.waitForLoadState('networkidle')
 
-    const input = page.locator('#settings-idle-timeout')
+    // The Timeouts table in the System page's Settings section card.
+    const settings = await openSettingsSection(page, 'Settings')
+    const input = settings.getByLabel('Idle session')
     await expect(input).toBeVisible({ timeout: 10_000 })
     await expect(input).toHaveValue('480')
 
     await input.fill('60')
-    await page.getByRole('button', { name: 'Save' }).click()
+    await settings.getByRole('button', { name: 'Save', exact: true }).click()
     await expect(page.locator('text=Settings saved').first()).toBeVisible({
       timeout: 10_000,
     })
 
     // Reset to the default so later tests keep the standard 8-hour window.
     await input.fill('480')
-    await page.getByRole('button', { name: 'Save' }).click()
+    await settings.getByRole('button', { name: 'Save', exact: true }).click()
     await expect(page.locator('text=Settings saved').first()).toBeVisible({
       timeout: 10_000,
     })

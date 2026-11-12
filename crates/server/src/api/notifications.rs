@@ -21,8 +21,8 @@ use shared::{
     notifications::{
         ChannelConfig, ChannelScope, ChannelType, CreateChannelRequest, CreateRuleRequest,
         DeliveryStatus, EventType, NotificationChannelResponse, NotificationDeliveryResponse,
-        NotificationRuleResponse, TemplatePreviewRequest, TemplatePreviewResponse,
-        UpdateChannelRequest, WebhookHeaderStatus,
+        NotificationLink, NotificationLinkTarget, NotificationRuleResponse, TemplatePreviewRequest,
+        TemplatePreviewResponse, UpdateChannelRequest, WebhookHeaderStatus,
     },
 };
 use sqlx::{FromRow, types::Json as JsonColumn};
@@ -54,6 +54,8 @@ struct ChannelRow {
     webhook_headers: JsonColumn<Vec<WebhookHeaderStatus>>,
     enabled: bool,
     scope: serde_json::Value,
+    link_target: String,
+    link_url: Option<String>,
     created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
 }
@@ -67,6 +69,10 @@ impl TryFrom<ChannelRow> for NotificationChannelResponse {
             .map_err(|e| ApiError::Internal(format!("channel {id} has an invalid config: {e}")))?;
         let scope = serde_json::from_value(row.scope)
             .map_err(|e| ApiError::Internal(format!("channel {id} has an invalid scope: {e}")))?;
+        let target = row
+            .link_target
+            .parse::<NotificationLinkTarget>()
+            .map_err(|e| ApiError::Internal(format!("channel {id} has an invalid link: {e}")))?;
         Ok(Self {
             id,
             name: row.name,
@@ -75,6 +81,10 @@ impl TryFrom<ChannelRow> for NotificationChannelResponse {
             webhook_headers: row.webhook_headers.0,
             enabled: row.enabled,
             scope,
+            link: NotificationLink {
+                target,
+                url: row.link_url,
+            },
             created_at: row.created_at,
             updated_at: row.updated_at,
         })
@@ -232,6 +242,36 @@ fn stored_config(config: &ChannelConfig) -> Result<serde_json::Value, ApiError> 
         .map_err(|e| ApiError::Internal(format!("failed to serialize channel config: {e}")))
 }
 
+/// Longest address a custom link may hold.
+const MAX_LINK_URL_LEN: usize = 2048;
+
+/// A link setting as stored: its target, and the address only for a custom
+/// link, which must be an `http(s)://` address.
+fn stored_link(link: &NotificationLink) -> Result<(String, Option<String>), ApiError> {
+    if link.target != NotificationLinkTarget::Custom {
+        return Ok((link.target.to_string(), None));
+    }
+    let url = link.url.as_deref().map(str::trim).unwrap_or_default();
+    if url.is_empty() {
+        return Err(ApiError::BadRequest(
+            "a custom link needs an address".to_owned(),
+        ));
+    }
+    if url.len() > MAX_LINK_URL_LEN {
+        return Err(ApiError::BadRequest(format!(
+            "a link address can be at most {MAX_LINK_URL_LEN} characters"
+        )));
+    }
+    let parsed = reqwest::Url::parse(url)
+        .map_err(|e| ApiError::BadRequest(format!("the link address is not a URL: {e}")))?;
+    if !matches!(parsed.scheme(), "http" | "https") {
+        return Err(ApiError::BadRequest(
+            "a link address must start with http:// or https://".to_owned(),
+        ));
+    }
+    Ok((link.target.to_string(), Some(url.to_owned())))
+}
+
 fn stored_scope(scope: &ChannelScope) -> Result<serde_json::Value, ApiError> {
     serde_json::to_value(scope)
         .map_err(|e| ApiError::Internal(format!("failed to serialize channel scope: {e}")))
@@ -260,7 +300,7 @@ async fn channel_rows(
                     WHERE h.channel_id = nc.id),
                    '[]'::jsonb
                ) AS "webhook_headers!: JsonColumn<Vec<WebhookHeaderStatus>>",
-               nc.enabled, nc.scope, nc.created_at, nc.updated_at
+               nc.enabled, nc.scope, nc.link_target, nc.link_url, nc.created_at, nc.updated_at
         FROM notification_channels nc
         WHERE $1::bigint IS NULL OR nc.id = $1
         ORDER BY nc.id
@@ -354,14 +394,15 @@ pub async fn create_channel(
     let mut config = input.into_config(admin.0.user_id);
     crate::notifications::template::apply_default_template(&mut config);
     validate_channel_config(&config)?;
+    let (link_target, link_url) = stored_link(&req.link.unwrap_or_default())?;
 
     let mut tx = state.pool.begin().await?;
     let id = sqlx::query_scalar!(
         r#"
         INSERT INTO notification_channels
-            (name, channel_type, config, smtp_password_encrypted, enabled, scope, created_at,
-             updated_at)
-        VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW())
+            (name, channel_type, config, smtp_password_encrypted, enabled, scope, link_target,
+             link_url, created_at, updated_at)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), NOW())
         RETURNING id
         "#,
         &req.name,
@@ -370,6 +411,8 @@ pub async fn create_channel(
         smtp_password.as_ref().map(EncryptedSmtpPassword::as_bytes),
         req.enabled.unwrap_or(true),
         stored_scope(&req.scope.unwrap_or_default())?,
+        link_target,
+        link_url,
     )
     .fetch_one(&mut *tx)
     .await?;
@@ -459,6 +502,8 @@ pub async fn update_channel(
         }
     };
     let scope = req.scope.as_ref().map(stored_scope).transpose()?;
+    let link = req.link.as_ref().map(stored_link).transpose()?;
+    let (link_target, link_url) = link.map_or((None, None), |(target, url)| (Some(target), url));
 
     sqlx::query_scalar!(
         r#"
@@ -468,6 +513,8 @@ pub async fn update_channel(
             enabled = COALESCE($3::bool, enabled),
             scope = COALESCE($4::jsonb, scope),
             smtp_password_encrypted = COALESCE($5::bytea, smtp_password_encrypted),
+            link_url = CASE WHEN $7::text IS NULL THEN link_url ELSE $8::text END,
+            link_target = COALESCE($7::text, link_target),
             updated_at = NOW()
         WHERE id = $6
         RETURNING id
@@ -478,6 +525,8 @@ pub async fn update_channel(
         scope,
         smtp_password.as_ref().map(EncryptedSmtpPassword::as_bytes),
         id,
+        link_target,
+        link_url,
     )
     .fetch_optional(&mut *tx)
     .await?
@@ -963,5 +1012,77 @@ impl ValidateSmtpRequest {
         } else {
             shared::notifications::SmtpSecurity::Starttls
         }
+    }
+}
+
+#[cfg(test)]
+mod link_tests {
+    use shared::notifications::{NotificationLink, NotificationLinkTarget};
+
+    use super::stored_link;
+
+    fn link(target: NotificationLinkTarget, url: Option<&str>) -> NotificationLink {
+        NotificationLink {
+            target,
+            url: url.map(ToOwned::to_owned),
+        }
+    }
+
+    #[test]
+    fn a_custom_link_needs_an_http_address_and_others_keep_none() {
+        assert_eq!(
+            stored_link(&link(
+                NotificationLinkTarget::Custom,
+                Some(" https://status.example ")
+            ))
+            .unwrap(),
+            (
+                "custom".to_owned(),
+                Some("https://status.example".to_owned())
+            )
+        );
+        assert!(stored_link(&link(NotificationLinkTarget::Custom, None)).is_err());
+        assert!(
+            stored_link(&link(
+                NotificationLinkTarget::Custom,
+                Some("javascript:alert(1)")
+            ))
+            .is_err()
+        );
+        assert!(stored_link(&link(NotificationLinkTarget::Custom, Some("not a url"))).is_err());
+        // An address sent with another target is not kept: the column only
+        // holds one for a custom link.
+        assert_eq!(
+            stored_link(&link(
+                NotificationLinkTarget::Schedule,
+                Some("https://x.example")
+            ))
+            .unwrap(),
+            ("schedule".to_owned(), None)
+        );
+    }
+
+    #[test]
+    fn a_custom_link_address_is_capped_in_length() {
+        let mut at_limit = format!(
+            "https://status.example/{}",
+            "a".repeat(super::MAX_LINK_URL_LEN)
+        );
+        at_limit.truncate(super::MAX_LINK_URL_LEN);
+        assert_eq!(
+            stored_link(&link(NotificationLinkTarget::Custom, Some(&at_limit))).unwrap(),
+            ("custom".to_owned(), Some(at_limit.clone()))
+        );
+
+        let too_long = format!("{at_limit}a");
+        let err = stored_link(&link(NotificationLinkTarget::Custom, Some(&too_long))).unwrap_err();
+        assert!(
+            matches!(
+                &err,
+                crate::error::ApiError::BadRequest(msg)
+                    if msg == "a link address can be at most 2048 characters"
+            ),
+            "unexpected error: {err:?}"
+        );
     }
 }

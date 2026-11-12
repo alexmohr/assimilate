@@ -225,6 +225,37 @@ describe('TokensView', () => {
     expect(wrapper.text()).toContain('bearer token for /metrics')
   })
 
+  it('creates a token that expires on a picked day and says when it stops working', async () => {
+    const mockApiPost = apiClient.post as ReturnType<typeof vi.fn>
+    mockApiPost.mockResolvedValue({
+      data: { token: mockTokens[0], plaintext: 'dated-token' },
+    })
+    const wrapper = renderWithPlugins(TokensView)
+    await flushPromises()
+
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text().includes('New'))!
+      .trigger('click')
+    await wrapper.find('#token-name').setValue('short-lived')
+    await wrapper.find('#admin-token-expiry').setValue('date')
+    expect(wrapper.text()).toContain('Pick the day it stops working.')
+    const create = () => wrapper.findAll('button').find((b) => b.text() === 'Create')!
+    // Without a day the token would never expire, so it cannot be created yet.
+    expect(create().attributes('disabled')).toBeDefined()
+    await wrapper.find('#admin-token-expiry-date').setValue('2099-07-15')
+    expect(create().attributes('disabled')).toBeUndefined()
+    await wrapper.find('form').trigger('submit')
+    await flushPromises()
+
+    const expiresAt = new Date('2099-07-15T23:59:59').toISOString()
+    expect(mockApiPost).toHaveBeenCalledWith('/tokens', {
+      name: 'short-lived',
+      expires_at: expiresAt,
+    })
+    expect(wrapper.text()).toContain(`It stops working on ${expiresAt}.`)
+  })
+
   it('starts every new token as a full one', async () => {
     const wrapper = renderWithPlugins(TokensView, { storeState: ADMIN })
     await flushPromises()

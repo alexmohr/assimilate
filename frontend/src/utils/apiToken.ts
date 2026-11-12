@@ -13,6 +13,58 @@ export interface ApiTokenRow {
   scope?: ApiTokenScope
   created_at: string
   last_used_at: string | null
+  /** When the token stops working; null or absent for one that never expires. */
+  expires_at?: string | null
+}
+
+/** The expiry offered when creating a token: a preset length, or a date picked. */
+export type TokenExpiryChoice = 'never' | '30d' | '90d' | '365d' | 'date'
+
+export const TOKEN_EXPIRY_CHOICES: readonly { value: TokenExpiryChoice; label: string }[] = [
+  { value: 'never', label: 'Never' },
+  { value: '30d', label: '30 days' },
+  { value: '90d', label: '90 days' },
+  { value: '365d', label: '1 year' },
+  { value: 'date', label: 'On a date' },
+]
+
+const EXPIRY_DAYS: Record<Exclude<TokenExpiryChoice, 'never' | 'date'>, number> = {
+  '30d': 30,
+  '90d': 90,
+  '365d': 365,
+}
+
+/**
+ * The expiry to send for a choice, as an ISO timestamp, or null for none. A
+ * picked date expires at the end of that day, local time.
+ */
+export function tokenExpiresAt(
+  choice: TokenExpiryChoice,
+  date: string,
+  now = new Date(),
+): string | null {
+  if (choice === 'never') return null
+  if (choice === 'date') {
+    if (!date) return null
+    return new Date(`${date}T23:59:59`).toISOString()
+  }
+  return new Date(now.getTime() + EXPIRY_DAYS[choice] * 86_400_000).toISOString()
+}
+
+/** How a token's expiry reads in the table: past, close, or plain. */
+export type TokenExpiryState = 'none' | 'ok' | 'soon' | 'expired'
+
+/** Within this many days an expiry is flagged, so it can be renewed in time. */
+const EXPIRY_SOON_DAYS = 14
+
+export function tokenExpiryState(
+  expiresAt: string | null | undefined,
+  now = Date.now(),
+): TokenExpiryState {
+  if (!expiresAt) return 'none'
+  const at = Date.parse(expiresAt)
+  if (at <= now) return 'expired'
+  return at - now <= EXPIRY_SOON_DAYS * 86_400_000 ? 'soon' : 'ok'
 }
 
 /**

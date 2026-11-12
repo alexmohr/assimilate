@@ -31,7 +31,7 @@ Tunnel management requires admin privileges. Navigate to the **Tunnels** page in
 ![Tunnels](assets/screenshots/tunnels.png)
 
 1. Click **New**.
-2. Select the **Host** (agent machine) this tunnel is for.
+2. In the **New tunnel** dialog, select the **Agent** this tunnel is for.
 3. Fill in the connection fields:
 
     | Field | Description |
@@ -41,11 +41,11 @@ Tunnel management requires admin privileges. Navigate to the **Tunnels** page in
     | SSH Port | SSH port on the agent machine (default: `22`) |
     | Tunnel Port | Port to bind on `127.0.0.1` of the agent machine |
 
-4. Leave **Enabled** checked to activate the tunnel immediately after saving.
-5. Click **Save**.
+4. Leave **Enable tunnel immediately** checked to activate the tunnel as soon as it is created.
+5. Click **Create**.
 
 Once created, the server connects to the agent machine over SSH and requests remote port forwarding.
-Install or update the agent from the host's **Deploy** dialog. Assimilate detects the enabled tunnel
+Install or update the agent with **Deploy agent** (or **Upgrade agent** / **Redeploy agent**) on the agent's page. Assimilate detects the enabled tunnel
 and writes `ws://127.0.0.1:<tunnel_port>` and the server key into the systemd service, and a
 generated token into its root-only token file, automatically. Redeploying refreshes these values
 even when the custom systemd unit already contains `BORG_SERVER_URL` and `BORG_SERVER_KEY` entries. The agent's
@@ -138,7 +138,7 @@ Each row shows:
 |--------|---------|
 | **Agent** | A status dot — green when connected, amber while reconnecting, red when disconnected or failed, grey when disabled — and the agent's hostname over its display name |
 | **Route** | `server → :<tunnel port> → <user>@<SSH host>:<SSH port>`: the tunnel port the agent connects to, and the SSH target the server dials |
-| **Status** | **Connected**, **Reconnecting**, **Disconnected** or **Error**, with the error message under it and **Disabled** for a disabled tunnel |
+| **Status** | Empty while connected, as the row's green dot already says so; otherwise **Reconnecting**, **Disconnected** or **Error** in the dot's colour, with the error message under it and **Disabled** for a disabled tunnel |
 
 Above the panel, the filter pills count the tunnels — **All**, **Connected**, **Reconnecting** and **Needs attention** (disconnected or failed) — and narrow the list to one of them. The search box matches the agent or the SSH host.
 

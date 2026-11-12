@@ -12,7 +12,8 @@ test('repo archives grouped by host name each group, not just the count', async 
   await page.getByRole('tab', { name: 'Archives' }).click()
   await page.waitForURL(/tab=archives/)
 
-  const group = page.locator('.archive-group').first()
+  // server-daily holds several hosts' archives, so its list opens grouped by host.
+  const group = page.locator('.archives-panel .group-header').first()
   await expect(group).toBeVisible()
 
   const hostname = group.locator('.group-hostname')

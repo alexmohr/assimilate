@@ -14,7 +14,6 @@ import { getMachine } from '../api/machines'
 import { useWebSocket } from '../composables/useWebSocket'
 import { getConfiguredTimezone } from '../composables/useTimezone'
 import type { MachineWaitResponse } from '../types/generated'
-import { badgeClass } from '../utils/badge'
 import {
   countLabel,
   dependencyWaits,
@@ -142,6 +141,13 @@ function statusDot(host: DependencyHost): string {
   if (host.last_check_reachable === false) return 'status-dot--warning'
   if (host.last_check_reachable === true) return 'status-dot--success'
   return ''
+}
+
+/** Whether the host may be away, and whether it is woken: plain text, as it is a setting, not a state. */
+function availabilityText(host: DependencyHost): string {
+  const availability = host.intermittent ? 'Intermittent' : 'Always online'
+  if (!host.wake_enabled) return availability
+  return `${availability} · ${host.intermittent ? 'woken on demand' : 'woken'}`
 }
 
 function lastCheckedText(host: DependencyHost): string {
@@ -289,6 +295,9 @@ function open(host: DependencyHost): void {
             <span
               class="status-dot"
               :class="statusDot(host)"
+              role="img"
+              :title="reachabilityBadge(host.last_check_reachable).label"
+              :aria-label="reachabilityBadge(host.last_check_reachable).label"
             />
             <div class="list-row-text">
               <div class="dependency-name-line">
@@ -299,12 +308,6 @@ function open(host: DependencyHost): void {
                 >
                   {{ host.name }}
                 </RouterLink>
-                <span
-                  class="badge"
-                  :class="badgeClass(reachabilityBadge(host.last_check_reachable).tone)"
-                >
-                  {{ reachabilityBadge(host.last_check_reachable).label }}
-                </span>
               </div>
               <span
                 class="list-row-sub"
@@ -323,18 +326,10 @@ function open(host: DependencyHost): void {
           </div>
 
           <div
-            class="list-row-chips"
+            class="dependency-availability"
             data-testid="dependency-availability"
           >
-            <span class="badge badge--neutral">
-              {{ host.intermittent ? 'Not always online' : 'Always online' }}
-            </span>
-            <span
-              v-if="host.wake_enabled"
-              class="badge badge--neutral"
-            >
-              {{ host.intermittent ? 'Wake on demand' : 'Wake' }}
-            </span>
+            {{ availabilityText(host) }}
           </div>
 
           <div class="dependency-used-by">
@@ -443,6 +438,12 @@ function open(host: DependencyHost): void {
   min-width: 0;
 }
 
+.dependency-availability {
+  font-size: var(--fs-sm);
+  color: var(--text-secondary);
+  min-width: 0;
+}
+
 .dependency-used-by {
   display: flex;
   flex-direction: column;
@@ -454,6 +455,15 @@ function open(host: DependencyHost): void {
 .dependency-waiting-link {
   color: var(--accent);
   text-decoration: none;
+}
+
+/* A used-by link wraps inside its own column rather than running into
+   Last checked beside it. */
+.dependency-used-link {
+  overflow-wrap: anywhere;
+}
+
+.dependency-waiting-link {
   white-space: nowrap;
 }
 

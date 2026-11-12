@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
-import { expect, loginAsAdmin, test } from './fixtures'
+import { expect, loginAsAdmin, openSettingsSection, test } from './fixtures'
 
 /**
  * A repository host: the machine borg writes to, with its address, pinned SSH
@@ -28,7 +28,8 @@ test.describe('Repository hosts', () => {
     // The route transition keeps the repository page mounted while it fades out.
     await expect(page.locator('.repo-detail')).toHaveCount(0)
     await expect(page.locator('.detail-name')).toHaveText('localhost')
-    await expect(page.locator('.detail-header')).toContainText('Not always online')
+    // Not always online, named neutrally in the header.
+    await expect(page.locator('.detail-header')).toContainText('Intermittent')
 
     // Connection: where the host is reached, and the key every repository on
     // it is verified against - pinned when the demo repositories were added.
@@ -37,32 +38,38 @@ test.describe('Repository hosts', () => {
     await expect(hostPane).toContainText('SSH host key')
     await expect(hostPane).not.toContainText('Not pinned yet')
 
-    await page.locator('.settings-nav-item', { hasText: 'Repositories' }).click()
+    const repositories = await openSettingsSection(page, 'Repositories')
     for (const name of ['database-hourly', 'media-weekly', 'stale-report-repo']) {
-      await expect(page.locator('.settings-pane').getByRole('link', { name })).toBeVisible()
+      await expect(repositories.getByRole('link', { name })).toBeVisible()
     }
-    await expect(
-      page.locator('.settings-pane').getByRole('link', { name: 'server-daily' }),
-    ).toHaveCount(0)
+    await expect(repositories.getByRole('link', { name: 'server-daily' })).toHaveCount(0)
 
     // A host its repositories still use cannot be removed.
-    await page.locator('.settings-nav-item', { hasText: 'Danger zone' }).click()
-    await expect(page.getByRole('button', { name: 'Remove host' })).toBeDisabled()
+    const danger = await openSettingsSection(page, 'Danger zone')
+    await expect(danger.getByRole('button', { name: 'Remove host' })).toBeDisabled()
   })
 
-  test('the grouped repository list flags a host that is not always online', async ({ page }) => {
+  test('the grouped repository list marks a host that is not always online Intermittent', async ({
+    page,
+  }) => {
     await loginAsAdmin(page)
     await page.goto('/repos')
     await page.waitForLoadState('networkidle')
 
-    const sleeping = page.locator('.pool-host', { hasText: 'localhost' })
-    await expect(sleeping).toContainText('Not always online')
-    await expect(sleeping.getByRole('link', { name: 'localhost' })).toHaveAttribute(
+    // Each host heads its repositories: a dot for its last check, its name
+    // linking to the host, and - for one that may be away - "Intermittent".
+    const header = (host: string) =>
+      page.locator('.pool-header').filter({
+        has: page.getByRole('link', { name: host, exact: true }),
+      })
+    const sleeping = header('localhost')
+    await expect(sleeping.locator('.pool-note')).toContainText('Intermittent')
+    await expect(sleeping.locator('.pool-note')).toHaveAttribute('title', /Can be offline/)
+    await expect(sleeping.getByRole('link', { name: 'localhost', exact: true })).toHaveAttribute(
       'href',
       /\/repo-hosts\/\d+/,
     )
-    await expect(page.locator('.pool-host', { hasText: 'demo' })).not.toContainText(
-      'Not always online',
-    )
+    await expect(sleeping.locator('.pool-host .status-dot')).toHaveAttribute('aria-label', /.+/)
+    await expect(header('demo')).not.toContainText('Intermittent')
   })
 })

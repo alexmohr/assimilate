@@ -29,8 +29,11 @@ vi.mock('vue-router', async () => {
 // v-model here - the builder has its own tests. Stubbed for the same reason
 // ScheduleDetailView.test.ts stubs it: without this, reaching the Timing step
 // under coverage instrumentation runs past the default test timeout.
+// Named, so `findComponent({ name: 'CronBuilder' })` still finds it now that
+// it renders inside the wizard shell's slot rather than the view's own tree.
 vi.mock('../components/CronBuilder.vue', () => ({
   default: {
+    name: 'CronBuilder',
     props: ['modelValue'],
     emits: ['update:modelValue'],
     template:
@@ -336,9 +339,10 @@ describe('ScheduleCreateView', () => {
     await wrapper.findAll('.wizard-step').at(-1)!.trigger('click')
 
     expect(button(wrapper, 'Create schedule')!.attributes('disabled')).toBeDefined()
-    expect(wrapper.text()).toContain('Still missing:')
-    expect(wrapper.text()).toContain('a name (Basics)')
-    expect(wrapper.text()).toContain('at least one host (Sources)')
+    // Named once, in the wizard's foot; the review pane does not repeat it.
+    expect(wrapper.text()).toContain('Still needs a name (Basics), at least one host (Sources).')
+    expect(wrapper.text().match(/a name \(Basics\)/g)).toHaveLength(1)
+    expect(wrapper.find('.wizard-note--success').exists()).toBe(false)
 
     await button(wrapper, 'Create schedule')!.trigger('click')
     await flushPromises()

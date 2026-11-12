@@ -141,11 +141,11 @@ async function confirmDelete(): Promise<void> {
       >
         <template #badges>
           <span
-            class="badge"
-            :class="host.intermittent ? 'badge--warning' : 'badge--neutral'"
+            v-if="host.intermittent"
+            class="badge badge--neutral"
+            title="Can be offline at any time, even when a backup is due. Missed backups run once it is back."
+            >Intermittent</span
           >
-            {{ host.intermittent ? 'Not always online' : 'Always online' }}
-          </span>
         </template>
         <template #meta>
           <span>

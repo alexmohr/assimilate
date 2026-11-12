@@ -62,15 +62,17 @@ describe('RepoSchedulesTab', () => {
     expect(vi.mocked(apiClient.get)).toHaveBeenCalledWith('/stats/health', { timeout: undefined })
   })
 
-  it('renders a card per schedule', async () => {
-    mockList([SCHEDULE])
+  it('renders a row per schedule, naming its agents', async () => {
+    mockList([SCHEDULE, { ...SCHEDULE, id: 8, name: 'weekly', target_hostnames: ['db-01'] }])
     const wrapper = renderWithPlugins(RepoSchedulesTab, { props: { repoId: 3 } })
     await flushPromises()
 
-    expect(wrapper.findAll('.entity-card')).toHaveLength(1)
-    expect(wrapper.text()).toContain('nightly')
-    expect(wrapper.text()).toContain('2 agents')
-    expect(wrapper.find('.badge--neutral').text()).toBe('Backup')
+    const rows = wrapper.findAll('[data-schedule-id]')
+    expect(rows).toHaveLength(2)
+    expect(rows[0]!.find('.sched-title').text()).toBe('nightly')
+    expect(rows[0]!.find('.sched-sub').text()).toContain('2 agents')
+    // A single agent is named rather than counted.
+    expect(rows[1]!.find('.sched-sub').text()).toContain('db-01')
   })
 
   it('shows an empty state when the repository has no schedules', async () => {
@@ -80,7 +82,7 @@ describe('RepoSchedulesTab', () => {
 
     expect(wrapper.find('.empty-state').exists()).toBe(true)
     expect(wrapper.find('.empty-title').text()).toBe('No schedules yet')
-    expect(wrapper.findAll('.entity-card')).toHaveLength(0)
+    expect(wrapper.findAll('[data-schedule-id]')).toHaveLength(0)
   })
 
   it('surfaces a load failure instead of an empty list', async () => {
@@ -92,14 +94,15 @@ describe('RepoSchedulesTab', () => {
     expect(wrapper.find('.empty-state').exists()).toBe(false)
   })
 
-  it('marks a disabled schedule and tints its card', async () => {
+  it('marks a disabled schedule, greys its dot and offers no Run now', async () => {
     mockList([{ ...SCHEDULE, enabled: false }])
     const wrapper = renderWithPlugins(RepoSchedulesTab, { props: { repoId: 3 } })
     await flushPromises()
 
-    const card = wrapper.find('.entity-card')
-    expect(card.classes()).toContain('entity-card--notable')
-    expect(wrapper.text()).toContain('Disabled')
+    const row = wrapper.find('[data-schedule-id="7"]')
+    expect(row.find('.sched-next').text()).toBe('Disabled')
+    expect(row.find('.sched-dot').classes()).toContain('sched-dot--idle')
+    expect(row.find('button[aria-label="Run nightly now"]').attributes('disabled')).toBeDefined()
   })
 
   it('runs a schedule now and disables the button while it is in flight', async () => {
@@ -113,16 +116,23 @@ describe('RepoSchedulesTab', () => {
     const wrapper = renderWithPlugins(RepoSchedulesTab, { props: { repoId: 3 } })
     await flushPromises()
 
-    const runBtn = wrapper.findAll('button').find((b) => b.text() === 'Run')
-    expect(runBtn).toBeDefined()
-    await runBtn!.trigger('click')
+    const runBtn = wrapper.find('button[aria-label="Run nightly now"]')
+    expect(runBtn.exists()).toBe(true)
+    expect(runBtn.attributes('disabled')).toBeUndefined()
+    await runBtn.trigger('click')
 
     expect(vi.mocked(apiClient.post)).toHaveBeenCalledWith('/schedules/7/run', {})
-    expect(wrapper.findAll('button')[0].attributes('disabled')).toBeDefined()
+    expect(
+      wrapper.find('button[aria-label="Run nightly now"]').attributes('disabled'),
+    ).toBeDefined()
+    // Starting a run does not open the schedule.
+    expect(routerPush).not.toHaveBeenCalled()
 
     resolveRun?.()
     await flushPromises()
-    expect(wrapper.findAll('button').find((b) => b.text() === 'Run')).toBeDefined()
+    expect(
+      wrapper.find('button[aria-label="Run nightly now"]').attributes('disabled'),
+    ).toBeUndefined()
   })
 
   it('reloads when the repository changes', async () => {
@@ -150,24 +160,26 @@ describe('RepoSchedulesTab', () => {
     const wrapper = renderWithPlugins(RepoSchedulesTab, { props: { repoId: 3 } })
     await flushPromises()
 
-    await wrapper
-      .findAll('button')
-      .find((b) => b.text().trim() === 'Run')!
-      .trigger('click')
+    await wrapper.find('button[aria-label="Run nightly now"]').trigger('click')
     await flushPromises()
 
     expect(apiClient.post).toHaveBeenCalledWith('/schedules/7/run', {})
     expect(toastSuccess).toHaveBeenCalledWith(`${label} started.`)
   })
 
-  it('opens the schedule when its card is selected', async () => {
+  it('opens the schedule when its row is selected, by click or Enter', async () => {
     mockList([SCHEDULE])
     const wrapper = renderWithPlugins(RepoSchedulesTab, { props: { repoId: 3 } })
     await flushPromises()
 
-    await wrapper.find('.entity-card').trigger('click')
+    const row = wrapper.find('[data-schedule-id="7"]')
+    expect(row.attributes('role')).toBe('link')
+    await row.trigger('click')
     await flushPromises()
+    expect(routerPush).toHaveBeenCalledWith('/schedules/7')
 
+    routerPush.mockClear()
+    await row.trigger('keydown', { key: 'Enter' })
     expect(routerPush).toHaveBeenCalledWith('/schedules/7')
   })
 })

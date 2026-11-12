@@ -70,7 +70,7 @@ test.describe('Schedule dependencies', () => {
     await page.waitForLoadState('networkidle')
     await expect(
       page.getByRole('button', { name: 'Power & dependencies', exact: true }),
-    ).toHaveAttribute('aria-current', 'true')
+    ).toHaveAttribute('aria-expanded', 'true')
     // Below the schedule's power settings, which have an Edit of their own.
     const dependencies = page.locator('.settings-pane .pane-section', {
       hasText: 'Required dependencies',

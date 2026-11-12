@@ -116,8 +116,14 @@ function leadInput(wrapper: ReturnType<typeof mount>) {
   return wrapper.find('#catch-up-lead')
 }
 
+/** The collapsible settings sections' heads, in order. */
 function navLabels(wrapper: ReturnType<typeof mount>): string[] {
-  return wrapper.findAll('.settings-nav-item').map((b) => b.text())
+  return wrapper.findAll('.accordion-head').map((b) => b.text())
+}
+
+/** The labels of the sections that are open. */
+function openSections(wrapper: ReturnType<typeof mount>): string[] {
+  return wrapper.findAll('.accordion-head[aria-expanded="true"]').map((b) => b.text())
 }
 
 describe('ScheduleSettingsTab', () => {
@@ -164,21 +170,20 @@ describe('ScheduleSettingsTab', () => {
     expect(form.wake_override).toBe('disabled')
   })
 
-  it('emits update:section when a nav item is clicked', async () => {
+  it('emits update:section when a section is opened', async () => {
     const wrapper = mount()
     await wrapper
-      .findAll('.settings-nav-item')
+      .findAll('.accordion-head')
       .find((b) => b.text() === 'Targets')!
       .trigger('click')
     expect(wrapper.emitted('update:section')).toEqual([['targets']])
+    expect(openSections(wrapper)).toEqual(['General', 'Targets'])
   })
 
-  it('falls back to General when the section prop is unavailable for this schedule type', async () => {
+  it('falls back to General when the section prop is unavailable for this schedule type', () => {
     const wrapper = mount({ isBackup: false, section: 'advanced' })
-    expect(wrapper.find('.settings-nav-item[aria-current="true"]').text()).toBe('General')
-
-    await wrapper.find('[aria-label="Help: naming and timing"]').trigger('click')
-    expect(wrapper.text()).toContain('What this schedule is called')
+    expect(openSections(wrapper)).toEqual(['General'])
+    expect(wrapper.get('.pane-lede').text()).toContain('What this schedule is called')
   })
 
   it('shows the Name field and writes into it', async () => {
@@ -201,10 +206,10 @@ describe('ScheduleSettingsTab', () => {
     expect(mount({ section: 'targets' }).findAll('.required')).toHaveLength(1)
   })
 
-  it('discloses the Targets pane-head hint with its explainer text', async () => {
+  it('says in the Targets pane head what the section covers', () => {
     const wrapper = mount({ section: 'targets' })
-    await wrapper.find('[aria-label="Help: hosts and destinations"]').trigger('click')
-    expect(wrapper.find('.help-hint-pop').text()).toContain(
+    expect(wrapper.find('[aria-label="Help: hosts and destinations"]').exists()).toBe(false)
+    expect(wrapper.get('.pane-head .pane-lede').text()).toContain(
       'Which hosts this schedule runs on, which repositories they write to',
     )
   })
@@ -306,10 +311,10 @@ describe('ScheduleSettingsTab', () => {
     )
   })
 
-  it('discloses the Retention pane-head hint with its explainer text', async () => {
+  it('says in the Retention pane head what the section covers', () => {
     const wrapper = mount({ section: 'retention' })
-    await wrapper.find('[aria-label="Help: how long archives are kept"]').trigger('click')
-    expect(wrapper.find('.help-hint-pop').text()).toContain(
+    expect(wrapper.find('[aria-label="Help: how long archives are kept"]').exists()).toBe(false)
+    expect(wrapper.get('.pane-head .pane-lede').text()).toContain(
       'How many archives borg keeps when this schedule prunes.',
     )
   })

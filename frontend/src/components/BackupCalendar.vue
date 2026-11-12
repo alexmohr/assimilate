@@ -388,9 +388,9 @@ function navigateToScheduleAndClose(scheduleId: number): void {
 .cal-select {
   padding: var(--space-2) var(--space-4);
   font-size: var(--fs-xs);
-  border: 1px solid var(--border);
+  border: 1px solid transparent;
   border-radius: var(--radius-sm);
-  background: var(--bg-base);
+  background: var(--bg-field);
   color: var(--text-primary);
 }
 
@@ -609,7 +609,7 @@ function navigateToScheduleAndClose(scheduleId: number): void {
   font-family: var(--mono);
   font-size: var(--fs-xs);
   color: var(--text-primary);
-  background: var(--bg-base);
+  background: var(--bg-code);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   padding: var(--space-5);

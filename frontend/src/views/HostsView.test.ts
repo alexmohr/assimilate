@@ -107,6 +107,25 @@ function activePill(wrapper: ReturnType<typeof mount>): string {
   return wrapper.get('.filter-pill.active').text()
 }
 
+/**
+ * Opens the filters card behind the Filters button, where coverage, tags,
+ * grouping, sort and hidden agents live; a no-op when it is already open.
+ */
+async function openFilters(wrapper: ReturnType<typeof mount>): Promise<void> {
+  const toggle = wrapper.get('.agents-search-row button[aria-expanded]')
+  if (toggle.attributes('aria-expanded') === 'true') return
+  await toggle.trigger('click')
+  await flushPromises()
+}
+
+/** The coverage select in the filters card. */
+async function coverageSelect(
+  wrapper: ReturnType<typeof mount>,
+): Promise<ReturnType<typeof wrapper.get<HTMLSelectElement>>> {
+  await openFilters(wrapper)
+  return wrapper.get<HTMLSelectElement>('#agents-coverage')
+}
+
 /** The fleet tile with the given label. */
 function tile(wrapper: ReturnType<typeof mount>, label: string): ReturnType<typeof wrapper.get> {
   const match = wrapper.findAll('.fleet-cell').find((c) => c.find('.stat-label').text() === label)
@@ -249,6 +268,10 @@ describe('HostsView', () => {
       if (url === '/system/version') {
         return Promise.resolve({ data: { agent_version: null } })
       }
+      // A scheduled host, so no "No schedules" issue takes the status column.
+      if (url === '/stats/schedule-counts') {
+        return Promise.resolve({ data: [{ agent_id: 1, count: 1 }] })
+      }
       return Promise.resolve({ data: [] })
     })
 
@@ -258,16 +281,20 @@ describe('HostsView', () => {
     const wrapper = mount(HostsView, { global: { plugins: [createPinia(), router] } })
     await flushPromises()
 
+    // The status column holds the running backup's destination as plain text;
+    // the dot says it is running.
     const rows = wrapper.findAll('.list-row')
     const protectedRow = rows.find((c) => c.text().includes('protected-host'))
-    expect(protectedRow?.find('.entity-running-pill').exists()).toBe(true)
-    expect(protectedRow?.text()).toContain('Backing up: server-daily')
+    expect(protectedRow?.get('.agents-running').text()).toBe('Backing up: server-daily')
+    expect(protectedRow?.get('.agents-running').attributes('title')).toBe(
+      'Backing up: server-daily',
+    )
     // A backup in flight colours the row's dot, ahead of plain "online".
     expect(protectedRow?.find('.list-row-main .status-dot').classes()).toContain('status-dot--info')
     expect(wrapper.find('.fleet-strip').text()).toContain('1 backing up now')
 
     const otherRow = rows.find((c) => c.text().includes('never-succeeded-host'))
-    expect(otherRow?.find('.entity-running-pill').exists()).toBe(false)
+    expect(otherRow?.find('.agents-running').exists()).toBe(false)
   })
 
   it('applies the coverage filter from the route query', async () => {
@@ -280,9 +307,7 @@ describe('HostsView', () => {
 
     await flushPromises()
 
-    expect(wrapper.get<HTMLSelectElement>('select[aria-label="Coverage"]').element.value).toBe(
-      'never-succeeded',
-    )
+    expect((await coverageSelect(wrapper)).element.value).toBe('never-succeeded')
     expect(wrapper.text()).toContain('never-succeeded-host')
     expect(wrapper.text()).not.toContain('protected-host')
   })
@@ -320,7 +345,7 @@ describe('HostsView', () => {
     expect(wrapper.text()).toContain('protected-host')
     expect(wrapper.text()).not.toContain('never-succeeded-host')
 
-    await wrapper.get<HTMLSelectElement>('select[aria-label="Coverage"]').setValue('disabled-only')
+    await (await coverageSelect(wrapper)).setValue('disabled-only')
 
     expect(wrapper.text()).toContain('never-succeeded-host')
     expect(wrapper.text()).not.toContain('protected-host')
@@ -337,16 +362,12 @@ describe('HostsView', () => {
     const wrapper = mount(HostsView, { global: { plugins: [createPinia(), router] } })
     await flushPromises()
 
-    expect(wrapper.get<HTMLSelectElement>('select[aria-label="Coverage"]').element.value).toBe(
-      'all',
-    )
+    expect((await coverageSelect(wrapper)).element.value).toBe('all')
 
     await router.push('/agents?coverage=never-succeeded')
     await flushPromises()
 
-    expect(wrapper.get<HTMLSelectElement>('select[aria-label="Coverage"]').element.value).toBe(
-      'never-succeeded',
-    )
+    expect((await coverageSelect(wrapper)).element.value).toBe('never-succeeded')
   })
 
   it('reacts to a status query arriving after the page has already mounted', async () => {
@@ -403,6 +424,7 @@ describe('HostsView', () => {
       await router.isReady()
       const wrapper = mount(HostsView, { global: { plugins: [createPinia(), router] } })
       await flushPromises()
+      await openFilters(wrapper)
 
       const segment = (label: string): ReturnType<typeof wrapper.get> =>
         wrapper.findAll('[role="radio"]').find((b) => b.text() === label)!
@@ -504,44 +526,6 @@ describe('HostsView', () => {
     expect(tileValue(wrapper, 'Agents')).toBe('2')
   })
 
-  it('counts the fleet by agent version in the Versions tile', async () => {
-    vi.mocked(apiClient.get).mockImplementation((url: string) => {
-      if (url === '/agents') {
-        return Promise.resolve({
-          data: [
-            { ...agents[0], agent_version: '0.1.89' },
-            { ...agents[1], agent_version: '0.1.87' },
-          ],
-        })
-      }
-      if (url === '/stats/dashboard-overview') {
-        return Promise.resolve({
-          data: {
-            protection: {
-              protected_agent_links: [],
-              unassigned_agents: [],
-              never_succeeded_agents: [],
-              disabled_only_agents: [],
-            },
-            running_operations: [],
-          },
-        })
-      }
-      if (url === '/system/version') return Promise.resolve({ data: { agent_version: '0.1.89' } })
-      return Promise.resolve({ data: [] })
-    })
-    const router = makeRouter()
-    await router.push('/agents')
-    await router.isReady()
-    const wrapper = mount(HostsView, { global: { plugins: [createPinia(), router] } })
-    await flushPromises()
-
-    const badges = tile(wrapper, 'Versions').findAll('.badge')
-    expect(badges.map((c) => c.text())).toEqual(
-      expect.arrayContaining(['0.1.89 · 1', '0.1.87 · 1']),
-    )
-  })
-
   /**
    * The version is the grid's grouping now, not a per-card stat: mounts a
    * fleet spanning two builds plus an agent that never reported one.
@@ -631,30 +615,8 @@ describe('HostsView', () => {
       'Version',
       '',
     ])
-    expect(groups[0].get('[data-col="version"]').text()).toBe('0.1.108')
-    expect(groups[2].get('[data-col="version"]').text()).toBe('-')
-  })
-
-  it('tones the Versions tile badges as current, behind or unknown', async () => {
-    const wrapper = await mountVersionedFleet()
-
-    const badges = tile(wrapper, 'Versions').findAll('.badge')
-    const current = badges.find((c) => c.text().startsWith('0.1.108'))
-    const outdated = badges.find((c) => c.text().startsWith('0.1.98'))
-    expect(current?.classes()).toContain('badge--success')
-    expect(outdated?.classes()).toContain('badge--warning')
-    // An agent that never reported one is neither current nor behind.
-    expect(badges.find((c) => c.text().startsWith('unknown'))?.classes()).toContain(
-      'badge--neutral',
-    )
-  })
-
-  it('keeps every version neutral when the server has no binary to compare against', async () => {
-    const wrapper = await mountVersionedFleet(null)
-
-    const badges = tile(wrapper, 'Versions').findAll('.badge')
-    expect(badges).toHaveLength(3)
-    for (const badge of badges) expect(badge.classes()).toContain('badge--neutral')
+    expect(groups[0].get('.list-row [data-col="version"]').text()).toBe('0.1.108')
+    expect(groups[2].get('.list-row [data-col="version"]').text()).toBe('-')
   })
 
   it('groups agents by status: needs attention (failing first), online, offline', async () => {
@@ -994,29 +956,83 @@ describe('HostsView issue rows', () => {
     vi.clearAllMocks()
   })
 
-  it('renders separate failed and overdue issue chips instead of a combined label', async () => {
+  /** A host whose one schedule is late but whose last run succeeded. */
+  async function mountOverdueOnly(): Promise<{
+    wrapper: ReturnType<typeof mount>
+    router: ReturnType<typeof createRouter>
+  }> {
+    return mountAgentsList(
+      [issueAgent],
+      [
+        {
+          hostname: 'flaky-host',
+          target_name: 'onsite',
+          last_status: 'success',
+          last_backup_at: '2026-01-01T00:00:00Z',
+          last_backup_status: 'success',
+          is_overdue: true,
+          last_error_message: null,
+        },
+      ],
+      [{ agent_id: 42, count: 1 }],
+    )
+  }
+
+  /** The issue chips a row's status column shows. */
+  function chips(wrapper: ReturnType<typeof mount>): string[] {
+    return wrapper.findAll('.list-row-chips .entity-issue-chip').map((c) => c.text())
+  }
+
+  // A row's status column holds one item: its most pressing issue. A failure
+  // outranks a late schedule, which the agent's own page still lists.
+  it('shows only the most pressing issue: a failure over an overdue schedule', async () => {
     const { wrapper } = await mountWithHealth()
 
-    const failedChip = wrapper.find('.entity-issue-chip.sev-danger')
-    const overdueChip = wrapper.find('.entity-issue-chip.sev-warning')
-    expect(failedChip.exists()).toBe(true)
-    expect(overdueChip.exists()).toBe(true)
-    expect(failedChip.text()).toContain('1 failed')
-    expect(overdueChip.text()).toContain('1 overdue')
+    expect(chips(wrapper)).toEqual(['1 failed'])
+    expect(wrapper.get('.list-row-chips .entity-issue-chip').classes()).toContain('sev-danger')
+    // The overdue schedule still counts towards the attention tile.
+    expect(tile(wrapper, 'Needs attention').get('.stat-sub').text()).toContain('1 overdue')
   })
 
-  it('navigates to the logs tab filtered to failed when the failed chip is clicked', async () => {
+  it('shows the overdue issue when nothing more pressing is wrong', async () => {
+    const { wrapper } = await mountOverdueOnly()
+
+    expect(chips(wrapper)).toEqual(['1 overdue'])
+    expect(wrapper.get('.list-row-chips .entity-issue-chip').classes()).toContain('sev-warning')
+    expect(wrapper.get('.list-row-main .status-dot').classes()).toContain('status-dot--warning')
+  })
+
+  // The issue outranks a running backup too: the column says what is wrong,
+  // the dot that something is running.
+  it('shows an issue rather than a backup in flight', async () => {
+    const { wrapper } = await mountOverdueOnly()
+
+    ws.handlers['BackupStarted']({ hostname: 'flaky-host', target_name: 'onsite' })
+    await flushPromises()
+
+    expect(chips(wrapper)).toEqual(['1 overdue'])
+    expect(wrapper.find('.agents-running').exists()).toBe(false)
+    expect(wrapper.get('.list-row-main .status-dot').classes()).toContain('status-dot--info')
+  })
+
+  // A failure is read in the Activity log, where its output is, rather than
+  // on the agent's page, which only says that it failed.
+  it('opens the activity log filtered to failed runs when the failed chip is clicked', async () => {
     const { wrapper, router } = await mountWithHealth()
 
     await wrapper.find('.entity-issue-chip.sev-danger').trigger('click')
     await flushPromises()
 
-    expect(router.currentRoute.value.path).toBe('/agents/flaky-host')
-    expect(router.currentRoute.value.query).toMatchObject({ tab: 'logs', status: 'failed' })
+    expect(router.currentRoute.value.path).toBe('/activity')
+    expect(router.currentRoute.value.query).toEqual({
+      category: 'backup',
+      hostname: 'flaky-host',
+      status: 'failed',
+    })
   })
 
   it('navigates to the schedules tab filtered to overdue when the overdue chip is clicked', async () => {
-    const { wrapper, router } = await mountWithHealth()
+    const { wrapper, router } = await mountOverdueOnly()
 
     await wrapper.find('.entity-issue-chip.sev-warning').trigger('click')
     await flushPromises()
@@ -1033,11 +1049,14 @@ describe('HostsView issue rows', () => {
     return wrapper
   }
 
-  it('shows an Offline pill and dims the row when the agent is disconnected', async () => {
+  // Offline is said by the dimmed row, its grey dot and its last-seen time;
+  // the status column is kept for an issue.
+  it('dims the row of a disconnected agent without an Offline pill', async () => {
     const wrapper = await mountSingleAgent({ is_connected: false })
 
     expect(wrapper.find('.list-row').classes()).toContain('agents-row--dim')
-    expect(wrapper.find('.entity-status-pill').text()).toBe('Offline')
+    expect(wrapper.get('.list-row-chips').text()).toBe('')
+    expect(wrapper.get('.list-row [data-col="last-seen"]').text()).toBe('Never')
   })
 
   it('shows nothing in the badge row for a healthy online agent with no issues', async () => {
@@ -1061,11 +1080,30 @@ describe('HostsView issue rows', () => {
     expect(wrapper.findAll('.list-group-title').map((t) => t.text())).toEqual(['Offline'])
   })
 
-  it('dims a hidden agent and badges it Hidden', async () => {
+  // Hidden and Imported moved from the status column to the line under the
+  // hostname.
+  it('dims a hidden agent and names it Hidden under the hostname', async () => {
     const wrapper = await mountSingleAgent({ is_connected: true, is_hidden: true })
 
     expect(wrapper.find('.list-row').classes()).toContain('agents-row--dim')
-    expect(wrapper.get('.list-row-chips .badge--neutral').text()).toBe('Hidden')
+    expect(wrapper.get('.list-row-sub.list-wide-only').text()).toBe('Hidden')
+    expect(wrapper.get('.list-row-chips').text()).toBe('')
+  })
+
+  it('joins the display name, Imported and Hidden on the line under the hostname', async () => {
+    const wrapper = await mountSingleAgent({
+      display_name: 'Flaky Box',
+      is_imported: true,
+      is_hidden: true,
+    })
+
+    expect(wrapper.get('.list-row-sub.list-wide-only').text()).toBe('Flaky Box · Imported · Hidden')
+  })
+
+  it('leaves out the line under the hostname when there is nothing to say', async () => {
+    const wrapper = await mountSingleAgent({})
+
+    expect(wrapper.find('.list-row-sub.list-wide-only').exists()).toBe(false)
   })
 
   it('flags a host nothing is scheduled to back up', async () => {
@@ -1123,7 +1161,7 @@ describe('HostsView issue rows', () => {
   /** The tone classes on one of the row's figures, by its `data-col`. */
   function cellTone(wrapper: ReturnType<typeof mount>, col: string): string[] {
     return wrapper
-      .get(`[data-col="${col}"]`)
+      .get(`.list-row [data-col="${col}"]`)
       .classes()
       .filter((c) => c.startsWith('stat-value--'))
   }
@@ -1189,11 +1227,12 @@ describe('HostsView issue rows', () => {
   // whether the agent is *behind* comes from the server-computed overdue
   // chip, so these cases only assert which backup time the row picks.
   function lastBackupStat(wrapper: ReturnType<typeof mount>): string {
-    return wrapper.get('[data-col="last-backup"]').text()
+    return wrapper.get('.list-row [data-col="last-backup"]').text()
   }
 
-  it('shows a running pill while a backup is in flight and clears it when it completes', async () => {
-    const { wrapper } = await mountAgentsList([issueAgent])
+  it('shows a running backup while it is in flight and clears it when it completes', async () => {
+    // Scheduled, so no "No schedules" issue takes the status column.
+    const { wrapper } = await mountAgentsList([issueAgent], [], [{ agent_id: 42, count: 1 }])
 
     ws.handlers['BackupStarted']({ hostname: 'flaky-host', target_name: 'offsite' })
     await flushPromises()
@@ -1343,16 +1382,24 @@ describe('HostsView issue rows', () => {
   it('filters by a selected tag and restores the full list when it is cleared', async () => {
     const wrapper = await mountFilterList()
 
-    await wrapper.get('.tag-filter-wrapper button').trigger('click')
-    const tagCheckbox = wrapper.get('.tag-dropdown-item input')
-    await tagCheckbox.trigger('change')
+    // Tags are pills in the filters card now, not a dropdown of checkboxes.
+    await openFilters(wrapper)
+    const tagPill = (): ReturnType<typeof wrapper.get> =>
+      wrapper.get('[role="group"][aria-label="Tags"] .filter-pill')
+    expect(tagPill().text()).toBe('production')
+    await tagPill().trigger('click')
     expect(rowNames(wrapper)).toEqual(['beta-host'])
+    expect(tagPill().attributes('aria-pressed')).toBe('true')
+    // The Filters button says it is narrowing the list.
+    expect(wrapper.get('.agents-search-row button[aria-expanded]').text()).toBe('Filters · 1')
 
     // Toggling the same tag off is a deselect, not a second filter. Both are
     // back, in status-group order: beta-host is online, alpha-host offline,
     // and the list groups before it sorts.
-    await tagCheckbox.trigger('change')
+    await tagPill().trigger('click')
     expect(rowNames(wrapper)).toEqual(['beta-host', 'alpha-host'])
+    expect(tagPill().attributes('aria-pressed')).toBe('false')
+    expect(wrapper.get('.agents-search-row button[aria-expanded]').text()).toBe('Filters')
   })
 
   it('sorts within a group by name, last seen and version', async () => {
@@ -1388,6 +1435,7 @@ describe('HostsView issue rows', () => {
       [],
       [1, 2, 3].map((agent_id) => ({ agent_id, count: 1 })),
     )
+    await openFilters(wrapper)
     const sortButton = (label: string): ReturnType<typeof wrapper.get> =>
       wrapper.findAll('.sort-controls button').filter((b) => b.text().startsWith(label))[0]
 
@@ -1427,6 +1475,7 @@ describe('HostsView issue rows', () => {
 
     expect(rowNames(wrapper)).toEqual(['off-host', 'on-host'])
 
+    await openFilters(wrapper)
     await wrapper
       .findAll('.sort-controls button')
       .filter((b) => b.text().startsWith('Status'))[0]
@@ -1586,8 +1635,10 @@ describe('HostsView issue rows', () => {
       ],
     )
 
-    expect(wrapper.find('.entity-issue-chip.sev-danger').exists()).toBe(true)
-    expect(wrapper.find('.entity-issue-chip.sev-warning').exists()).toBe(true)
+    // Only the most pressing issue is shown, so the failure stands for both;
+    // the overdue one still counts towards the attention tile.
+    expect(chips(wrapper)).toEqual(['1 failed'])
+    expect(tile(wrapper, 'Needs attention').get('.stat-sub').text()).toContain('1 overdue')
   })
 
   // The row link has to merge the domain into the query on every row, not
@@ -1848,33 +1899,42 @@ describe('HostsView toolbar and empty state', () => {
   it('lists hidden agents too once Show hidden is switched on', async () => {
     const wrapper = await mountAgentsPage(agents)
     expect(apiClient.get).toHaveBeenCalledWith('/agents', { params: undefined })
-    const toggle = wrapper.get('.hidden-toggle [role="switch"]')
-    expect(toggle.attributes('aria-checked')).toBe('false')
+    await openFilters(wrapper)
+    const hiddenSwitch = (): ReturnType<typeof wrapper.get> =>
+      wrapper.get('[role="switch"][aria-label="Show hidden agents"]')
+    expect(hiddenSwitch().attributes('aria-checked')).toBe('false')
 
-    await toggle.trigger('click')
+    await hiddenSwitch().trigger('click')
     await flushPromises()
 
     expect(apiClient.get).toHaveBeenCalledWith('/agents', {
       params: { include_hidden: true },
     })
-    expect(wrapper.get('.hidden-toggle [role="switch"]').attributes('aria-checked')).toBe('true')
+    expect(hiddenSwitch().attributes('aria-checked')).toBe('true')
     expect(localStorage.getItem('assimilate-agents-show-hidden')).toBe('true')
   })
 
-  it('keeps the filters behind a toggle on a phone', async () => {
-    mobile.isMobile = true
+  // The filters card sits behind the Filters button on every screen now,
+  // not only on a phone.
+  it.each([
+    ['a phone', true],
+    ['a wide screen', false],
+  ])('keeps the filters behind the Filters button on %s', async (_screen, isMobile) => {
+    mobile.isMobile = isMobile
     try {
       const wrapper = await mountAgentsPage(agents)
-      const toggle = wrapper.get('.filter-toggle')
+      const toggle = wrapper.get('.agents-search-row button[aria-expanded]')
+      expect(toggle.attributes('aria-expanded')).toBe('false')
       expect(wrapper.find('select').exists()).toBe(false)
-      expect(wrapper.find('.hidden-toggle').exists()).toBe(false)
+      expect(wrapper.find('[role="switch"]').exists()).toBe(false)
       expect(wrapper.find('[role="radiogroup"]').exists()).toBe(false)
-      // The status pills stay out: they are the filter a phone reaches for most.
+      // The status pills stay out: they are the filter reached for most.
       expect(wrapper.findAll('.filter-pill')).toHaveLength(4)
 
       await toggle.trigger('click')
+      expect(toggle.attributes('aria-expanded')).toBe('true')
       expect(wrapper.findAll('select')).toHaveLength(1)
-      expect(wrapper.find('.hidden-toggle').exists()).toBe(true)
+      expect(wrapper.find('[role="switch"][aria-label="Show hidden agents"]').exists()).toBe(true)
       expect(wrapper.find('[role="radiogroup"]').exists()).toBe(true)
 
       await toggle.trigger('click')
@@ -1882,6 +1942,20 @@ describe('HostsView toolbar and empty state', () => {
     } finally {
       mobile.isMobile = false
     }
+  })
+
+  it('counts the coverage and hidden filters on the Filters button', async () => {
+    const wrapper = await mountAgentsPage(agents)
+    const toggle = (): ReturnType<typeof wrapper.get> =>
+      wrapper.get('.agents-search-row button[aria-expanded]')
+    expect(toggle().text()).toBe('Filters')
+
+    await (await coverageSelect(wrapper)).setValue('unassigned')
+    expect(toggle().text()).toBe('Filters · 1')
+
+    await wrapper.get('[role="switch"][aria-label="Show hidden agents"]').trigger('click')
+    await flushPromises()
+    expect(toggle().text()).toBe('Filters · 2')
   })
 })
 

@@ -9,6 +9,7 @@ import {
   makeFailedReport,
   mockScheduleOneHealth,
   mockScheduleOnePatch,
+  openSettingsSection,
   test,
 } from './fixtures'
 import type { Locator, Page } from '@playwright/test'
@@ -61,7 +62,7 @@ async function openScheduleAdvanced(page: Page): Promise<void> {
   await page.waitForLoadState('networkidle')
 
   await page.getByRole('tab', { name: 'Settings' }).click()
-  await page.getByRole('button', { name: 'Advanced' }).click()
+  await openSettingsSection(page, 'Advanced')
 }
 
 /** Adds an empty pre-backup command row, returning its field and its script box. */
@@ -141,9 +142,7 @@ test.describe('Schedules management', () => {
     await expect(page.getByText('media-weekly').first()).toBeVisible()
   })
 
-  test('schedules list groups rows under at least one time-based section and shows a run-history strip', async ({
-    page,
-  }) => {
+  test('schedules list groups rows under at least one time-based section', async ({ page }) => {
     await loginAsAdmin(page)
     await page.goto('/schedules')
     await page.waitForLoadState('networkidle')
@@ -152,27 +151,10 @@ test.describe('Schedules management', () => {
     // any seeded schedules present there is always at least one group header.
     await expect(page.locator('.list-group-header').first()).toBeVisible()
 
+    // A row is the status dot, the name over its cadence, and the next run.
     const row = page.locator('.list-row', { hasText: 'server-daily' }).first()
-    await expect(row.locator('.run-history')).toBeVisible()
-  })
-
-  test('a multi-agent run draws as one bar split into a segment per agent', async ({ page }) => {
-    await loginAsAdmin(page)
-    await page.goto('/schedules')
-    await page.waitForLoadState('networkidle')
-
-    // Seeded with three firings of two agents each (see seed-demo.sh), the
-    // oldest of which one agent failed.
-    const row = page.locator('.list-row', { hasText: 'Fleet nightly demo' }).first()
-    const bars = row.locator('.run-bar')
-    await expect(bars).toHaveCount(3)
-    for (const bar of await bars.all()) {
-      await expect(bar.locator('.run-bar-segment')).toHaveCount(2)
-    }
-    await expect(bars.first()).toHaveClass(/run-bar-danger/)
-    await expect(bars.first().locator('.run-bar-segment-success')).toHaveCount(1)
-    await expect(bars.first().locator('.run-bar-segment-danger')).toHaveCount(1)
-    await expect(row.locator('.run-history-caption')).toHaveText('3 runs · 1 failed')
+    await expect(row.locator('.status-dot')).toBeVisible()
+    await expect(row.locator('.list-row-sub')).not.toBeEmpty()
   })
 
   test('the group control re-sections the list by agent and by repository', async ({ page }) => {
@@ -350,8 +332,12 @@ test.describe('Schedules management', () => {
     await expect(runningChip).toBeVisible()
     await expect(runningChip).toHaveText('Running')
 
+    // Another schedule is not running. A healthy row shows no health label
+    // at all, so ask for a Running label rather than reading one that may
+    // not be there.
     const otherRow = page.locator('.list-row', { hasText: 'database-hourly' }).first()
-    await expect(healthChip(otherRow)).not.toHaveText('Running')
+    await expect(otherRow).toBeVisible()
+    await expect(healthChip(otherRow).filter({ hasText: 'Running' })).toHaveCount(0)
   })
 
   // A row is a link to the schedule: its chips no longer navigate on their
@@ -377,10 +363,15 @@ test.describe('Schedules management', () => {
     await page.goto('/schedules')
     await page.waitForLoadState('networkidle')
 
+    // Named in red text, not a pill: the row's dot already says it.
     const chip = healthChip(scheduleRow(page, 1))
     await expect(chip).toContainText('Failed')
-    await expect(chip).toHaveClass(/badge--danger/)
+    await expect(chip).toHaveClass(/schedules-health--danger/)
     await expect(chip).toHaveAttribute('title', /Simulated failure/)
+
+    // The failure is read in the Activity log, so the label links there.
+    await chip.click()
+    await expect(page).toHaveURL(/\/activity\?category=backup&schedule_id=1&status=failed/)
   })
 
   test('a warned schedule row shows a Warning chip carrying the warning', async ({ page }) => {
@@ -477,7 +468,7 @@ test.describe('Schedules management', () => {
     await page.waitForLoadState('networkidle')
 
     await page.getByRole('tab', { name: 'Settings' }).click()
-    await page.getByRole('button', { name: 'General' }).click()
+    await openSettingsSection(page, 'General')
 
     // Whether a host is waited for is set on the host now, so the schedule has
     // no switch of its own - just the cutoff, and the machines it applies to:
@@ -607,7 +598,7 @@ test.describe('Schedules management', () => {
 
   // This schedule's Backups tab is an archive browser, and a failed run
   // wrote no archive - so the run detail under Recent runs shows its output
-  // in place, and hands the run to the host that produced it.
+  // in place, and hands the run to the Activity log, opened on it.
   test('a failed run in the overview run detail opens on its host', async ({ page }) => {
     await loginAsAdmin(page)
     await page.route('**/api/schedules/1/reports**', (route) =>
@@ -635,18 +626,18 @@ test.describe('Schedules management', () => {
     await expect(pill).toHaveAttribute('aria-pressed', 'true')
     await expect(pill).toHaveClass(/run-tone--failed/)
 
+    // Each host of the run is a log row that opens on its output.
     const detail = page.locator('.run-detail')
-    const toggle = detail.getByRole('button', { name: 'Show detail' })
+    const toggle = detail.locator('.log-row-summary').first()
     await toggle.click()
-    await expect(detail.getByRole('button', { name: 'Hide detail' })).toHaveAttribute(
-      'aria-expanded',
-      'true',
-    )
+    await expect(toggle).toHaveAttribute('aria-expanded', 'true')
     await expect(detail.locator('.agent-row-detail')).toContainText('connection refused')
 
-    await detail.getByRole('button', { name: 'Open in Logs' }).click()
+    await detail.getByRole('button', { name: 'Open in Activity log' }).click()
 
-    await expect(page).toHaveURL(/\/agents\/web-server-01\?.*tab=logs.*report=9995/)
+    await expect(page).toHaveURL(
+      /\/activity\?category=backup&hostname=web-server-01&schedule_id=1&report=9995/,
+    )
   })
 
   // There is no archive jump on the Overview any more - the Backups tab is
@@ -681,11 +672,11 @@ test.describe('Schedules management', () => {
     await page.waitForLoadState('networkidle')
 
     await expect(page.locator('.run-pill')).toHaveClass(/run-tone--success/)
-    const rows = page.locator('.run-detail .agent-row')
+    const rows = page.locator('.run-detail .log-row')
     await expect(rows).toHaveCount(1)
-    await expect(rows.first()).toContainText('Production Web Server')
-    await expect(rows.first().locator('.agent-row-stats')).toContainText('2.0 GB')
-    await expect(rows.first().locator('.agent-row-stats')).toContainText('6m 41s')
+    await expect(rows.first().locator('.log-row-title')).toHaveText('Production Web Server')
+    await expect(rows.first().locator('.log-row-facts')).toContainText('2.0 GB')
+    await expect(rows.first().locator('.log-row-facts')).toContainText('6m 41s')
   })
 
   test('schedule detail shows retention policy', async ({ page }) => {
@@ -694,19 +685,13 @@ test.describe('Schedules management', () => {
     await page.waitForLoadState('networkidle')
 
     await page.getByRole('tab', { name: 'Settings' }).click()
-    await page.getByRole('button', { name: 'Retention' }).click()
+    const retention = await openSettingsSection(page, 'Retention')
 
-    // The pane no longer restates the rail item that opened it, so what proves
-    // Retention is showing is the rail marking it current plus its own lede,
-    // disclosed behind its `HelpHint`.
-    await expect(page.getByRole('button', { name: 'Retention' })).toHaveAttribute(
-      'aria-current',
-      'true',
-    )
-    await page.getByRole('button', { name: 'Help: how long archives are kept' }).click()
-    await expect(page.locator('.settings-pane')).toContainText('borg keeps')
-    await expect(page.getByText('Daily', { exact: true })).toBeVisible()
-    await expect(page.getByText('Weekly', { exact: true })).toBeVisible()
+    // The section card opens on its own lede, then a row per interval.
+    await expect(page).toHaveURL(/section=retention/)
+    await expect(retention).toContainText('borg keeps')
+    await expect(retention.getByText('Daily', { exact: true })).toBeVisible()
+    await expect(retention.getByText('Weekly', { exact: true })).toBeVisible()
   })
 
   test('schedule detail Advanced section edits and saves the hook command timeout', async ({
@@ -822,156 +807,86 @@ test.describe('Schedules management', () => {
     await expect(infoCard).toContainText('Production Web Server')
   })
 
-  // Logs used to be an overflow-menu link out to the Activity page; it's an
-  // in-page tab now, the same run-history view an agent's own Logs tab
-  // renders, so there is no "More schedule actions" item for it any more.
-  test('schedule detail Logs tab shows the run history in place', async ({ page }) => {
+  // The schedule has no Logs tab of its own any more: its run history is the
+  // Activity log, filtered to it, reached from Recent runs. An old link to the
+  // Logs tab lands there too.
+  test("the schedule's run history is the Activity log, filtered to it", async ({ page }) => {
     await loginAsAdmin(page)
     await page.goto('/schedules/1')
     await page.waitForLoadState('networkidle')
 
+    await expect(page.getByRole('tab', { name: /Logs/ })).toHaveCount(0)
     await page.getByRole('button', { name: 'More schedule actions' }).click()
     await expect(page.getByRole('menuitem', { name: 'Logs' })).toHaveCount(0)
-    await page.keyboard.press('Escape')
+    await page.getByRole('button', { name: 'More schedule actions' }).click()
 
-    await page.getByRole('tab', { name: /Logs/ }).click()
-    await page.waitForLoadState('networkidle')
+    await page.getByRole('button', { name: 'View all in Activity log' }).click()
+    await expect(page).toHaveURL(/\/activity\?category=backup&schedule_id=1$/)
+    await expect(page.getByTestId('activity-entries').locator('.log-row').first()).toBeVisible()
 
-    await expect(page.locator('[id^="report-"]').first()).toBeVisible()
-    await expect(page).toHaveURL(/\/schedules\/1\?.*tab=logs/)
+    await page.goto('/schedules/1?tab=logs&status=failed')
+    await expect(page).toHaveURL(/\/activity\?category=backup&schedule_id=1&status=failed$/)
   })
 
-  // Mirrors agent-detail.spec.ts's own Logs-tab filter test - this schedule's
-  // Logs tab renders the same RunLogTab component, so it needs the same
-  // e2e coverage rather than only a component-mount unit test.
-  test('schedule detail Logs tab filters by status', async ({ page }) => {
-    await loginAsAdmin(page)
-
-    // The demo seed's own failure for this schedule ages out as the demo
-    // date moves (see agent-detail.spec.ts's equivalent comment), so the
-    // run this filters to is guaranteed here instead of relying on it.
-    await page.route('**/api/schedules/1/reports**', (route) =>
-      route.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify({ reports: [makeFailedReport(9998, 1)], total: 1 }),
-      }),
-    )
-
-    await page.goto('/schedules/1')
-    await page.waitForLoadState('networkidle')
-
-    await page.getByRole('tab', { name: /Logs/ }).click()
-    await page.waitForLoadState('networkidle')
-
-    const failed = page.locator('.segmented-option', { hasText: /^Failed/ })
-    await expect(failed).toBeVisible()
-    await failed.click()
-
-    await expect(page.locator('[id^="report-"]').first()).toBeVisible()
-    await expect(page.locator('.agent-row-stripe--danger').first()).toBeVisible()
-  })
-
-  // A failed copy is retried from its own row: the request names that one
-  // host and repository, and once the retry's pending run is in the log the
-  // failed row stops offering a second one.
-  test('schedule detail Logs tab retries a failed run', async ({ page }) => {
-    await loginAsAdmin(page)
-
-    const failed = makeFailedReport(9990, 1)
-    let retried = false
-    await page.route('**/api/schedules/1/reports**', (route) =>
-      route.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify(
-          retried
-            ? {
-                reports: [{ ...makeFailedReport(9991, 1), status: 'pending' }, failed],
-                total: 2,
-              }
-            : { reports: [failed], total: 1 },
-        ),
-      }),
-    )
-    let runBody: unknown = null
-    await page.route('**/api/schedules/1/run', (route) => {
-      runBody = route.request().postDataJSON()
-      retried = true
-      return route.fulfill({ status: 202, body: '' })
-    })
-
-    await page.goto('/schedules/1?tab=logs')
-    await page.waitForLoadState('networkidle')
-
-    const row = page.locator('#report-9990')
-    await row.getByRole('button', { name: 'Retry' }).click()
-
-    await expect(page.getByText('Retry queued for server-daily on web-server-01.')).toBeVisible()
-    expect(runBody).toEqual({ agent_ids: [1], repo_ids: [1] })
-    await expect(page.locator('#report-9991')).toBeVisible()
-    await expect(row.getByRole('button', { name: 'Retry' })).toHaveCount(0)
-  })
-
-  test('schedule detail Logs tab sort toggle reorders runs', async ({ page }) => {
-    await loginAsAdmin(page)
-    await page.goto('/schedules/1')
-    await page.waitForLoadState('networkidle')
-
-    await page.getByRole('tab', { name: /Logs/ }).click()
-    await page.waitForLoadState('networkidle')
-
-    const rows = page.locator('[id^="report-"]')
-    await expect(rows.first()).toBeVisible()
-    const newestFirstId = await rows.first().getAttribute('id')
-
-    const sortBtn = page.getByRole('button', { name: /Newest first/ })
-    await expect(sortBtn).toBeVisible()
-    await sortBtn.click()
-    await expect(page.getByRole('button', { name: /Oldest first/ })).toBeVisible()
-
-    await expect.poll(async () => rows.first().getAttribute('id')).not.toBe(newestFirstId)
-  })
-
-  // The demo seed's own history isn't guaranteed to exceed one page for any
-  // given schedule, so this mocks 60 rows directly - the same approach the
-  // "clean up failed backups" test below takes for its own report list, and
-  // agent-detail.spec.ts's equivalent Load-more test relies on a real
-  // backfill instead only because it targets a single, dedicated host.
-  test('schedule detail Logs tab offers to load more once there are more runs than the first page', async ({
-    page,
-  }) => {
-    await loginAsAdmin(page)
-
-    const firstPage = Array.from({ length: 50 }, (_, i) => ({
-      ...makeFailedReport(20000 + i, 1),
-      status: 'success',
-      error_message: null,
+  /** Answers the Activity log with `count` runs of schedule 1, at most `limit` per request. */
+  async function mockScheduleOneActivity(
+    page: Page,
+    count: number,
+    status: (index: number) => string,
+  ): Promise<void> {
+    const entries = Array.from({ length: count }, (_, i) => ({
+      id: 30_000 + i,
+      hostname: 'web-server-01',
+      target_name: 'server-daily',
+      started_at: new Date(Date.now() - (i + 1) * 3_600_000).toISOString(),
+      finished_at: new Date(Date.now() - (i + 1) * 3_600_000 + 60_000).toISOString(),
+      status: status(i),
+      duration_secs: 60,
+      repo_id: 1,
+      archive_name: null,
+      error_message: status(i) === 'failed' ? 'connection refused' : null,
+      schedule_id: 1,
+      schedule_name: null,
+      run_id: null,
+      acknowledged: false,
     }))
-    await page.route('**/api/schedules/1/reports**', (route) => {
-      const url = new URL(route.request().url())
-      const offset = Number(url.searchParams.get('offset') ?? '0')
-      const rows = offset === 0 ? firstPage : [{ ...firstPage[0], id: 19999 }]
-      return route.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify({ reports: rows, total: 51 }),
-      })
-    })
+    await page.route(
+      (url) => url.pathname === '/api/stats/activity',
+      (route) => {
+        const limit = Number(new URL(route.request().url()).searchParams.get('limit') ?? '50')
+        return route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify(entries.slice(0, limit)),
+        })
+      },
+    )
+  }
 
-    await page.goto('/schedules/1')
-    await page.waitForLoadState('networkidle')
-    await page.getByRole('tab', { name: /Logs/ }).click()
-    await page.waitForLoadState('networkidle')
+  // What the schedule's Failed label opens: its failed runs, and only those.
+  test("the Activity log narrows the schedule's runs to its failures", async ({ page }) => {
+    await loginAsAdmin(page)
+    // The demo's own failures for this schedule age out as the demo date
+    // moves, so the runs this filters are guaranteed here instead.
+    await mockScheduleOneActivity(page, 4, (i) => (i % 2 === 0 ? 'failed' : 'success'))
 
-    const loadMore = page.getByRole('button', { name: /^Load \d+ more$/ })
-    await expect(loadMore).toBeVisible()
-    const before = await page.locator('[id^="report-"]').count()
+    await page.goto('/activity?category=backup&schedule_id=1&status=failed')
+    const rows = page.getByTestId('activity-entries').locator('.log-row')
+    await expect(rows).toHaveCount(2)
+    await expect(rows.locator('.log-row-dot.status-dot--danger')).toHaveCount(2)
+  })
 
-    await loadMore.click()
-    await page.waitForLoadState('networkidle')
+  test("the schedule's run history offers to load more past the first page", async ({ page }) => {
+    await loginAsAdmin(page)
+    await mockScheduleOneActivity(page, 60, () => 'success')
 
-    await expect.poll(async () => page.locator('[id^="report-"]').count()).toBeGreaterThan(before)
+    await page.goto('/activity?category=backup&schedule_id=1')
+    const rows = page.getByTestId('activity-entries').locator('.log-row')
+    await expect(rows).toHaveCount(50)
+
+    await page.getByRole('button', { name: 'Load more' }).click()
+    await expect(rows).toHaveCount(60)
+    await expect(page.getByRole('button', { name: 'Load more' })).toHaveCount(0)
   })
 
   // Failed run history has no archive behind it, so an admin should be able
@@ -1054,7 +969,7 @@ test.describe('Schedules management', () => {
 
     // Per-host backup sources live under Settings > Targets.
     await page.getByRole('tab', { name: 'Settings' }).click()
-    await page.getByRole('button', { name: 'Targets' }).click()
+    await openSettingsSection(page, 'Targets')
     await expect(
       page.locator('.per-host-paths').or(page.locator('.per-host-entry')).first(),
     ).toBeVisible()
@@ -1127,8 +1042,8 @@ test.describe('Schedules management', () => {
     })
 
     await page.getByRole('tab', { name: 'Settings' }).click()
-    await page.getByRole('button', { name: 'General' }).click()
-    const toggle = page.getByRole('switch', { name: 'Enabled' })
+    const general = await openSettingsSection(page, 'General')
+    const toggle = general.getByRole('switch', { name: 'Enabled' })
     await expect(toggle).toHaveAttribute('aria-checked', 'true')
     await toggle.click()
 
@@ -1251,14 +1166,13 @@ test.describe('Schedules management', () => {
       page.locator('.detail-header').getByText('Auto-disabled · agent unreachable'),
     ).toBeVisible()
 
-    // Third surface: the agent's own Schedules tab (AgentScheduleRow.vue), which
-    // reuses scheduleDisabledLabel independently of the schedule row/detail
-    // header - a wiring mistake there (wrong prop, label not reaching the DOM)
-    // wouldn't be caught by the two assertions above.
+    // Third surface: the agent's own Schedules tab, a table of its own (not
+    // the list row or the detail header above), which says the schedule is
+    // off where its next run would be.
     await page.goto('/agents/web-server-01?tab=schedules')
     await page.waitForLoadState('networkidle')
-    const row = page.locator('.rows .agent-row').filter({ hasText: 'server-daily' })
-    await expect(row.locator('.entity-status-pill')).toHaveText('Auto-disabled · agent unreachable')
+    const row = page.locator('.sched-row[data-schedule-id="1"]')
+    await expect(row.locator('.sched-next')).toHaveText('Disabled')
   })
 
   test('a schedule auto-disabled by a local/config error (not an unreachable agent) shows the error variant', async ({
@@ -1291,8 +1205,8 @@ test.describe('Schedules management', () => {
 
     await page.goto('/agents/web-server-01?tab=schedules')
     await page.waitForLoadState('networkidle')
-    const row = page.locator('.rows .agent-row').filter({ hasText: 'server-daily' })
-    await expect(row.locator('.entity-status-pill')).toHaveText('Auto-disabled · error')
+    const row = page.locator('.sched-row[data-schedule-id="1"]')
+    await expect(row.locator('.sched-next')).toHaveText('Disabled')
   })
 
   // schedule.last_run_at is dispatch bookkeeping, advanced only once a
@@ -1317,13 +1231,13 @@ test.describe('Schedules management', () => {
     await page.waitForLoadState('networkidle')
 
     // Several other seeded schedules also target the "server-daily" repo, so
-    // a text filter would match multiple rows - data-schedule-id (fallen
-    // through from AgentSchedulesTab, same pattern as the schedule list row's
-    // data-schedule-id) is the only unambiguous selector.
-    const row = page.locator('.rows .agent-row[data-schedule-id="1"]')
-    const stats = row.locator('.agent-row-stats')
-    await expect(stats).toContainText(/last .+ ago/)
-    await expect(stats).not.toContainText('never run')
-    await expect(row.locator('.agent-row-when')).toHaveText('Daily at 02:00')
+    // a text filter would match multiple rows - the table row's
+    // data-schedule-id is the only unambiguous selector.
+    const row = page.locator('.sched-row[data-schedule-id="1"]')
+    const last = row.locator('.sched-col-last')
+    await expect(last).toContainText('Succeeded')
+    await expect(last).toContainText(/\d+d ago/)
+    await expect(last).not.toContainText('Never run')
+    await expect(row.locator('.sched-col-cadence')).toHaveText('Daily at 02:00')
   })
 })

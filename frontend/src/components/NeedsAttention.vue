@@ -4,6 +4,7 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 -->
 
 <script setup lang="ts">
+import { runLogLink } from '../utils/activityLink'
 import type { RouteLocationRaw } from 'vue-router'
 import { RouterLink } from 'vue-router'
 import { X } from '@lucide/vue'
@@ -16,6 +17,15 @@ defineProps<{ findings: DashboardFinding[] }>()
 const emit = defineEmits<{ dismissed: [] }>()
 
 function destinationRoute(finding: DashboardFinding): RouteLocationRaw {
+  // A failed or warned backup is read where its output is, whatever page the
+  // finding otherwise points at.
+  if (finding.kind === 'backup_failed' || finding.kind === 'backup_warning') {
+    return runLogLink({
+      hostname: finding.hostname,
+      scheduleId: finding.schedule_id,
+      status: finding.kind === 'backup_failed' ? 'failed' : 'warning',
+    })
+  }
   const dest = finding.destination
   switch (dest.kind) {
     case 'host':
@@ -25,11 +35,7 @@ function destinationRoute(finding: DashboardFinding): RouteLocationRaw {
     case 'repository':
       return `/repos/${dest.repo_id}`
     case 'activity': {
-      const query: Record<string, string> = { category: 'backup' }
-      if (finding.kind === 'backup_failed') query.status = 'failed'
-      else if (finding.kind === 'backup_warning') query.status = 'warning'
-      if (finding.schedule_id !== null) query.schedule_id = String(finding.schedule_id)
-      return { path: '/activity', query }
+      return runLogLink({ scheduleId: finding.schedule_id })
     }
   }
 }
@@ -51,7 +57,7 @@ async function dismiss(finding: DashboardFinding): Promise<void> {
 <template>
   <section
     id="needs-attention"
-    class="panel attention-panel"
+    class="panel"
   >
     <div class="panel-heading">
       <div>
@@ -115,10 +121,6 @@ async function dismiss(finding: DashboardFinding): Promise<void> {
 </template>
 
 <style scoped>
-.attention-panel {
-  border-top: 3px solid var(--warning);
-}
-
 .panel-heading {
   display: flex;
   justify-content: space-between;
@@ -154,13 +156,16 @@ p {
   gap: var(--space-5);
   align-items: center;
   padding: var(--space-5) 0;
-  border-top: 1px solid var(--border);
+  border-top: 1px solid var(--border-subtle);
 }
 
+/* The same status dot as every other row list, not a coloured bar. */
 .severity-mark {
   width: 8px;
-  height: 32px;
-  border-radius: var(--radius-pill);
+  height: 8px;
+  border-radius: 50%;
+  align-self: start;
+  margin-top: 0.4em;
 }
 
 .severity-critical {

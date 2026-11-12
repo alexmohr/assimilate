@@ -10,11 +10,12 @@ import BaseSegmented, { type SegmentedOption } from './BaseSegmented.vue'
 import ToggleSwitch from './ToggleSwitch.vue'
 import FileChangePatternsEditor from './FileChangePatternsEditor.vue'
 import CommandListEditor from './CommandListEditor.vue'
-import HelpHint from './HelpHint.vue'
+import DatabaseDumpMismatch from './DatabaseDumpMismatch.vue'
 import PaneRow from './PaneRow.vue'
 import PerAgentFields from './PerAgentFields.vue'
 import BorgPatternReference from './BorgPatternReference.vue'
 import type { AgentRow } from '../types/agent'
+import { useHostDumpSettings } from '../composables/useHostDumpSettings'
 import { isFsSnapshotOn } from '../utils/fsSnapshot'
 import type { FsSnapshotMode } from '../types/generated'
 import type { ScheduleAgentOverrides, ScheduleFormState } from '../types/scheduleForm'
@@ -38,6 +39,14 @@ const props = withDefaults(
     agents?: readonly AgentRow[]
   }>(),
   { agents: () => [] },
+)
+
+/**
+ * Target hosts that have database dumps turned off themselves: ticking "Dump
+ * databases" does nothing on them, which nothing else on this form shows.
+ */
+const { hostsWithDumpsOff } = useHostDumpSettings(() =>
+  props.agents.filter((agent) => props.agentIds.includes(agent.id)),
 )
 
 const form = defineModel<ScheduleFormState>('form', { required: true })
@@ -69,14 +78,11 @@ const hostsWithoutSnapshotTools = computed(() =>
 
 <template>
   <div class="form-stack">
-    <div class="pane-head pane-head--end">
-      <HelpHint
-        label="bandwidth, patterns and commands"
-        align="end"
-      >
+    <div class="pane-head">
+      <p class="pane-lede">
         Settings most schedules leave alone: bandwidth and verification, the patterns that decide
         what is skipped, and commands to run around each backup.
-      </HelpHint>
+      </p>
     </div>
     <section class="pane-section">
       <span class="group-label group-label--lg">Options</span>
@@ -145,6 +151,10 @@ const hostsWithoutSnapshotTools = computed(() =>
             label="Dump databases"
           />
         </PaneRow>
+        <DatabaseDumpMismatch
+          v-if="form.database_backup_enabled && hostsWithDumpsOff.length > 0"
+          :hosts="hostsWithDumpsOff"
+        />
         <PaneRow
           title="Filesystem snapshots"
           help="reading a frozen copy of the sources"

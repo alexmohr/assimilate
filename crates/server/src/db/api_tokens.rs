@@ -25,6 +25,8 @@ pub struct ApiTokenRow {
     pub created_at: DateTime<Utc>,
     /// When the token was last used.
     pub last_used_at: Option<DateTime<Utc>>,
+    /// When the token stops working; `None` for one that never expires.
+    pub expires_at: Option<DateTime<Utc>>,
 }
 
 /// Inserts a full-scope API token.
@@ -53,14 +55,34 @@ pub async fn insert_api_token_with_scope(
     token_hash: &str,
     scope: ApiTokenScope,
 ) -> Result<ApiTokenRow, ApiError> {
+    insert_api_token_expiring(pool, user_id, name, token_hash, scope, None).await
+}
+
+/// Inserts an API token limited to `scope` that stops working at
+/// `expires_at`, or never when that is `None`.
+///
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
+pub async fn insert_api_token_expiring(
+    pool: &PgPool,
+    user_id: i64,
+    name: &str,
+    token_hash: &str,
+    scope: ApiTokenScope,
+    expires_at: Option<DateTime<Utc>>,
+) -> Result<ApiTokenRow, ApiError> {
     sqlx::query_as!(
         ApiTokenRow,
-        r#"INSERT INTO api_tokens (user_id, name, token_hash, scope) VALUES ($1, $2, $3, $4)
-           RETURNING id, user_id, name, scope AS "scope: ApiTokenScope", created_at, last_used_at"#,
+        r#"INSERT INTO api_tokens (user_id, name, token_hash, scope, expires_at)
+           VALUES ($1, $2, $3, $4, $5)
+           RETURNING id, user_id, name, scope AS "scope: ApiTokenScope", created_at, last_used_at,
+           expires_at"#,
         user_id,
         name,
         token_hash,
         scope.to_string(),
+        expires_at,
     )
     .fetch_one(pool)
     .await
@@ -76,8 +98,8 @@ pub async fn list_api_tokens_for_user(
 ) -> Result<Vec<ApiTokenRow>, ApiError> {
     sqlx::query_as!(
         ApiTokenRow,
-        r#"SELECT id, user_id, name, scope AS "scope: ApiTokenScope", created_at, last_used_at
-           FROM api_tokens WHERE user_id = $1 ORDER BY created_at DESC"#,
+        r#"SELECT id, user_id, name, scope AS "scope: ApiTokenScope", created_at, last_used_at,
+           expires_at FROM api_tokens WHERE user_id = $1 ORDER BY created_at DESC"#,
         user_id,
     )
     .fetch_all(pool)
@@ -91,8 +113,8 @@ pub async fn list_api_tokens_for_user(
 pub async fn list_all_api_tokens(pool: &PgPool) -> Result<Vec<ApiTokenRow>, ApiError> {
     sqlx::query_as!(
         ApiTokenRow,
-        r#"SELECT id, user_id, name, scope AS "scope: ApiTokenScope", created_at, last_used_at
-           FROM api_tokens ORDER BY created_at DESC"#,
+        r#"SELECT id, user_id, name, scope AS "scope: ApiTokenScope", created_at, last_used_at,
+           expires_at FROM api_tokens ORDER BY created_at DESC"#,
     )
     .fetch_all(pool)
     .await
@@ -108,7 +130,8 @@ pub async fn delete_api_token(pool: &PgPool, token_id: i64) -> Result<ApiTokenRo
     sqlx::query_as!(
         ApiTokenRow,
         r#"DELETE FROM api_tokens WHERE id = $1
-           RETURNING id, user_id, name, scope AS "scope: ApiTokenScope", created_at, last_used_at"#,
+           RETURNING id, user_id, name, scope AS "scope: ApiTokenScope", created_at, last_used_at,
+           expires_at"#,
         token_id
     )
     .fetch_optional(pool)
@@ -162,7 +185,9 @@ pub async fn get_user_by_token_hash(
 ) -> Result<ApiTokenLookupRow, ApiError> {
     let row = sqlx::query_as!(
         ApiTokenLookupRow,
-        r#"SELECT user_id, scope AS "scope: ApiTokenScope" FROM api_tokens WHERE token_hash = $1"#,
+        // An expired token is no token at all: the same 401 as an unknown one.
+        r#"SELECT user_id, scope AS "scope: ApiTokenScope" FROM api_tokens
+           WHERE token_hash = $1 AND (expires_at IS NULL OR expires_at > NOW())"#,
         token_hash,
     )
     .fetch_one(pool)
@@ -197,8 +222,8 @@ pub async fn update_api_token_last_used(pool: &PgPool, token_hash: &str) -> Resu
 /// Returns [`ApiError::Database`] if the database query fails.
 pub async fn touch_monitoring_token(pool: &PgPool, token_hash: &str) -> Result<bool, ApiError> {
     let id = sqlx::query_scalar!(
-        "UPDATE api_tokens SET last_used_at = NOW() WHERE token_hash = $1 AND scope = $2 \
-         RETURNING id",
+        "UPDATE api_tokens SET last_used_at = NOW() WHERE token_hash = $1 AND scope = $2 AND \
+         (expires_at IS NULL OR expires_at > NOW()) RETURNING id",
         token_hash,
         ApiTokenScope::Monitoring.to_string(),
     )

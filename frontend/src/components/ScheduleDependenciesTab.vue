@@ -211,8 +211,6 @@ async function save(): Promise<void> {
       woken if it is set up for that, before the pre-backup commands run. If one does not answer,
       the run is skipped and caught up once it does when the dependency is marked as not always
       online, and fails otherwise."
-    lede-label="dependencies"
-    hint-label="per-agent dependencies"
     :editing="editing"
     :can-edit="hosts.length > 0 && agentIds.length > 0"
     :saving="saving"

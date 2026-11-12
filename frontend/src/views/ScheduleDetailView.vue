@@ -4,6 +4,10 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 -->
 
 <script setup lang="ts">
+import { runLogLink } from '../utils/activityLink'
+import { legacyDetailLink } from '../utils/legacyDetailLink'
+import { useHostDumpSettings } from '../composables/useHostDumpSettings'
+import DatabaseDumpMismatch from '../components/DatabaseDumpMismatch.vue'
 import { ref, computed, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { storeToRefs } from 'pinia'
@@ -45,8 +49,7 @@ import {
 } from '../utils/schedulePayload'
 import { parseLines } from '../utils/validation'
 import { normalizeBackupStatus } from '../utils/backupStatus'
-import { domainParams, isAgentOffline, lastSeenText } from '../utils/agent'
-import { openReportArchive } from '../utils/reportNavigation'
+import { isAgentOffline, lastSeenText } from '../utils/agent'
 import {
   dependencyCheckOutcomeText,
   dependencyWaitBadge,
@@ -57,10 +60,8 @@ import ScheduleHeader from '../components/ScheduleHeader.vue'
 import ScheduleOverviewTab from '../components/ScheduleOverviewTab.vue'
 import ScheduleSettingsTab from '../components/ScheduleSettingsTab.vue'
 import ScheduleBackupsTab from '../components/ScheduleBackupsTab.vue'
-import RunLogTab, { type BackupFilter } from '../components/RunLogTab.vue'
 import { useArchiveDeletionEvents } from '../composables/useArchiveDeletionEvents'
 import { useReportsPager } from '../composables/useReportsPager'
-import { useReportRetry } from '../composables/useReportRetry'
 import { DEFAULT_SCHEDULE_FORM_STATE } from '../types/scheduleForm'
 import type { ScheduleAgentOverrides, ScheduleFormState } from '../types/scheduleForm'
 import BaseSpinner from '../components/BaseSpinner.vue'
@@ -91,6 +92,16 @@ const props = defineProps<{ id: string }>()
 const route = useRoute()
 const router = useRouter()
 
+// An old link (a Logs tab, a moved settings section) lands where that place lives now.
+watch(
+  () => route.query,
+  (query) => {
+    const to = legacyDetailLink(query, { scheduleId: Number(props.id) })
+    if (to) router.replace(to)
+  },
+  { immediate: true },
+)
+
 const { isAdmin, canViewWakeSecrets } = storeToRefs(useAuthStore())
 
 const schedule = ref<ScheduleRow | null>(null)
@@ -119,9 +130,6 @@ const reportsPager = useReportsPager((limit, offset) =>
 const reports = reportsPager.reports
 const reportsLoading = reportsPager.loading
 const reportsError = reportsPager.error
-const filterStatus = ref<BackupFilter>('all')
-const sortAscending = ref(false)
-const expandedReportId = ref<number | null>(null)
 const { success: toastSuccess, error: toastError } = useToast()
 const { onMessage } = useWebSocket()
 const selectedAgentIds = ref<number[]>([])
@@ -219,10 +227,10 @@ const estimatedRemainingSecs = computed<number | null>(() => {
   return Math.max(0, Math.round(estimatedTotal - backupElapsedSecs.value))
 })
 
-type TabId = 'overview' | 'backups' | 'logs' | 'settings'
+type TabId = 'overview' | 'backups' | 'settings'
 
 function isTabId(value: unknown): value is TabId {
-  return value === 'overview' || value === 'backups' || value === 'logs' || value === 'settings'
+  return value === 'overview' || value === 'backups' || value === 'settings'
 }
 
 const activeTab = computed<TabId>({
@@ -251,10 +259,14 @@ const settingsSection = computed<ScheduleSettingsSection>({
 
 /**
  * A run's output, from the Overview's run detail. This schedule's Backups tab
- * is an archive browser and a failed run wrote no archive, so the error lives
- * one level down, on the host's own Logs tab - which renders it in place,
- * expanded.
+ * is an archive browser and a failed run wrote no archive, so the error opens
+ * on the run's own row in the Activity log, expanded.
  */
+/** The schedule's whole run history lives in the Activity log, filtered to it. */
+function openActivityLog(): void {
+  router.push({ path: '/activity', query: { category: 'backup', schedule_id: String(props.id) } })
+}
+
 function openReportDetail(r: ReportRow): void {
   const agent = agentMap.value.get(r.agent_id ?? 0)
   const hostname = agent?.hostname ?? r.hostname
@@ -262,10 +274,7 @@ function openReportDetail(r: ReportRow): void {
     logger.error('cannot open a run whose host is unknown', r.id)
     return
   }
-  router.push({
-    path: `/agents/${encodeURIComponent(hostname)}`,
-    query: { ...domainParams(agent?.domain), tab: 'logs', report: String(r.id) },
-  })
+  router.push(runLogLink({ hostname, scheduleId: Number(props.id), reportId: r.id }))
 }
 
 const scheduleType = computed<ScheduleType>(() => schedule.value?.schedule_type ?? 'backup')
@@ -273,13 +282,11 @@ const isBackup = computed(() => scheduleType.value === 'backup')
 
 /**
  * Backups carries no count: it is the archive browser, and the true archive
- * count isn't known until it loads. Logs can show one - `reportsPager.total`
- * is the server's real total, not just how many pages have been fetched.
+ * count isn't known until it loads.
  */
 const visibleTabs = computed<TabOption<TabId>[]>(() => {
   const tabs: TabOption<TabId>[] = [{ id: 'overview', label: 'Overview' }]
   if (isBackup.value) tabs.push({ id: 'backups', label: 'Backups' })
-  tabs.push({ id: 'logs', label: 'Logs', count: reportsPager.total.value })
   tabs.push({ id: 'settings', label: 'Settings' })
   return tabs
 })
@@ -289,6 +296,20 @@ const agentMap = computed(() => {
   agents.value.forEach((c) => m.set(c.id, c))
   return m
 })
+
+/**
+ * The saved schedule's hosts that have database dumps turned off themselves,
+ * read only while the schedule asks for dumps: on those hosts its archives
+ * hold no databases, which the agent only says in its own log.
+ */
+const { hostsWithDumpsOff: dumpHostsOff } = useHostDumpSettings(() =>
+  schedule.value?.database_backup_enabled
+    ? selectedAgentIds.value.flatMap((id) => {
+        const agent = agentMap.value.get(id)
+        return agent ? [agent] : []
+      })
+    : [],
+)
 
 const headerTypeLabel = computed(() => scheduleTypeLabel(scheduleType.value))
 const headerCronSummary = computed(
@@ -413,19 +434,10 @@ function clearScheduleState(): void {
   health.value = []
   reports.value = []
   // reportsPager's own `total` isn't touched by resetting `reports` above (it
-  // is a separate ref, not derived) - without clearing it too, the Logs tab
-  // badge and "Load more" note would show the previous schedule's count until
+  // is a separate ref, not derived) - without clearing it too, the Backups
+  // tab's "Load more" note would show the previous schedule's count until
   // its own reportsPager.load() call below resolves.
   reportsPager.total.value = 0
-  // Same category of state as reports/total above, just driving the Logs
-  // tab's own UI instead of its data: without resetting these too, a
-  // filter/sort/expanded row left on schedule A's Logs tab would silently
-  // carry over onto schedule B after an in-app navigation that reuses this
-  // component instance, with nothing on screen explaining why the tab
-  // looks empty or differently sorted.
-  filterStatus.value = 'all'
-  sortAscending.value = false
-  expandedReportId.value = null
   failedReportCount.value = 0
   backupRunning.value = false
   backupHostname.value = null
@@ -828,8 +840,6 @@ function findRunningReport(): ReportRow | undefined {
   })
 }
 
-const { retryingReportIds, retry: retryReport } = useReportRetry(loadReports)
-
 function loadMoreReports(): void {
   void reportsPager.loadMore()
 }
@@ -844,14 +854,6 @@ async function cancelBackup(): Promise<void> {
   } finally {
     cancelLoading.value = false
   }
-}
-
-function toggleReport(r: ReportRow): void {
-  expandedReportId.value = expandedReportId.value === r.id ? null : r.id
-}
-
-function openReport(r: ReportRow): void {
-  openReportArchive(router, r)
 }
 
 onMessage('BackupStarted', (payload) => {
@@ -989,13 +991,10 @@ watch(
 // Only a first visit with nothing loaded yet triggers a fetch here - reports
 // are already kept fresh regardless of which tab is active (loadData() on
 // mount, then every WebSocket DataChanged via useArchiveDeletionEvents's
-// reload below). Refetching unconditionally on every switch to this tab
-// used to be harmless when only the Backups tab (no incremental pagination)
-// depended on it, but doing the same for the Logs tab discarded whatever
-// "Load more" progress the reports pager had - so this now only fills a
-// tab that has never loaded anything, not one already showing data.
+// reload below). Refetching on every switch to this tab would discard the
+// "Load more" progress the reports pager has made.
 watch(activeTab, (tab) => {
-  if ((tab === 'backups' || tab === 'logs') && reports.value.length === 0) {
+  if (tab === 'backups' && reports.value.length === 0) {
     loadReports().catch(() => undefined)
   }
 })
@@ -1056,6 +1055,12 @@ watch(activeTab, (tab) => {
         <h1 class="page-title">New Schedule</h1>
       </div>
 
+      <DatabaseDumpMismatch
+        v-if="schedule.database_backup_enabled && dumpHostsOff.length > 0"
+        class="schedule-dump-mismatch"
+        :hosts="dumpHostsOff"
+      />
+
       <BaseTabs
         v-model="activeTab"
         :tabs="visibleTabs"
@@ -1090,7 +1095,7 @@ watch(activeTab, (tab) => {
           :can-check-dependencies="isAdmin"
           :checking-dependency-id="checkingDependencyId"
           @retry="runNow($event)"
-          @open-logs="activeTab = 'logs'"
+          @open-logs="openActivityLog"
           @open-report-detail="openReportDetail"
           @check-dependency="checkDependency"
         />
@@ -1111,25 +1116,6 @@ watch(activeTab, (tab) => {
           :repo-options="repoOptions"
           :is-admin="isAdmin"
           :reload="loadReports"
-          @load-more="loadMoreReports"
-        />
-
-        <RunLogTab
-          v-else-if="activeTab === 'logs'"
-          v-model:filter="filterStatus"
-          v-model:sort-ascending="sortAscending"
-          :reports="reports"
-          :total="reportsPager.total.value"
-          :loading="reportsLoading"
-          :loading-more="reportsPager.loadingMore.value"
-          :error="reportsError"
-          :expanded-report-id="expandedReportId"
-          :highlighted-archive-name="undefined"
-          :retrying-report-ids="retryingReportIds"
-          :pinned-report-id="null"
-          @toggle="toggleReport"
-          @open="openReport"
-          @retry="retryReport"
           @load-more="loadMoreReports"
         />
 
@@ -1266,5 +1252,8 @@ watch(activeTab, (tab) => {
 .error-inline {
   font-size: var(--fs-sm);
   color: var(--danger);
+}
+.schedule-dump-mismatch {
+  margin-bottom: var(--space-6);
 }
 </style>

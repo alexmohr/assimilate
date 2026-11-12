@@ -216,6 +216,7 @@ async fn build_agent_response(state: &AppState, agent: AgentRow) -> AgentRespons
         restart_unavailable_reason,
         last_ssh_user: agent.last_ssh_user,
         machine_id: agent.machine_id,
+        database_backup_enabled: agent.database_backup_enabled,
         power: shared::responses::AgentPowerSettingsResponse {
             wake: shared::responses::HostWakeSettingsResponse {
                 wake_enabled: agent.wake_enabled,

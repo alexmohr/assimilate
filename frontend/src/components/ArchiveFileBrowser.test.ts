@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount, RouterLinkStub } from '@vue/test-utils'
 import { defineComponent, h, nextTick } from 'vue'
 import { createMemoryHistory, createRouter, type Router } from 'vue-router'
@@ -38,6 +38,47 @@ vi.mock('./BaseHostLink.vue', () => ({
 // browser bare, with no router installed. `RouterLinkStub` is what every other
 // spec here stubs it with (`ArchiveSelector`, `ArchiveSelectorRow`).
 const GLOBAL = { stubs: { RouterLink: RouterLinkStub, teleport: true } }
+
+/** The rows of the folder shown, one per entry. */
+function entryRows(wrapper: ReturnType<typeof mount>) {
+  return wrapper.findAll('[data-testid="browser-entry"]')
+}
+
+/** The row of the entry named `name` in the folder shown. */
+function rowNamed(wrapper: ReturnType<typeof mount>, name: string) {
+  const found = entryRows(wrapper).find((r) => r.get('.browser-row-title').text() === name)
+  expect(found, `row ${name}`).toBeTruthy()
+  return found!
+}
+
+function rowNames(wrapper: ReturnType<typeof mount>): string[] {
+  return entryRows(wrapper).map((r) => r.get('.browser-row-title').text())
+}
+
+/** Opens the open archive's menu, which holds what acts on the whole archive. */
+async function openActions(wrapper: ReturnType<typeof mount>): Promise<void> {
+  await wrapper.get('button[aria-label="Archive actions"]').trigger('click')
+  await nextTick()
+}
+
+function menuItem(wrapper: ReturnType<typeof mount>, label: string) {
+  return wrapper.findAll('.archive-menu-item').find((b) => b.text().startsWith(label))
+}
+
+function menuLabels(wrapper: ReturnType<typeof mount>): string[] {
+  return wrapper.findAll('.archive-menu-item').map((b) => b.text())
+}
+
+/** The tab strip over the archive: Files, Changes, Databases, Growth. */
+function tab(wrapper: ReturnType<typeof mount>, label: string) {
+  const found = wrapper.findAll('[role="tab"]').find((t) => t.text() === label)
+  expect(found, `tab ${label}`).toBeTruthy()
+  return found!
+}
+
+function selectedTab(wrapper: ReturnType<typeof mount>): string | undefined {
+  return wrapper.find('[role="tab"][aria-selected="true"]').text()
+}
 
 const toastSuccess = vi.fn()
 const toastError = vi.fn()
@@ -177,9 +218,10 @@ describe('ArchiveFileBrowser', () => {
     })
     serveAgents()
 
-    const restoreBtn = wrapper.find('button[title="Restore whole archive"]')
-    expect(restoreBtn.exists()).toBe(true)
-    await restoreBtn.trigger('click')
+    await openActions(wrapper)
+    const restoreBtn = menuItem(wrapper, 'Restore whole archive...')
+    expect(restoreBtn).toBeDefined()
+    await restoreBtn!.trigger('click')
     await submitRestoreDialog(wrapper)
     return wrapper
   }
@@ -199,18 +241,18 @@ describe('ArchiveFileBrowser', () => {
 
     it('keeps what was picked in one folder while browsing another', async () => {
       const wrapper = await mountWithEntries()
-      const fileRow = wrapper.findAll('tr').find((r) => r.text().includes('readme.txt'))
+      const fileRow = rowNamed(wrapper, 'readme.txt')
       await fileRow!.find('[data-testid="pick-entry"]').setValue(true)
 
       vi.mocked(apiClient.get).mockResolvedValue({ data: { index_status: 'done', entries: [] } })
-      const dirRow = wrapper.findAll('tr').find((r) => r.text().includes('subdir'))
+      const dirRow = rowNamed(wrapper, 'subdir')
       await dirRow!.trigger('click')
       await flushPromises()
 
       expect(wrapper.get('[data-testid="browser-selection"]').text()).toContain('1 selected')
     })
 
-    it('offers no checkbox on the parent row, and select-all leaves it out', async () => {
+    it('offers no parent row to tick, and select-all leaves it out', async () => {
       const wrapper = await mountWithEntries()
       vi.mocked(apiClient.get).mockResolvedValue({
         data: {
@@ -220,13 +262,13 @@ describe('ArchiveFileBrowser', () => {
           ],
         },
       })
-      const dirRow = wrapper.findAll('tr').find((r) => r.text().includes('subdir'))
+      const dirRow = rowNamed(wrapper, 'subdir')
       await dirRow!.trigger('click')
       await flushPromises()
 
-      const parentRow = wrapper.findAll('tbody tr').find((r) => r.text().includes('..'))
-      expect(parentRow).toBeDefined()
-      expect(parentRow!.find('[data-testid="pick-entry"]').exists()).toBe(false)
+      // The path bar above the rows stands for the folder and the one above
+      // it, so neither "." nor ".." is a row to tick.
+      expect(rowNames(wrapper)).toEqual(['inner.txt'])
 
       await wrapper.get('[data-testid="pick-all"]').setValue(true)
       expect(wrapper.get('[data-testid="browser-selection"]').text()).toContain('1 selected')
@@ -259,7 +301,7 @@ describe('ArchiveFileBrowser', () => {
     it('downloads one picked file as itself, without packing a tar', async () => {
       const wrapper = await mountWithEntries()
       const createElementSpy = vi.spyOn(document, 'createElement')
-      const fileRow = wrapper.findAll('tr').find((r) => r.text().includes('readme.txt'))
+      const fileRow = rowNamed(wrapper, 'readme.txt')
       await fileRow!.find('[data-testid="pick-entry"]').setValue(true)
 
       await clickSelectionDownload(wrapper)
@@ -270,6 +312,7 @@ describe('ArchiveFileBrowser', () => {
         .map((r) => r.value as HTMLAnchorElement)
         .at(-1)
       expect(anchor?.getAttribute('href')).toContain('/extract?path=readme.txt')
+      expect(anchor?.download).toBe('readme.txt')
       expect(apiClient.post).not.toHaveBeenCalledWith(
         expect.stringContaining('/download'),
         expect.anything(),
@@ -377,44 +420,140 @@ describe('ArchiveFileBrowser', () => {
     })
   })
 
-  it('goes back to the archive list from the header', async () => {
-    const wrapper = await mountWithEntries()
-    await wrapper.get('.browser-back').trigger('click')
-    expect(wrapper.emitted('back')).toHaveLength(1)
-  })
-
   describe('comparing a file with another archive', () => {
     const current = makeArchive('test-archive', { start: '2026-06-02T12:00:00Z' })
     const earlier = makeArchive('earlier-archive', { start: '2026-06-01T12:00:00Z' })
 
-    it('offers Compare on a regular file once there is another archive', async () => {
+    /** Ticks one file, which is what History and Compare act on. */
+    async function tickReadme(wrapper: ReturnType<typeof mount>): Promise<void> {
+      await rowNamed(wrapper, 'readme.txt').get('[data-testid="pick-entry"]').setValue(true)
+    }
+
+    it('offers Compare on one ticked regular file once there is another archive', async () => {
+      const wrapper = await mountWithEntries({
+        repoId: 5,
+        archive: current,
+        archives: [earlier, current],
+      })
+      expect(wrapper.find('[data-testid="compare-file"]').exists()).toBe(false)
+
+      await tickReadme(wrapper)
+      const buttons = wrapper.findAll('[data-testid="compare-file"]')
+      expect(buttons).toHaveLength(1)
+      expect(buttons[0].attributes('title')).toBe('Compare with another archive')
+    })
+
+    it('offers neither Compare nor History for a folder or for several entries', async () => {
       const wrapper = await mountWithEntries({
         repoId: 5,
         archive: current,
         archives: [earlier, current],
       })
 
-      const buttons = wrapper.findAll('[data-testid="compare-file"]')
-      expect(buttons).toHaveLength(1)
-      expect(buttons[0].attributes('aria-label')).toBe('Compare readme.txt with another archive')
+      await rowNamed(wrapper, 'subdir').get('[data-testid="pick-entry"]').setValue(true)
+      expect(wrapper.find('[data-testid="compare-file"]').exists()).toBe(false)
+      expect(wrapper.find('[data-testid="file-history"]').exists()).toBe(false)
+
+      await tickReadme(wrapper)
+      expect(wrapper.get('[data-testid="browser-selection"]').text()).toContain('2 selected')
+      expect(wrapper.find('[data-testid="compare-file"]').exists()).toBe(false)
+      expect(wrapper.find('[data-testid="file-history"]').exists()).toBe(false)
+    })
+
+    it("keeps Compare and History when a folder's only file is ticked", async () => {
+      const wrapper = await mountWithEntries({
+        repoId: 5,
+        archive: current,
+        archives: [earlier, current],
+      })
+      vi.mocked(apiClient.get).mockResolvedValue({
+        data: {
+          index_status: 'done',
+          entries: [
+            {
+              type: '-',
+              path: 'subdir/only.conf',
+              size: 20,
+              mtime: '2026-06-01T12:00:00Z',
+              mode: '644',
+            },
+          ],
+        },
+      })
+      await rowNamed(wrapper, 'subdir').trigger('click')
+      await flushPromises()
+      await nextTick()
+
+      // Ticking every file of a folder selects the folder; with one file in
+      // it, that is still one file to compare or trace.
+      await rowNamed(wrapper, 'only.conf').get('[data-testid="pick-entry"]').setValue(true)
+      expect(wrapper.find('[data-testid="compare-file"]').exists()).toBe(true)
+      expect(wrapper.find('[data-testid="file-history"]').exists()).toBe(true)
+    })
+
+    it('finds the one file down a chain of folders that hold nothing else', async () => {
+      const wrapper = await mountWithEntries({
+        repoId: 5,
+        archive: current,
+        archives: [earlier, current],
+      })
+      const children: Record<string, object[]> = {
+        subdir: [
+          { type: 'd', path: 'subdir/deep', size: 0, mtime: '2026-06-01T12:00:00Z', mode: '755' },
+        ],
+        'subdir/deep': [
+          {
+            type: '-',
+            path: 'subdir/deep/only.conf',
+            size: 20,
+            mtime: '2026-06-01T12:00:00Z',
+            mode: '644',
+          },
+        ],
+      }
+      vi.mocked(apiClient.get).mockImplementation((_url, config) => {
+        const path = (config?.params as { path?: string } | undefined)?.path ?? ''
+        return Promise.resolve({ data: { index_status: 'done', entries: children[path] ?? [] } })
+      })
+      await rowNamed(wrapper, 'subdir').trigger('click')
+      await flushPromises()
+      await rowNamed(wrapper, 'deep').trigger('click')
+      await flushPromises()
+      await nextTick()
+
+      await rowNamed(wrapper, 'only.conf').get('[data-testid="pick-entry"]').setValue(true)
+      expect(wrapper.find('[data-testid="compare-file"]').exists()).toBe(true)
+      vi.mocked(apiClient.get).mockResolvedValue({ data: { versions: [] } })
+      await wrapper.get('[data-testid="file-history"]').trigger('click')
+      await flushPromises()
+
+      expect(apiClient.get).toHaveBeenCalledWith(
+        '/repos/5/archives/test-archive/file-history',
+        expect.objectContaining({
+          params: expect.objectContaining({ path: 'subdir/deep/only.conf' }),
+        }),
+      )
     })
 
     it('has nothing to compare with when the archive is the only one', async () => {
       const wrapper = await mountWithEntries({ repoId: 5, archive: current, archives: [current] })
+      await tickReadme(wrapper)
 
       expect(wrapper.find('[data-testid="compare-file"]').exists()).toBe(false)
     })
 
     it('offers a file its history even when the archive is the only one', async () => {
       const wrapper = await mountWithEntries({ repoId: 5, archive: current, archives: [current] })
+      await tickReadme(wrapper)
 
       const buttons = wrapper.findAll('[data-testid="file-history"]')
       expect(buttons).toHaveLength(1)
-      expect(buttons[0].attributes('aria-label')).toBe('History of readme.txt')
+      expect(buttons[0].text()).toBe('History')
     })
 
     it('opens and closes a file history', async () => {
       const wrapper = await mountWithEntries({ repoId: 5, archive: current, archives: [current] })
+      await tickReadme(wrapper)
       vi.mocked(apiClient.get).mockResolvedValue({
         data: { path: 'readme.txt', hostname: 'web-01', agent_online: false, entries: [] },
       })
@@ -439,6 +578,7 @@ describe('ArchiveFileBrowser', () => {
         archive: current,
         archives: [earlier, current],
       })
+      await tickReadme(wrapper)
       vi.mocked(apiClient.get).mockResolvedValue({
         data: { status: 'text', added: 0, removed: 0, hunks: [] },
       })
@@ -473,7 +613,8 @@ describe('ArchiveFileBrowser', () => {
     const wrapper = mount(ArchiveFileBrowser, {
       props: { repoId: null, archive: null },
     })
-    expect(wrapper.text()).toContain('Select an archive to browse its contents.')
+    expect(wrapper.text()).toContain('Pick an archive')
+    expect(wrapper.find('[role="tab"]').exists()).toBe(false)
   })
 
   it('renders browser header when archive is provided and contents loaded', async () => {
@@ -483,8 +624,8 @@ describe('ArchiveFileBrowser', () => {
 
     const wrapper = await mountWithWait({ repoId: 5, archive: makeArchive('test-archive') })
 
-    expect(wrapper.find('.browser-title').exists()).toBe(true)
-    expect(wrapper.text()).toContain('test-archive')
+    expect(wrapper.get('.archive-head-name').text()).toBe('test-archive')
+    expect(selectedTab(wrapper)).toBe('Files')
   })
 
   it('shows the archive meta bar with date, original, and dedup size', async () => {
@@ -497,10 +638,10 @@ describe('ArchiveFileBrowser', () => {
       archive: makeArchive('test-archive', { original_size: 2048, deduplicated_size: 1024 }),
     })
 
-    const metaBar = wrapper.find('.archive-meta-bar')
-    expect(metaBar.exists()).toBe(true)
-    expect(metaBar.text()).toContain('2.0 KB')
-    expect(metaBar.text()).toContain('1.0 KB')
+    const facts = wrapper.get('.archive-head-facts')
+    expect(facts.text()).toContain('2.0 KB')
+    expect(facts.text()).toContain('+1.0 KB new')
+    expect(facts.text()).toContain('2026')
   })
 
   it('shows empty directory message when contents are empty', async () => {
@@ -510,7 +651,10 @@ describe('ArchiveFileBrowser', () => {
 
     const wrapper = await mountWithWait({ repoId: 5, archive: makeArchive('test-archive') })
 
-    expect(wrapper.text()).toContain('Empty directory.')
+    expect(wrapper.text()).toContain('This folder is empty.')
+    expect(entryRows(wrapper)).toHaveLength(0)
+    // Nothing to tick, so nothing to select all of.
+    expect(wrapper.get('[data-testid="pick-all"]').attributes('disabled')).toBeDefined()
   })
 
   it('shows error state when contents fail to load', async () => {
@@ -518,20 +662,21 @@ describe('ArchiveFileBrowser', () => {
 
     const wrapper = await mountWithWait({ repoId: 5, archive: makeArchive('test-archive') })
 
-    expect(wrapper.find('.browser-title').exists()).toBe(true)
-    expect(wrapper.text()).toContain('test-archive')
+    expect(wrapper.get('.archive-head-name').text()).toBe('test-archive')
+    expect(wrapper.get('.error-banner').text()).toBe('Repository error')
+    expect(entryRows(wrapper)).toHaveLength(0)
   })
 
   it('shows breadcrumb, directories, and files when API returns entries', async () => {
     const wrapper = await mountWithEntries()
 
-    expect(wrapper.find('.browser-title').exists()).toBe(true)
-    expect(wrapper.text()).toContain('test-archive')
+    expect(wrapper.get('.archive-head-name').text()).toBe('test-archive')
     expect(wrapper.find('.path-crumbs').exists()).toBe(true)
     const crumbs = wrapper.findAll('.crumb')
-    expect(crumbs.length).toBeGreaterThanOrEqual(1)
-    expect(wrapper.text()).toContain('subdir')
-    expect(wrapper.text()).toContain('readme.txt')
+    expect(crumbs.map((c) => c.text())).toEqual(['/'])
+    expect(crumbs[0]!.attributes('aria-current')).toBe('location')
+    // Folders first, then files, each by name.
+    expect(rowNames(wrapper)).toEqual(['subdir', 'readme.txt'])
   })
 
   it('clicking breadcrumb button triggers navigateTo', async () => {
@@ -540,7 +685,7 @@ describe('ArchiveFileBrowser', () => {
     const callCountBefore = vi.mocked(apiClient.get).mock.calls.length
     const crumb = wrapper.find('.crumb')
     expect(crumb.exists()).toBe(true)
-    expect(crumb.text()).toBe('~')
+    expect(crumb.text()).toBe('/')
     await crumb.trigger('click')
     await flushPromises()
     await nextTick()
@@ -548,44 +693,29 @@ describe('ArchiveFileBrowser', () => {
     expect(vi.mocked(apiClient.get).mock.calls.length).toBeGreaterThan(callCountBefore)
   })
 
-  it('renders directory rows as clickable', async () => {
+  it('opens a folder from its row, and ticks a file from its row', async () => {
     const wrapper = await mountWithEntries()
 
-    const clickableRows = wrapper.findAll('tr.clickable')
-    // Directory entries (., subdir) get clickable class; readme.txt does not
-    expect(clickableRows.length).toBe(2)
-    // Verify the subdir row is among the clickable rows
-    const subdirRow = clickableRows.find((r) => r.text().includes('subdir'))
-    expect(subdirRow).toBeTruthy()
-  })
+    const subdir = rowNamed(wrapper, 'subdir')
+    expect(subdir.classes()).toContain('browser-row--clickable')
+    // A folder's name is a button of its own, so it opens by keyboard too.
+    expect(subdir.get('.browser-open').text()).toBe('subdir')
+    expect(rowNamed(wrapper, 'readme.txt').find('.browser-open').exists()).toBe(false)
 
-  it('downloads one file from its own row, not the whole archive', async () => {
-    // The header now carries the whole-archive Download, so `.btn-ghost`
-    // resolves there first: the per-row action needs selecting explicitly or
-    // it goes untested.
-    const wrapper = await mountWithEntries()
-
-    const createElementSpy = vi.spyOn(document, 'createElement')
-    const fileRow = wrapper.findAll('tr').find((r) => r.text().includes('readme.txt'))
-    expect(fileRow).toBeDefined()
-
-    await fileRow!.find('.td-action button[title="Download"]').trigger('click')
+    await rowNamed(wrapper, 'readme.txt').trigger('click')
     await flushPromises()
+    expect(wrapper.get('[data-testid="browser-selection"]').text()).toContain('1 selected')
+    expect(rowNamed(wrapper, 'readme.txt').classes()).toContain('browser-row--selected')
 
-    const anchor = createElementSpy.mock.results
-      .filter((_, i) => createElementSpy.mock.calls[i][0] === 'a')
-      .map((r) => r.value as HTMLAnchorElement)
-      .at(-1)
-    expect(anchor?.getAttribute('href')).toContain('/extract?path=readme.txt')
-    expect(anchor?.download).toBe('readme.txt')
-
-    // `resetAllMocks` clears calls but leaves the spy installed, and the next
-    // test spies on document.createElement too - restore it so its own anchor
-    // count is its own.
-    createElementSpy.mockRestore()
+    await rowNamed(wrapper, 'subdir').trigger('click')
+    await flushPromises()
+    expect(vi.mocked(apiClient.get)).toHaveBeenLastCalledWith(
+      expect.stringContaining('/contents'),
+      expect.objectContaining({ params: { path: 'subdir' } }),
+    )
   })
 
-  it('restores the entries ticked in the table', async () => {
+  it('restores the entries ticked in the list', async () => {
     vi.mocked(apiClient.post).mockResolvedValue({ data: { success: true } })
 
     const wrapper = await mountWithEntries({
@@ -595,11 +725,11 @@ describe('ArchiveFileBrowser', () => {
     })
     serveAgents()
 
-    const fileRow = wrapper.findAll('tr').find((r) => r.text().includes('readme.txt'))
+    const fileRow = rowNamed(wrapper, 'readme.txt')
     await fileRow!.find('[data-testid="pick-entry"]').setValue(true)
     const bar = wrapper.get('[data-testid="browser-selection"]')
-    expect(bar.text()).toContain('1 selected · 1.0 KB')
-    expect(bar.text()).toContain('to their original paths on web-server-01')
+    expect(bar.text()).toContain('1 selected · 1.0 KB · 1 file')
+    expect(bar.text()).toContain('Restores to web-server-01, at the original paths or elsewhere')
 
     await bar.get('[data-testid="restore-picked"]').trigger('click')
     await submitRestoreDialog(wrapper)
@@ -610,21 +740,29 @@ describe('ArchiveFileBrowser', () => {
     )
   })
 
-  it('download button renders in action column and triggers download', async () => {
+  it('downloads the whole archive from the archive menu', async () => {
     const wrapper = await mountWithEntries()
 
     const createElementSpy = vi.spyOn(document, 'createElement')
     const appendChildSpy = vi.spyOn(document.body, 'appendChild')
     const removeChildSpy = vi.spyOn(document.body, 'removeChild')
-    const downloadBtn = wrapper.find('button[title="Download whole archive"]')
-    expect(downloadBtn.exists()).toBe(true)
-    await downloadBtn.trigger('click')
+    await openActions(wrapper)
+    const downloadBtn = menuItem(wrapper, 'Download')
+    expect(downloadBtn).toBeDefined()
+    await downloadBtn!.trigger('click')
     await flushPromises()
     await nextTick()
 
     // downloadEntry creates an anchor element and appends it to body
     const anchorCalls = createElementSpy.mock.calls.filter(([tag]) => tag === 'a')
     expect(anchorCalls.length).toBe(1)
+    const anchor = createElementSpy.mock.results
+      .filter((_, i) => createElementSpy.mock.calls[i][0] === 'a')
+      .map((r) => r.value as HTMLAnchorElement)[0]
+    expect(anchor?.getAttribute('href')).toBe('/api/repos/5/archives/test-archive/export')
+    expect(anchor?.download).toBe('test-archive.tar.lz4')
+    // The menu closes once its action has run.
+    expect(wrapper.find('.archive-menu-item').exists()).toBe(false)
     expect(appendChildSpy).toHaveBeenCalledWith(expect.any(HTMLAnchorElement))
     expect(removeChildSpy).toHaveBeenCalledWith(expect.any(HTMLAnchorElement))
     createElementSpy.mockRestore()
@@ -639,19 +777,49 @@ describe('ArchiveFileBrowser', () => {
       isAdmin: false,
     })
 
-    expect(wrapper.findAll('button[title*="Restore"]').length).toBe(0)
-    expect(wrapper.findAll('button[title*="Delete"]').length).toBe(0)
+    await openActions(wrapper)
+    expect(menuLabels(wrapper)).toEqual([
+      'Download',
+      'Compare with another archive',
+      'Copy archive name',
+    ])
+    await wrapper.get('[data-testid="pick-all"]').setValue(true)
+    expect(wrapper.find('[data-testid="restore-picked"]').exists()).toBe(false)
+    expect(wrapper.get('[data-testid="browser-selection"]').text()).not.toContain('Restores to')
   })
 
-  it('shows restore buttons and a whole-archive delete button when isAdmin is true', async () => {
+  it('offers restoring and deleting the whole archive when isAdmin is true', async () => {
     const wrapper = await mountWithEntries({
       repoId: 5,
       archive: makeArchive('test-archive'),
       isAdmin: true,
     })
 
-    expect(wrapper.findAll('button[title*="Restore"]').length).toBeGreaterThan(0)
-    expect(wrapper.find('button[title="Delete whole archive"]').exists()).toBe(true)
+    await openActions(wrapper)
+    expect(menuLabels(wrapper)).toEqual([
+      'Restore whole archive...',
+      'Download',
+      'Compare with another archive',
+      'Copy archive name',
+      'Delete archive...',
+    ])
+    await wrapper.get('[data-testid="pick-all"]').setValue(true)
+    expect(wrapper.find('[data-testid="restore-picked"]').exists()).toBe(true)
+  })
+
+  it('opens the Changes tab from the menu’s compare entry', async () => {
+    const wrapper = await mountWithEntries()
+    vi.mocked(apiClient.get).mockResolvedValue({
+      data: { added: [], removed: [], modified: [], total_changes: 0 },
+    })
+
+    await openActions(wrapper)
+    await menuItem(wrapper, 'Compare with another archive')!.trigger('click')
+    await flushPromises()
+
+    expect(selectedTab(wrapper)).toBe('Changes')
+    expect(wrapper.find('[data-testid="archive-diff"]').exists()).toBe(true)
+    expect(wrapper.find('.archive-pathbar').exists()).toBe(false)
   })
 
   it('restoring the whole archive follows it with toasts', async () => {
@@ -692,7 +860,7 @@ describe('ArchiveFileBrowser', () => {
     expect(toastInfo).not.toHaveBeenCalled()
   })
 
-  it('puts the whole-archive actions in the header, not on a hidden table row', async () => {
+  it('puts the whole-archive actions in the header menu, not on a row', async () => {
     // Download, restore and delete used to be reachable only through the file
     // table's "." row, with delete transparent until the pointer hovered it.
     const wrapper = await mountWithEntries({
@@ -701,17 +869,130 @@ describe('ArchiveFileBrowser', () => {
       isAdmin: true,
     })
 
-    const header = wrapper.find('.browser-actions')
-    expect(header.exists()).toBe(true)
-    expect(header.find('button[title="Download whole archive"]').text()).toContain('Download')
-    expect(header.find('button[title="Restore whole archive"]').text()).toContain('Restore')
-    expect(header.find('button[title="Delete whole archive"]').text()).toContain('Delete')
+    const header = wrapper.get('.archive-head')
+    await header.get('button[aria-label="Archive actions"]').trigger('click')
+    const menu = wrapper.get('.archive-head [role="menu"]')
+    expect(menu.text()).toContain('Download')
+    expect(menu.text()).toContain('Restore whole archive...')
+    expect(menu.text()).toContain('Delete archive...')
 
-    // The table's action column keeps per-entry download and compare only.
-    const rowActions = wrapper.findAll('.td-action')
-    for (const cell of rowActions) {
-      expect(cell.find('button[title*="Delete"]').exists()).toBe(false)
+    // A row carries only its own checkbox and, for a folder, the name that opens it.
+    for (const row of entryRows(wrapper)) {
+      const controls = row.findAll('button, input').filter((c) => !c.classes('browser-open'))
+      expect(controls.map((c) => c.attributes('data-testid'))).toEqual(['pick-entry'])
     }
+  })
+
+  describe('copying the archive name', () => {
+    function stubClipboard(writeText: (text: string) => Promise<void>): void {
+      Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true })
+    }
+
+    afterEach(() => {
+      Reflect.deleteProperty(navigator, 'clipboard')
+    })
+
+    it('copies the name from the archive menu and says so', async () => {
+      const writeText = vi.fn().mockResolvedValue(undefined)
+      stubClipboard(writeText)
+      const wrapper = await mountWithEntries()
+
+      await openActions(wrapper)
+      await menuItem(wrapper, 'Copy archive name')!.trigger('click')
+      await flushPromises()
+
+      expect(writeText).toHaveBeenCalledWith('test-archive')
+      expect(toastSuccess).toHaveBeenCalledWith('Archive name copied')
+      expect(toastError).not.toHaveBeenCalled()
+    })
+
+    it('says why when the clipboard refuses the copy', async () => {
+      stubClipboard(vi.fn().mockRejectedValue(new Error('Clipboard blocked')))
+      const wrapper = await mountWithEntries()
+
+      await openActions(wrapper)
+      await menuItem(wrapper, 'Copy archive name')!.trigger('click')
+      await flushPromises()
+
+      expect(toastError).toHaveBeenCalledWith('Clipboard blocked')
+      expect(toastSuccess).not.toHaveBeenCalled()
+    })
+  })
+
+  it("opens a folder from its name's own button", async () => {
+    const wrapper = await mountWithEntries()
+
+    await rowNamed(wrapper, 'subdir').get('.browser-open').trigger('click')
+    await flushPromises()
+
+    expect(vi.mocked(apiClient.get)).toHaveBeenLastCalledWith(
+      expect.stringContaining('/contents'),
+      expect.objectContaining({ params: { path: 'subdir' } }),
+    )
+  })
+
+  describe('revealing a search match', () => {
+    async function mountRevealing(reveal: { archiveKey: string; path: string; isDir: boolean }) {
+      vi.mocked(apiClient.get).mockResolvedValue({
+        data: { index_status: 'done', entries: [] },
+      })
+      const wrapper = mount(ArchiveFileBrowser, {
+        props: {
+          repoId: 5,
+          archive: makeArchive('test-archive'),
+          archiveKey: '5/test-archive',
+          reveal,
+        },
+        global: GLOBAL,
+      })
+      await flushPromises()
+      await nextTick()
+      return wrapper
+    }
+
+    it('opens the folder a found file sits in, with the file ticked', async () => {
+      const wrapper = await mountRevealing({
+        archiveKey: '5/test-archive',
+        path: 'etc/nginx/nginx.conf',
+        isDir: false,
+      })
+
+      expect(vi.mocked(apiClient.get)).toHaveBeenLastCalledWith(
+        expect.stringContaining('/contents'),
+        expect.objectContaining({ params: { path: 'etc/nginx' } }),
+      )
+      expect(wrapper.get('[data-testid="browser-selection"]').text()).toContain('1 selected')
+      expect(wrapper.emitted('revealed')).toEqual([[]])
+    })
+
+    it('opens a found folder itself, ticking nothing', async () => {
+      const wrapper = await mountRevealing({
+        archiveKey: '5/test-archive',
+        path: 'etc/nginx',
+        isDir: true,
+      })
+
+      expect(vi.mocked(apiClient.get)).toHaveBeenLastCalledWith(
+        expect.stringContaining('/contents'),
+        expect.objectContaining({ params: { path: 'etc/nginx' } }),
+      )
+      expect(wrapper.find('[data-testid="browser-selection"]').exists()).toBe(false)
+      expect(wrapper.emitted('revealed')).toEqual([[]])
+    })
+
+    it('waits while another archive is open', async () => {
+      const wrapper = await mountRevealing({
+        archiveKey: '5/other-archive',
+        path: 'etc/nginx/nginx.conf',
+        isDir: false,
+      })
+
+      expect(wrapper.emitted('revealed')).toBeUndefined()
+      expect(vi.mocked(apiClient.get)).not.toHaveBeenCalledWith(
+        expect.stringContaining('/contents'),
+        expect.objectContaining({ params: { path: 'etc/nginx' } }),
+      )
+    })
   })
 
   it('names the archive and its host beside the file list', async () => {
@@ -720,8 +1001,8 @@ describe('ArchiveFileBrowser', () => {
       archive: makeArchive('test-archive'),
     })
 
-    expect(wrapper.find('.browser-title-name').text()).toBe('test-archive')
-    expect(wrapper.find('.archive-meta-bar .host-link').text()).toBe('web-server-01')
+    expect(wrapper.get('.archive-head-name').text()).toBe('test-archive')
+    expect(wrapper.get('.archive-head-facts .host-link').text()).toBe('web-server-01')
   })
 
   // Download, restore and - above all - Delete in this same header act on one
@@ -741,7 +1022,7 @@ describe('ArchiveFileBrowser', () => {
 
   it('leaves the repository chip off when the caller names no repository', async () => {
     const wrapper = await mountWithEntries({ repoId: 5, archive: makeArchive('test-archive') })
-    expect(wrapper.find('.archive-meta-bar .repo-link').exists()).toBe(false)
+    expect(wrapper.get('.archive-head-facts').findComponent(RouterLinkStub).exists()).toBe(false)
   })
 
   it('names the host borg recorded when no agent claims the archive', async () => {
@@ -756,164 +1037,68 @@ describe('ArchiveFileBrowser', () => {
 
     // The agent hostname is meaningless on an unmatched archive - it is
     // whichever agent the name happened to resemble, not its origin.
-    expect(wrapper.find('.archive-meta-bar .host-link').text()).toBe('legacy-nas')
+    expect(wrapper.get('.archive-head-facts .host-link').text()).toBe('legacy-nas')
   })
 
-  it('offers a way back up that is disabled at the archive root', async () => {
-    const wrapper = await mountWithEntries()
-
-    const up = wrapper.find('.browser-up')
-    expect(up.attributes('disabled')).toBeDefined()
-
-    const subdirRow = wrapper.findAll('tr.clickable').find((r) => r.text().includes('subdir'))
-    await subdirRow!.trigger('click')
-    await flushPromises()
-    await nextTick()
-
-    expect(wrapper.find('.browser-up').attributes('disabled')).toBeUndefined()
-
-    const callsBefore = vi.mocked(apiClient.get).mock.calls.length
-    await wrapper.find('.browser-up').trigger('click')
-    await flushPromises()
-    await nextTick()
-
-    expect(vi.mocked(apiClient.get).mock.calls.length).toBe(callsBefore + 1)
-    expect(wrapper.findAll('.crumb')).toHaveLength(1)
-  })
-
-  it('clicking the whole-archive delete button emits delete-archive with the archive', async () => {
+  it('the menu delete entry emits delete-archive with the archive', async () => {
     const archive = makeArchive('test-archive')
     const wrapper = await mountWithEntries({ repoId: 5, archive, isAdmin: true })
 
-    const deleteBtn = wrapper.find('button[title="Delete whole archive"]')
-    expect(deleteBtn.exists()).toBe(true)
-    await deleteBtn.trigger('click')
+    await openActions(wrapper)
+    const deleteBtn = menuItem(wrapper, 'Delete archive...')
+    expect(deleteBtn).toBeDefined()
+    expect(deleteBtn!.classes()).toContain('overflow-menu-item--danger')
+    await deleteBtn!.trigger('click')
 
     expect(wrapper.emitted('delete-archive')).toBeTruthy()
     expect(wrapper.emitted('delete-archive')?.[0]).toEqual([archive])
   })
 
-  it('disables the whole-archive delete button and blocks the emit while deleting is true', async () => {
+  it('disables the menu delete entry and blocks the emit while deleting is true', async () => {
     const archive = makeArchive('test-archive')
     const wrapper = await mountWithEntries({ repoId: 5, archive, isAdmin: true, deleting: true })
 
+    expect(wrapper.get('.archive-head-deleting').text()).toBe('Deleting')
+    await openActions(wrapper)
     const deleteBtn = wrapper.find('button[title="Deletion in progress"]')
     expect(deleteBtn.exists()).toBe(true)
+    expect(deleteBtn.text()).toBe('Deleting...')
     expect(deleteBtn.attributes('disabled')).toBeDefined()
-    expect(wrapper.find('button[title="Delete whole archive"]').exists()).toBe(false)
+    expect(menuItem(wrapper, 'Delete archive...')).toBeUndefined()
 
     await deleteBtn.trigger('click')
 
     expect(wrapper.emitted('delete-archive')).toBeFalsy()
   })
 
-  it('renders filter inputs and handles interaction', async () => {
-    const wrapper = await mountWithEntries()
-
-    expect(wrapper.find('.data-table').exists()).toBe(true)
-    const filterInputs = wrapper.findAll('.filter-input')
-    expect(filterInputs.length).toBe(3)
-    const nameInput = filterInputs[0]
-    expect(nameInput.element.getAttribute('placeholder')).toBe('Filter name...')
-    await nameInput.setValue('readme')
-    await nameInput.trigger('input')
-  })
-
-  it('filters files by display name', async () => {
-    const wrapper = await mountWithEntries()
-
-    const nameInput = wrapper.findAll('.filter-input')[0]
-    await nameInput.setValue('readme')
-    await nameInput.trigger('input')
-    await nextTick()
-
-    // The DataTable should now show only matching rows
-    const rows = wrapper.findAll('tr')
-    const visibleNames = rows
-      .filter((r) => !r.classes().includes('p-datatable-header'))
-      .map((r) => r.text())
-    expect(visibleNames.some((t) => t.includes('readme.txt'))).toBe(true)
-  })
-
-  it('filters files by display size', async () => {
-    const wrapper = await mountWithEntries()
-
-    const rowsBefore = wrapper
-      .findAll('tr')
-      .filter((r) => !r.classes().includes('p-datatable-header'))
-    const sizeInput = wrapper.findAll('.filter-input')[1]
-    await sizeInput.setValue('1.0')
-    await sizeInput.trigger('input')
-    await nextTick()
-
-    const rows = wrapper.findAll('tr').filter((r) => !r.classes().includes('p-datatable-header'))
-    const visibleSizes = rows.map((r) => r.text())
-    expect(visibleSizes.some((t) => t.includes('1.0 KB'))).toBe(true)
-    expect(rows.length).toBeLessThan(rowsBefore.length)
-  })
-
-  it('clicking a sortable column header reorders rows by that field', async () => {
+  it('lists folders first, then files, each by name', async () => {
     vi.mocked(apiClient.get).mockResolvedValue({
       data: {
         index_status: 'done',
         entries: [
           { type: '-', path: 'zebra.txt', size: 10, mtime: '2026-06-01T12:00:00Z', mode: '644' },
+          { type: 'd', path: 'logs', size: 0, mtime: '2026-06-01T12:00:00Z', mode: '755' },
           { type: '-', path: 'apple.txt', size: 20, mtime: '2026-06-01T12:00:00Z', mode: '644' },
+          { type: 'd', path: 'bin', size: 0, mtime: '2026-06-01T12:00:00Z', mode: '755' },
         ],
       },
     })
-    const wrapper = mount(ArchiveFileBrowser, {
-      props: { repoId: 5, archive: makeArchive('test-archive') },
-    })
-    await flushPromises()
-    await nextTick()
+    const wrapper = await mountWithWait({ repoId: 5, archive: makeArchive('test-archive') })
 
-    const nameHeader = wrapper.findAll('th').find((h) => h.text().includes('Name'))
-    expect(nameHeader).toBeTruthy()
-
-    // The initial render is already ascending by name, so the first click
-    // (ascending) is a no-op and the second click (descending) is the one
-    // that proves the header is actually wired up to sorting.
-    await nameHeader!.trigger('click')
-    await nextTick()
-    await nameHeader!.trigger('click')
-    await nextTick()
-
-    const fileRows = wrapper
-      .findAll('tbody tr')
-      .map((r) => r.text())
-      .filter((t) => t.includes('.txt'))
-    expect(fileRows[0]).toContain('zebra.txt')
-    expect(fileRows[1]).toContain('apple.txt')
+    expect(rowNames(wrapper)).toEqual(['bin', 'logs', 'apple.txt', 'zebra.txt'])
+    // A file's facts say when it was last modified; its size sits on the right.
+    const apple = rowNamed(wrapper, 'apple.txt')
+    expect(apple.get('.browser-row-facts').text()).toMatch(/^modified /)
+    expect(apple.get('.browser-row-size').text()).toBe('20.0 B')
   })
 
-  it('filters files by display date', async () => {
+  it('shows no row for the folder itself, so nothing reopens it', async () => {
     const wrapper = await mountWithEntries()
 
-    const mtimeInput = wrapper.findAll('.filter-input')[2]
-    await mtimeInput.setValue('2026')
-    await mtimeInput.trigger('input')
-    await nextTick()
-
-    const rows = wrapper.findAll('tr').filter((r) => !r.classes().includes('p-datatable-header'))
-    const visibleDates = rows.map((r) => r.text())
-    expect(visibleDates.some((t) => t.includes('2026'))).toBe(true)
-    expect(rows.length).toBeGreaterThan(0)
-  })
-
-  it('clicking the dot-directory row does NOT navigate', async () => {
-    const wrapper = await mountWithEntries()
-
-    const dotRow = wrapper.findAll('tr.clickable').find((r) => r.text().includes('.'))
-    expect(dotRow).toBeTruthy()
-    const callCountBefore = vi.mocked(apiClient.get).mock.calls.length
-
-    await dotRow!.trigger('click')
-    await flushPromises()
-    await nextTick()
-
-    // Verify no new API calls were made (the '.' entry should not navigate)
-    expect(vi.mocked(apiClient.get).mock.calls.length).toBe(callCountBefore)
+    // The "." entry the listing carries stands for the folder shown; the path
+    // bar does its job, so it is no row of its own to click.
+    expect(rowNames(wrapper)).not.toContain('.')
+    expect(rowNames(wrapper)).not.toContain('..')
   })
 
   it('calls stopPolling on unmount', async () => {
@@ -953,9 +1138,9 @@ describe('ArchiveFileBrowser', () => {
       isAdmin: true,
     })
     vi.mocked(apiClient.get).mockResolvedValue({ data: { dumps: [makeDatabaseDump()] } })
-    await wrapper.findAll('.browser-view button')[1]!.trigger('click')
+    await tab(wrapper, 'Databases').trigger('click')
     await flushPromises()
-    expect(wrapper.find('.browser-title-label').text()).toBe('Databases')
+    expect(selectedTab(wrapper)).toBe('Databases')
 
     vi.mocked(apiClient.get).mockResolvedValue({
       data: { index_status: 'done', entries: [] },
@@ -963,7 +1148,7 @@ describe('ArchiveFileBrowser', () => {
     await wrapper.setProps({ archive: makeArchive('second-archive') })
     await flushPromises()
 
-    expect(wrapper.find('.browser-title-label').text()).toBe('Files')
+    expect(selectedTab(wrapper)).toBe('Files')
     expect(wrapper.find('[data-testid="archive-database-dumps"]').exists()).toBe(false)
   })
 
@@ -1023,22 +1208,19 @@ describe('ArchiveFileBrowser', () => {
       return mountWithWait({ repoId: 5, archive: makeArchive('test-archive') })
     }
 
-    function row(wrapper: ReturnType<typeof mount>, name: string) {
-      const found = wrapper.findAll('tbody tr').find((r) => r.find('.name-text').text() === name)
-      expect(found, name).toBeTruthy()
-      return found!
-    }
+    const row = rowNamed
 
     it('marks each link and names its target, and leaves other rows alone', async () => {
       const wrapper = await mountWithLinks()
 
       const current = row(wrapper, 'current')
-      expect(current.get('[data-testid="entry-link"]').text()).toContain('Link')
+      expect(current.get('[data-testid="entry-link"]').text()).toContain('link')
       expect(current.get('[data-testid="link-target"]').text()).toBe('releases/2')
-      expect(current.get('.td-name').attributes('title')).toBe(
+      expect(current.get('.browser-row-title [title]').attributes('title')).toBe(
         'Symbolic link: /current → releases/2. Restoring it brings back the link, not what it points to.',
       )
-      expect(current.get('.td-size').text()).toBe('-')
+      // A link has no size of its own to show.
+      expect(current.find('.browser-row-size').exists()).toBe(false)
       expect(row(wrapper, 'readme.txt').find('[data-testid="entry-link"]').exists()).toBe(false)
       expect(row(wrapper, 'releases').find('[data-testid="entry-link"]').exists()).toBe(false)
     })
@@ -1049,23 +1231,29 @@ describe('ArchiveFileBrowser', () => {
       const localtime = row(wrapper, 'localtime')
       expect(localtime.get('[data-testid="link-target"]').element.tagName).toBe('SPAN')
       expect(localtime.text()).toContain('not in archive')
-      expect(localtime.classes()).not.toContain('clickable')
+      expect(localtime.find('.browser-open').exists()).toBe(false)
+      // A click on the row ticks the link itself rather than opening anything.
+      const before = vi.mocked(apiClient.get).mock.calls.length
+      await localtime.trigger('click')
+      await flushPromises()
+      expect(vi.mocked(apiClient.get).mock.calls.length).toBe(before)
+      expect(wrapper.get('[data-testid="browser-selection"]').text()).toContain('1 selected')
     })
 
     it('marks a link whose target the index does not record, without a target', async () => {
       const wrapper = await mountWithLinks()
 
       const untold = row(wrapper, 'untold')
-      expect(untold.get('[data-testid="entry-link"]').text()).toBe('Link')
+      expect(untold.get('[data-testid="entry-link"]').text()).toBe('link')
       expect(untold.find('[data-testid="link-target"]').exists()).toBe(false)
-      expect(untold.classes()).not.toContain('clickable')
+      expect(untold.find('.browser-open').exists()).toBe(false)
     })
 
     it('opens a folder target from its row', async () => {
       const wrapper = await mountWithLinks()
 
       const current = row(wrapper, 'current')
-      expect(current.classes()).toContain('clickable')
+      expect(current.find('.browser-open').exists()).toBe(true)
       await current.trigger('click')
       await flushPromises()
 
@@ -1079,7 +1267,7 @@ describe('ArchiveFileBrowser', () => {
       const wrapper = await mountWithLinks()
 
       const env = row(wrapper, '.env')
-      expect(env.classes()).not.toContain('clickable')
+      expect(env.find('.browser-open').exists()).toBe(false)
       await env.get('button[data-testid="link-target"]').trigger('click')
       await flushPromises()
 
@@ -1094,9 +1282,7 @@ describe('ArchiveFileBrowser', () => {
     const wrapper = await mountWithEntries()
     const callCountBefore = vi.mocked(apiClient.get).mock.calls.length
 
-    const subdirRow = wrapper.findAll('tr.clickable').find((r) => r.text().includes('subdir'))
-    expect(subdirRow).toBeTruthy()
-    await subdirRow!.trigger('click')
+    await rowNamed(wrapper, 'subdir').trigger('click')
     await flushPromises()
     await nextTick()
 
@@ -1107,9 +1293,8 @@ describe('ArchiveFileBrowser', () => {
     )
 
     let crumbs = wrapper.findAll('.crumb')
-    expect(crumbs.length).toBe(2)
-    expect(crumbs[0].text()).toBe('~')
-    expect(crumbs[1].text()).toBe('subdir')
+    expect(crumbs.map((c) => c.text())).toEqual(['/', 'subdir'])
+    expect(crumbs[1].attributes('aria-current')).toBe('location')
 
     await crumbs[0].trigger('click')
     await flushPromises()
@@ -1117,11 +1302,10 @@ describe('ArchiveFileBrowser', () => {
 
     expect(vi.mocked(apiClient.get).mock.calls.length).toBe(callCountBefore + 2)
     crumbs = wrapper.findAll('.crumb')
-    expect(crumbs.length).toBe(1)
-    expect(crumbs[0].text()).toBe('~')
+    expect(crumbs.map((c) => c.text())).toEqual(['/'])
   })
 
-  it('download button creates a download link', async () => {
+  it('the menu download creates a download link', async () => {
     vi.mocked(apiClient.get).mockResolvedValue({
       data: {
         index_status: 'done',
@@ -1137,13 +1321,15 @@ describe('ArchiveFileBrowser', () => {
 
     const wrapper = mount(ArchiveFileBrowser, {
       props: { repoId: 5, archive: makeArchive('test-archive') },
+      global: GLOBAL,
     })
 
     await flushPromises()
     await nextTick()
-    const downloadBtn = wrapper.find('button[title="Download whole archive"]')
-    expect(downloadBtn.exists()).toBe(true)
-    await downloadBtn.trigger('click')
+    await openActions(wrapper)
+    const downloadBtn = menuItem(wrapper, 'Download')
+    expect(downloadBtn).toBeDefined()
+    await downloadBtn!.trigger('click')
 
     expect(createElementSpy).toHaveBeenCalledWith('a')
     expect(appendChildSpy).toHaveBeenCalled()
@@ -1152,28 +1338,6 @@ describe('ArchiveFileBrowser', () => {
     createElementSpy.mockRestore()
     appendChildSpy.mockRestore()
     removeChildSpy.mockRestore()
-  })
-
-  it('typing in filter inputs covers v-model and input callbacks', async () => {
-    const wrapper = await mountWithEntries()
-
-    const inputs = wrapper.findAll('input')
-    const nameInput = inputs.find((el) => el.attributes('placeholder') === 'Filter name...')
-    const sizeInput = inputs.find((el) => el.attributes('placeholder') === 'Filter size...')
-    const dateInput = inputs.find((el) => el.attributes('placeholder') === 'Filter date...')
-
-    expect(nameInput).toBeTruthy()
-    expect(sizeInput).toBeTruthy()
-    expect(dateInput).toBeTruthy()
-
-    await nameInput!.setValue('test')
-    await sizeInput!.setValue('1024')
-    await dateInput!.setValue('2026')
-
-    await nextTick()
-
-    const el = nameInput!.element as HTMLInputElement
-    expect(el.value).toBe('test')
   })
 
   it('shows indexing spinner when index_status is indexing', async () => {
@@ -1204,25 +1368,25 @@ describe('ArchiveFileBrowser', () => {
     })
     vi.mocked(apiClient.get).mockResolvedValue({ data: { dumps: [makeDatabaseDump()] } })
 
-    const views = wrapper.findAll('.browser-view button')
-    expect(views.map((b) => b.text())).toEqual(['Files', 'Databases', 'Growth'])
+    const views = wrapper.findAll('[role="tab"]')
+    expect(views.map((b) => b.text())).toEqual(['Files', 'Changes', 'Databases', 'Growth'])
     // The dumps are read only once the view is opened.
     expect(apiClient.get).not.toHaveBeenCalledWith('/repos/5/archives/test-archive/databases')
 
-    await views[1]!.trigger('click')
+    await tab(wrapper, 'Databases').trigger('click')
     await flushPromises()
 
     expect(apiClient.get).toHaveBeenCalledWith('/repos/5/archives/test-archive/databases')
-    expect(wrapper.find('.browser-title-label').text()).toBe('Databases')
-    expect(wrapper.find('.browser-path').exists()).toBe(false)
+    expect(selectedTab(wrapper)).toBe('Databases')
+    expect(wrapper.find('.archive-pathbar').exists()).toBe(false)
     const dumps = wrapper.find('[data-testid="archive-database-dumps"]')
     expect(dumps.text()).toContain('orders')
     expect(dumps.text()).toContain('shop/orders-db')
     expect(dumps.find('button[title="Restore orders"]').exists()).toBe(true)
 
-    await views[0]!.trigger('click')
-    expect(wrapper.find('.browser-title-label').text()).toBe('Files')
-    expect(wrapper.find('.browser-path').exists()).toBe(true)
+    await tab(wrapper, 'Files').trigger('click')
+    expect(selectedTab(wrapper)).toBe('Files')
+    expect(wrapper.find('.archive-pathbar').exists()).toBe(true)
   })
 
   it("switches to where the archive's deduplicated size went", async () => {
@@ -1239,12 +1403,12 @@ describe('ArchiveFileBrowser', () => {
       },
     })
 
-    await wrapper.findAll('.browser-view button')[2]!.trigger('click')
+    await tab(wrapper, 'Growth').trigger('click')
     await flushPromises()
 
     expect(apiClient.get).toHaveBeenCalledWith('/repos/5/archives/test-archive/growth')
-    expect(wrapper.find('.browser-title-label').text()).toBe('Growth')
-    expect(wrapper.find('.browser-path').exists()).toBe(false)
+    expect(selectedTab(wrapper)).toBe('Growth')
+    expect(wrapper.find('.archive-pathbar').exists()).toBe(false)
     expect(wrapper.find('[data-testid="archive-growth-total"]').text()).toBe('2.0 KB')
   })
 
@@ -1252,17 +1416,19 @@ describe('ArchiveFileBrowser', () => {
     const wrapper = await mountWithEntries()
     vi.mocked(apiClient.get).mockResolvedValue({ data: { dumps: [makeDatabaseDump()] } })
 
-    await wrapper.findAll('.browser-view button')[1]!.trigger('click')
+    await tab(wrapper, 'Databases').trigger('click')
     await flushPromises()
 
     expect(wrapper.find('[data-testid="archive-database-dumps"]').text()).toContain('orders')
     expect(wrapper.find('button[title="Restore orders"]').exists()).toBe(false)
   })
 
-  it('offers no database view before a repository is resolved', async () => {
+  it('offers no Changes, Databases or Growth before a repository is resolved', async () => {
     const wrapper = await mountWithWait({ repoId: null, archive: makeArchive('test-archive') })
 
-    expect(wrapper.find('.browser-view').exists()).toBe(false)
+    expect(wrapper.find('[role="tab"]').exists()).toBe(false)
+    // Its files still browse.
+    expect(wrapper.find('.archive-pathbar').exists()).toBe(true)
   })
 
   // Issue #198: each directory opened is a browser history entry, so Back
@@ -1323,9 +1489,7 @@ describe('ArchiveFileBrowser', () => {
     }
 
     async function openDir(wrapper: ReturnType<typeof mount>, name: string): Promise<void> {
-      const row = wrapper.findAll('tr.clickable').find((r) => r.text().includes(name))
-      expect(row).toBeTruthy()
-      await row!.trigger('click')
+      await rowNamed(wrapper, name).trigger('click')
       await settle()
     }
 
@@ -1343,16 +1507,16 @@ describe('ArchiveFileBrowser', () => {
       expect(router.currentRoute.value.query).toEqual({ tab: 'archives', path: '/subdir' })
       await openDir(wrapper, 'nested')
       expect(router.currentRoute.value.query).toEqual({ tab: 'archives', path: '/subdir/nested' })
-      expect(crumbs(wrapper)).toEqual(['~', 'subdir', 'nested'])
+      expect(crumbs(wrapper)).toEqual(['/', 'subdir', 'nested'])
 
       router.back()
       await settle()
-      expect(crumbs(wrapper)).toEqual(['~', 'subdir'])
+      expect(crumbs(wrapper)).toEqual(['/', 'subdir'])
       expect(lastContentsPath()).toBe('subdir')
 
       router.back()
       await settle()
-      expect(crumbs(wrapper)).toEqual(['~'])
+      expect(crumbs(wrapper)).toEqual(['/'])
       expect(router.currentRoute.value.query).toEqual({ tab: 'archives' })
 
       router.back()
@@ -1367,18 +1531,18 @@ describe('ArchiveFileBrowser', () => {
 
       router.back()
       await settle()
-      expect(crumbs(wrapper)).toEqual(['~'])
+      expect(crumbs(wrapper)).toEqual(['/'])
 
       router.forward()
       await settle()
-      expect(crumbs(wrapper)).toEqual(['~', 'subdir'])
+      expect(crumbs(wrapper)).toEqual(['/', 'subdir'])
     })
 
-    it('the breadcrumb and Up button add history entries too', async () => {
+    it('the breadcrumb adds history entries too', async () => {
       const router = makeRouter()
       const wrapper = await mountAt(router, '/repos/5?path=%2Fsubdir%2Fnested')
 
-      await wrapper.find('button[aria-label="Up one level"]').trigger('click')
+      await wrapper.findAll('.crumb')[1].trigger('click')
       await settle()
       expect(router.currentRoute.value.query).toEqual({ path: '/subdir' })
 
@@ -1388,7 +1552,7 @@ describe('ArchiveFileBrowser', () => {
 
       router.back()
       await settle()
-      expect(crumbs(wrapper)).toEqual(['~', 'subdir'])
+      expect(crumbs(wrapper)).toEqual(['/', 'subdir'])
     })
 
     it('opens a deep link at the directory it names', async () => {
@@ -1397,7 +1561,7 @@ describe('ArchiveFileBrowser', () => {
 
       expect(vi.mocked(apiClient.get)).toHaveBeenCalledTimes(1)
       expect(lastContentsPath()).toBe('subdir')
-      expect(crumbs(wrapper)).toEqual(['~', 'subdir'])
+      expect(crumbs(wrapper)).toEqual(['/', 'subdir'])
     })
 
     it('opens a deep link once the archive is picked, not before', async () => {
@@ -1408,7 +1572,7 @@ describe('ArchiveFileBrowser', () => {
 
       await wrapper.setProps({ archive: makeArchive('test-archive') })
       await settle()
-      expect(crumbs(wrapper)).toEqual(['~', 'subdir'])
+      expect(crumbs(wrapper)).toEqual(['/', 'subdir'])
     })
 
     it('opening another archive starts at its root and drops the old directory', async () => {
@@ -1418,7 +1582,7 @@ describe('ArchiveFileBrowser', () => {
 
       await wrapper.setProps({ archive: makeArchive('second-archive') })
       await settle()
-      expect(crumbs(wrapper)).toEqual(['~'])
+      expect(crumbs(wrapper)).toEqual(['/'])
       expect(lastContentsPath()).toBeUndefined()
       expect(router.currentRoute.value.query).toEqual({ tab: 'archives' })
     })
@@ -1435,14 +1599,14 @@ describe('ArchiveFileBrowser', () => {
     it('ignores a route path that climbs out of the archive', async () => {
       const router = makeRouter()
       const wrapper = await mountAt(router, '/repos/5?path=%2Fsubdir%2F..%2F..%2Fetc')
-      expect(crumbs(wrapper)).toEqual(['~'])
+      expect(crumbs(wrapper)).toEqual(['/'])
       expect(lastContentsPath()).toBeUndefined()
     })
 
     it('keeps its directory under its own key when told to', async () => {
       const router = makeRouter()
       const wrapper = await mountAt(router, '/repos/5?path=%2Fother', { pathQueryKey: 'path-5' })
-      expect(crumbs(wrapper)).toEqual(['~'])
+      expect(crumbs(wrapper)).toEqual(['/'])
 
       await openDir(wrapper, 'subdir')
       expect(router.currentRoute.value.query).toEqual({ path: '/other', 'path-5': '/subdir' })
@@ -1468,7 +1632,7 @@ describe('ArchiveFileBrowser', () => {
         global: { ...GLOBAL, plugins: [router] },
       })
       await settle()
-      expect(crumbs(wrapper)).toEqual(['~', 'subdir'])
+      expect(crumbs(wrapper)).toEqual(['/', 'subdir'])
 
       await wrapper.setProps({ show: false })
       await settle()
@@ -1504,7 +1668,7 @@ describe('ArchiveFileBrowser', () => {
         const wrapper = await mountAt(router, '/repos/5?browse=test-archive&path=%2Fsubdir', {
           routeArchiveName: 'test-archive',
         })
-        expect(crumbs(wrapper)).toEqual(['~', 'subdir'])
+        expect(crumbs(wrapper)).toEqual(['/', 'subdir'])
       })
 
       it('opens at the root while the route still names another archive', async () => {
@@ -1512,7 +1676,7 @@ describe('ArchiveFileBrowser', () => {
         const wrapper = await mountAt(router, '/repos/5?browse=other&path=%2Fsubdir', {
           routeArchiveName: 'other',
         })
-        expect(crumbs(wrapper)).toEqual(['~'])
+        expect(crumbs(wrapper)).toEqual(['/'])
         expect(lastContentsPath()).toBeUndefined()
       })
 
@@ -1524,7 +1688,7 @@ describe('ArchiveFileBrowser', () => {
 
         await router.push('/repos/5?browse=other&path=%2Fsubdir')
         await settle()
-        expect(crumbs(wrapper)).toEqual(['~'])
+        expect(crumbs(wrapper)).toEqual(['/'])
       })
 
       it('leaves the route to the explorer when another archive opens or it closes', async () => {
@@ -1535,7 +1699,7 @@ describe('ArchiveFileBrowser', () => {
 
         await wrapper.setProps({ archive: makeArchive('second-archive') })
         await settle()
-        expect(crumbs(wrapper)).toEqual(['~'])
+        expect(crumbs(wrapper)).toEqual(['/'])
         await wrapper.setProps({ archive: null })
         await settle()
         expect(router.currentRoute.value.fullPath).toBe(
@@ -1625,13 +1789,7 @@ describe('ArchiveFileBrowser', () => {
       return wrapper
     }
 
-    function row(wrapper: ReturnType<typeof mount>, name: string) {
-      const found = wrapper
-        .findAll('tbody tr')
-        .find((r) => r.find('.name-text').exists() && r.find('.name-text').text() === name)
-      expect(found, `row ${name}`).toBeTruthy()
-      return found!
-    }
+    const row = rowNamed
 
     function pick(wrapper: ReturnType<typeof mount>, name: string) {
       return row(wrapper, name).find<HTMLInputElement>('[data-testid="pick-entry"]')
@@ -1648,7 +1806,7 @@ describe('ArchiveFileBrowser', () => {
     }
 
     function summary(wrapper: ReturnType<typeof mount>): string {
-      return wrapper.get('.browser-selection-count').text()
+      return wrapper.get('.selection-count').text()
     }
 
     it('shows what each folder holds, read from the content index', async () => {
@@ -1658,7 +1816,7 @@ describe('ArchiveFileBrowser', () => {
         paths: ['subdir'],
       })
       expect(row(wrapper, 'subdir').get('[data-testid="folder-files"]').text()).toBe('3 files')
-      expect(row(wrapper, 'subdir').get('.td-size').text()).toBe('5.0 KB')
+      expect(row(wrapper, 'subdir').get('.browser-row-size').text()).toBe('5.0 KB')
       expect(row(wrapper, 'readme.txt').find('[data-testid="folder-files"]').exists()).toBe(false)
     })
 
@@ -1682,7 +1840,9 @@ describe('ArchiveFileBrowser', () => {
       await toggle(wrapper, 'subdir')
 
       expect(summary(wrapper)).toBe('1 selected')
-      expect(row(wrapper, 'subdir').get('.td-size').text()).toBe('-')
+      // Not added up yet: the folder says what it is instead of a size.
+      expect(row(wrapper, 'subdir').find('.browser-row-size').exists()).toBe(false)
+      expect(row(wrapper, 'subdir').get('[data-testid="folder-files"]').text()).toBe('folder')
     })
 
     it('marks a folder partly picked when something inside it is', async () => {
@@ -1822,18 +1982,29 @@ describe('ArchiveFileBrowser', () => {
         const router = makeRouter()
         const wrapper = await mountTree(router)
 
+        // The search opens from the path bar's search button.
+        expect(wrapper.find('[data-testid="tree-search"]').exists()).toBe(false)
+        await wrapper.get('[data-testid="tree-search-toggle"]').trigger('click')
         await wrapper.get('[data-testid="tree-search"]').setValue('.txt')
         await vi.advanceTimersByTimeAsync(400)
         await settle()
 
         expect(wrapper.find('[data-testid="pick-entry"]').exists()).toBe(false)
         const hits = wrapper.findAll('[data-testid="search-hit"]')
-        expect(hits.map((hit) => hit.find('.name-text').text())).toEqual([
+        expect(hits.map((hit) => hit.get('.browser-row-title').text())).toEqual([
           'readme.txt',
-          'subdir/a.txt',
-          'subdir/inner/x.txt',
-          'subdir/inner/y.txt',
+          'a.txt',
+          'x.txt',
+          'y.txt',
         ])
+        expect(hits.map((hit) => hit.get('[data-testid="reveal-hit"]').text())).toEqual([
+          '/',
+          '/subdir',
+          '/subdir/inner',
+          '/subdir/inner',
+        ])
+        // While a search is entered, its matches stand in for the folder.
+        expect(wrapper.get('[data-testid="pick-all"]').attributes('disabled')).toBeDefined()
         await hits[2]!.get('[data-testid="pick-hit"]').trigger('change')
         await settle()
         expect(summary(wrapper)).toBe('1 selected · 2.0 KB · 1 file')
@@ -1913,26 +2084,28 @@ describe('ArchiveFileBrowser', () => {
         params: { limit: 10_000 },
       })
       const badges = Object.fromEntries(
-        wrapper
-          .findAll('tbody tr')
-          .filter((row) => row.find('.name-text').exists())
-          .map((row) => [
-            row.get('.name-text').text(),
-            row.find('[data-testid="change-badge"]').exists()
-              ? row.get('[data-testid="change-badge"]').text()
-              : null,
-          ]),
+        entryRows(wrapper).map((row) => [
+          row.get('.browser-row-title').text(),
+          row.find('[data-testid="change-badge"]').exists()
+            ? row.get('[data-testid="change-badge"]').text()
+            : null,
+        ]),
       )
       expect(badges).toEqual({
-        '.': null,
         subdir: null,
+        'added.txt': 'new',
+        'edited.txt': 'changed',
         'same.txt': null,
-        'edited.txt': 'Changed',
-        'added.txt': 'New',
       })
       expect(
         wrapper.findAll('[data-testid="change-badge"]').map((badge) => badge.attributes('title')),
-      ).toEqual(['New since older', 'Changed since older'])
+      ).toEqual(['new since older', 'changed since older'])
+      // The dot beside each says which it is at a glance.
+      expect(
+        wrapper
+          .findAll('[data-testid="change-badge"] .status-dot')
+          .map((dot) => dot.classes().filter((c) => c.startsWith('status-dot--'))),
+      ).toEqual([['status-dot--success'], ['status-dot--warning']])
     })
   })
 })

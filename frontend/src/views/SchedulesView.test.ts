@@ -272,7 +272,7 @@ function rowFor(wrapper: Wrapper, name: string): ReturnType<Wrapper['find']> | u
   return wrapper.findAll('.list-row').find((r) => r.find('.list-row-name').text() === name)
 }
 
-/** The one health chip of a row. */
+/** The one health label of a row; absent on a healthy row, whose dot says it alone. */
 function healthChip(wrapper: Wrapper, name: string): ReturnType<Wrapper['find']> {
   return rowFor(wrapper, name)!.find('.schedules-health')
 }
@@ -324,10 +324,11 @@ describe('SchedulesView', () => {
     const wrapper = renderWithPlugins(SchedulesView)
     await flushPromises()
 
-    const badges = wrapper.findAll('.badge--info')
-    expect(badges).toHaveLength(1)
-    expect(badges[0].text()).toBe('Catch-up pending')
-    expect(badges[0].attributes('title')).toContain('One host missed a run')
+    const labels = wrapper.findAll('.schedules-health--info')
+    expect(labels).toHaveLength(1)
+    expect(labels[0].text()).toBe('Catch-up pending')
+    expect(labels[0].attributes('title')).toContain('One host missed a run')
+    expect(rowFor(wrapper, 'server-daily')!.find('.status-dot--info').exists()).toBe(true)
     expect(rowFor(wrapper, 'server-daily')!.find('.schedules-health').text()).toBe(
       'Catch-up pending',
     )
@@ -381,19 +382,22 @@ describe('SchedulesView', () => {
     expect(rowFor(wrapper, 'database-hourly')!.find('.schedules-agent').text()).toBe('db-server-01')
   })
 
-  it('shows Healthy for an enabled schedule and Disabled for a disabled one', async () => {
+  it('shows a healthy schedule by its dot alone and names Disabled for a disabled one', async () => {
     setupApiSuccess()
     const wrapper = renderWithPlugins(SchedulesView)
     await flushPromises()
     await openDisabledGroup(wrapper)
 
-    const healthy = healthChip(wrapper, 'server-daily')
-    expect(healthy.text()).toBe('Healthy')
-    expect(healthy.classes()).toContain('badge--success')
+    // The green dot says healthy; no label repeats it.
+    expect(healthChip(wrapper, 'server-daily').exists()).toBe(false)
+    expect(rowFor(wrapper, 'server-daily')!.find('.status-dot--success').exists()).toBe(true)
+    expect(rowFor(wrapper, 'server-daily')!.text()).not.toContain('Healthy')
 
     const disabled = healthChip(wrapper, 'media-weekly')
     expect(disabled.text()).toBe('Disabled')
-    expect(disabled.classes()).toContain('badge--neutral')
+    expect(disabled.classes()).toContain('schedules-health--neutral')
+    // A neutral state keeps the dot's own grey.
+    expect(rowFor(wrapper, 'media-weekly')!.find('.status-dot').classes()).toEqual(['status-dot'])
     // A disabled schedule has no next run to show.
     expect(rowFor(wrapper, 'media-weekly')!.text()).toContain('\u2014')
   })
@@ -428,13 +432,18 @@ describe('SchedulesView', () => {
     )
   })
 
-  it('shows exactly one health chip per row', async () => {
+  it('shows one status dot per row and at most one health label, never a pill', async () => {
     setupApiSuccess()
     const wrapper = renderWithPlugins(SchedulesView)
     await flushPromises()
+    await openDisabledGroup(wrapper)
 
-    for (const row of wrapper.findAll('.list-row')) {
-      expect(row.findAll('.badge')).toHaveLength(1)
+    const rows = wrapper.findAll('.list-row')
+    expect(rows.length).toBeGreaterThan(0)
+    for (const row of rows) {
+      expect(row.findAll('.status-dot')).toHaveLength(1)
+      expect(row.findAll('.schedules-health').length).toBeLessThanOrEqual(1)
+      expect(row.findAll('.badge')).toHaveLength(0)
     }
   })
 
@@ -445,7 +454,7 @@ describe('SchedulesView', () => {
 
     const chip = healthChip(wrapper, 'database-hourly')
     expect(chip.text()).toBe('Overdue · Failed')
-    expect(chip.classes()).toContain('badge--danger')
+    expect(chip.classes()).toContain('schedules-health--danger')
     expect(rowFor(wrapper, 'database-hourly')!.find('.status-dot--danger').exists()).toBe(true)
   })
 
@@ -457,6 +466,56 @@ describe('SchedulesView', () => {
     expect(healthChip(wrapper, 'database-hourly').attributes('title')).toContain(
       'Connection refused',
     )
+  })
+
+  it("links a failed run's label to that run's output in the Activity log", async () => {
+    setupApiSuccess()
+    const wrapper = renderWithPlugins(SchedulesView)
+    await flushPromises()
+    const push = vi.spyOn(wrapper.vm.$router, 'push')
+
+    const chip = healthChip(wrapper, 'database-hourly')
+    expect(chip.attributes('role')).toBe('link')
+    expect(chip.attributes('tabindex')).toBe('0')
+    expect(chip.classes()).toContain('schedules-health--link')
+    await chip.trigger('click')
+
+    // Only the log opens, not the schedule the row itself links to.
+    expect(push).toHaveBeenCalledTimes(1)
+    expect(push).toHaveBeenCalledWith({
+      path: '/activity',
+      query: { category: 'backup', schedule_id: '2', status: 'failed' },
+    })
+  })
+
+  it("opens a warned run's output from the keyboard too", async () => {
+    mockApiClient.get.mockImplementation((url: string) => {
+      if (url === '/schedules') return Promise.resolve({ data: mockSchedules })
+      if (url === '/repos') return Promise.resolve({ data: mockRepos })
+      if (url === '/agents') return Promise.resolve({ data: mockAgents })
+      if (url === '/stats/health') {
+        return Promise.resolve({
+          data: [
+            { ...mockHealth[0], last_status: 'warning', last_error_message: 'file vanished' },
+            mockHealth[1],
+          ],
+        })
+      }
+      return Promise.resolve({ data: [] })
+    })
+    const wrapper = renderWithPlugins(SchedulesView)
+    await flushPromises()
+    const push = vi.spyOn(wrapper.vm.$router, 'push')
+
+    const chip = healthChip(wrapper, 'server-daily')
+    expect(chip.text()).toBe('Warning')
+    expect(chip.attributes('title')).toBe('file vanished')
+    await chip.trigger('keydown', { key: 'Enter' })
+
+    expect(push).toHaveBeenCalledWith({
+      path: '/activity',
+      query: { category: 'backup', schedule_id: '1', status: 'warning' },
+    })
   })
 
   it('shows an Overdue chip whose tooltip lists per-host detail', async () => {
@@ -472,7 +531,10 @@ describe('SchedulesView', () => {
 
     const chip = healthChip(wrapper, 'server-daily')
     expect(chip.text()).toBe('Overdue')
-    expect(chip.classes()).toContain('badge--warning')
+    expect(chip.classes()).toContain('schedules-health--warning')
+    expect(rowFor(wrapper, 'server-daily')!.find('.status-dot--warning').exists()).toBe(true)
+    // Overdue alone is not a run that failed, so it does not link to a run's output.
+    expect(chip.attributes('role')).toBeUndefined()
     expect(chip.attributes('title')).toContain('Web Server (web-server-01) — last backup:')
     expect(wrapper.text()).not.toContain('Last backup failed')
     // The next run takes the warning tone, and the group counts it.
@@ -737,8 +799,8 @@ describe('SchedulesView', () => {
 
     const chip = healthChip(wrapper, 'server-daily')
     expect(chip.text()).toBe('Running')
-    expect(chip.classes()).toContain('badge--accent')
-    expect(chip.find('.badge-dot').exists()).toBe(true)
+    expect(chip.classes()).toContain('schedules-health--accent')
+    expect(rowFor(wrapper, 'server-daily')!.find('.status-dot--accent').exists()).toBe(true)
     expect(healthChip(wrapper, 'database-hourly').text()).not.toBe('Running')
   })
 
@@ -828,7 +890,7 @@ describe('SchedulesView', () => {
 
     const cols = groupFor(wrapper, 'Due now')!.findAll('.list-cols')
     expect(cols).toHaveLength(1)
-    expect(cols[0].text()).toBe('ScheduleAgentHealthLast 10 runsNext run')
+    expect(cols[0].text()).toBe('ScheduleAgentHealthNext run')
   })
 
   it('buckets schedules into Next 24 hours, This week, and Later by next_run_at', async () => {
@@ -1242,46 +1304,7 @@ describe('SchedulesView', () => {
     })
   })
 
-  it('renders the run-history strip for a schedule from the activity feed', async () => {
-    mockApiClient.get.mockImplementation((url: string) => {
-      if (url === '/schedules')
-        return Promise.resolve({ data: mockSchedules.map((s) => ({ ...s })) })
-      if (url === '/repos') return Promise.resolve({ data: mockRepos })
-      if (url === '/agents') return Promise.resolve({ data: mockAgents })
-      if (url === '/stats/health') return Promise.resolve({ data: mockHealth })
-      if (url.startsWith('/stats/activity?days=30&limit_per_schedule=')) {
-        return Promise.resolve({
-          data: [
-            {
-              id: 101,
-              started_at: '2026-05-30T02:00:00Z',
-              duration_secs: 300,
-              status: 'success',
-              schedule_id: 1,
-            },
-            {
-              id: 102,
-              started_at: '2026-05-29T02:00:00Z',
-              duration_secs: 45,
-              status: 'failed',
-              schedule_id: 1,
-            },
-          ],
-        })
-      }
-      return Promise.resolve({ data: [] })
-    })
-    const wrapper = renderWithPlugins(SchedulesView)
-    await flushPromises()
-
-    const row = rowFor(wrapper, 'server-daily')!
-    expect(row.findAll('.run-bar')).toHaveLength(2)
-    expect(row.text()).toContain('2 runs · 1 failed')
-
-    expect(rowFor(wrapper, 'database-hourly')!.text()).toContain('No runs yet')
-  })
-
-  it('caps the activity fetch at the run-history bar count, relying on the backend to cap per schedule', async () => {
+  it('caps the activity fetch at the recent runs kept per schedule, relying on the backend to cap per schedule', async () => {
     let activityUrl: string | null = null
     mockApiClient.get.mockImplementation((url: string) => {
       if (url === '/schedules')
@@ -1316,7 +1339,9 @@ describe('SchedulesView', () => {
     const wrapper = renderWithPlugins(SchedulesView)
     await flushPromises()
 
-    expect(rowFor(wrapper, 'server-daily')!.text()).toContain('No runs yet')
+    expect(wrapper.find('.error-banner').exists()).toBe(false)
+    expect(rowFor(wrapper, 'server-daily')!.attributes('href')).toBe('/schedules/1')
+    expect(rowFor(wrapper, 'database-hourly')).toBeDefined()
   })
 
   describe('persisted view settings', () => {

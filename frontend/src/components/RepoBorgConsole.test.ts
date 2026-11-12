@@ -157,11 +157,10 @@ describe('RepoBorgConsole', () => {
     expect(wrapper.find('.console-error').exists()).toBe(false)
   })
 
-  it('discloses the ad-hoc command explanation on demand', async () => {
+  it('explains running ad-hoc commands in words', () => {
     const wrapper = mount()
-    await wrapper.find('[aria-label="Help: running ad-hoc commands"]').trigger('click')
-    const pop = wrapper.find('.help-hint-pop')
-    expect(pop.text()).toContain('are injected automatically')
-    expect(pop.text()).toContain('::archive')
+    const lede = wrapper.find('.pane-lede')
+    expect(lede.text()).toContain('are injected automatically')
+    expect(lede.text()).toContain('::archive')
   })
 })

@@ -47,7 +47,7 @@ describe('RepoSettingsTab', () => {
   it('lists the Power & dependencies section for an admin', () => {
     expect(
       mount()
-        .findAll('.settings-nav-item')
+        .findAll('.accordion-head .accordion-title')
         .map((b) => b.text()),
     ).toContain('Power & dependencies')
   })
@@ -55,9 +55,11 @@ describe('RepoSettingsTab', () => {
   it('hides the Power & dependencies section from a non-admin', () => {
     expect(
       mount({ isAdmin: false })
-        .findAll('.settings-nav-item')
+        .findAll('.accordion-head .accordion-title')
         .map((b) => b.text()),
     ).not.toContain('Power & dependencies')
+    // The rail still lists the sections a non-admin does have.
+    expect(mount({ isAdmin: false }).findAll('.accordion-head').length).toBeGreaterThan(0)
   })
 
   // Power belongs to the repository host now: the repository shows what its

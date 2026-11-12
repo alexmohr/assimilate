@@ -6,7 +6,7 @@ import { expect, loginAsAdmin, test } from './fixtures'
 test.describe('database sources', () => {
   test('names the engine every source runs', async ({ page }) => {
     await loginAsAdmin(page)
-    await page.goto('/agents/db-server-01?tab=settings&section=databases')
+    await page.goto('/agents/db-server-01?tab=sources&section=databases')
 
     const row = (name: string) => page.locator('tbody tr', { hasText: name })
     for (const [name, engine] of [

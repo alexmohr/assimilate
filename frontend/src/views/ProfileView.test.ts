@@ -6,6 +6,8 @@ import { flushPromises, type DOMWrapper } from '@vue/test-utils'
 import { renderWithPlugins } from '../test-utils'
 import ProfileView from './ProfileView.vue'
 import { apiClient } from '../api/client'
+import { useAuthStore } from '../stores/auth'
+import { useEscapeKey } from '../composables/useEscapeKey'
 
 vi.mock('../utils/format', () => ({
   formatDate: vi.fn((v: string | null | undefined, fallback = '') => v ?? fallback),
@@ -19,10 +21,12 @@ vi.mock('../api/client', () => ({
   },
 }))
 
+const mockSetTheme = vi.hoisted(() => vi.fn())
+
 vi.mock('../composables/useTheme', () => ({
   useTheme: vi.fn(() => ({
     theme: 'auto',
-    setTheme: vi.fn(),
+    setTheme: mockSetTheme,
     loadFromBackend: vi.fn(),
   })),
 }))
@@ -62,7 +66,7 @@ function mockGetTokens(): void {
 }
 
 async function clickTotpTab(wrapper: ReturnType<typeof renderWithPlugins>) {
-  const totpTab = wrapper.findAll('.tab').filter((t) => t.text() === 'Two-factor auth')
+  const totpTab = wrapper.findAll('.accordion-head').filter((t) => t.text() === 'Two-factor auth')
   await totpTab[0].trigger('click')
   await wrapper.vm.$nextTick()
 }
@@ -74,7 +78,7 @@ async function clickSetupButton(wrapper: ReturnType<typeof renderWithPlugins>) {
 }
 
 async function clickSessionsTab(wrapper: ReturnType<typeof renderWithPlugins>) {
-  const sessionsTab = wrapper.findAll('.tab').filter((t) => t.text() === 'Sessions')
+  const sessionsTab = wrapper.findAll('.accordion-head').filter((t) => t.text() === 'Sessions')
   await sessionsTab[0].trigger('click')
   await flushPromises()
 }
@@ -163,18 +167,95 @@ describe('ProfileView', () => {
     expect(wrapper.find('.page-description').text()).toContain('admin')
   })
 
-  it('renders the Change Password, API Tokens, and Appearance tabs', () => {
+  // The tabs became collapsible section cards, so the row of five no longer
+  // runs off a phone; each former tab is a section head.
+  it('renders the Change Password, API Tokens, and Appearance sections', () => {
     const wrapper = renderWithPlugins(ProfileView, {
       storeState: { auth: { user: { ...baseUser } } },
     })
 
-    const tabs = wrapper.findAll('.tab')
+    const tabs = wrapper.findAll('.accordion-head')
     expect(tabs.some((t) => t.text() === 'Change password')).toBe(true)
     expect(tabs.some((t) => t.text() === 'API tokens')).toBe(true)
     expect(tabs.some((t) => t.text() === 'Two-factor auth')).toBe(true)
     expect(tabs.some((t) => t.text() === 'Sessions')).toBe(true)
     expect(tabs.some((t) => t.text() === 'Appearance')).toBe(true)
   })
+
+  describe('change password', () => {
+    function renderProfile(): ReturnType<typeof renderWithPlugins> {
+      return renderWithPlugins(ProfileView, { storeState: { auth: { user: baseUser } } })
+    }
+
+    async function submitPasswords(
+      wrapper: ReturnType<typeof renderWithPlugins>,
+      newPassword: string,
+      confirmPassword: string,
+    ): Promise<void> {
+      await wrapper.find('#profile-new-pw').setValue(newPassword)
+      await wrapper.find('#profile-confirm-pw').setValue(confirmPassword)
+      await wrapper.find('form.password-form').trigger('submit')
+      await flushPromises()
+    }
+
+    it('changes the password typed twice and clears both fields', async () => {
+      const wrapper = renderProfile()
+      await submitPasswords(wrapper, 'n3w-passw0rd', 'n3w-passw0rd')
+
+      expect(useAuthStore().changePassword).toHaveBeenCalledWith('n3w-passw0rd')
+      expect(wrapper.get('.form-success').text()).toBe('Password changed successfully.')
+      expect(wrapper.find('.form-error').exists()).toBe(false)
+      expect(wrapper.find<HTMLInputElement>('#profile-new-pw').element.value).toBe('')
+      expect(wrapper.find<HTMLInputElement>('#profile-confirm-pw').element.value).toBe('')
+    })
+
+    it('refuses a confirmation that does not match, without asking the server', async () => {
+      const wrapper = renderProfile()
+      await submitPasswords(wrapper, 'n3w-passw0rd', 'n3w-passw0rX')
+
+      expect(wrapper.get('.form-error').text()).toBe('Passwords do not match')
+      expect(useAuthStore().changePassword).not.toHaveBeenCalled()
+    })
+
+    it('refuses a password shorter than 8 characters', async () => {
+      const wrapper = renderProfile()
+      await submitPasswords(wrapper, 'short', 'short')
+
+      expect(wrapper.get('.form-error').text()).toBe('Password must be at least 8 characters')
+      expect(useAuthStore().changePassword).not.toHaveBeenCalled()
+    })
+
+    it('shows why the server refused the change and keeps what was typed', async () => {
+      const wrapper = renderProfile()
+      vi.mocked(useAuthStore().changePassword).mockRejectedValueOnce(
+        new Error('password too common'),
+      )
+      await submitPasswords(wrapper, 'n3w-passw0rd', 'n3w-passw0rd')
+
+      expect(wrapper.get('.form-error').text()).toContain('password too common')
+      expect(wrapper.find('.form-success').exists()).toBe(false)
+      expect(wrapper.find<HTMLInputElement>('#profile-new-pw').element.value).toBe('n3w-passw0rd')
+    })
+  })
+
+  it.each(['auto', 'light', 'dark'] as const)(
+    'sets the %s theme from the Appearance section',
+    async (theme) => {
+      const wrapper = renderWithPlugins(ProfileView, {
+        storeState: { auth: { user: baseUser } },
+      })
+      const head = wrapper.findAll('.accordion-head').find((t) => t.text() === 'Appearance')
+      await head!.trigger('click')
+      await flushPromises()
+
+      const options = wrapper.findAll('button.theme-option')
+      expect(options.map((o) => o.text())).toEqual(['Auto', 'Light', 'Dark'])
+      await options.find((o) => o.text().toLowerCase() === theme)!.trigger('click')
+
+      expect(mockSetTheme).toHaveBeenCalledTimes(1)
+      expect(mockSetTheme).toHaveBeenCalledWith(theme)
+    },
+  )
 
   describe('two-factor tab by deployment mode', () => {
     async function tabLabels(mode: 'server' | 'desktop', totpEnabled: boolean): Promise<string[]> {
@@ -185,10 +266,10 @@ describe('ProfileView', () => {
         },
       })
       await flushPromises()
-      return wrapper.findAll('.tab').map((t) => t.text())
+      return wrapper.findAll('.accordion-head').map((t) => t.text())
     }
 
-    it('hides the two-factor tab in desktop mode', async () => {
+    it('hides the two-factor section in desktop mode', async () => {
       const labels = await tabLabels('desktop', false)
 
       expect(labels).not.toContain('Two-factor auth')
@@ -196,11 +277,11 @@ describe('ProfileView', () => {
       expect(labels).toContain('Sessions')
     })
 
-    it('shows the two-factor tab in server mode', async () => {
+    it('shows the two-factor section in server mode', async () => {
       expect(await tabLabels('server', false)).toContain('Two-factor auth')
     })
 
-    it('keeps the tab in desktop mode while TOTP is on, so it can be turned off', async () => {
+    it('keeps the section in desktop mode while TOTP is on, so it can be turned off', async () => {
       expect(await tabLabels('desktop', true)).toContain('Two-factor auth')
     })
   })
@@ -219,7 +300,7 @@ describe('ProfileView', () => {
     expect(wrapper.text()).toContain('Disable two-factor')
   })
 
-  it('sessions tab loads and displays when clicked', async () => {
+  it('sessions section loads and displays when opened', async () => {
     mockSessions([
       {
         id: 'sess-1',
@@ -432,7 +513,7 @@ describe('ProfileView', () => {
     }
 
     async function clickApiTokensTab(wrapper: ReturnType<typeof renderWithPlugins>) {
-      const tokensTab = wrapper.findAll('.tab').filter((t) => t.text() === 'API tokens')
+      const tokensTab = wrapper.findAll('.accordion-head').filter((t) => t.text() === 'API tokens')
       await tokensTab[0].trigger('click')
       await wrapper.vm.$nextTick()
     }
@@ -484,6 +565,24 @@ describe('ProfileView', () => {
       const closeBtn = wrapper.find('button.modal-close')
       expect(closeBtn.exists()).toBe(true)
       await closeBtn.trigger('click')
+      await flushPromises()
+      expect(wrapper.find('.modal-backdrop').exists()).toBe(false)
+    })
+
+    it('closes delete token modal on Escape', async () => {
+      vi.mocked(apiClient.get).mockResolvedValue({ data: { tokens: [mockToken] } })
+      vi.mocked(useEscapeKey).mockClear()
+
+      const wrapper = renderWithPlugins(ProfileView, {
+        storeState: { auth: { user: { ...baseUser } } },
+      })
+      await openDeleteTokenModal(wrapper)
+
+      // The view hands useEscapeKey the open flag of each dialog with what
+      // Escape does to it; press it for the delete dialog.
+      const deleteEscape = vi.mocked(useEscapeKey).mock.calls.find(([open]) => open.value === true)
+      expect(deleteEscape).toBeDefined()
+      deleteEscape![1]()
       await flushPromises()
       expect(wrapper.find('.modal-backdrop').exists()).toBe(false)
     })
@@ -663,6 +762,53 @@ describe('ProfileView', () => {
       await flushPromises()
 
       expect(wrapper.find('.token-text').exists()).toBe(false)
+    })
+
+    it('creates a never-expiring token unless an expiry is chosen, and says so', async () => {
+      const wrapper = await createTokenSuccessfully()
+
+      expect(apiClient.post).toHaveBeenCalledWith('/tokens', { name: 'ci-token' })
+      expect(wrapper.find('.token-notice').text()).toContain('It works until it is deleted.')
+    })
+
+    it('sends the expiry chosen in the dialog and repeats it with the plaintext', async () => {
+      mockGetTokens()
+      vi.mocked(apiClient.post).mockResolvedValue({
+        data: { token: mockToken, plaintext: 'tok_secret' },
+      } as never)
+
+      const wrapper = renderWithPlugins(ProfileView)
+      await openCreateTokenModal(wrapper)
+      await wrapper.find('.modal-dialog input').setValue('ci-token')
+      await wrapper.get('#profile-token-expiry').setValue('date')
+      await wrapper.get('#profile-token-expiry-date').setValue('2026-07-15')
+      await findInModal(wrapper, 'Create')!.trigger('click')
+      await flushPromises()
+
+      const expiresAt = new Date(2026, 6, 15, 23, 59, 59).toISOString()
+      expect(apiClient.post).toHaveBeenCalledWith('/tokens', {
+        name: 'ci-token',
+        expires_at: expiresAt,
+      })
+      // formatDate is mocked to echo its input.
+      expect(wrapper.find('.token-notice').text()).toContain(`It stops working on ${expiresAt}.`)
+    })
+
+    it('starts the next token as never expiring again', async () => {
+      mockGetTokens()
+      const wrapper = renderWithPlugins(ProfileView)
+      await openCreateTokenModal(wrapper)
+      await wrapper.get('#profile-token-expiry').setValue('90d')
+      await findInModal(wrapper, 'Cancel')!.trigger('click')
+      await flushPromises()
+
+      await wrapper
+        .findAll('button')
+        .find((b) => b.text().trim() === 'New token')!
+        .trigger('click')
+      await flushPromises()
+
+      expect(wrapper.get<HTMLSelectElement>('#profile-token-expiry').element.value).toBe('never')
     })
 
     it('reports a create failure without revealing a token', async () => {

@@ -10,9 +10,8 @@ import { cancelRestoreRun, getRestoreRun, listRestoreRuns } from '../api/restore
 import { useToast } from '../composables/useToast'
 import { useWebSocket } from '../composables/useWebSocket'
 import type { RestoreRun } from '../types/generated'
-import { badgeClass } from '../utils/badge'
 import { extractError } from '../utils/error'
-import { formatDateShort } from '../utils/format'
+import { formatDate, formatDateShort } from '../utils/format'
 import { logger } from '../utils/logger'
 import {
   isRestoreFinished,
@@ -22,6 +21,8 @@ import {
 } from '../utils/restoreRun'
 import BaseSpinner from './BaseSpinner.vue'
 import EmptyState from './EmptyState.vue'
+import LogList from './LogList.vue'
+import LogRow from './LogRow.vue'
 
 /**
  * Restores of archive files and database dumps onto agents, newest first, kept current from
@@ -80,10 +81,16 @@ async function reload(id: string): Promise<void> {
   }
 }
 
-/** The whole of what the restore covers, for a cell that may clip it. */
-function restoreTitle(run: RestoreRun): string {
-  if (run.database !== undefined) return restoreScope(run)
-  return `${restoreScope(run)} into ${run.target_path ?? ''}`
+/** Where the restore wrote to: a database's own name, or the target folder. */
+function restoreInto(run: RestoreRun): string | null {
+  if (run.database !== undefined) return null
+  return run.target_path === null ? null : `into ${run.target_path}`
+}
+
+const expandedId = ref<string | null>(null)
+
+function toggle(run: RestoreRun): void {
+  expandedId.value = expandedId.value === run.id ? null : run.id
 }
 
 onMessage('RestoreRunChanged', (payload) => {
@@ -116,111 +123,79 @@ onMounted(() => {
     description="Restores of archive files or database dumps onto an agent will appear here."
   />
 
-  <div
+  <LogList
     v-else
-    class="table-wrap table-wrap--framed"
+    data-testid="restore-runs"
   >
-    <table
-      class="data-table"
-      data-testid="restore-runs"
+    <LogRow
+      v-for="run in runs"
+      :key="run.id"
+      :data-restore-id="run.id"
+      :tone="restoreStatusTone(run.status)"
+      :title="run.hostname"
+      :subtitle="run.archive_name"
+      :facts="[restoreScope(run), run.error_message ?? restoreInto(run), `by ${run.requested_by}`]"
+      :time="formatDateShort(run.created_at)"
+      :time-title="formatDate(run.created_at)"
+      :expanded="expandedId === run.id"
+      @toggle="toggle(run)"
     >
-      <thead>
-        <tr>
-          <th>Requested</th>
-          <th>Host</th>
-          <th>Archive</th>
-          <th>Restoring</th>
-          <th>Status</th>
-        </tr>
-      </thead>
-      <tbody>
-        <tr
-          v-for="run in runs"
-          :key="run.id"
-          :data-restore-id="run.id"
+      <template
+        v-if="run.status === 'pending'"
+        #actions
+      >
+        <button
+          class="btn btn-sm btn-ghost"
+          data-testid="restore-cancel"
+          :disabled="cancelling === run.id"
+          @click="cancel(run)"
         >
-          <td>
-            <div class="cell-date restore-unbroken">{{ formatDateShort(run.created_at) }}</div>
-            <div class="cell-muted">by {{ run.requested_by }}</div>
-          </td>
-          <td class="cell-host restore-unbroken">
-            {{ run.hostname }}
-          </td>
-          <td>
-            <div class="cell-mono restore-unbroken">{{ run.archive_name }}</div>
-            <div class="cell-muted">{{ run.repo_name }}</div>
-          </td>
-          <td
-            class="cell-truncate restore-scope"
-            :title="restoreTitle(run)"
-          >
-            <template v-if="run.database">
-              <span class="cell-mono">{{ restoreScope(run) }}</span>
-              <div class="cell-muted">Database</div>
-            </template>
-            <template v-else>
-              <span class="cell-mono">{{ restoreScope(run) }}</span>
-              into
-              <span class="cell-mono">{{ run.target_path }}</span>
-            </template>
-            <div
-              v-if="run.error_message"
-              class="cell-muted restore-error"
-              :title="run.error_message"
-            >
-              {{ run.error_message }}
-            </div>
-          </td>
-          <td>
-            <span
-              class="badge"
-              :class="[
-                badgeClass(restoreStatusTone(run.status)),
-                { 'badge--pulse': run.status === 'running' },
-              ]"
-            >
-              <span
-                v-if="run.status === 'running'"
-                class="badge-dot"
-              />
-              {{ restoreStatusLabel(run.status) }}
-            </span>
-            <div v-if="run.status === 'pending'">
-              <button
-                class="btn btn-xs btn-ghost restore-cancel"
-                :disabled="cancelling === run.id"
-                @click="cancel(run)"
-              >
-                {{ cancelling === run.id ? 'Cancelling...' : 'Cancel' }}
-              </button>
-            </div>
-          </td>
-        </tr>
-      </tbody>
-    </table>
-  </div>
+          {{ cancelling === run.id ? 'Cancelling...' : 'Cancel' }}
+        </button>
+      </template>
+      <template #detail>
+        <dl class="info-grid">
+          <dt>Status</dt>
+          <dd>{{ restoreStatusLabel(run.status) }}</dd>
+          <dt>Requested</dt>
+          <dd>{{ formatDate(run.created_at) }} by {{ run.requested_by }}</dd>
+          <template v-if="run.started_at">
+            <dt>Started</dt>
+            <dd>{{ formatDate(run.started_at) }}</dd>
+          </template>
+          <template v-if="run.finished_at">
+            <dt>Finished</dt>
+            <dd>{{ formatDate(run.finished_at) }}</dd>
+          </template>
+          <dt>Repository</dt>
+          <dd>{{ run.repo_name }}</dd>
+          <dt>Archive</dt>
+          <dd class="restore-value">{{ run.archive_name }}</dd>
+          <dt>{{ run.database ? 'Database' : 'Restoring' }}</dt>
+          <dd class="restore-value">{{ restoreScope(run) }}</dd>
+          <template v-if="run.database === undefined">
+            <dt>Into</dt>
+            <dd class="restore-value">{{ run.target_path ?? '\u2014' }}</dd>
+          </template>
+          <template v-if="run.files_restored !== null">
+            <dt>Files restored</dt>
+            <dd>{{ run.files_restored.toLocaleString() }}</dd>
+          </template>
+        </dl>
+        <pre
+          v-if="run.error_message"
+          class="error-pre"
+          >{{ run.error_message }}</pre
+        >
+      </template>
+    </LogRow>
+  </LogList>
 </template>
 
 <style scoped>
-/* Host names and archive names break at their hyphens otherwise, which
-   splits one name over several lines. */
-.restore-unbroken {
-  white-space: nowrap;
-}
-
-/* Narrower than the shared truncation, so the table fits a laptop screen. */
-.restore-scope {
-  max-width: 14rem;
-}
-
-/* An error clipped by the cell ends in an ellipsis; its title holds the rest. */
-.restore-error {
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-/* Under the status it cancels, to keep the table within a laptop screen. */
-.restore-cancel {
-  margin-top: var(--space-2);
+/* Paths and archive names are long unbroken tokens. */
+.restore-value {
+  font-family: var(--mono);
+  word-break: break-all;
 }
 </style>

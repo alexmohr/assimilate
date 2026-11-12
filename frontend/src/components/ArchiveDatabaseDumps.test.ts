@@ -88,7 +88,7 @@ describe('ArchiveDatabaseDumps', () => {
     const wrapper = await mountDumps()
 
     expect(wrapper.text()).toContain('This archive holds no database dumps.')
-    expect(wrapper.find('table').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="database-dump"]').exists()).toBe(false)
   })
 
   it('lists each dump with its source named the way its runtime names it', async () => {
@@ -100,15 +100,21 @@ describe('ArchiveDatabaseDumps', () => {
     ])
     const wrapper = await mountDumps()
 
-    // Each cell's lines run together in its text: the source, then where it ran.
-    const rows = wrapper.findAll('tbody tr').map((row) => row.findAll('td').map((td) => td.text()))
-    expect(rows).toEqual([
-      ['orders', 'shop/orders-dbKubernetes · CloudNativePG · pod orders-db-1'],
-      ['wiki', 'wiki-dbDocker · Labelled container · container wiki-db-1'],
-      ['app', 'PostgreSQL on this hostHost · Host server · through /var/run/postgresql'],
-      ['other', 'PostgreSQL on this hostHost · Host server'],
+    // Each row names the database, then the source and where it ran.
+    const rows = wrapper.findAll('[data-testid="database-dump"]').map((row) => [
+      row.find('.browser-row-title').text(),
+      row
+        .findAll('.browser-row-facts > span')
+        .map((fact) => fact.text())
+        .join(' '),
     ])
-    expect(wrapper.findAll('button').some((b) => b.text() === 'Restore')).toBe(false)
+    expect(rows).toEqual([
+      ['orders', 'shop/orders-db · Kubernetes · CloudNativePG · pod orders-db-1'],
+      ['wiki', 'wiki-db · Docker · Labelled container · container wiki-db-1'],
+      ['app', 'PostgreSQL on this host · Host · Host server · through /var/run/postgresql'],
+      ['other', 'PostgreSQL on this host · Host · Host server'],
+    ])
+    expect(wrapper.findAll('button').some((b) => b.text().startsWith('Restore'))).toBe(false)
   })
 
   it('opens the restore dialog on the archive host for one who may restore', async () => {
@@ -118,7 +124,8 @@ describe('ArchiveDatabaseDumps', () => {
     const dialog = wrapper.findComponent(DatabaseRestoreDialog)
     expect(dialog.props('open')).toBe(false)
 
-    const restore = wrapper.findAll('tbody tr')[1]!.find('button')
+    const restore = wrapper.findAll('[data-testid="database-dump"]')[1]!.find('button')
+    expect(restore.text()).toBe('Restore...')
     expect(restore.attributes('title')).toBe('Restore wiki')
     await restore.trigger('click')
 
@@ -152,8 +159,8 @@ describe('ArchiveDatabaseDumps', () => {
     await flushPromises()
 
     expect(listArchiveDatabases).toHaveBeenLastCalledWith(4, 'db-01-2026-10-02')
-    expect(wrapper.findAll('tbody tr')).toHaveLength(1)
-    expect(wrapper.find('tbody').text()).toContain('wiki')
+    expect(wrapper.findAll('[data-testid="database-dump"]')).toHaveLength(1)
+    expect(wrapper.find('[data-testid="archive-database-dumps"]').text()).toContain('wiki')
   })
 
   it('drops a failure that arrives after a later archive was opened', async () => {
@@ -172,6 +179,6 @@ describe('ArchiveDatabaseDumps', () => {
     await flushPromises()
 
     expect(wrapper.find('.error-banner').exists()).toBe(false)
-    expect(wrapper.find('tbody').text()).toContain('wiki')
+    expect(wrapper.find('[data-testid="archive-database-dumps"]').text()).toContain('wiki')
   })
 })

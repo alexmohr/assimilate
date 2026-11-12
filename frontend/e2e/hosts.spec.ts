@@ -16,6 +16,13 @@ function agentRow(page: Page, hostname: string): ReturnType<Page['locator']> {
   return page.locator('.list-row').filter({ hasText: hostname }).first()
 }
 
+/** Opens the list's Filters card, where grouping, sort and coverage live. */
+async function openFilters(page: Page): Promise<void> {
+  const button = page.getByRole('button', { name: /^Filters/ })
+  if ((await button.getAttribute('aria-expanded')) !== 'true') await button.click()
+  await expect(page.locator('.agents-filters')).toBeVisible()
+}
+
 test.describe('Hosts management', () => {
   test('hosts list shows connected agent hosts and imported placeholders', async ({ page }) => {
     await loginAsAdmin(page)
@@ -36,14 +43,10 @@ test.describe('Hosts management', () => {
     await page.waitForLoadState('networkidle')
     await showEveryAgent(page)
 
+    // Three tiles: the Versions tile is gone, version grouping says as much.
     const tiles = page.locator('.fleet-strip .fleet-cell')
-    await expect(tiles).toHaveCount(4)
-    await expect(tiles.locator('.stat-label')).toHaveText([
-      'Agents',
-      'Online',
-      'Needs attention',
-      'Versions',
-    ])
+    await expect(tiles).toHaveCount(3)
+    await expect(tiles.locator('.stat-label')).toHaveText(['Agents', 'Online', 'Needs attention'])
     await expect(tiles.first().locator('.stat-sub')).toContainText('schedule')
 
     // web-server-01's own schedule (id 1) is the one backup-lifecycle.spec.ts
@@ -69,6 +72,8 @@ test.describe('Hosts management', () => {
     await page.goto('/agents')
     await page.waitForLoadState('networkidle')
 
+    // Grouping is in the Filters card.
+    await openFilters(page)
     await page.getByRole('radio', { name: 'Version' }).click()
 
     // Three groups: the version the live agent containers report (the agent
@@ -108,6 +113,7 @@ test.describe('Hosts management', () => {
     // The choice survives a reload.
     await page.reload()
     await page.waitForLoadState('networkidle')
+    await openFilters(page)
     await expect(page.getByRole('radio', { name: 'Version' })).toHaveAttribute(
       'aria-checked',
       'true',
@@ -216,7 +222,9 @@ test.describe('Hosts management', () => {
     await expect(loadBtn).not.toBeDisabled()
   })
 
-  test('agent row shows a Failed chip that navigates to the failed backup', async ({ page }) => {
+  test('agent row shows a Failed chip that opens the failed runs in the Activity log', async ({
+    page,
+  }) => {
     // Intercept the health API to inject a failure with an error message for web-server-01.
     await page.route('**/api/stats/health', async (route: Route) => {
       await route.fulfill({
@@ -247,7 +255,8 @@ test.describe('Hosts management', () => {
     await failedChip.click()
     await page.waitForLoadState('networkidle')
 
-    await expect(page).toHaveURL(/\/agents\/web-server-01\?tab=logs&status=failed/)
+    // Where a failure can be read: the agent's failed runs in the Activity log.
+    await expect(page).toHaveURL(/\/activity\?category=backup&hostname=web-server-01&status=failed/)
   })
 
   test('two hosts can share a hostname as long as their domains differ', async ({ page }) => {
@@ -337,20 +346,44 @@ test.describe('Hosts management', () => {
     await expect(page).toHaveURL(/\/agents\/web-server-01\?tab=schedules&health=overdue/)
   })
 
-  test('agent row shows a Running pill while a backup is in progress', async ({ page }) => {
+  test('agent row names where it is backing up to while a backup is in progress', async ({
+    page,
+  }) => {
     await mockRunningBackupOperation(page)
+    // A row shows one thing at most, and an issue outranks a running backup,
+    // so web-server-01's own seeded failures and overdue runs are cleared here.
+    await page.route(
+      (url) => url.pathname === '/api/stats/health',
+      async (route: Route) => {
+        const response = await route.fetch()
+        const entries = (await response.json()) as Array<Record<string, unknown>>
+        return route.fulfill({
+          status: response.status(),
+          contentType: 'application/json',
+          body: JSON.stringify(
+            entries.map((e) =>
+              e.hostname === 'web-server-01'
+                ? { ...e, last_status: 'success', is_overdue: false, last_error_message: null }
+                : e,
+            ),
+          ),
+        })
+      },
+    )
 
     await loginAsAdmin(page)
     await page.goto('/agents')
     await page.waitForLoadState('networkidle')
 
+    // The row's blue dot says it is running; the text names where to.
     const card = agentRow(page, 'web-server-01')
-    const runningPill = card.locator('.entity-running-pill')
-    await expect(runningPill).toBeVisible()
-    await expect(runningPill).toContainText('server-daily')
+    const running = card.locator('.agents-running')
+    await expect(running).toBeVisible()
+    await expect(running).toContainText('Backing up: server-daily')
+    await expect(card.locator('.status-dot')).toHaveClass(/status-dot--info/)
 
     const otherCard = agentRow(page, 'db-server-01')
-    await expect(otherCard.locator('.entity-running-pill')).not.toBeVisible()
+    await expect(otherCard.locator('.agents-running')).not.toBeVisible()
   })
 
   test("agent detail schedules tab's Failed chip navigates to the filtered activity log", async ({

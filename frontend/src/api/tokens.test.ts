@@ -58,6 +58,39 @@ describe('tokens api', () => {
     })
   })
 
+  // Never expiring is the default, and the server reads a missing field as
+  // that, so no expiry is sent rather than an explicit null.
+  it('sends no expiry for a token that never expires', async () => {
+    vi.mocked(apiClient.post).mockResolvedValue({ data: { plaintext: 'p' } })
+
+    await createToken('ci-token', 'full', null)
+
+    expect(apiClient.post).toHaveBeenCalledWith('/tokens', { name: 'ci-token' })
+  })
+
+  it('sends the expiry of a full token without naming its scope', async () => {
+    vi.mocked(apiClient.post).mockResolvedValue({ data: { plaintext: 'p' } })
+
+    await createToken('ci-token', 'full', '2026-07-01T00:00:00.000Z')
+
+    expect(apiClient.post).toHaveBeenCalledWith('/tokens', {
+      name: 'ci-token',
+      expires_at: '2026-07-01T00:00:00.000Z',
+    })
+  })
+
+  it('sends both the scope and the expiry of a monitoring token', async () => {
+    vi.mocked(apiClient.post).mockResolvedValue({ data: { plaintext: 'p' } })
+
+    await createToken('prometheus', 'monitoring', '2026-07-01T00:00:00.000Z')
+
+    expect(apiClient.post).toHaveBeenCalledWith('/tokens', {
+      name: 'prometheus',
+      scope: 'monitoring',
+      expires_at: '2026-07-01T00:00:00.000Z',
+    })
+  })
+
   it('deletes a token', async () => {
     vi.mocked(apiClient.delete).mockResolvedValue({})
 

@@ -36,6 +36,10 @@ pub struct CreateTokenRequest {
     /// create one, since it reads metrics about every host and repository.
     #[serde(default)]
     pub scope: ApiTokenScope,
+    /// When the token stops working. It must lie in the future; without it
+    /// the token works until it is deleted.
+    #[serde(default)]
+    pub expires_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 impl From<db::ApiTokenRow> for ApiTokenResponse {
@@ -46,6 +50,7 @@ impl From<db::ApiTokenRow> for ApiTokenResponse {
             name: row.name,
             scope: row.scope,
             last_used_at: row.last_used_at,
+            expires_at: row.expires_at,
             created_at: row.created_at,
         }
     }
@@ -108,15 +113,24 @@ pub async fn create_token(
         }
     }
 
+    if let Some(expires_at) = req.expires_at
+        && expires_at <= chrono::Utc::now()
+    {
+        return Err(ApiError::BadRequest(
+            "a token's expiry must lie in the future".to_string(),
+        ));
+    }
+
     let plaintext = generate_token();
     let token_hash = hash_token(&plaintext);
 
-    let token: ApiTokenResponse = db::insert_api_token_with_scope(
+    let token: ApiTokenResponse = db::insert_api_token_expiring(
         &state.pool,
         auth.user_id,
         req.name.trim(),
         &token_hash,
         req.scope,
+        req.expires_at,
     )
     .await?
     .into();
@@ -236,6 +250,7 @@ mod tests {
             ApiJson(CreateTokenRequest {
                 name: " ci-pipeline ".to_owned(),
                 scope: ApiTokenScope::Full,
+                expires_at: None,
             }),
         )
         .await
@@ -270,6 +285,48 @@ mod tests {
 
     #[ignore = "requires DATABASE_URL"]
     #[sqlx::test(migrations = "./migrations")]
+    async fn a_token_cannot_be_created_already_expired(pool: PgPool) {
+        let state = build_test_state(pool.clone(), b"tokens-expiry-test-key");
+        let user = insert_auth_user(&pool, "expiry-owner").await;
+        let request = |expires_at| {
+            ApiJson(CreateTokenRequest {
+                name: "nightly".to_owned(),
+                scope: ApiTokenScope::Full,
+                expires_at,
+            })
+        };
+
+        let past = chrono::Utc::now()
+            .checked_sub_signed(chrono::Duration::minutes(1))
+            .unwrap();
+        let refused = create_token(
+            State(state.clone()),
+            user.clone(),
+            ClientIp::default(),
+            request(Some(past)),
+        )
+        .await;
+        assert!(matches!(refused, Err(ApiError::BadRequest(_))));
+
+        let future = chrono::Utc::now()
+            .checked_add_signed(chrono::Duration::days(90))
+            .unwrap();
+        let Json(created) = create_token(
+            State(state),
+            user.clone(),
+            ClientIp::default(),
+            request(Some(future)),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            created.token.expires_at.map(|t| t.timestamp_micros()),
+            Some(future.timestamp_micros())
+        );
+    }
+
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
     async fn only_an_admin_can_create_a_monitoring_token(pool: PgPool) {
         let state = build_test_state(pool.clone(), b"tokens-scope-test-key");
         let user = insert_auth_user(&pool, "not-an-admin").await;
@@ -281,6 +338,7 @@ mod tests {
             ApiJson(CreateTokenRequest {
                 name: "prometheus".to_owned(),
                 scope: ApiTokenScope::Monitoring,
+                expires_at: None,
             }),
         )
         .await;

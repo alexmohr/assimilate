@@ -4,6 +4,7 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 -->
 
 <script setup lang="ts">
+import { runLogLink } from '../utils/activityLink'
 import { ref, computed, onMounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { apiClient } from '../api/client'
@@ -21,7 +22,7 @@ import { getConfiguredTimezone } from '../composables/useTimezone'
 import { logger } from '../utils/logger'
 import { normalizeBackupStatus } from '../utils/backupStatus'
 import { isAgentOffline, lastSeenText } from '../utils/agent'
-import { badgeClass, type BadgeTone } from '../utils/badge'
+import type { BadgeTone } from '../utils/badge'
 import { scheduleRunStatus, type ScheduleHealthEntry } from '../utils/scheduleHealth'
 import { scheduleRowHealth, type ScheduleRowHealth } from '../utils/scheduleRowHealth'
 import {
@@ -44,7 +45,6 @@ import BaseSpinner from '../components/BaseSpinner.vue'
 import EmptyState from '../components/EmptyState.vue'
 import SortControls from '../components/SortControls.vue'
 import BaseSegmented, { type SegmentedOption } from '../components/BaseSegmented.vue'
-import RunHistoryStrip, { type RunHistoryEntry } from '../components/RunHistoryStrip.vue'
 import FilterSyntaxHelp from '../components/FilterSyntaxHelp.vue'
 import type { AgentRow } from '../types/agent'
 import { scheduleDisabledLabel } from '../utils/scheduleStatus'
@@ -71,11 +71,11 @@ interface ScheduleActivityEntry {
 }
 
 const ACTIVITY_WINDOW_DAYS = 30
-// Matches RunHistoryStrip's default `maxBars` - each row only ever renders
-// this many of its most recent runs. The backend counts runs (every agent's
-// report for one firing), not report rows, so a multi-agent schedule still
-// gets its last ten firings.
-const RUN_HISTORY_BARS = 10
+// How many of each schedule's latest runs are fetched: enough to see every
+// repository it writes into and to estimate how long its next run takes.
+// The backend counts runs (every agent's report for one firing), not report
+// rows, so a multi-agent schedule still gets its last ten firings.
+const RECENT_RUNS_PER_SCHEDULE = 10
 
 const schedules = ref<ScheduleRow[]>([])
 const repos = ref<Repo[]>([])
@@ -213,25 +213,6 @@ const activityBySchedule = computed(() => {
     const list = map.get(entry.schedule_id) ?? []
     list.push(entry)
     map.set(entry.schedule_id, list)
-  }
-  return map
-})
-
-const runsBySchedule = computed(() => {
-  const map = new Map<number, RunHistoryEntry[]>()
-  for (const [scheduleId, entries] of activityBySchedule.value) {
-    map.set(
-      scheduleId,
-      entries.map((entry) => ({
-        id: entry.id,
-        startedAt: entry.started_at,
-        durationSecs: entry.duration_secs,
-        status: entry.status,
-        runId: entry.run_id,
-        hostname: entry.hostname,
-        targetName: entry.target_name,
-      })),
-    )
   }
   return map
 })
@@ -499,6 +480,10 @@ function applyQuickFilter(value: QuickFilter): void {
   else filterHealth.value = 'all'
 }
 
+function openRunIssue(scheduleId: number, kind: 'failed' | 'warning'): void {
+  router.push(runLogLink({ scheduleId, status: kind }))
+}
+
 /** `.status-dot` modifier for a tone; neutral is the dot's own grey. */
 function dotClass(tone: BadgeTone | null): string | null {
   if (tone === null || tone === 'neutral') return null
@@ -746,13 +731,13 @@ async function fetchAll(): Promise<void> {
       listAgents(),
       getScheduleHealth(),
       // The backend caps this per schedule (not the result set overall), so
-      // RUN_HISTORY_BARS alone is enough to guarantee every card gets its
+      // RECENT_RUNS_PER_SCHEDULE alone is enough to guarantee every card gets its
       // own last-N runs regardless of how many schedules exist or how often
       // any one of them runs.
       apiClient
         .get<
           ScheduleActivityEntry[]
-        >(`/stats/activity?days=${ACTIVITY_WINDOW_DAYS}&limit_per_schedule=${RUN_HISTORY_BARS}`)
+        >(`/stats/activity?days=${ACTIVITY_WINDOW_DAYS}&limit_per_schedule=${RECENT_RUNS_PER_SCHEDULE}`)
         .catch(() => ({ data: [] as ScheduleActivityEntry[] })),
     ])
     schedules.value = scheduleRows
@@ -974,8 +959,7 @@ useQueryOverride(() => route.query.filter, isFilterHealth, filterHealth)
           >
             <span>Schedule</span>
             <span>Agent</span>
-            <span>Health</span>
-            <span>Last 10 runs</span>
+            <span class="schedules-health-head">Health</span>
             <span>Next run</span>
             <span></span>
           </div>
@@ -1017,20 +1001,28 @@ useQueryOverride(() => route.query.filter, isFilterHealth, filterHealth)
               >{{ agentsLabel(s) }}</span
             >
             <span class="list-row-chips">
+              <!-- The dot already says healthy; anything else is named, in the
+                   dot's colour, so it reads without a second, matching pill. -->
+              <!-- A failed or warned run links to its output in the Activity
+                   log; the row itself still opens the schedule. -->
               <span
-                class="badge schedules-health"
-                :class="badgeClass(s.rowHealth.tone)"
+                v-if="s.rowHealth.runIssue"
+                class="schedules-health schedules-health--link"
+                :class="`schedules-health--${s.rowHealth.tone}`"
                 :title="s.rowHealth.title || undefined"
+                role="link"
+                tabindex="0"
+                @click.prevent.stop="openRunIssue(s.id, s.rowHealth.runIssue)"
+                @keydown.enter.prevent.stop="openRunIssue(s.id, s.rowHealth.runIssue)"
+                >{{ s.rowHealth.label }}</span
               >
-                <span
-                  v-if="s.rowHealth.tone === 'accent'"
-                  class="badge-dot"
-                ></span>
-                {{ s.rowHealth.label }}
-              </span>
-            </span>
-            <span class="list-wide-only">
-              <RunHistoryStrip :runs="runsBySchedule.get(s.id) ?? []" />
+              <span
+                v-else-if="s.rowHealth.tone !== 'success'"
+                class="schedules-health"
+                :class="`schedules-health--${s.rowHealth.tone}`"
+                :title="s.rowHealth.title || undefined"
+                >{{ s.rowHealth.label }}</span
+              >
             </span>
             <span
               class="list-row-value list-wide-only"
@@ -1074,7 +1066,9 @@ useQueryOverride(() => route.query.filter, isFilterHealth, filterHealth)
 }
 
 .schedules-list .list-group {
-  --list-cols: minmax(0, 2.4fr) minmax(0, 1.2fr) minmax(0, 1.5fr) 11rem 7rem 1.25rem;
+  /* Every column a share of the row, never its content's width: each row is
+     a grid of its own, so a width taken from content set them apart. */
+  --list-cols: minmax(0, 2.4fr) minmax(0, 1fr) minmax(0, 1.4fr) 9rem 1.25rem;
 }
 
 /* The Disabled group's title is a button that folds the group open. */
@@ -1097,6 +1091,9 @@ useQueryOverride(() => route.query.filter, isFilterHealth, filterHealth)
 }
 
 .schedules-sub-arrow {
+  /* An inline arrow; Tailwind's preflight makes every svg a block, which put
+     it on a line of its own. */
+  display: inline;
   vertical-align: middle;
 }
 
@@ -1106,11 +1103,42 @@ useQueryOverride(() => route.query.filter, isFilterHealth, filterHealth)
   white-space: nowrap;
 }
 
+.schedules-health-head {
+  text-align: right;
+}
+
 .schedules-health {
+  flex: 1 1 auto;
+  min-width: 0;
+  text-align: right;
+  font-size: var(--fs-sm);
+  color: var(--text-secondary);
   max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.schedules-health--link {
+  cursor: pointer;
+}
+
+.schedules-health--link:hover,
+.schedules-health--link:focus-visible {
+  text-decoration: underline;
+}
+
+.schedules-health--warning {
+  color: var(--warning);
+}
+
+.schedules-health--danger {
+  color: var(--danger);
+}
+
+.schedules-health--accent,
+.schedules-health--info {
+  color: var(--accent);
 }
 
 .schedules-next--overdue {
@@ -1120,6 +1148,7 @@ useQueryOverride(() => route.query.filter, isFilterHealth, filterHealth)
 /* On a phone the next run sits at the end of the name's line, clear of the
    chevron that is pinned to the row's top-right corner. */
 .schedules-next-narrow {
+  flex-shrink: 0;
   margin-left: auto;
   margin-right: var(--space-7);
   font-size: var(--fs-xs);

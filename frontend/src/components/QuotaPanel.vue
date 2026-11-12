@@ -17,7 +17,6 @@ import type { QuotaData } from '../api/repos'
 import PaneRow from './PaneRow.vue'
 import ToggleSwitch from './ToggleSwitch.vue'
 import EditFormActions from './EditFormActions.vue'
-import HelpHint from './HelpHint.vue'
 
 type QuotaStatus = 'ok' | 'warning' | 'critical'
 
@@ -216,7 +215,7 @@ if (props.sshHost !== undefined) {
 <template>
   <div>
     <div class="pane-head">
-      <HelpHint label="space limits">
+      <p class="pane-lede">
         <template v-if="sshHost === undefined">
           How much space this repository may use, and what Assimilate does as it fills up.
         </template>
@@ -225,7 +224,7 @@ if (props.sshHost !== undefined) {
           disk or one provider quota, and what Assimilate does as it fills up. Each repository can
           still have a quota of its own as well.
         </template>
-      </HelpHint>
+      </p>
       <div class="panel-actions">
         <span
           v-if="quota && quota.enabled"

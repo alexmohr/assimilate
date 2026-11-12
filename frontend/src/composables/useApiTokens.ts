@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
-import { ref, type Ref } from 'vue'
+import { computed, ref, type ComputedRef, type Ref } from 'vue'
 import { createToken, deleteToken, listTokens, type ApiToken } from '../api/tokens'
 import type { ApiTokenScope } from '../types/generated'
 import { extractError } from '../utils/error'
+import { tokenExpiresAt, type TokenExpiryChoice } from '../utils/apiToken'
 import { useClipboard } from './useClipboard'
 
 interface UseApiTokensReturn {
@@ -16,6 +17,18 @@ interface UseApiTokensReturn {
   createName: Ref<string>
   /** What the token being created may do; a full token unless changed. */
   createScope: Ref<ApiTokenScope>
+  /** When the token being created expires: a preset length, or a picked date. */
+  createExpiry: Ref<TokenExpiryChoice>
+  /** The picked date, `YYYY-MM-DD`, when `createExpiry` is `date`. */
+  createExpiryDate: Ref<string>
+  /** The expiry of the token just created, while its plaintext is shown. */
+  newTokenExpiresAt: Ref<string | null>
+  /**
+   * Whether the token being created can be submitted: it has a name, and
+   * "On a date" has its day picked. Without the day the token would never
+   * expire, the opposite of what was asked.
+   */
+  createReady: ComputedRef<boolean>
   /** The scope of the token just created, while its plaintext is shown. */
   newTokenScope: Ref<ApiTokenScope>
   createError: Ref<string>
@@ -42,6 +55,14 @@ export function useApiTokens(): UseApiTokensReturn {
   const showCreateModal = ref(false)
   const createName = ref('')
   const createScope = ref<ApiTokenScope>('full')
+  const createExpiry = ref<TokenExpiryChoice>('never')
+  const createExpiryDate = ref('')
+  const newTokenExpiresAt = ref<string | null>(null)
+  const createReady = computed(
+    () =>
+      createName.value.trim() !== '' &&
+      !(createExpiry.value === 'date' && createExpiryDate.value === ''),
+  )
   const newTokenScope = ref<ApiTokenScope>('full')
   const createError = ref('')
   const createSubmitting = ref(false)
@@ -67,17 +88,22 @@ export function useApiTokens(): UseApiTokensReturn {
   function openCreate(): void {
     createName.value = ''
     createScope.value = 'full'
+    createExpiry.value = 'never'
+    createExpiryDate.value = ''
     createError.value = ''
     newTokenPlaintext.value = ''
     showCreateModal.value = true
   }
 
   async function submitCreate(): Promise<void> {
+    if (!createReady.value) return
     createError.value = ''
     createSubmitting.value = true
     try {
-      const res = await createToken(createName.value, createScope.value)
+      const expiresAt = tokenExpiresAt(createExpiry.value, createExpiryDate.value)
+      const res = await createToken(createName.value, createScope.value, expiresAt)
       newTokenScope.value = createScope.value
+      newTokenExpiresAt.value = expiresAt
       newTokenPlaintext.value = res.plaintext
       await fetchTokens()
     } catch (e: unknown) {
@@ -122,6 +148,10 @@ export function useApiTokens(): UseApiTokensReturn {
     showCreateModal,
     createName,
     createScope,
+    createExpiry,
+    createExpiryDate,
+    createReady,
+    newTokenExpiresAt,
     newTokenScope,
     createError,
     createSubmitting,

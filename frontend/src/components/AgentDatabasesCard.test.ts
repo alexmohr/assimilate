@@ -10,6 +10,7 @@ import { NO_RUNTIMES } from '../utils/databaseRuntimes'
 import BaseSegmented from './BaseSegmented.vue'
 import ToggleSwitch from './ToggleSwitch.vue'
 import type { AgentRow } from '../types/agent'
+import type { ScheduleRow } from '../types/schedule'
 import type {
   AgentDatabaseSourceResponse,
   AgentDatabasesResponse,
@@ -516,5 +517,80 @@ describe('AgentDatabasesCard', () => {
   it('offers no scan for an imported host', async () => {
     const wrapper = await mount({ canEdit: false })
     expect(wrapper.text()).not.toContain('Scan for databases')
+  })
+
+  // A schedule's own switch asks for dumps; this host's switch can refuse them.
+  // When it does, the host's pane names the schedules left without dumps.
+  describe('schedules asking for dumps a host blocks', () => {
+    function sched(id: number, name: string, dumps: boolean): ScheduleRow {
+      return { id, name, database_backup_enabled: dumps } as unknown as ScheduleRow
+    }
+
+    function blocked(): void {
+      vi.mocked(apiClient.get).mockResolvedValue({
+        data: response([source()], { enabled: false }),
+      } as never)
+    }
+
+    it('names the one schedule asking and links to it', async () => {
+      blocked()
+      const wrapper = await mount({
+        schedules: [sched(5, 'Nightly', true), sched(6, 'Weekly', false)],
+      })
+      const notice = wrapper.get('[data-testid="database-dump-asked"]')
+      expect(notice.attributes('role')).toBe('status')
+      expect(notice.get('.notice-bar-title').text()).toBe('1 schedule asks for database dumps here')
+      const links = notice.findAll('a.dump-asked-link')
+      expect(links.map((l) => l.text())).toEqual(['Nightly'])
+      expect(links[0].attributes('href')).toBe('/schedules/5')
+      expect(notice.text()).toContain('Nightly asks for database dumps, but they are blocked')
+    })
+
+    it('joins two schedules with "and"', async () => {
+      blocked()
+      const wrapper = await mount({
+        schedules: [sched(5, 'Nightly', true), sched(6, 'Weekly', true)],
+      })
+      const notice = wrapper.get('[data-testid="database-dump-asked"]')
+      expect(notice.get('.notice-bar-title').text()).toBe('2 schedules ask for database dumps here')
+      expect(notice.text()).toContain('Nightly and Weekly ask for database dumps')
+    })
+
+    it('lists three or more with commas and a final "and"', async () => {
+      blocked()
+      const wrapper = await mount({
+        schedules: [sched(5, 'Nightly', true), sched(6, 'Weekly', true), sched(7, 'Hourly', true)],
+      })
+      const notice = wrapper.get('[data-testid="database-dump-asked"]')
+      expect(notice.text()).toContain('Nightly, Weekly and Hourly ask for database dumps')
+      expect(notice.findAll('a.dump-asked-link').map((l) => l.attributes('href'))).toEqual([
+        '/schedules/5',
+        '/schedules/6',
+        '/schedules/7',
+      ])
+    })
+
+    it('names an unnamed schedule by its number', async () => {
+      blocked()
+      const wrapper = await mount({ schedules: [sched(9, '', true)] })
+      expect(wrapper.get('a.dump-asked-link').text()).toBe('Schedule #9')
+    })
+
+    it('says nothing when no schedule asks for dumps', async () => {
+      blocked()
+      const wrapper = await mount({ schedules: [sched(5, 'Nightly', false)] })
+      expect(wrapper.find('[data-testid="database-dump-asked"]').exists()).toBe(false)
+    })
+
+    it('says nothing without any schedules passed in', async () => {
+      blocked()
+      const wrapper = await mount()
+      expect(wrapper.find('[data-testid="database-dump-asked"]').exists()).toBe(false)
+    })
+
+    it('says nothing once the host allows dumps', async () => {
+      const wrapper = await mount({ schedules: [sched(5, 'Nightly', true)] })
+      expect(wrapper.find('[data-testid="database-dump-asked"]').exists()).toBe(false)
+    })
   })
 })

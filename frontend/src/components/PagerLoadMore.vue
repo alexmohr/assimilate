@@ -7,8 +7,8 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 import { REPORTS_PAGE_SIZE } from '../composables/useReportsPager'
 
 /**
- * The "load more" footer shared by `RunLogTab` and `ScheduleBackupsTab`:
- * both page through the same `useReportsPager`-backed list and need the
+ * The "load more" footer of `ScheduleBackupsTab`, kept apart so any list
+ * paging through a `useReportsPager`-backed list gets the
  * same button (capped at a page, disabled and relabelled while a fetch is
  * in flight) plus a note explaining how much of the total is loaded.
  */

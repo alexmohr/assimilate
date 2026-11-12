@@ -73,3 +73,43 @@ export function relativeTime(iso: string): string {
   if (futureHrs < 24) return `in ${futureHrs}h`
   return `in ${Math.floor(futureHrs / 24)}d`
 }
+
+/** The time of day, `14:30`, in the configured timezone. */
+export function formatClock(iso: string): string {
+  return new Date(iso).toLocaleTimeString(undefined, {
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+    timeZone: getConfiguredTimezone(),
+  })
+}
+
+/** A day without its year, `6 Nov`, in the configured timezone. */
+export function formatDay(iso: string): string {
+  return new Date(iso).toLocaleDateString(undefined, {
+    day: 'numeric',
+    month: 'short',
+    timeZone: getConfiguredTimezone(),
+  })
+}
+
+/** A day with its year, `6 Nov 2026`, in the configured timezone. */
+export function formatDayYear(iso: string): string {
+  return new Date(iso).toLocaleDateString(undefined, {
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+    timeZone: getConfiguredTimezone(),
+  })
+}
+
+/**
+ * What follows item `index` of `count` in a sentence listing them: ", "
+ * between items, " and " before the last, and `end` after it. Lists built
+ * from separate links (one per host or schedule) cannot use a plain join.
+ */
+export function listSeparator(index: number, count: number, end = ''): string {
+  if (index < count - 2) return ', '
+  if (index === count - 2) return ' and '
+  return end
+}

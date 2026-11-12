@@ -364,3 +364,20 @@ export async function deleteArchive(
   )
   return response.data
 }
+
+/**
+ * One file of an archive as it was backed up, for showing it in the browser
+ * (an image in a comparison). The server's `extract` streams the file itself,
+ * typed by its extension, unlike a download, which is a tar of what is picked.
+ */
+export async function getArchiveFile(
+  repoId: number,
+  archiveName: string,
+  path: string,
+): Promise<Blob> {
+  const response = await apiClient.get<Blob>(
+    `/repos/${repoId}/archives/${encodeURIComponent(archiveName)}/extract`,
+    { params: { path }, responseType: 'blob' },
+  )
+  return response.data
+}

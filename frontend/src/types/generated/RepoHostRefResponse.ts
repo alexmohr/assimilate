@@ -17,4 +17,13 @@ export type RepoHostRefResponse = {
    * Whether the host is marked as not always online.
    */
   intermittent: boolean;
+  /**
+   * Whether the host answered its last reachability check; `None` before
+   * it was ever checked.
+   */
+  last_check_reachable: boolean | null;
+  /**
+   * When the host was last checked.
+   */
+  last_checked_at: string | null;
 };

@@ -7,7 +7,12 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 import { Trash2 } from '@lucide/vue'
 import { formatDate } from '../utils/format'
 import { badgeClass } from '../utils/badge'
-import { tokenScopeLabel, tokenScopeTone, type ApiTokenRow } from '../utils/apiToken'
+import {
+  tokenExpiryState,
+  tokenScopeLabel,
+  tokenScopeTone,
+  type ApiTokenRow,
+} from '../utils/apiToken'
 
 defineProps<{
   tokens: T[]
@@ -20,12 +25,13 @@ defineEmits<{
 
 <template>
   <div class="table-wrap table-wrap--framed">
-    <table class="data-table">
+    <table class="data-table data-table--stack">
       <thead>
         <tr>
           <th>Name</th>
           <th>Created</th>
           <th>Last used</th>
+          <th>Expires</th>
           <th>Actions</th>
         </tr>
       </thead>
@@ -46,11 +52,28 @@ defineEmits<{
               Monitoring
             </span>
           </td>
-          <td class="cell-date">
+          <td
+            data-label="Created"
+            class="cell-date"
+          >
             {{ formatDate(token.created_at) }}
           </td>
-          <td class="cell-date">
+          <td
+            data-label="Last used"
+            class="cell-date"
+          >
             {{ formatDate(token.last_used_at, 'Never') }}
+          </td>
+          <!-- An expired token is red, one expiring within two weeks amber. -->
+          <td
+            data-label="Expires"
+            class="cell-date"
+            :class="`token-expiry--${tokenExpiryState(token.expires_at)}`"
+          >
+            <template v-if="tokenExpiryState(token.expires_at) === 'expired'">
+              Expired {{ formatDate(token.expires_at ?? null) }}
+            </template>
+            <template v-else>{{ formatDate(token.expires_at ?? null, 'Never') }}</template>
           </td>
           <td>
             <button
@@ -75,5 +98,16 @@ defineEmits<{
   & .badge {
     margin-left: var(--space-3);
   }
+}
+.token-expiry--soon {
+  color: var(--warning);
+}
+
+.token-expiry--expired {
+  color: var(--danger);
+}
+
+.token-expiry--none {
+  color: var(--text-muted);
 }
 </style>

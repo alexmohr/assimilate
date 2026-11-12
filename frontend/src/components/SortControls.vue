@@ -18,6 +18,8 @@ defineProps<{
   field: F
   direction: SortDir
   options: readonly { field: F; label: string }[]
+  /** Leave out the "Sort:" caption, for a row that already names it. */
+  hideLabel?: boolean
 }>()
 
 defineEmits<{ toggle: [field: F] }>()
@@ -25,7 +27,11 @@ defineEmits<{ toggle: [field: F] }>()
 
 <template>
   <div class="sort-controls">
-    <span class="sort-label">Sort:</span>
+    <span
+      v-if="!hideLabel"
+      class="sort-label"
+      >Sort:</span
+    >
     <button
       v-for="option in options"
       :key="option.field"

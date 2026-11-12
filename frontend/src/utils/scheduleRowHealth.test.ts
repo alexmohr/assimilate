@@ -162,3 +162,72 @@ describe('scheduleRowHealth', () => {
     expect(health.title).toContain('One host missed a run')
   })
 })
+
+/**
+ * `runIssue`: whether the row's chip leads to the output of a failed or
+ * warned last run. Kept apart from the label tests so each case says only
+ * what decides the link.
+ */
+describe('scheduleRowHealth runIssue', () => {
+  it('marks a failed last run, so the chip leads to its output', () => {
+    const health = scheduleRowHealth(input({ entries: [entry({ last_status: 'failed' })] }))
+    expect(health).toMatchObject({ label: 'Failed', tone: 'danger', runIssue: 'failed' })
+  })
+
+  it('reads any unknown status as a failure', () => {
+    const health = scheduleRowHealth(input({ entries: [entry({ last_status: 'exploded' })] }))
+    expect(health.runIssue).toBe('failed')
+  })
+
+  it('marks a warned last run, keeping the warning tone', () => {
+    const health = scheduleRowHealth(input({ entries: [entry({ last_status: 'warning' })] }))
+    expect(health).toMatchObject({ label: 'Warning', tone: 'warning', runIssue: 'warning' })
+  })
+
+  it('prefers the failure when one target failed and another warned', () => {
+    const health = scheduleRowHealth(
+      input({
+        entries: [
+          entry({ last_status: 'warning', last_error_message: 'some files vanished' }),
+          entry({ repo_id: 21, last_status: 'failed', last_error_message: 'repo locked' }),
+        ],
+      }),
+    )
+    expect(health.runIssue).toBe('failed')
+    expect(health.title).toBe('repo locked')
+  })
+
+  it('keeps the run issue when other problems share the chip', () => {
+    const health = scheduleRowHealth(
+      input({
+        entries: [entry({ last_status: 'warning', is_overdue: true })],
+        overlapAgents: ['db-01'],
+        catchUpPendingCount: 1,
+      }),
+    )
+    expect(health.label).toBe('Overdue · Warning · Overlaps db-01 · Catch-up pending')
+    expect(health.runIssue).toBe('warning')
+  })
+
+  it.each([
+    ['a healthy run', input()],
+    ['no run yet', input({ entries: [] })],
+    ['an overdue run that passed', input({ entries: [entry({ is_overdue: true })] })],
+    ['an overlap alone', input({ overlapAgents: ['db-01'] })],
+    ['an offline agent', input({ offlineAgents: ['web-01 — last seen 2h ago'] })],
+    ['a pending catch-up', input({ catchUpPendingCount: 2 })],
+    ['a run still in progress', input({ entries: [entry({ last_status: 'started' })] })],
+    ['a skipped run', input({ entries: [entry({ last_status: 'skipped' })] })],
+  ])('leaves no run issue for %s', (_name, value) => {
+    expect('runIssue' in scheduleRowHealth(value)).toBe(false)
+  })
+
+  it('leaves no run issue while it runs or when it is disabled, even after a failure', () => {
+    const failed = [entry({ last_status: 'failed' })]
+    expect(scheduleRowHealth(input({ running: true, entries: failed })).runIssue).toBeUndefined()
+    expect(
+      scheduleRowHealth(input({ enabled: false, disabledLabel: 'Disabled', entries: failed }))
+        .runIssue,
+    ).toBeUndefined()
+  })
+})

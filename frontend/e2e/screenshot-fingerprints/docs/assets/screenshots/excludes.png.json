@@ -1,5 +1,5 @@
 {
   "test": "settings pages",
   "pages": ["frontend/src/views/ExcludesView.vue"],
-  "fingerprint": "3bc34e9b62a9de9b50c8fbc9e2e13c513bbcc5079a4e53426e5cbcd7f0d9cbdb"
+  "fingerprint": "90a2b0456e34126469caa8619a47442e828aa2978d87ecedc0c32088587c1cb4"
 }

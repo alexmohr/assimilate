@@ -94,7 +94,6 @@ async function save(): Promise<void> {
     label="Machine"
     lede="When this dependency is the same machine as a repository host, they share one set of
       power settings."
-    lede-label="sharing a machine"
     :editing="editing"
     :can-edit="isAdmin"
     :saving="saving"

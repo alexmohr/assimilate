@@ -7,25 +7,24 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 import { computed } from 'vue'
 import { ChevronRight } from '@lucide/vue'
 import { formatBytes, relativeTime } from '../utils/format'
-import { badgeClass, type BadgeTone } from '../utils/badge'
+import type { BadgeTone } from '../utils/badge'
 import { repoQuotaUse, repoRowStatus, type RepoRowStatus } from '../utils/repoStatus'
 import type { RepoWithStats } from '../types/repo'
 
 /**
- * One repository on the Repositories overview: a link to its page, with the
- * columns the list's head names (status, archives, last backup, size of
- * quota). On a phone the cells stack into a name line, a counts line and a
- * coloured status line.
+ * One repository on the Repositories overview: a link to its page. A status
+ * dot, the name over a line of facts, and its size (against its own quota,
+ * when it has one) on the right. The dot is the status; a status other than
+ * healthy is also named first in the facts, in its tone when it is a risk
+ * and muted when it is not. On a phone the size drops under the facts.
  */
 const props = withDefaults(
   defineProps<{
     repo: RepoWithStats
     /** Steps the row back, for a host-group entry the current filter hides. */
     dim?: boolean
-    /** The row sits under its host's header, which already says whether the host sleeps. */
-    pooled?: boolean
   }>(),
-  { dim: false, pooled: false },
+  { dim: false },
 )
 
 const status = computed<RepoRowStatus>(() => repoRowStatus(props.repo))
@@ -38,19 +37,11 @@ const target = computed<string>(() =>
     : `/repos/${props.repo.id}`,
 )
 
-/** The borg address and settings, plus a note on a sleeping host the row's header does not carry. */
-const subline = computed<string>(() => {
-  const { repo } = props
-  const parts = [
-    `${repo.ssh_user}@${repo.ssh_host}:${repo.repo_path}`,
-    repo.encryption,
-    repo.compression,
-  ]
-  if (!props.pooled && repo.repo_host.intermittent) parts.push('host sleeps')
-  return parts.join(' · ')
-})
-
-const lastBackup = computed<string>(() => relativeTime(props.repo.last_backup_at ?? ''))
+const lastBackup = computed<string>(() =>
+  props.repo.last_backup_at
+    ? `last backup ${relativeTime(props.repo.last_backup_at)}`
+    : 'no backup yet',
+)
 
 const sizeText = computed<string>(() => {
   const used = formatBytes(props.repo.total_deduplicated_size)
@@ -67,6 +58,16 @@ const DOT_CLASS: Record<BadgeTone, string | null> = {
   danger: 'status-dot--danger',
   info: 'status-dot--info',
   accent: 'status-dot--accent',
+  neutral: null,
+}
+
+/** The status named in the facts takes a colour only when it is a risk. */
+const STATUS_CLASS: Record<BadgeTone, string | null> = {
+  success: null,
+  warning: 'repo-row-status--warning',
+  danger: 'repo-row-status--danger',
+  info: null,
+  accent: null,
   neutral: null,
 }
 
@@ -105,22 +106,19 @@ const barTone = computed<BadgeTone>(() => {
       ></span>
       <span class="list-row-text">
         <span class="list-row-name">{{ repo.name }}</span>
-        <span class="list-row-sub">{{ subline }}</span>
+        <span class="list-row-sub repo-row-facts">
+          <span
+            v-if="status.kind !== 'healthy'"
+            :class="STATUS_CLASS[status.tone]"
+            :title="status.detail ?? undefined"
+            >{{ status.label }}</span
+          >
+          <span>{{ archivesText }}</span>
+          <span>{{ lastBackup }}</span>
+        </span>
       </span>
-      <span class="list-narrow-only repo-row-when">{{ lastBackup }}</span>
     </span>
-    <span class="list-row-chips list-wide-only">
-      <span
-        class="badge"
-        :class="[badgeClass(status.tone), { 'badge--pulse': status.kind === 'importing' }]"
-        :title="status.detail ?? undefined"
-      >
-        {{ status.label }}
-      </span>
-    </span>
-    <span class="list-row-value list-wide-only">{{ repo.archive_count }}</span>
-    <span class="list-row-value list-wide-only">{{ lastBackup }}</span>
-    <div class="list-wide-only repo-row-quota">
+    <div class="repo-row-quota">
       <div
         v-if="quotaUse"
         class="progress-track"
@@ -133,13 +131,6 @@ const barTone = computed<BadgeTone>(() => {
       </div>
       <span class="repo-row-size">{{ sizeText }}</span>
     </div>
-    <span class="list-narrow-only repo-row-counts">{{ archivesText }} · {{ sizeText }}</span>
-    <span
-      class="list-narrow-only repo-row-status"
-      :class="`repo-row-status--${status.tone}`"
-    >
-      {{ status.label }}
-    </span>
     <ChevronRight
       :size="16"
       class="list-row-chevron"
@@ -152,38 +143,17 @@ const barTone = computed<BadgeTone>(() => {
   opacity: 0.45;
 }
 
-/* The bar over its figure; a grid rather than a column flex, because the
-   shared track grows along a flex axis and would collapse to nothing. */
-.repo-row-quota {
-  display: grid;
-  gap: var(--space-2);
-  min-width: 0;
+.repo-row-facts {
+  display: flex;
+  flex-wrap: wrap;
+  column-gap: var(--space-2);
+  white-space: normal;
 }
 
-.repo-row-size {
-  font-family: var(--mono);
-  font-size: var(--fs-xs);
-  color: var(--text-secondary);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.repo-row-when,
-.repo-row-counts {
-  font-size: var(--fs-xs);
-  color: var(--text-secondary);
-}
-
-.repo-row-status {
-  flex-basis: 100%;
-  font-size: var(--fs-xs);
-  font-weight: 600;
-  color: var(--text-secondary);
-}
-
-.repo-row-status--success {
-  color: var(--success);
+.repo-row-facts > span + span::before {
+  content: '\00B7';
+  margin-right: var(--space-2);
+  color: var(--text-muted);
 }
 
 .repo-row-status--warning {
@@ -194,12 +164,40 @@ const barTone = computed<BadgeTone>(() => {
   color: var(--danger);
 }
 
+/* The bar over its figure, both at the right; a grid rather than a column
+   flex, because the shared track grows along a flex axis and would collapse
+   to nothing. */
+.repo-row-quota {
+  display: grid;
+  gap: var(--space-2);
+  justify-items: end;
+  min-width: 0;
+}
+
+.repo-row-quota .progress-track {
+  width: 100%;
+}
+
+.repo-row-size {
+  font-family: var(--mono);
+  font-size: var(--fs-xs);
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+
 @media (max-width: 640px) {
-  /* Last backup sits at the right of the name line, clear of the chevron. */
-  .repo-row-when {
-    margin-left: auto;
-    margin-right: calc(16px + var(--space-3));
-    white-space: nowrap;
+  /* Under the facts, at the start of the line like them. */
+  .repo-row-quota {
+    flex: 1 1 100%;
+    justify-items: start;
+  }
+
+  .repo-row-quota .progress-track {
+    max-width: 14rem;
   }
 }
 </style>

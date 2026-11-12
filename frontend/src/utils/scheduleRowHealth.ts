@@ -32,6 +32,8 @@ export interface ScheduleRowHealth {
   title: string
   /** Needs attention: sorts the row to the top of its group. */
   problem: boolean
+  /** The last run failed or warned, so the label leads to that run's output. */
+  runIssue?: 'failed' | 'warning'
 }
 
 /**
@@ -57,6 +59,7 @@ export function scheduleRowHealth(input: ScheduleRowHealthInput): ScheduleRowHea
   const parts: string[] = []
   const titles: string[] = []
   let tone: BadgeTone = 'warning'
+  let runIssue: 'failed' | 'warning' | undefined
 
   if (input.entries.some((h) => h.is_overdue)) {
     parts.push('Overdue')
@@ -67,9 +70,11 @@ export function scheduleRowHealth(input: ScheduleRowHealthInput): ScheduleRowHea
   if (failed) {
     parts.push('Failed')
     tone = 'danger'
+    runIssue = 'failed'
     if (failed.last_error_message) titles.push(failed.last_error_message)
   } else if (warned) {
     parts.push('Warning')
+    runIssue = 'warning'
     if (warned.last_error_message) titles.push(warned.last_error_message)
   }
   const missed = missedBackupStreak(input.entries[0])
@@ -88,7 +93,13 @@ export function scheduleRowHealth(input: ScheduleRowHealthInput): ScheduleRowHea
       parts.push('Catch-up pending')
       titles.push(catchUpPendingTitle(input.catchUpPendingCount))
     }
-    return { label: parts.join(' · '), tone, title: titles.join('\n'), problem: true }
+    return {
+      label: parts.join(' · '),
+      tone,
+      title: titles.join('\n'),
+      problem: true,
+      ...(runIssue ? { runIssue } : {}),
+    }
   }
 
   // Checked before "Agent offline": a catch-up is pending precisely because

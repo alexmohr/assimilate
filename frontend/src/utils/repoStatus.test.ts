@@ -92,9 +92,24 @@ describe('repoRowStatus', () => {
     expect(status.kind).toBe('healthy')
   })
 
-  it('counts unmatched archives when the quota is fine', () => {
+  it('counts unmatched archives when the quota is fine, without calling them a problem', () => {
     const status = repoRowStatus(repo({ unmatched_count: 2 }))
-    expect(status).toMatchObject({ kind: 'unmatched', label: '2 unmatched', tone: 'warning' })
+    expect(status).toMatchObject({
+      kind: 'unmatched',
+      label: '2 unmatched',
+      tone: 'success',
+      detail: 'Imported archives no schedule claims yet',
+    })
+    // Unmatched archives are old data to sort out, not a backup at risk.
+    expect(isRepoProblem(status)).toBe(false)
+  })
+
+  it('puts a near-quota warning ahead of unmatched archives', () => {
+    const status = repoRowStatus(
+      repo({ unmatched_count: 2, quota: quota(), total_deduplicated_size: 600 }),
+    )
+    expect(status.kind).toBe('near_quota')
+    expect(isRepoProblem(status)).toBe(true)
   })
 
   it('puts a quota breach ahead of unmatched archives', () => {

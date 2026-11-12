@@ -98,10 +98,9 @@ describe('RepoOverviewCard', () => {
       expect(wrapper.find('.current-op-running').text()).toBe('Server sync in progress (+2 queued)')
     })
 
-    it('discloses the connection details explanation on demand', async () => {
+    it('says what the connection details are in words', () => {
       const wrapper = mount()
-      await wrapper.find('[aria-label="Help: connection details"]').trigger('click')
-      expect(wrapper.find('.help-hint-pop').text()).toBe(
+      expect(wrapper.find('.pane-lede').text()).toBe(
         'Where this repository lives and how borg writes to it.',
       )
     })

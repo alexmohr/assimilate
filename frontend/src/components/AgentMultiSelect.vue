@@ -103,8 +103,8 @@ onBeforeUnmount(() => document.removeEventListener('click', handleClickOutside))
 .multi-select-trigger {
   width: 100%;
   padding: var(--space-4) var(--space-5);
-  background: var(--bg-input);
-  border: 1px solid var(--border);
+  background: var(--bg-field);
+  border: 1px solid transparent;
   border-radius: var(--radius-sm);
   color: var(--text-primary);
   font-size: var(--fs-base);

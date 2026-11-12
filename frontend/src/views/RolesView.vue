@@ -246,9 +246,9 @@ onMounted((): void => {
     <!-- Permission Matrix -->
     <div
       v-else
-      class="table-wrap"
+      class="table-wrap table-wrap--framed"
     >
-      <table class="data-table data-table--compact">
+      <table class="data-table data-table--stack data-table--compact">
         <thead>
           <tr>
             <th class="role-name-col">Role</th>
@@ -282,6 +282,7 @@ onMounted((): void => {
             <td
               v-for="perm in PERMISSION_LABELS"
               :key="perm.key"
+              :data-label="perm.label"
               class="perm-cell"
             >
               <span
@@ -452,8 +453,8 @@ onMounted((): void => {
   min-width: 120px;
 }
 
-.data-table tr.seeded {
-  background: var(--bg-hover);
+.data-table tr.seeded td:first-child {
+  font-weight: 600;
 }
 
 .role-name-cell {

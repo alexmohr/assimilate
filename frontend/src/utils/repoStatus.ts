@@ -67,11 +67,13 @@ export function repoRowStatus(repo: RepoWithStats): RepoRowStatus {
       ? { kind: 'over_quota', label: 'Over quota', tone: 'danger', detail }
       : { kind: 'near_quota', label: 'Near quota', tone: 'warning', detail }
   }
+  // Archives no schedule claims yet are old data to sort out, not a backup at
+  // risk, so they leave the repository's dot green.
   if (repo.unmatched_count > 0) {
     return {
       kind: 'unmatched',
       label: `${repo.unmatched_count} unmatched`,
-      tone: 'warning',
+      tone: 'success',
       detail: 'Imported archives no schedule claims yet',
     }
   }

@@ -1,8 +1,21 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { renderWithPlugins } from '../test-utils'
+
+// The open archive's file tree fetches from the server and carries the
+// archive's menu, Delete among it; this tab only decides what it is handed.
+vi.mock('./ArchiveFileBrowser.vue', () => ({
+  default: {
+    name: 'ArchiveFileBrowser',
+    props: ['repoId', 'repoName', 'archive', 'archives', 'isAdmin', 'deleting'],
+    emits: ['delete-archive'],
+    template:
+      '<div class="stub-browser"><button v-if="isAdmin" class="stub-delete" type="button">Delete archive...</button></div>',
+  },
+}))
+
 import ScheduleBackupsTab from './ScheduleBackupsTab.vue'
 import type { ReportRow } from '../types/report'
 import type { AgentRow } from '../types/agent'
@@ -45,6 +58,28 @@ function mount(props: Record<string, unknown> = {}) {
   })
 }
 
+type Wrapper = ReturnType<typeof mount>
+
+/** Every archive row, in the order the list shows them. */
+function archiveRows(wrapper: Wrapper) {
+  return wrapper.findAll('[data-testid="archive-row"]')
+}
+
+/** The archive names, in list order. */
+function names(wrapper: Wrapper): string[] {
+  return archiveRows(wrapper).map((r) => r.get('.browser-row-title').text())
+}
+
+/** The row marked as the open archive, by `aria-current`. */
+function selectedRows(wrapper: Wrapper) {
+  return archiveRows(wrapper).filter((r) => r.attributes('aria-current') === 'true')
+}
+
+/** The repository filter's pills, present only for a schedule with several targets. */
+function repoPills(wrapper: Wrapper) {
+  return wrapper.findAll('[role="group"][aria-label="Repository"] .filter-pill')
+}
+
 const REPOS = [
   { id: 3, name: 'server-daily', required: true },
   { id: 4, name: 'offsite-weekly', required: false },
@@ -67,15 +102,14 @@ describe('ScheduleBackupsTab', () => {
         report({ id: 3, archive_name: 'failed-run', status: 'failed' }),
       ],
     })
-    const names = wrapper.findAll('.archive-name').map((c) => c.text())
-    expect(names).toEqual(['kept'])
+    expect(names(wrapper)).toEqual(['kept'])
   })
 
   it('keeps warning runs, whose archive exists but is incomplete', () => {
     const wrapper = mount({
       reports: [report({ id: 2, archive_name: 'partial', status: 'warning' })],
     })
-    expect(wrapper.findAll('.archive-name').map((c) => c.text())).toEqual(['partial'])
+    expect(names(wrapper)).toEqual(['partial'])
   })
 
   it('orders the archives newest first', () => {
@@ -86,7 +120,7 @@ describe('ScheduleBackupsTab', () => {
         report({ id: 3, archive_name: 'feb', started_at: '2026-02-01T00:00:00Z' }),
       ],
     })
-    expect(wrapper.findAll('.archive-name').map((c) => c.text())).toEqual(['mar', 'feb', 'jan'])
+    expect(names(wrapper)).toEqual(['mar', 'feb', 'jan'])
   })
 
   it('says so when the schedule has produced no archives', () => {
@@ -96,7 +130,7 @@ describe('ScheduleBackupsTab', () => {
 
   it('reports the clicked archive up to the view, which owns the selection', async () => {
     const wrapper = mount()
-    await wrapper.find('.archive-row-select').trigger('click')
+    await archiveRows(wrapper)[0]!.trigger('click')
     const updates = wrapper.emitted('update:selected')
     expect(updates).toHaveLength(1)
     expect((updates![0][0] as ReportRow).archive_name).toBe('web-01-2026-01-01')
@@ -104,9 +138,23 @@ describe('ScheduleBackupsTab', () => {
 
   it('offers deletion to an admin and withholds it from everyone else', () => {
     // The schedule's own table had no delete at all; it now shares the
-    // repository screen's control, gated the same way.
-    expect(mount({ isAdmin: true }).find('.archive-row-delete').exists()).toBe(true)
-    expect(mount({ isAdmin: false }).find('.archive-row-delete').exists()).toBe(false)
+    // repository screen's control, gated the same way: in the open archive's
+    // menu rather than on each row.
+    const admin = mount({ isAdmin: true, selected: report({}) })
+    expect(admin.findComponent({ name: 'ArchiveFileBrowser' }).props('isAdmin')).toBe(true)
+    expect(admin.find('.stub-delete').exists()).toBe(true)
+
+    const viewer = mount({ isAdmin: false, selected: report({}) })
+    expect(viewer.findComponent({ name: 'ArchiveFileBrowser' }).props('isAdmin')).toBe(false)
+    expect(viewer.find('.stub-delete').exists()).toBe(false)
+  })
+
+  it('opens the selected archive in the file browser, on its own repository', () => {
+    const wrapper = mount({ selected: report({}), repoOptions: [REPOS[0]] })
+    const browser = wrapper.findComponent({ name: 'ArchiveFileBrowser' })
+    expect(browser.props('repoId')).toBe(3)
+    expect(browser.props('repoName')).toBe('server-daily')
+    expect((browser.props('archive') as { name: string }).name).toBe('web-01-2026-01-01')
   })
 
   it('groups the archives by host, like every other archive screen', () => {
@@ -123,16 +171,20 @@ describe('ScheduleBackupsTab', () => {
     // `reload` is optional; the tab falls back to a resolved promise so the
     // explorer's post-delete refresh has something to await either way.
     const wrapper = mount({ reload: undefined })
-    expect(wrapper.find('.archive-row').exists()).toBe(true)
+    expect(archiveRows(wrapper)).toHaveLength(1)
   })
 
   it('marks the selected row', () => {
     const wrapper = mount({ selected: report({}) })
-    expect(wrapper.find('.archive-row').classes()).toContain('selected')
+    const row = archiveRows(wrapper)[0]!
+    expect(row.attributes('aria-current')).toBe('true')
+    expect(row.classes()).toContain('browser-row--selected')
   })
 
   it('leaves every row unmarked when nothing is selected', () => {
-    expect(mount().find('.archive-row').classes()).not.toContain('selected')
+    const row = archiveRows(mount())[0]!
+    expect(row.attributes('aria-current')).toBe('false')
+    expect(row.classes()).not.toContain('browser-row--selected')
   })
 
   // Regression test: unlike `AgentArchivesTab`, this tab derives its archive
@@ -179,10 +231,20 @@ describe('ScheduleBackupsTab', () => {
       return mount({ reports: SPLIT, repoOptions: REPOS, ...over })
     }
 
+    /** Each row's archive name and the repository it names, if any. */
     function rows(wrapper: ReturnType<typeof mount>): string[][] {
-      return wrapper
-        .findAll('.archive-row')
-        .map((r) => [r.find('.archive-name').text(), r.find('.archive-repo').text()])
+      return archiveRows(wrapper).map((r) => [r.get('.browser-row-title').text(), repoOf(r)])
+    }
+
+    /** The repository a row names among its facts; empty when it names none. */
+    function repoOf(row: ReturnType<typeof archiveRows>[number]): string {
+      const names = REPOS.map((repo) => repo.name)
+      return (
+        row
+          .findAll('.browser-row-facts span')
+          .map((f) => f.text())
+          .find((t) => names.includes(t)) ?? ''
+      )
     }
 
     it('lists every target in one list, each row tagged with its repository', () => {
@@ -193,22 +255,22 @@ describe('ScheduleBackupsTab', () => {
     })
 
     it('names every target and how many archives each holds', () => {
-      const options = spreadMount()
-        .findAll('.archive-repo-filter .segmented-option')
-        .map((o) => o.text())
+      const options = repoPills(spreadMount()).map((o) => o.text())
       expect(options).toEqual(['All · 2', 'server-daily · 1', 'offsite-weekly · 1'])
     })
 
     it('offers no repository filter when the schedule writes to one repository', () => {
       const wrapper = mount({ repoOptions: [REPOS[0]] })
-      expect(wrapper.find('.archive-repo-filter').exists()).toBe(false)
-      expect(wrapper.find('.archive-repo').exists()).toBe(false)
+      expect(repoPills(wrapper)).toHaveLength(0)
+      expect(rows(wrapper)).toEqual([['web-01-2026-01-01', '']])
     })
 
     it('narrows to one target', async () => {
       const wrapper = spreadMount()
-      await wrapper.findAll('.archive-repo-filter .segmented-option')[2]!.trigger('click')
-      expect(rows(wrapper)).toEqual([['on-offsite', 'offsite-weekly']])
+      await repoPills(wrapper)[2]!.trigger('click')
+      // Narrowed to one target, the rows stop repeating its name: the pill says it.
+      expect(rows(wrapper)).toEqual([['on-offsite', '']])
+      expect(repoPills(wrapper)[2]!.attributes('aria-pressed')).toBe('true')
     })
 
     // The same name in two targets is two copies; picking one must hand the
@@ -219,7 +281,7 @@ describe('ScheduleBackupsTab', () => {
         report({ id: 2, archive_name: 'nightly', repo_id: 4 }),
       ]
       const wrapper = mount({ reports: copies, repoOptions: REPOS })
-      await wrapper.findAll('.archive-row-select')[1]!.trigger('click')
+      await archiveRows(wrapper)[1]!.trigger('click')
 
       expect((wrapper.emitted('update:selected')![0]![0] as ReportRow).id).toBe(2)
     })
@@ -229,13 +291,15 @@ describe('ScheduleBackupsTab', () => {
     // target - which used to land on an empty pane.
     it('shows a selection made against another target, even past a filter', async () => {
       const wrapper = spreadMount()
-      await wrapper.findAll('.archive-repo-filter .segmented-option')[1]!.trigger('click')
-      expect(rows(wrapper)).toEqual([['on-primary', 'server-daily']])
+      await repoPills(wrapper)[1]!.trigger('click')
+      expect(rows(wrapper)).toEqual([['on-primary', '']])
 
       await wrapper.setProps({ selected: SPLIT[1] })
 
-      const selected = wrapper.find('.archive-row.selected')
-      expect(selected.find('.archive-name').text()).toBe('on-offsite')
+      const selected = selectedRows(wrapper)
+      expect(selected.map((r) => r.get('.browser-row-title').text())).toEqual(['on-offsite'])
+      // The filter gave way, so both targets show again.
+      expect(rows(wrapper)).toHaveLength(2)
     })
 
     // The targets and the reports are two independent requests, so the rows
@@ -252,7 +316,7 @@ describe('ScheduleBackupsTab', () => {
     // that happens to write into the same repository.
     it('forgets the repository filter when the schedule changes', async () => {
       const wrapper = spreadMount()
-      await wrapper.findAll('.archive-repo-filter .segmented-option')[2]!.trigger('click')
+      await repoPills(wrapper)[2]!.trigger('click')
       expect(rows(wrapper)).toHaveLength(1)
 
       await wrapper.setProps({ scheduleId: '2' })
@@ -264,12 +328,16 @@ describe('ScheduleBackupsTab', () => {
     // file tree open on a row the list says is not there.
     it('clears a search that hides the archive the Overview jumped to', async () => {
       const wrapper = spreadMount()
-      await wrapper.find('.archive-search input').setValue('on-primary')
+      const search = wrapper.get('input[aria-label="Search archives"]')
+      await search.setValue('on-primary')
+      expect(rows(wrapper)).toHaveLength(1)
 
       await wrapper.setProps({ selected: SPLIT[1] })
 
-      expect((wrapper.find('.archive-search input').element as HTMLInputElement).value).toBe('')
-      expect(wrapper.find('.archive-row.selected .archive-name').text()).toBe('on-offsite')
+      expect((search.element as HTMLInputElement).value).toBe('')
+      expect(selectedRows(wrapper).map((r) => r.get('.browser-row-title').text())).toEqual([
+        'on-offsite',
+      ])
     })
 
     it('says none of the targets holds an archive yet', () => {

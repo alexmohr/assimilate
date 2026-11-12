@@ -22,6 +22,7 @@ vi.mock('../composables/useToast', () => ({
 
 import { clickSectionButton, renderWithPlugins, startEditingSection } from '../test-utils'
 import { dialogButton } from '../test-utils/dom'
+import { menuLabels, openMenu } from '../test-utils/overflowMenu'
 import { dependencyHost } from '../test-utils/dependencyFixtures'
 import { machine } from '../test-utils/machineFixtures'
 import { apiClient } from '../api/client'
@@ -93,7 +94,7 @@ type Wrapper = ReturnType<typeof renderWithPlugins>
 
 const POWER = 'power & dependencies'
 
-/** Mounts the page as `role`, then clicks the rail item labelled `section`, if any. */
+/** Mounts the page as `role`, then opens the settings section labelled `section`, if any. */
 async function render(role = 'admin', section?: string): Promise<Wrapper> {
   const page = renderWithPlugins(DependencyHostDetailView, {
     props: { id: '3' },
@@ -101,16 +102,28 @@ async function render(role = 'admin', section?: string): Promise<Wrapper> {
   })
   await flushPromises()
   if (section === undefined) return page
-  const rail = page.findAll('.settings-nav-item')
+  const heads = page.findAll('.accordion-head')
   const index = railItems(page).findIndex((label) => label.toLowerCase() === section)
-  expect(index, `rail item ${section}`).toBeGreaterThanOrEqual(0)
-  await rail[index]!.trigger('click')
+  expect(index, `section ${section}`).toBeGreaterThanOrEqual(0)
+  await heads[index]!.trigger('click')
   await flushPromises()
+  expect(heads[index]!.attributes('aria-expanded')).toBe('true')
   return page
 }
 
+/** The collapsible settings sections, in order. */
 function railItems(wrapper: Wrapper): string[] {
-  return wrapper.findAll('.settings-nav-item').map((b) => b.text())
+  return wrapper.findAll('.accordion-head').map((b) => b.text())
+}
+
+/** Opens the header's overflow menu and picks "Remove dependency". */
+async function startRemove(wrapper: Wrapper): Promise<void> {
+  await openMenu(wrapper)
+  await wrapper
+    .findAll('.overflow-menu-item')
+    .find((i) => i.text().trim() === 'Remove dependency')!
+    .trigger('click')
+  await flushPromises()
 }
 
 function button(wrapper: Wrapper, label: string) {
@@ -136,29 +149,34 @@ describe('DependencyHostDetailView', () => {
     expect(wrapper.get('h1').text()).toBe('nas-media')
     expect(wrapper.get('.detail-subtitle').text()).toBe('Dependency · SMB nas-media.lan:445')
     const badges = wrapper.findAll('.detail-header .badge').map((b) => b.text())
-    expect(badges).toEqual(['Not answering', 'Not always online'])
+    expect(badges).toEqual(['Not answering', 'Intermittent'])
     const crumbs = wrapper.findAll('.detail-breadcrumb a').map((a) => a.attributes('href'))
     expect(crumbs).toEqual(['/dependencies'])
   })
 
-  it('opens on the connection section, with the danger zone for admins only', async () => {
+  it('opens on the connection section, with removing it for admins only', async () => {
     const admin = await render()
     expect(admin.findComponent({ name: 'DependencyConnectionCard' }).exists()).toBe(true)
-    expect(railItems(admin)).toEqual([
-      'Connection',
-      'Power & dependencies',
-      'Used by',
-      'Danger zone',
+    expect(railItems(admin)).toEqual(['Connection', 'Power & dependencies', 'Used by'])
+    expect(admin.findAll('.accordion-head').map((h) => h.attributes('aria-expanded'))).toEqual([
+      'true',
+      'false',
+      'false',
     ])
+    // Removing it lives in the header's overflow menu, not a danger-zone section.
+    await openMenu(admin)
+    expect(menuLabels(admin)).toEqual(['Remove dependency'])
 
     const viewer = await render('viewer')
     expect(railItems(viewer)).toEqual(['Connection', 'Power & dependencies', 'Used by'])
+    expect(viewer.find('.overflow-toggle').exists()).toBe(false)
   })
 
   it('lets admins edit and test, and shows everyone else the same page read-only', async () => {
     // The machine it is on, how that machine is woken, and whether it is always online.
     const admin = await render('admin', POWER)
-    expect(admin.findAll('button').filter((b) => b.text() === 'Edit')).toHaveLength(3)
+    const power = admin.get('#acc-body-power')
+    expect(power.findAll('button').filter((b) => b.text() === 'Edit')).toHaveLength(3)
     expect(button(admin, 'Test connection')).toBeDefined()
 
     const viewer = await render('viewer', POWER)
@@ -228,10 +246,9 @@ describe('DependencyHostDetailView', () => {
   })
 
   it('removes the dependency after confirmation and returns to the list', async () => {
-    const wrapper = await render('admin', 'danger zone')
-    expect(wrapper.text()).toContain('runs waiting on it stop waiting')
-    await button(wrapper, 'Remove dependency')!.trigger('click')
-    await flushPromises()
+    const wrapper = await render()
+    await startRemove(wrapper)
+    expect(document.body.textContent).toContain('runs waiting on it stop waiting')
     dialogButton('Remove').click()
     await flushPromises()
 
@@ -241,9 +258,8 @@ describe('DependencyHostDetailView', () => {
 
   it('keeps the dialog open with the reason when removing fails', async () => {
     vi.mocked(apiClient.delete).mockRejectedValue(new Error('still in use'))
-    const wrapper = await render('admin', 'danger zone')
-    await button(wrapper, 'Remove dependency')!.trigger('click')
-    await flushPromises()
+    const wrapper = await render()
+    await startRemove(wrapper)
     dialogButton('Remove').click()
     await flushPromises()
     expect(document.body.textContent).toContain('still in use')
@@ -338,9 +354,8 @@ describe('DependencyHostDetailView', () => {
   })
 
   it('leaves the dependency in place when removing it is cancelled', async () => {
-    const wrapper = await render('admin', 'danger zone')
-    await button(wrapper, 'Remove dependency')!.trigger('click')
-    await flushPromises()
+    const wrapper = await render()
+    await startRemove(wrapper)
     expect(document.body.querySelector('.modal-dialog')).not.toBeNull()
 
     dialogButton('Cancel').click()

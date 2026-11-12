@@ -242,9 +242,9 @@ After changing the password, the dashboard loads and shows no agents yet.
 
 An *agent* represents a machine running the Assimilate agent binary.
 
-1. Navigate to **Agents** and click **New agent**.
-2. Enter a display name for the machine.
-3. Click **Save** — the server generates a unique agent token.
+1. Navigate to **Agents** and click **New**.
+2. Enter the machine's hostname (the output of `hostname` on it), and optionally a display name.
+3. Click **Create** — the server generates a unique agent token.
 4. Copy the token and the server key shown with it.
 5. On the backup machine, start the agent with both:
 
@@ -257,7 +257,7 @@ BORG_SERVER_KEY=<copied-server-key> \
 
 The agent encrypts its connection end to end and only talks to the server that holds that key. See [Encrypted connection](agents.md#encrypted-connection).
 
-The agent status changes to **Online** in the dashboard once the agent connects.
+The agent shows as **Online** on the Agents page and its own page once it connects.
 
 See [Agent Management](agents.md) for systemd unit examples and advanced options.
 
@@ -279,8 +279,8 @@ echo "<public key from System page>" >> ~/.ssh/authorized_keys
 
 ### Create the repository
 
-1. Navigate to **Repos** and click **New repository**.
-2. Fill in the connection details:
+1. Navigate to **Repos** and click **New**.
+2. Fill in a name and the connection details:
 
     | Field | Example |
     |---|---|
@@ -291,20 +291,19 @@ echo "<public key from System page>" >> ~/.ssh/authorized_keys
     | Passphrase | a strong random passphrase |
 
 3. Click **Test Connection** to verify SSH access.
-4. Click **Initialize** to run `borg init` and create the repository.
+4. Click **Create Repo** to run `borg init` and create the repository.
 
 See [Repository Management](repositories.md) for pruning policies and passphrase rotation.
 
 ## Your First Backup
 
-1. Navigate to **Scheduling** and click **Add Schedule**.
-2. Select the agent and repository created above.
-3. Set the paths to back up (e.g., `/home`, `/etc`).
-4. Choose a cron expression or interval (e.g., `0 2 * * *` for 2 AM daily).
-5. Click **Save**.
-6. Click **Run now** to trigger an immediate backup.
+1. Navigate to **Schedules** and click **New**. The new-schedule wizard opens.
+2. On **Basics**, name the schedule; on **Sources**, select the agent created above and set the paths to back up (e.g., `/home`, `/etc`); on **Targets**, pick the repository.
+3. On **Timing**, choose a cron expression (e.g., `0 2 * * *` for 2 AM daily).
+4. Continue to **Review** and click **Create schedule**.
+5. On the schedule's page, click **Run now** to trigger an immediate backup.
 
-The dashboard shows the backup progress in real time. Once complete, the archive appears under **Archives** for the repository.
+The schedule's Overview and the dashboard show the backup progress in real time. Once complete, the archive appears on the repository's **Archives** tab.
 
 See [Scheduling & Retention](scheduling.md) for retention policies and pre/post hooks.
 

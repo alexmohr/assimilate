@@ -48,6 +48,11 @@ const sizeText = computed<string>(() => {
   return quotaUse.value ? `${used} of ${formatBytes(quotaUse.value.ceilingBytes)}` : used
 })
 
+const pendingDeletionsText = computed<string>(() => {
+  const count = props.repo.append_only?.pending_deletion_count ?? 0
+  return `${count} pending deletion${count === 1 ? '' : 's'}`
+})
+
 const archivesText = computed<string>(
   () => `${props.repo.archive_count} archive${props.repo.archive_count === 1 ? '' : 's'}`,
 )
@@ -130,7 +135,7 @@ const barTone = computed<BadgeTone>(() => {
           <span
             v-if="(repo.append_only?.pending_deletion_count ?? 0) > 0"
             title="Archives queued for deletion at the next maintenance run"
-            >{{ repo.append_only?.pending_deletion_count }} pending deletion</span
+            >{{ pendingDeletionsText }}</span
           >
           <span>{{ archivesText }}</span>
           <span>{{ lastBackup }}</span>

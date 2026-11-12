@@ -92,8 +92,10 @@ describe('RepoListRow', () => {
     expect(facts(stopped).slice(0, 3)).toEqual([
       'append-only',
       'maintenance stopped',
-      '3 pending deletion',
+      '3 pending deletions',
     ])
+    const oneQueued = mount({ append_only: appendOnly({ pending_deletion_count: 1 }) })
+    expect(facts(oneQueued)).toContain('1 pending deletion')
     const stoppedFact = stopped.findAll('.repo-row-facts > span')[1]!
     expect(stoppedFact.classes()).toContain('repo-row-status--warning')
   })

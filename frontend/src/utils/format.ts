@@ -102,3 +102,14 @@ export function formatDayYear(iso: string): string {
     timeZone: getConfiguredTimezone(),
   })
 }
+
+/**
+ * What follows item `index` of `count` in a sentence listing them: ", "
+ * between items, " and " before the last, and `end` after it. Lists built
+ * from separate links (one per host or schedule) cannot use a plain join.
+ */
+export function listSeparator(index: number, count: number, end = ''): string {
+  if (index < count - 2) return ', '
+  if (index === count - 2) return ' and '
+  return end
+}

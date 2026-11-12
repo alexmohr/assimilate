@@ -1060,18 +1060,14 @@ mod tests {
             .expect("forwarded channel");
         channel.data(&b"ping"[..]).await.unwrap();
 
-        let reply = tokio::time::timeout(Duration::from_secs(5), async {
-            loop {
-                match channel.wait().await {
-                    Some(russh::ChannelMsg::Data { data }) => break data.to_vec(),
-                    Some(_) => {}
-                    None => break Vec::new(),
-                }
-            }
-        })
-        .await
-        .expect("echo should come back through the tunnel");
-        assert_eq!(reply, b"ping");
+        let msg = tokio::time::timeout(Duration::from_secs(5), channel.wait())
+            .await
+            .expect("echo should come back through the tunnel")
+            .expect("channel should stay open");
+        assert!(
+            matches!(&msg, russh::ChannelMsg::Data { data } if data.as_ref() == b"ping"),
+            "expected the echoed bytes, got {msg:?}"
+        );
 
         drop(session);
         server.shutdown().await;

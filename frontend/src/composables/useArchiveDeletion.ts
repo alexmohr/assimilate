@@ -19,7 +19,11 @@ export interface UseArchiveDeletionOptions {
    * same name exists in every target a schedule writes into.
    */
   sortedArchives: Ref<RepoArchive[]> | ComputedRef<RepoArchive[]>
-  /** Sends the delete for `archive` to the repository it names. */
+  /**
+   * Sends the delete for `archive` to the repository it names. When it
+   * resolves to a boolean, that is the server's word on whether the deletion
+   * was only queued for maintenance, and it wins over `willBeQueued`.
+   */
   deleteArchiveByName: (archive: RepoArchive) => Promise<unknown>
   /** Silent reload, so the panel does not flash a loading placeholder. */
   reloadArchives: (silent: boolean) => Promise<unknown>
@@ -115,7 +119,7 @@ export function useArchiveDeletion(options: UseArchiveDeletionOptions): UseArchi
     const archive = pending.value
     if (!archive) return
     const repo = String(archive.repo_id)
-    const queued = options.willBeQueued?.(archive) === true
+    const predicted = options.willBeQueued?.(archive) === true
     deleteLoading.value = true
     // Mark it as deleting before the request even goes out, not after it
     // resolves. On a fast repo the DELETE's DataChanged notification can
@@ -126,9 +130,14 @@ export function useArchiveDeletion(options: UseArchiveDeletionOptions): UseArchi
     // can also take a moment on its own (repo-level lock contention with
     // another queued operation, network latency), so the button must show
     // "in flight" the instant the user confirms either way.
-    if (!queued) markIn(repo, archive.name)
+    if (!predicted) markIn(repo, archive.name)
     try {
-      await options.deleteArchiveByName(archive)
+      const outcome = await options.deleteArchiveByName(archive)
+      // What the server did, not what was guessed: the repository may have
+      // become append-only (or stopped being) since the list last said so.
+      const queued = typeof outcome === 'boolean' ? outcome : predicted
+      if (queued && !predicted) forgetIn(repo, archive.name)
+      if (!queued && predicted) markIn(repo, archive.name)
       pending.value = null
       if (queued) {
         options.onQueued?.(archive)
@@ -144,7 +153,7 @@ export function useArchiveDeletion(options: UseArchiveDeletionOptions): UseArchi
     } catch (e: unknown) {
       // The request never made it (or the server rejected it), so it was
       // never actually queued - undo the optimistic mark.
-      if (!queued) forgetIn(repo, archive.name)
+      if (!predicted) forgetIn(repo, archive.name)
       toastError(extractError(e))
     } finally {
       deleteLoading.value = false

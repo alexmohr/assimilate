@@ -19,7 +19,8 @@ test.describe('Append-only repositories', () => {
     await page.waitForLoadState('networkidle')
 
     const pane = page.locator('.settings-pane')
-    await expect(page.locator('.settings-nav-item[aria-current="true"]')).toHaveText('Append-only')
+    // The section the link names is the one open, among the collapsible ones.
+    await expect(page.locator('#acc-head-append-only')).toHaveAttribute('aria-expanded', 'true')
     await expect(pane.getByRole('switch', { name: 'Append-only' })).toBeChecked()
     await expect(pane).toContainText('borg-ao@127.0.0.1')
 
@@ -40,11 +41,12 @@ test.describe('Append-only repositories', () => {
     await page.waitForLoadState('networkidle')
 
     const row = page.locator('.repo-row').filter({ hasText: 'vault-offsite' })
-    await expect(row).toContainText('Append-only')
+    // Named among the facts under the repository's name, not as a badge.
+    await expect(row).toContainText('append-only')
 
-    // A repository on a login that is not append-only carries no badge.
+    // A repository on a login that is not append-only does not say so.
     const plain = page.locator('.repo-row').filter({ hasText: 'server-daily' })
-    await expect(plain).not.toContainText('Append-only')
+    await expect(plain).not.toContainText('append-only')
   })
 
   test('a queued deletion stays in the archive list until maintenance and can be kept', async ({

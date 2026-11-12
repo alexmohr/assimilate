@@ -159,6 +159,8 @@ describe('ArchiveFileBrowser', () => {
       repoName?: string
       isAdmin?: boolean
       deleting?: boolean
+      queued?: boolean
+      keeping?: boolean
       archives?: ArchiveEntry[]
     } = {
       repoId: 5,
@@ -1069,6 +1071,51 @@ describe('ArchiveFileBrowser', () => {
     await deleteBtn.trigger('click')
 
     expect(wrapper.emitted('delete-archive')).toBeFalsy()
+  })
+
+  it('offers Keep instead of Delete for an archive queued for maintenance', async () => {
+    const archive = makeArchive('test-archive')
+    const wrapper = await mountWithEntries({ repoId: 5, archive, isAdmin: true, queued: true })
+
+    expect(wrapper.get('.archive-head-queued').text()).toBe('Removed at next maintenance')
+    await openActions(wrapper)
+    expect(menuItem(wrapper, 'Delete archive...')).toBeUndefined()
+    const keepBtn = menuItem(wrapper, 'Keep archive')
+    expect(keepBtn).toBeDefined()
+    await keepBtn!.trigger('click')
+
+    expect(wrapper.emitted('keep-archive')?.[0]).toEqual([archive])
+    expect(wrapper.emitted('delete-archive')).toBeFalsy()
+  })
+
+  it('waits while a Keep is in flight', async () => {
+    const archive = makeArchive('test-archive')
+    const wrapper = await mountWithEntries({
+      repoId: 5,
+      archive,
+      isAdmin: true,
+      queued: true,
+      keeping: true,
+    })
+
+    await openActions(wrapper)
+    const keepBtn = menuItem(wrapper, 'Keep archive')!
+    expect(keepBtn.attributes('disabled')).toBeDefined()
+    await keepBtn.trigger('click')
+
+    expect(wrapper.emitted('keep-archive')).toBeFalsy()
+  })
+
+  it('leaves Keep out for a reader who cannot delete', async () => {
+    const wrapper = await mountWithEntries({
+      repoId: 5,
+      archive: makeArchive('test-archive'),
+      isAdmin: false,
+      queued: true,
+    })
+
+    await openActions(wrapper)
+    expect(menuItem(wrapper, 'Keep archive')).toBeUndefined()
   })
 
   it('lists folders first, then files, each by name', async () => {

@@ -121,6 +121,16 @@ where
         .map_err(SetupError::from)
 }
 
+/// Gives a call to the host up after [`HOST_TIMEOUT`]. A read or write that
+/// stalls instead of failing would otherwise hold the login's lock, and for
+/// turning append-only off every sibling repository's, until the server
+/// restarted.
+async fn bounded<T>(fut: impl Future<Output = T>) -> Result<T, SetupError> {
+    tokio::time::timeout(HOST_TIMEOUT, fut)
+        .await
+        .map_err(|_| SetupError::Timeout)
+}
+
 async fn connect_role(
     role: KeyRole,
     login: Login<'_>,
@@ -136,6 +146,10 @@ async fn connect_role(
 }
 
 async fn read_authorized_keys(sftp: &SftpSession) -> Result<String, SetupError> {
+    bounded(read_authorized_keys_unbounded(sftp)).await?
+}
+
+async fn read_authorized_keys_unbounded(sftp: &SftpSession) -> Result<String, SetupError> {
     match sftp.try_exists(AUTHORIZED_KEYS).await {
         Ok(true) => {}
         Ok(false) => return Ok(String::new()),
@@ -155,7 +169,12 @@ async fn read_authorized_keys(sftp: &SftpSession) -> Result<String, SetupError> 
 /// `SftpSession::write` opens a file for writing only: it neither creates a
 /// missing file nor truncates an existing one, so a shorter text would leave
 /// the end of the old one behind. `create` does both.
-async fn put(sftp: &SftpSession, path: &str, bytes: &[u8]) -> Result<(), SshError> {
+async fn put(sftp: &SftpSession, path: &str, bytes: &[u8]) -> Result<(), SetupError> {
+    bounded(put_unbounded(sftp, path, bytes)).await??;
+    Ok(())
+}
+
+async fn put_unbounded(sftp: &SftpSession, path: &str, bytes: &[u8]) -> Result<(), SshError> {
     let mut file = sftp
         .create(path)
         .await
@@ -169,7 +188,7 @@ async fn put(sftp: &SftpSession, path: &str, bytes: &[u8]) -> Result<(), SshErro
 }
 
 async fn write_authorized_keys(sftp: &SftpSession, text: &str) -> Result<(), SetupError> {
-    if let Err(e) = sftp.create_dir(".ssh").await {
+    if let Err(e) = bounded(sftp.create_dir(".ssh")).await?.as_ref() {
         tracing::debug!(error = %e, "sftp create_dir .ssh failed (may already exist)");
     }
     put(sftp, AUTHORIZED_KEYS, text.as_bytes()).await?;
@@ -193,13 +212,14 @@ async fn put_back(sftp: &SftpSession, text: &str, why: &str) {
 /// Keeps the first state of the file Assimilate saw. A later change never
 /// overwrites it, so it stays the way back to what the admin had.
 async fn keep_first_copy(sftp: &SftpSession, original: &str) {
-    match sftp.try_exists(BACKUP_COPY).await {
-        Ok(false) => {
+    match bounded(sftp.try_exists(BACKUP_COPY)).await {
+        Ok(Ok(false)) => {
             if let Err(e) = put(sftp, BACKUP_COPY, original.as_bytes()).await {
                 warn!(error = %e, "could not keep a copy of authorized_keys");
             }
         }
-        Ok(true) => {}
+        Ok(Ok(true)) => {}
+        Ok(Err(e)) => warn!(error = %e, "could not look for the authorized_keys copy"),
         Err(e) => warn!(error = %e, "could not look for the authorized_keys copy"),
     }
 }
@@ -451,6 +471,15 @@ mod tests {
     use ssh_key::{Algorithm, PrivateKey, rand_core::OsRng};
 
     use super::*;
+
+    #[tokio::test(start_paused = true)]
+    async fn a_call_to_the_host_that_never_answers_is_given_up_on() {
+        let result = bounded(std::future::pending::<()>()).await;
+        assert!(matches!(result, Err(SetupError::Timeout)), "{result:?}");
+
+        let answered = bounded(std::future::ready(7)).await;
+        assert!(matches!(answered, Ok(7)), "{answered:?}");
+    }
 
     #[test]
     fn a_host_that_could_not_be_reached_is_not_reported_as_refusing_a_key() {

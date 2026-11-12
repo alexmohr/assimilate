@@ -1445,6 +1445,63 @@ mod deploy_tests;
     reason = "tests use std::fs for simple synchronous setup/assertions"
 )]
 mod tests {
+    const HOST_KEY_B64: &str =
+        "AAAAC3NzaC1lZDI1NTE5AAAAINwxkbeQjd0zydveueMhRPJE+cxoP0DNuUcYAwqmOs6S";
+
+    fn offered_key() -> PublicKeyOrCertificate {
+        PublicKeyOrCertificate::from(russh::keys::parse_public_key_base64(HOST_KEY_B64).unwrap())
+    }
+
+    fn offered_certificate() -> PublicKeyOrCertificate {
+        PublicKeyOrCertificate::Certificate(crate::test_support::generate_test_host_certificate())
+    }
+
+    #[test]
+    fn plain_host_key_yields_keys_but_not_certificates() {
+        assert!(plain_host_key(&offered_key()).is_some());
+        assert!(plain_host_key(&offered_certificate()).is_none());
+    }
+
+    #[tokio::test]
+    async fn client_handler_rejects_certificates_when_a_key_is_pinned() {
+        use russh::client::Handler as _;
+
+        let pinned = russh::keys::parse_public_key_base64(HOST_KEY_B64)
+            .unwrap()
+            .to_openssh()
+            .unwrap();
+        let mut handler = SshClientHandler {
+            expected_host_key: Some(pinned),
+        };
+        assert!(handler.check_server_key(&offered_key()).await.unwrap());
+        assert!(
+            !handler
+                .check_server_key(&offered_certificate())
+                .await
+                .unwrap()
+        );
+    }
+
+    #[tokio::test]
+    async fn host_key_capture_records_keys_but_not_certificates() {
+        use russh::client::Handler as _;
+
+        let captured = Arc::new(Mutex::new(None));
+        let mut handler = HostKeyCaptureHandler {
+            host_key: Arc::clone(&captured),
+        };
+        assert!(handler.check_server_key(&offered_key()).await.unwrap());
+        assert!(captured.lock().unwrap().is_some());
+
+        assert!(
+            handler
+                .check_server_key(&offered_certificate())
+                .await
+                .unwrap()
+        );
+        assert!(captured.lock().unwrap().is_none());
+    }
+
     use super::*;
 
     #[test]

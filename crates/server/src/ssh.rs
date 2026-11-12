@@ -153,8 +153,9 @@ impl client::Handler for HostKeyCaptureHandler {
         &mut self,
         server_public_key: &PublicKeyOrCertificate,
     ) -> impl std::future::Future<Output = Result<bool, Self::Error>> {
+        let offered = plain_host_key(server_public_key).and_then(|key| key.to_openssh().ok());
         if let Ok(mut host_key) = self.host_key.lock() {
-            *host_key = plain_host_key(server_public_key).and_then(|key| key.to_openssh().ok());
+            *host_key = offered;
         }
         std::future::ready(Ok(true))
     }

@@ -5,36 +5,9 @@ use std::path::PathBuf;
 
 use shared::{
     hooks::HookCommand,
+    prune::Retention,
     types::{Compression, FileChangePattern},
 };
-
-/// How many archives of each age bucket `borg prune` keeps.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct Retention {
-    pub hourly: u32,
-    pub daily: u32,
-    pub weekly: u32,
-    pub monthly: u32,
-    pub yearly: u32,
-}
-
-impl Retention {
-    pub fn is_unset(self) -> bool {
-        self == Self::default()
-    }
-
-    /// The bucket-wise maximum: keeps everything either side would keep.
-    #[must_use]
-    pub fn union(self, other: Self) -> Self {
-        Self {
-            hourly: self.hourly.max(other.hourly),
-            daily: self.daily.max(other.daily),
-            weekly: self.weekly.max(other.weekly),
-            monthly: self.monthly.max(other.monthly),
-            yearly: self.yearly.max(other.yearly),
-        }
-    }
-}
 
 /// Who prunes and compacts a repository after a backup.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

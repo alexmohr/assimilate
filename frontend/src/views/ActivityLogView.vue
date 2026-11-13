@@ -61,6 +61,7 @@ import type { ReportRow } from '../types/report'
 import { backupStatusTone, logLevelTone, systemEventTone } from '../utils/badge'
 import type { SegmentedOption } from '../components/BaseSegmented.vue'
 import { useAuthStore } from '../stores/auth'
+import { formatHookOutput, parseHookOutput } from '../utils/hookOutput'
 import type { AcknowledgedFilter } from '../types/generated'
 
 interface ScheduleOption {
@@ -367,12 +368,16 @@ onMessage('BackupLog', (payload) => {
   } catch {
     // non-JSON line - show it
   }
+  // A script's output is shown as the text it printed, not as the JSON line
+  // that carried it.
+  const hook = parseHookOutput(payload.line)
+  const text = hook === null ? payload.line : formatHookOutput(hook)
   const sessions = new Map(liveBackupSessions.value)
   for (const [key, session] of sessions) {
     if (session.hostname === payload.hostname) {
       sessions.set(key, {
         ...session,
-        lines: [...session.lines.slice(-(MAX_ACTIVITY_LOG_LINES - 1)), payload.line],
+        lines: [...session.lines.slice(-(MAX_ACTIVITY_LOG_LINES - 1)), text],
       })
       break
     }

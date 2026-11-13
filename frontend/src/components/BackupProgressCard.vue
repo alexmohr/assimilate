@@ -48,9 +48,10 @@ const queued = computed(() => props.waitingFor != null && props.progress === nul
 
 const hookLog = ref<HTMLElement | null>(null)
 
-// Follows the newest line, as a terminal does.
+// Follows the newest line, as a terminal does. Keyed on the newest entry, not
+// the count: past the cap the count stops changing while lines keep arriving.
 watch(
-  () => props.hookOutput.length,
+  () => props.hookOutput.at(-1),
   async () => {
     await nextTick()
     if (hookLog.value) hookLog.value.scrollTop = hookLog.value.scrollHeight

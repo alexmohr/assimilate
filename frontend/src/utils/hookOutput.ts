@@ -2,6 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 import type { AgentLogLine } from '../types/generated/AgentLogLine'
+import type { HookPhase } from '../types/generated/HookPhase'
 
 /** One line a pre- or post-backup hook printed while the backup was running. */
 export type HookOutputEntry = Extract<AgentLogLine, { type: 'hook_output' }>
@@ -28,6 +29,16 @@ export function parseHookOutput(raw: string): HookOutputEntry | null {
   } catch {
     return null
   }
+}
+
+const PHASE_LABELS: Record<HookPhase, string> = {
+  pre_backup: 'pre-backup',
+  post_backup: 'post-backup',
+}
+
+/** A hook line as plain text for a log that has no room for its phase and stream columns. */
+export function formatHookOutput(entry: HookOutputEntry): string {
+  return `${PHASE_LABELS[entry.phase]}: ${entry.line}`
 }
 
 /** Appends `entry`, dropping the oldest lines past [`MAX_HOOK_OUTPUT_LINES`]. */

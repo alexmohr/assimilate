@@ -1124,6 +1124,24 @@ describe('ActivityLogView', () => {
       await flushPromises()
       expect(wrapper.find('.live-session-card').exists()).toBe(false)
     })
+
+    it('shows what a script printed as text, not as the JSON line that carried it', async () => {
+      const wrapper = await mountDefault()
+      triggerWsMessage('BackupStarted', run)
+      triggerWsMessage('BackupLog', {
+        hostname: 'web-01',
+        line: JSON.stringify({
+          type: 'hook_output',
+          phase: 'pre_backup',
+          stream: 'stdout',
+          line: 'Quiescing the application',
+        }),
+      })
+      await flushPromises()
+
+      const lines = wrapper.get('.live-session-card').findAll('.live-session-line')
+      expect(lines.map((l) => l.text())).toEqual(['pre-backup: Quiescing the application'])
+    })
   })
 
   describe('filter controls', () => {

@@ -10,6 +10,7 @@ mod database;
 mod endpoint;
 mod executor;
 mod live_file;
+mod pipe;
 #[cfg(windows)]
 mod service;
 mod snapshot;

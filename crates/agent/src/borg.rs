@@ -13,7 +13,7 @@ use shared::{
     task_registry::TaskRegistry,
 };
 use tokio::{
-    io::{AsyncBufReadExt as _, AsyncReadExt as _, BufReader},
+    io::AsyncReadExt as _,
     process::{ChildStderr, ChildStdout},
     sync::mpsc,
 };
@@ -272,31 +272,17 @@ async fn wait_with_stderr_stream(
             std::io::Result::Ok(buf)
         };
         let read_err = async move {
-            let mut lines_buf = Vec::<u8>::new();
-            if let Some(s) = stderr {
-                let mut reader = BufReader::new(s);
-                let mut line = String::new();
-                loop {
-                    line.clear();
-                    match reader.read_line(&mut line).await {
-                        Ok(0) => break,
-                        Ok(_) => {
-                            lines_buf.extend_from_slice(line.as_bytes());
-                            let trimmed = line
-                                .trim_end_matches('\n')
-                                .trim_end_matches('\r')
-                                .to_owned();
-                            if !trimmed.is_empty() {
-                                // Non-blocking: drop line if channel is full rather than
-                                // blocking the pipe drain and causing borg to stall.
-                                log_tx.try_send(trimmed).ok();
-                            }
-                        }
-                        Err(e) => return std::io::Result::Err(e),
-                    }
+            match stderr {
+                // Non-blocking: drop a line if the channel is full rather than
+                // blocking the pipe drain and causing borg to stall.
+                Some(s) => {
+                    crate::pipe::drain_lines(s, |line| {
+                        log_tx.try_send(line.to_owned()).ok();
+                    })
+                    .await
                 }
+                None => std::io::Result::Ok(Vec::new()),
             }
-            std::io::Result::Ok(lines_buf)
         };
         tokio::join!(wait, read_out, read_err)
     };

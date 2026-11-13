@@ -27,10 +27,12 @@ use shared::{
     task_registry::TaskRegistry,
 };
 use tokio::{
-    io::{AsyncBufReadExt, AsyncRead, BufReader},
+    io::AsyncRead,
     process::{Child, Command},
     sync::mpsc,
 };
+
+use crate::pipe::drain_lines;
 
 /// The longest line forwarded live, in characters. The collected output keeps
 /// the full bytes; this only bounds what one runaway line costs the log stream.
@@ -118,31 +120,23 @@ fn shell(command: &str) -> Command {
     cmd
 }
 
-/// Reads `reader` to the end, returning every byte and forwarding each line
-/// to `live` as soon as its newline arrives. A full log channel drops the
-/// line rather than stalling the hook, as borg's stderr stream does.
+/// Reads `reader` to the end, returning every byte and forwarding each line to
+/// `live` as soon as its newline arrives. A full log channel drops the line
+/// rather than stalling the hook, as borg's stderr stream does.
 async fn read_all(
     reader: impl AsyncRead + Unpin,
     stream: HookStream,
     live: Option<&LiveOutput<'_>>,
 ) -> io::Result<Vec<u8>> {
-    let mut reader = BufReader::new(reader);
-    let mut buf = Vec::new();
-    let mut line = Vec::new();
-    loop {
-        line.clear();
-        if reader.read_until(b'\n', &mut line).await? == 0 {
-            return Ok(buf);
-        }
-        buf.extend_from_slice(&line);
+    drain_lines(reader, |line| {
         if let Some(live) = live {
-            forward(live, stream, &line);
+            forward(live, stream, line);
         }
-    }
+    })
+    .await
 }
 
-fn forward(live: &LiveOutput<'_>, stream: HookStream, raw: &[u8]) {
-    let text = String::from_utf8_lossy(raw);
+fn forward(live: &LiveOutput<'_>, stream: HookStream, text: &str) {
     let text = text.trim_end();
     if text.is_empty() {
         return;

@@ -17,7 +17,10 @@
 use std::{
     collections::HashMap,
     fmt,
-    sync::{Arc, Mutex, MutexGuard, PoisonError},
+    sync::{
+        Arc, Mutex, MutexGuard, PoisonError,
+        atomic::{AtomicU64, Ordering},
+    },
     time::{Duration, Instant},
 };
 
@@ -31,7 +34,12 @@ const FINISHED_JOB_TTL: Duration = Duration::from_mins(10);
 
 /// How long a deploy may stay in progress before it counts as abandoned, so a
 /// task that died without reporting cannot block the agent's deploys forever.
-const RUNNING_JOB_TTL: Duration = Duration::from_mins(30);
+pub(crate) const RUNNING_JOB_TTL: Duration = Duration::from_mins(30);
+
+/// Which deploy of an agent a report belongs to: an agent's deploys are told
+/// apart by it, so a late report from one cannot land in the next.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct JobId(u64);
 
 /// Why [`DeployJobs::start`] refused to start a deploy.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
@@ -61,6 +69,7 @@ struct StepRecord {
 }
 
 struct Job {
+    id: JobId,
     requested_by: i64,
     started: Instant,
     finished: Option<Instant>,
@@ -80,13 +89,14 @@ impl fmt::Debug for Job {
 }
 
 impl Job {
-    fn new(requested_by: i64) -> Self {
+    fn new(id: JobId, requested_by: i64) -> Self {
         let pending = StepRecord {
             status: DeployStepStatus::Pending,
             started: None,
             duration: None,
         };
         Self {
+            id,
             requested_by,
             started: Instant::now(),
             finished: None,
@@ -118,6 +128,7 @@ impl Job {
 #[derive(Clone, Default)]
 pub struct DeployJobs {
     jobs: Arc<Mutex<HashMap<i64, Job>>>,
+    next_id: Arc<AtomicU64>,
 }
 
 impl DeployJobs {
@@ -126,12 +137,12 @@ impl DeployJobs {
     }
 
     /// Starts a deploy of `agent_id` for `user_id`, replacing a finished or
-    /// abandoned one.
+    /// abandoned one, and returns the identity its reports must carry.
     ///
     /// # Errors
     ///
     /// Returns [`StartError::AlreadyRunning`] if one is still in progress.
-    pub fn start(&self, agent_id: i64, user_id: i64) -> Result<(), StartError> {
+    pub fn start(&self, agent_id: i64, user_id: i64) -> Result<JobId, StartError> {
         let now = Instant::now();
         let mut jobs = self.lock();
         let running = jobs
@@ -140,14 +151,16 @@ impl DeployJobs {
         if running {
             return Err(StartError::AlreadyRunning);
         }
-        jobs.insert(agent_id, Job::new(user_id));
-        Ok(())
+        let id = JobId(self.next_id.fetch_add(1, Ordering::Relaxed));
+        jobs.insert(agent_id, Job::new(id, user_id));
+        Ok(id)
     }
 
-    /// Moves the deploy on to `step`: whichever step was running is done.
-    pub fn begin_step(&self, agent_id: i64, step: DeployStep) {
+    /// Moves deploy `id` on to `step`: whichever step was running is done. A
+    /// report from a deploy that has been replaced is ignored.
+    pub fn begin_step(&self, agent_id: i64, id: JobId, step: DeployStep) {
         let now = Instant::now();
-        if let Some(job) = self.lock().get_mut(&agent_id) {
+        if let Some(job) = self.lock().get_mut(&agent_id).filter(|job| job.id == id) {
             job.settle_running(DeployStepStatus::Done, now);
             if let Some((_, record)) = job.steps.iter_mut().find(|(s, _)| *s == step) {
                 record.status = DeployStepStatus::Running;
@@ -156,11 +169,12 @@ impl DeployJobs {
         }
     }
 
-    /// Ends the deploy with `outcome`. A step still running when it failed is
-    /// the one that failed; on success every step is done.
-    pub fn finish(&self, agent_id: i64, outcome: Outcome) {
+    /// Ends deploy `id` with `outcome`. A step still running when it failed is
+    /// the one that failed; on success every step is done. A report from a
+    /// deploy that has been replaced is ignored.
+    pub fn finish(&self, agent_id: i64, id: JobId, outcome: Outcome) {
         let now = Instant::now();
-        if let Some(job) = self.lock().get_mut(&agent_id) {
+        if let Some(job) = self.lock().get_mut(&agent_id).filter(|job| job.id == id) {
             let settled = if outcome.error.is_some() {
                 DeployStepStatus::Failed
             } else {
@@ -283,9 +297,9 @@ mod tests {
     #[test]
     fn beginning_a_step_finishes_the_one_before_it() {
         let jobs = DeployJobs::default();
-        jobs.start(AGENT, OWNER).unwrap();
-        jobs.begin_step(AGENT, DeployStep::Connect);
-        jobs.begin_step(AGENT, DeployStep::Upload);
+        let id = jobs.start(AGENT, OWNER).unwrap();
+        jobs.begin_step(AGENT, id, DeployStep::Connect);
+        jobs.begin_step(AGENT, id, DeployStep::Upload);
 
         assert_eq!(
             statuses(&jobs),
@@ -321,8 +335,8 @@ mod tests {
     #[test]
     fn a_finished_deploy_can_be_replaced() {
         let jobs = DeployJobs::default();
-        jobs.start(AGENT, OWNER).unwrap();
-        jobs.finish(AGENT, outcome(None));
+        let id = jobs.start(AGENT, OWNER).unwrap();
+        jobs.finish(AGENT, id, outcome(None));
 
         jobs.start(AGENT, OTHER)
             .expect("a finished deploy no longer blocks");
@@ -335,11 +349,11 @@ mod tests {
     #[test]
     fn a_failure_marks_the_running_step_failed_and_leaves_later_ones_pending() {
         let jobs = DeployJobs::default();
-        jobs.start(AGENT, OWNER).unwrap();
-        jobs.begin_step(AGENT, DeployStep::Connect);
-        jobs.begin_step(AGENT, DeployStep::Upload);
-        jobs.begin_step(AGENT, DeployStep::Install);
-        jobs.finish(AGENT, outcome(Some("cp: Text file busy")));
+        let id = jobs.start(AGENT, OWNER).unwrap();
+        jobs.begin_step(AGENT, id, DeployStep::Connect);
+        jobs.begin_step(AGENT, id, DeployStep::Upload);
+        jobs.begin_step(AGENT, id, DeployStep::Install);
+        jobs.finish(AGENT, id, outcome(Some("cp: Text file busy")));
 
         assert_eq!(
             statuses(&jobs),
@@ -359,9 +373,9 @@ mod tests {
     #[test]
     fn success_leaves_every_started_step_done() {
         let jobs = DeployJobs::default();
-        jobs.start(AGENT, OWNER).unwrap();
-        DeployStep::iter().for_each(|step| jobs.begin_step(AGENT, step));
-        jobs.finish(AGENT, outcome(None));
+        let id = jobs.start(AGENT, OWNER).unwrap();
+        DeployStep::iter().for_each(|step| jobs.begin_step(AGENT, id, step));
+        jobs.finish(AGENT, id, outcome(None));
 
         assert!(statuses(&jobs).iter().all(|s| *s == DeployStepStatus::Done));
         assert_eq!(
@@ -373,8 +387,8 @@ mod tests {
     #[test]
     fn only_the_user_who_started_the_deploy_gets_the_token() {
         let jobs = DeployJobs::default();
-        jobs.start(AGENT, OWNER).unwrap();
-        jobs.finish(AGENT, outcome(None));
+        let id = jobs.start(AGENT, OWNER).unwrap();
+        jobs.finish(AGENT, id, outcome(None));
 
         assert_eq!(
             jobs.status(AGENT, OWNER).unwrap().token.as_deref(),
@@ -392,8 +406,8 @@ mod tests {
     #[test]
     fn the_token_stays_readable_until_it_is_dismissed() {
         let jobs = DeployJobs::default();
-        jobs.start(AGENT, OWNER).unwrap();
-        jobs.finish(AGENT, outcome(None));
+        let id = jobs.start(AGENT, OWNER).unwrap();
+        jobs.finish(AGENT, id, outcome(None));
 
         // A reply that never reached the browser must not lose the token.
         assert!(jobs.status(AGENT, OWNER).unwrap().token.is_some());
@@ -406,8 +420,8 @@ mod tests {
     #[test]
     fn dismissing_someone_elses_deploy_does_nothing() {
         let jobs = DeployJobs::default();
-        jobs.start(AGENT, OWNER).unwrap();
-        jobs.finish(AGENT, outcome(None));
+        let id = jobs.start(AGENT, OWNER).unwrap();
+        jobs.finish(AGENT, id, outcome(None));
 
         jobs.dismiss(AGENT, OTHER);
         assert!(jobs.status(AGENT, OWNER).is_some());
@@ -416,9 +430,10 @@ mod tests {
     #[test]
     fn a_skipped_deploy_reports_it_without_a_token() {
         let jobs = DeployJobs::default();
-        jobs.start(AGENT, OWNER).unwrap();
+        let id = jobs.start(AGENT, OWNER).unwrap();
         jobs.finish(
             AGENT,
+            id,
             Outcome {
                 skipped: true,
                 token: None,
@@ -448,8 +463,8 @@ mod tests {
     #[test]
     fn an_expired_result_is_gone() {
         let jobs = DeployJobs::default();
-        jobs.start(AGENT, OWNER).unwrap();
-        jobs.finish(AGENT, outcome(None));
+        let id = jobs.start(AGENT, OWNER).unwrap();
+        jobs.finish(AGENT, id, outcome(None));
         jobs.lock().get_mut(&AGENT).unwrap().finished =
             Instant::now().checked_sub(FINISHED_JOB_TTL + Duration::from_secs(1));
 
@@ -459,8 +474,8 @@ mod tests {
     #[test]
     fn the_debug_output_never_shows_the_token() {
         let jobs = DeployJobs::default();
-        jobs.start(AGENT, OWNER).unwrap();
-        jobs.finish(AGENT, outcome(None));
+        let id = jobs.start(AGENT, OWNER).unwrap();
+        jobs.finish(AGENT, id, outcome(None));
 
         let shown = format!("{:?}", jobs.lock().get(&AGENT).unwrap());
         assert!(!shown.contains("tok-secret"), "{shown}");
@@ -469,9 +484,10 @@ mod tests {
     #[test]
     fn steps_and_results_for_an_agent_without_a_deploy_are_ignored() {
         let jobs = DeployJobs::default();
+        let id = JobId(0);
 
-        jobs.begin_step(AGENT, DeployStep::Connect);
-        jobs.finish(AGENT, outcome(None));
+        jobs.begin_step(AGENT, id, DeployStep::Connect);
+        jobs.finish(AGENT, id, outcome(None));
 
         assert!(
             jobs.status(AGENT, OWNER).is_none(),
@@ -479,6 +495,41 @@ mod tests {
         );
         jobs.start(AGENT, OWNER)
             .expect("the agent is free to deploy");
+    }
+
+    #[test]
+    fn a_report_from_a_replaced_deploy_cannot_touch_the_one_that_replaced_it() {
+        let jobs = DeployJobs::default();
+        let stale = jobs.start(AGENT, OWNER).unwrap();
+        // The first deploy hung past its limit, so another may take over.
+        jobs.lock().get_mut(&AGENT).unwrap().started = Instant::now()
+            .checked_sub(RUNNING_JOB_TTL + Duration::from_secs(1))
+            .expect("an instant in the past");
+        let current = jobs.start(AGENT, OTHER).unwrap();
+        assert_ne!(stale, current);
+
+        // The hung task wakes up and reports into the agent's slot.
+        jobs.begin_step(AGENT, stale, DeployStep::Connect);
+        jobs.finish(AGENT, stale, outcome(Some("late failure")));
+
+        let status = jobs.status(AGENT, OTHER).unwrap();
+        assert_eq!(status.state, DeployJobState::Running, "{status:?}");
+        assert!(
+            status
+                .steps
+                .iter()
+                .all(|s| s.status == DeployStepStatus::Pending),
+            "{status:?}"
+        );
+        assert_eq!(status.error, None);
+
+        // The deploy that replaced it still reports normally.
+        jobs.begin_step(AGENT, current, DeployStep::Connect);
+        jobs.finish(AGENT, current, outcome(None));
+        assert_eq!(
+            jobs.status(AGENT, OTHER).unwrap().state,
+            DeployJobState::Succeeded
+        );
     }
 
     #[test]

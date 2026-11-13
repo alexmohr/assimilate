@@ -898,16 +898,12 @@ mod tests {
         async fn a_host_that_never_answers_ends_the_deploy_at_its_deadline(pool: PgPool) {
             let state = state(&pool);
             let agent_id = agent_id(&pool).await;
+            // The connection is made - the system completes it for a listener
+            // that is bound - but nothing ever answers the SSH handshake.
             let silent = tokio::net::TcpListener::bind("127.0.0.1:0")
                 .await
                 .expect("bind");
             let port = silent.local_addr().expect("address").port();
-            let _held = tokio::spawn(async move {
-                let mut open = Vec::new();
-                while let Ok((stream, _)) = silent.accept().await {
-                    open.push(stream);
-                }
-            });
             let binaries = binaries().await;
             let job = state.deploy_jobs.start(agent_id, USER).expect("start");
             let mut run = run_for(

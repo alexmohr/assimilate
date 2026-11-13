@@ -1608,7 +1608,7 @@ mod stand_in;
 #[cfg(test)]
 pub(crate) mod append_only_tests;
 #[cfg(test)]
-mod deploy_tests;
+pub(crate) mod deploy_tests;
 
 #[cfg(test)]
 #[allow(

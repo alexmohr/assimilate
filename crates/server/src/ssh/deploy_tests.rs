@@ -24,7 +24,7 @@ use super::{DeployAgentParams, TOKEN_FILE_PATH, UNIT_PATH, deploy_agent, install
 
 /// What the stand-in host was sent.
 #[derive(Default)]
-struct Recorded {
+pub(crate) struct Recorded {
     /// Every command line run, in order.
     commands: Vec<String>,
     /// Each command that read standard input, with what it read.
@@ -34,7 +34,7 @@ struct Recorded {
     files: HashMap<String, (Vec<u8>, Option<u32>)>,
 }
 
-type Shared = Arc<Mutex<Recorded>>;
+pub(crate) type Shared = Arc<Mutex<Recorded>>;
 
 /// One SSH connection to the stand-in host.
 struct Connection {
@@ -254,7 +254,7 @@ impl Server for StandIn {
 
 /// Starts the stand-in host on a loopback port, refusing commands that
 /// contain `refuse`, and returns the port and what it records.
-async fn stand_in_host(refuse: Option<&'static str>) -> (u16, Shared) {
+pub(crate) async fn stand_in_host(refuse: Option<&'static str>) -> (u16, Shared) {
     let recorded = Shared::default();
     let config = Arc::new(russh::server::Config {
         keys: vec![crate::test_support::generate_test_key()],

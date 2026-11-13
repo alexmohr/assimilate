@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
-import { ref } from 'vue'
+import { getCurrentScope, onScopeDispose, ref } from 'vue'
 import type { Ref } from 'vue'
 import { deployAgent, dismissAgentDeploy, getAgentDeployStatus } from '../api/agents'
 import type { DeployAgentRequest, DeployAgentResult } from '../api/agents'
@@ -47,13 +47,17 @@ export function useAgentDeploy(
   const error = ref<string | null>(null)
   const timer = useTimeout()
   let failedPolls = 0
+  // A request still in flight when the dialog closes resolves afterwards, and
+  // must not start a poll nothing would ever cancel.
+  let disposed = false
+  if (getCurrentScope()) onScopeDispose(() => (disposed = true))
 
   function isRunning(): boolean {
     return status.value?.state === 'running'
   }
 
   function schedulePoll(): void {
-    if (isRunning()) timer.start(() => void poll(), POLL_INTERVAL_MS)
+    if (!disposed && isRunning()) timer.start(() => void poll(), POLL_INTERVAL_MS)
   }
 
   /** Takes in a status, telling `onSucceeded` when a deploy being followed has just ended well. */

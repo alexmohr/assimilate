@@ -606,6 +606,50 @@ describe('AgentDeployDialog', () => {
         expect(getMock).toHaveBeenCalledTimes(asked)
       })
 
+      it('does not start polling for a dialog that was closed while its request was in flight', async () => {
+        const w = await mountUpgrade()
+        let answer: (value: unknown) => void = () => undefined
+        postMock.mockReturnValueOnce(
+          new Promise((resolve) => {
+            answer = resolve
+          }),
+        )
+        await startDeploy()
+
+        // The dialog is closed before the server has answered the request.
+        w.unmount()
+        const asked = getMock.mock.calls.length
+        answer({ data: deployStatus() })
+        await flushPromises()
+        await nextPoll()
+        await nextPoll()
+
+        expect(getMock).toHaveBeenCalledTimes(asked)
+      })
+
+      it('does not keep polling after the dialog is closed during a poll', async () => {
+        const w = await mountUpgrade()
+        postMock.mockResolvedValueOnce({ data: deployStatus() })
+        let answer: (value: unknown) => void = () => undefined
+        getMock.mockReturnValueOnce(
+          new Promise((resolve) => {
+            answer = resolve
+          }),
+        )
+        await startDeploy()
+        // The first poll is under way when the dialog goes.
+        await vi.advanceTimersByTimeAsync(1000)
+        const asked = getMock.mock.calls.length
+
+        w.unmount()
+        answer({ data: deployStatus() })
+        await flushPromises()
+        await nextPoll()
+        await nextPoll()
+
+        expect(getMock).toHaveBeenCalledTimes(asked)
+      })
+
       it('keeps polling through a failed poll, and gives up after several in a row', async () => {
         await mountUpgrade()
         postMock.mockResolvedValueOnce({ data: deployStatus() })

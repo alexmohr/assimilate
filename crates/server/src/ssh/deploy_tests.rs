@@ -342,10 +342,21 @@ async fn deploy_to(port: u16) -> Result<(), super::SshError> {
 
 /// Like [`deploy_to`], also returning the steps the deploy reported, in order.
 async fn deploy_reporting(port: u16) -> (Result<(), super::SshError>, Vec<DeployStep>) {
+    deploy_reporting_with(port, true).await
+}
+
+/// Like [`deploy_reporting`], for a server that has the agent binary for the
+/// host's architecture only if `with_binary`.
+async fn deploy_reporting_with(
+    port: u16,
+    with_binary: bool,
+) -> (Result<(), super::SshError>, Vec<DeployStep>) {
     let binaries = tempfile::tempdir().expect("tempdir");
-    tokio::fs::write(binaries.path().join("agent-x86_64"), b"agent")
-        .await
-        .expect("write agent binary");
+    if with_binary {
+        tokio::fs::write(binaries.path().join("agent-x86_64"), b"agent")
+            .await
+            .expect("write agent binary");
+    }
     let steps = Mutex::new(Vec::new());
     let result = deploy_agent(
         &DeployAgentParams {
@@ -384,6 +395,23 @@ async fn a_deploy_reports_each_step_as_it_begins() {
             DeployStep::Restart
         ]
     );
+}
+
+/// A server with no binary for the host's architecture has not failed to
+/// connect: the connection worked and the host answered. The failure belongs to
+/// the step of getting the binary onto the host, and says what is missing.
+#[tokio::test]
+async fn a_missing_binary_for_the_hosts_architecture_is_not_a_connect_failure() {
+    let (port, _recorded) = stand_in_host(None).await;
+
+    let (result, steps) = deploy_reporting_with(port, false).await;
+
+    let error = result.expect_err("the deploy fails").to_string();
+    assert!(
+        error.contains("no agent binary found for arch x86_64"),
+        "{error}"
+    );
+    assert_eq!(steps, [DeployStep::Connect, DeployStep::Upload]);
 }
 
 /// A deploy that fails stops reporting at the step it failed in, so the caller

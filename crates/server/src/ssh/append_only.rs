@@ -212,14 +212,16 @@ async fn put_back(sftp: &SftpSession, text: &str, why: &str) {
 /// Keeps the first state of the file Assimilate saw. A later change never
 /// overwrites it, so it stays the way back to what the admin had.
 async fn keep_first_copy(sftp: &SftpSession, original: &str) {
-    match bounded(sftp.try_exists(BACKUP_COPY)).await {
-        Ok(Ok(false)) => {
+    let exists = bounded(sftp.try_exists(BACKUP_COPY))
+        .await
+        .and_then(|found| found.map_err(|e| SetupError::Ssh(SshError::Sftp(e.to_string()))));
+    match exists {
+        Ok(false) => {
             if let Err(e) = put(sftp, BACKUP_COPY, original.as_bytes()).await {
                 warn!(error = %e, "could not keep a copy of authorized_keys");
             }
         }
-        Ok(Ok(true)) => {}
-        Ok(Err(e)) => warn!(error = %e, "could not look for the authorized_keys copy"),
+        Ok(true) => {}
         Err(e) => warn!(error = %e, "could not look for the authorized_keys copy"),
     }
 }

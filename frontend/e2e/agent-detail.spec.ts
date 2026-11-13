@@ -113,15 +113,41 @@ test.describe('Agent detail', () => {
       async (route) =>
         route.fulfill({ status: 200, contentType: 'application/json', body: '{"content":null}' }),
     )
+    // The deploy runs on the server: the request starts it, and the dialog
+    // reads its status until it has finished.
+    const steps = ['connect', 'upload', 'install', 'restart', 'reconnect'].map((step) => ({
+      step,
+      status: 'done',
+      duration_ms: 400,
+    }))
+    const idle = { skipped: false, token: null, available_version: null, error: null }
     let deployBody: Record<string, unknown> | null = null
     await page.route(
       (url) => url.pathname === '/api/agents/web-server-01/deploy',
       async (route) => {
-        deployBody = route.request().postDataJSON() as Record<string, unknown>
-        await route.fulfill({
+        const method = route.request().method()
+        if (method === 'POST') {
+          deployBody = route.request().postDataJSON() as Record<string, unknown>
+          return route.fulfill({
+            status: 202,
+            contentType: 'application/json',
+            body: JSON.stringify({ ...idle, state: 'running', steps: [] }),
+          })
+        }
+        if (method === 'DELETE') return route.fulfill({ status: 204 })
+        // Nothing is deployed until the request above has been made.
+        if (deployBody === null) {
+          return route.fulfill({ status: 404, contentType: 'application/json', body: '{}' })
+        }
+        return route.fulfill({
           status: 200,
           contentType: 'application/json',
-          body: JSON.stringify({ success: true, skipped: false, token: 'tok-redeploy-e2e' }),
+          body: JSON.stringify({
+            ...idle,
+            state: 'succeeded',
+            steps,
+            token: 'tok-redeploy-e2e',
+          }),
         })
       },
     )
@@ -135,7 +161,9 @@ test.describe('Agent detail', () => {
     await page.getByPlaceholder('e.g. 192.168.1.10').fill('10.0.0.9')
     await page.getByRole('button', { name: 'Redeploy Agent' }).click()
 
-    await expect(page.locator('.deploy-success-msg')).toHaveText('Agent redeployed successfully.')
+    await expect(page.locator('.deploy-success-msg')).toHaveText('Agent redeployed successfully.', {
+      timeout: 15_000,
+    })
     await expect(page.locator('.token-text')).toHaveText('tok-redeploy-e2e')
     expect(deployBody).toMatchObject({ force: true, ssh_host: '10.0.0.9' })
   })

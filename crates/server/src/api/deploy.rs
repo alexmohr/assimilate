@@ -1094,6 +1094,34 @@ mod tests {
             assert_eq!(agent.last_ssh_user.as_deref(), Some("deployer"));
         }
 
+        /// Recording what was deployed is bookkeeping after the fact: the host
+        /// is already deployed, so failing to write it down is not the deploy's
+        /// failure.
+        #[ignore = "requires DATABASE_URL"]
+        #[sqlx::test(migrations = "./migrations")]
+        async fn a_deploy_still_succeeds_when_it_cannot_be_recorded(pool: PgPool) {
+            let state = state(&pool);
+            let agent_id = agent_id(&pool).await;
+            let (port, _recorded) = stand_in_host(None).await;
+            let binaries = binaries().await;
+            state.deploy_jobs.start(agent_id, USER).expect("start");
+            reconnect_soon(&state, agent_id);
+            pool.close().await;
+
+            run_deploy(run_for(
+                &state,
+                agent_id,
+                port,
+                binaries.path(),
+                Duration::from_secs(30),
+            ))
+            .await;
+
+            let status = state.deploy_jobs.status(agent_id, USER).expect("a result");
+            assert_eq!(status.state, DeployJobState::Succeeded, "{status:?}");
+            assert_eq!(status.error, None);
+        }
+
         #[ignore = "requires DATABASE_URL"]
         #[sqlx::test(migrations = "./migrations")]
         async fn a_deploy_whose_agent_never_returns_fails_in_the_reconnect_step(pool: PgPool) {

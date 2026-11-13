@@ -16,6 +16,7 @@ use russh_sftp::{
     protocol::{FileAttributes, OpenFlags},
 };
 use serde::{Deserialize, Serialize};
+use shared::responses::DeployStep;
 use tokio::io::AsyncWriteExt;
 use tracing::{info, warn};
 
@@ -1389,13 +1390,21 @@ pub(crate) async fn list_agent_binaries(dir: &std::path::Path) -> Vec<String> {
     available
 }
 
+/// Deploys the agent, calling `on_step` as each [`DeployStep`] begins. The deploy
+/// ends with the service's restart; waiting for the agent to reconnect is the
+/// caller's.
+///
 /// # Errors
 ///
 /// Returns an error if:
 /// - [`SshError::Io`]: an I/O error occurs over the SSH connection
 /// - [`SshError::Sftp`]: the SFTP operation fails
 /// - [`SshError::Exec`]: the operation fails
-pub async fn deploy_agent(params: &DeployAgentParams<'_>) -> Result<(), SshError> {
+pub async fn deploy_agent(
+    params: &DeployAgentParams<'_>,
+    on_step: &(dyn Fn(DeployStep) + Send + Sync),
+) -> Result<(), SshError> {
+    on_step(DeployStep::Connect);
     let unit_content = params.systemd_service_content.map_or_else(
         || default_unit_content(params.remote_path, params.server_url, params.server_key),
         |custom| inject_env_vars(custom, params.server_url, params.server_key),
@@ -1427,9 +1436,11 @@ pub async fn deploy_agent(params: &DeployAgentParams<'_>) -> Result<(), SshError
         ))
     })?;
 
+    on_step(DeployStep::Upload);
     // Always upload to /tmp first - SFTP write to the final path often fails due to
     // missing directories or permission issues (SFTP reports these as "No such file").
     let uploaded = upload_private(&sftp, Upload::Binary, &binary_data).await?;
+    on_step(DeployStep::Install);
     let install = install_cmd(&uploaded, params.remote_path, "0755");
     let (exit_code, _, stderr) =
         exec_with_sudo_fallback(&session, &install, params.password).await?;
@@ -1460,6 +1471,7 @@ pub async fn deploy_agent(params: &DeployAgentParams<'_>) -> Result<(), SshError
         )));
     }
 
+    on_step(DeployStep::Restart);
     let enable_cmd = "systemctl daemon-reload && systemctl enable assimilate-agent && systemctl \
                       restart assimilate-agent";
     let (exit_code, _, stderr) =

@@ -119,7 +119,7 @@ Agents are keyed by **hostname**. Hostname alone is not always unique — two ho
 | `GET` / `PUT` / `DELETE` | `/api/agents/{hostname}` | Get, update, or delete an agent |
 | `POST` | `/api/agents/{hostname}/regenerate-token` | Issue a new agent token |
 | `POST` | `/api/agents/{hostname}/restart` | Send a restart command to the agent |
-| `POST` | `/api/agents/{hostname}/deploy` | Push the agent binary and install a systemd unit over SSH |
+| `POST` / `GET` / `DELETE` | `/api/agents/{hostname}/deploy` | Start pushing the agent binary and installing a systemd unit over SSH (answers `202` at once), read the deploy's steps and result, or dismiss the result |
 | `POST` | `/api/agents/{hostname}/service-unit` | Generate the systemd unit file for the agent |
 | `GET` / `POST` | `/api/agents/{hostname}/hostname-patterns` | List or add hostname alias patterns |
 | `DELETE` | `/api/agents/{hostname}/hostname-patterns/{pattern_id}` | Delete a hostname alias pattern |

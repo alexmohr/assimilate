@@ -17,6 +17,7 @@ use russh::{
     server::{Auth, ChannelOpenHandle, Handler, Msg, Server, Session},
 };
 use russh_sftp::protocol::{FileAttributes, Handle, OpenFlags, Status, StatusCode, Version};
+use shared::responses::DeployStep;
 use tokio::net::TcpListener;
 
 use super::{DeployAgentParams, TOKEN_FILE_PATH, UNIT_PATH, deploy_agent, install_cmd, sudo_input};
@@ -336,23 +337,68 @@ async fn a_deploy_keeps_the_token_and_the_sudo_password_off_every_command_line()
 /// Deploys to the stand-in host on `port`, as a user whose sudo needs a
 /// password.
 async fn deploy_to(port: u16) -> Result<(), super::SshError> {
+    deploy_reporting(port).await.0
+}
+
+/// Like [`deploy_to`], also returning the steps the deploy reported, in order.
+async fn deploy_reporting(port: u16) -> (Result<(), super::SshError>, Vec<DeployStep>) {
     let binaries = tempfile::tempdir().expect("tempdir");
     tokio::fs::write(binaries.path().join("agent-x86_64"), b"agent")
         .await
         .expect("write agent binary");
-    deploy_agent(&DeployAgentParams {
-        host: "127.0.0.1",
-        user: "deployer",
-        port,
-        binary_dir: binaries.path(),
-        remote_path: "/usr/local/bin/assimilate-agent",
-        server_url: "wss://backup.example",
-        token: "t0ken-s3cret",
-        server_key: "S3rverKey=",
-        password: Some("passw0rd-s3cret"),
-        systemd_service_content: None,
-    })
-    .await
+    let steps = Mutex::new(Vec::new());
+    let result = deploy_agent(
+        &DeployAgentParams {
+            host: "127.0.0.1",
+            user: "deployer",
+            port,
+            binary_dir: binaries.path(),
+            remote_path: "/usr/local/bin/assimilate-agent",
+            server_url: "wss://backup.example",
+            token: "t0ken-s3cret",
+            server_key: "S3rverKey=",
+            password: Some("passw0rd-s3cret"),
+            systemd_service_content: None,
+        },
+        &|step| steps.lock().expect("steps").push(step),
+    )
+    .await;
+    (result, steps.into_inner().expect("steps"))
+}
+
+/// The deploy tells its caller where it is: connecting, uploading, installing,
+/// restarting - and the agent's reconnect is for the caller to wait for.
+#[tokio::test]
+async fn a_deploy_reports_each_step_as_it_begins() {
+    let (port, _recorded) = stand_in_host(None).await;
+
+    let (result, steps) = deploy_reporting(port).await;
+
+    result.expect("the deploy succeeds");
+    assert_eq!(
+        steps,
+        [
+            DeployStep::Connect,
+            DeployStep::Upload,
+            DeployStep::Install,
+            DeployStep::Restart
+        ]
+    );
+}
+
+/// A deploy that fails stops reporting at the step it failed in, so the caller
+/// knows which step to blame and that the later ones never ran.
+#[tokio::test]
+async fn a_refused_install_is_reported_as_failing_in_the_install_step() {
+    let (port, _recorded) = stand_in_host(Some("assimilate-agent-binary-")).await;
+
+    let (result, steps) = deploy_reporting(port).await;
+
+    result.expect_err("the deploy fails");
+    assert_eq!(
+        steps,
+        [DeployStep::Connect, DeployStep::Upload, DeployStep::Install]
+    );
 }
 
 /// A host that refuses to install any of the files fails the deploy, saying

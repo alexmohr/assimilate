@@ -398,7 +398,7 @@ mod tests {
 
         assert!(output.status.success());
         assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "out");
-        assert!(output.stderr.is_empty());
+        assert_eq!(output.stderr, Vec::<u8>::new());
         assert!(log_rx.try_recv().is_err());
         drop(stderr);
     }

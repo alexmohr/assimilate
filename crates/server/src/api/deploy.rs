@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
-use std::{path::PathBuf, time::Duration};
+use std::path::PathBuf;
 
 use axum::{
     Json,
@@ -16,15 +16,19 @@ use shared::{
     types::DeploymentMode,
 };
 use strum::IntoEnumIterator;
-use tracing::{info, warn};
+use tracing::info;
+
+mod run;
+
+use run::{DEPLOY_DEADLINE, DeployRun, RECONNECT_POLL, RECONNECT_TIMEOUT, run_deploy};
 
 use super::{
     auth::AuthUser,
     helpers::{self, DomainQuery, MaxLen},
 };
 use crate::{
-    AgentRegistry, AppState, db,
-    deploy_jobs::{DeployJobs, Outcome},
+    AppState, db,
+    deploy_jobs::JobId,
     error::{ApiError, ApiJson},
     ssh,
 };
@@ -226,12 +230,13 @@ async fn start_deploy(
         .map_err(|e| ApiError::Internal(e.to_string()))?
         .to_string();
 
-    let token = begin_job(state, agent.id, user_id).await?;
+    let (job, token) = begin_job(state, agent.id, user_id).await?;
 
     let run = DeployRun {
         pool: state.pool.clone(),
         registry: state.registry.clone(),
         jobs: state.deploy_jobs.clone(),
+        job,
         agent_id: agent.id,
         hostname: hostname.to_owned(),
         ssh_host: req.ssh_host,
@@ -250,6 +255,7 @@ async fn start_deploy(
         server_commit_count,
         reconnect_timeout: RECONNECT_TIMEOUT,
         reconnect_poll: RECONNECT_POLL,
+        deadline: DEPLOY_DEADLINE,
     };
     state.task_registry.register(tokio::spawn(run_deploy(run)));
 
@@ -263,14 +269,19 @@ async fn start_deploy(
 /// Registers the agent's deploy and issues its new token. The deploy is
 /// forgotten again if the token cannot be issued, so the agent is not left
 /// looking busy.
-async fn begin_job(state: &AppState, agent_id: i64, user_id: i64) -> Result<String, ApiError> {
-    state
+async fn begin_job(
+    state: &AppState,
+    agent_id: i64,
+    user_id: i64,
+) -> Result<(JobId, String), ApiError> {
+    let job = state
         .deploy_jobs
         .start(agent_id, user_id)
         .map_err(|e| ApiError::Conflict(e.to_string()))?;
-    issue_agent_token(&state.pool, agent_id)
+    let token = issue_agent_token(&state.pool, agent_id)
         .await
-        .inspect_err(|_| state.deploy_jobs.remove(agent_id))
+        .inspect_err(|_| state.deploy_jobs.remove(agent_id))?;
+    Ok((job, token))
 }
 
 #[utoipa::path(
@@ -355,15 +366,6 @@ pub async fn dismiss_deploy(
 /// Where the agent binary is installed unless the request says otherwise.
 const DEFAULT_INSTALL_PATH: &str = "/usr/local/bin/assimilate-agent";
 
-/// How long a restarted agent has to connect back before the deploy fails.
-const RECONNECT_TIMEOUT: Duration = Duration::from_secs(90);
-/// How often the server looks for the restarted agent.
-const RECONNECT_POLL: Duration = Duration::from_millis(500);
-/// How long after the restart an agent that names no process instance has to
-/// have been connected before it counts as the restarted one: it cannot be told
-/// from the old process by its identity, only by outlasting its shutdown.
-const RECONNECT_GRACE: Duration = Duration::from_secs(3);
-
 fn skipped_status(version: Option<String>) -> DeployStatusResponse {
     DeployStatusResponse {
         state: DeployJobState::Succeeded,
@@ -389,174 +391,6 @@ async fn issue_agent_token(pool: &sqlx::PgPool, agent_id: i64) -> Result<String,
     let hash = bcrypt::hash(&token, bcrypt::DEFAULT_COST)?;
     db::regenerate_agent_token(pool, agent_id, &hash).await?;
     Ok(token)
-}
-
-/// Everything a deploy needs once it runs on its own, away from the request.
-struct DeployRun {
-    pool: sqlx::PgPool,
-    registry: AgentRegistry,
-    jobs: DeployJobs,
-    agent_id: i64,
-    hostname: String,
-    ssh_host: String,
-    ssh_user: String,
-    ssh_port: u16,
-    ssh_password: Option<String>,
-    binary_dir: PathBuf,
-    install_path: String,
-    server_url: String,
-    token: String,
-    server_key: String,
-    systemd_service_content: Option<String>,
-    available_version: Option<String>,
-    server_commit_count: Option<i32>,
-    /// How long the restarted agent has to connect back.
-    reconnect_timeout: Duration,
-    /// How often the server looks for it.
-    reconnect_poll: Duration,
-}
-
-/// Why a deploy stopped.
-#[derive(Debug, thiserror::Error)]
-enum DeployError {
-    #[error("{0}")]
-    Ssh(#[from] ssh::SshError),
-    #[error(
-        "the agent was installed and restarted but did not connect back to the server within \
-         {} seconds; check the agent's logs on the host",
-        .0.as_secs()
-    )]
-    NotReconnected(Duration),
-}
-
-/// Runs a deploy to its end and records how it went. Never fails: whatever
-/// goes wrong is the deploy's result.
-async fn run_deploy(run: DeployRun) {
-    let before = presence(&run.registry, run.agent_id).await;
-    let result = execute_deploy(&run, &before).await;
-    if let Err(e) = &result {
-        warn!(hostname = %run.hostname, error = %e, "agent deploy failed");
-    }
-    run.jobs.finish(
-        run.agent_id,
-        Outcome {
-            skipped: false,
-            token: Some(run.token),
-            available_version: run.available_version,
-            error: result.err().map(|e| e.to_string()),
-        },
-    );
-}
-
-async fn execute_deploy(run: &DeployRun, before: &Presence) -> Result<(), DeployError> {
-    ssh::deploy_agent(
-        &ssh::DeployAgentParams {
-            host: &run.ssh_host,
-            user: &run.ssh_user,
-            port: run.ssh_port,
-            binary_dir: &run.binary_dir,
-            remote_path: &run.install_path,
-            server_url: &run.server_url,
-            token: &run.token,
-            server_key: &run.server_key,
-            password: run.ssh_password.as_deref(),
-            systemd_service_content: run.systemd_service_content.as_deref(),
-        },
-        &|step| run.jobs.begin_step(run.agent_id, step),
-    )
-    .await?;
-
-    // The host is deployed, so a failure to record it must not fail the deploy.
-    if let Some(version) = &run.available_version
-        && let Err(e) = db::update_last_seen_and_version(
-            &run.pool,
-            run.agent_id,
-            version,
-            None,
-            None,
-            run.server_commit_count,
-        )
-        .await
-    {
-        warn!(hostname = %run.hostname, error = %e, "failed to record the deployed agent version");
-    }
-    if let Err(e) = db::update_last_ssh_user(&run.pool, run.agent_id, &run.ssh_user).await {
-        warn!(hostname = %run.hostname, error = %e, "failed to record the deploy's SSH user");
-    }
-    info!(hostname = %run.hostname, ssh_host = %run.ssh_host, "agent deployed, waiting for it to reconnect");
-
-    run.jobs.begin_step(run.agent_id, DeployStep::Reconnect);
-    if wait_for_reconnect(
-        &run.registry,
-        run.agent_id,
-        before,
-        run.reconnect_timeout,
-        run.reconnect_poll,
-    )
-    .await
-    {
-        info!(hostname = %run.hostname, "agent reconnected after deploy");
-        Ok(())
-    } else {
-        Err(DeployError::NotReconnected(run.reconnect_timeout))
-    }
-}
-
-/// Whether an agent is connected to the server, and as which process.
-#[derive(Debug, Clone, PartialEq, Eq)]
-enum Presence {
-    /// Not connected.
-    Absent,
-    /// Connected as the process named by the instance id, or as one that names
-    /// none.
-    Present(Option<String>),
-}
-
-async fn presence(registry: &AgentRegistry, agent_id: i64) -> Presence {
-    match registry.instance_id(agent_id).await {
-        None => Presence::Absent,
-        Some(instance) => Presence::Present(instance),
-    }
-}
-
-/// Whether the agent connected now is the one the deploy restarted, rather than
-/// the process that was running before it: `before` is the agent's presence
-/// before the restart, `now` its presence now, `since_restart` how long the
-/// restart has been under way.
-fn is_restarted_agent(before: &Presence, now: &Presence, since_restart: Duration) -> bool {
-    match (before, now) {
-        (_, Presence::Absent) => false,
-        // It was not connected, so any connection is the new one.
-        (Presence::Absent, Presence::Present(_)) => true,
-        (Presence::Present(Some(previous)), Presence::Present(current)) => {
-            current.as_ref() != Some(previous)
-        }
-        // The old process named no instance, so only its shutdown tells the two
-        // apart: a connection that is still there after a grace period is not it.
-        (Presence::Present(None), Presence::Present(_)) => since_restart >= RECONNECT_GRACE,
-    }
-}
-
-/// Waits up to `timeout` for the deployed agent to connect back. Returns
-/// whether it did.
-async fn wait_for_reconnect(
-    registry: &AgentRegistry,
-    agent_id: i64,
-    before: &Presence,
-    timeout: Duration,
-    poll: Duration,
-) -> bool {
-    let started = tokio::time::Instant::now();
-    loop {
-        let now = presence(registry, agent_id).await;
-        if is_restarted_agent(before, &now, started.elapsed()) {
-            return true;
-        }
-        if started.elapsed() >= timeout {
-            return false;
-        }
-        tokio::time::sleep(poll).await;
-    }
 }
 
 /// Request payload for fetching a systemd service unit from a remote host.
@@ -737,114 +571,6 @@ mod tests {
         }
     }
 
-    fn present(id: &str) -> Presence {
-        Presence::Present(Some(id.to_owned()))
-    }
-
-    #[test]
-    fn an_agent_that_was_not_connected_counts_as_restarted_once_it_connects() {
-        assert!(is_restarted_agent(
-            &Presence::Absent,
-            &Presence::Present(None),
-            Duration::ZERO
-        ));
-        assert!(is_restarted_agent(
-            &Presence::Absent,
-            &present("new"),
-            Duration::ZERO
-        ));
-        assert!(!is_restarted_agent(
-            &Presence::Absent,
-            &Presence::Absent,
-            Duration::from_mins(1)
-        ));
-    }
-
-    #[test]
-    fn a_connection_from_the_old_process_is_not_the_restarted_agent() {
-        let before = present("old");
-        assert!(!is_restarted_agent(
-            &before,
-            &present("old"),
-            Duration::from_mins(1)
-        ));
-        assert!(!is_restarted_agent(
-            &before,
-            &Presence::Absent,
-            Duration::from_mins(1)
-        ));
-        assert!(is_restarted_agent(&before, &present("new"), Duration::ZERO));
-        assert!(
-            is_restarted_agent(&before, &Presence::Present(None), Duration::ZERO),
-            "an agent that now names no instance is a different process"
-        );
-    }
-
-    #[test]
-    fn an_agent_without_an_instance_must_outlast_the_grace_period() {
-        let before = Presence::Present(None);
-        assert!(!is_restarted_agent(
-            &before,
-            &Presence::Present(None),
-            RECONNECT_GRACE.saturating_sub(Duration::from_millis(1))
-        ));
-        assert!(is_restarted_agent(
-            &before,
-            &Presence::Present(None),
-            RECONNECT_GRACE
-        ));
-    }
-
-    async fn connect(registry: &AgentRegistry, agent_id: i64, instance_id: &str) {
-        let (sender, _receiver) = tokio::sync::mpsc::channel(1);
-        registry
-            .register(agent_id, sender, false, None, Some(instance_id.to_owned()))
-            .await;
-    }
-
-    #[tokio::test(start_paused = true)]
-    async fn waiting_returns_once_the_restarted_agent_connects() {
-        let registry = AgentRegistry::new();
-        connect(&registry, 1, "old").await;
-        let before = presence(&registry, 1).await;
-
-        let reconnecting = registry.clone();
-        let wait = tokio::spawn(async move {
-            wait_for_reconnect(
-                &reconnecting,
-                1,
-                &before,
-                Duration::from_secs(30),
-                Duration::from_millis(500),
-            )
-            .await
-        });
-        tokio::time::sleep(Duration::from_secs(5)).await;
-        assert!(!wait.is_finished(), "the old process is still connected");
-
-        connect(&registry, 1, "new").await;
-        assert!(wait.await.expect("the wait ends"));
-    }
-
-    #[tokio::test(start_paused = true)]
-    async fn waiting_gives_up_when_the_agent_never_comes_back() {
-        let registry = AgentRegistry::new();
-        connect(&registry, 1, "old").await;
-        let before = presence(&registry, 1).await;
-        registry.unregister(1).await;
-
-        let reconnected = wait_for_reconnect(
-            &registry,
-            1,
-            &before,
-            Duration::from_secs(30),
-            Duration::from_millis(500),
-        )
-        .await;
-
-        assert!(!reconnected);
-    }
-
     #[test]
     fn a_skipped_deploy_reports_success_without_running_any_step() {
         let status = skipped_status(Some("1.2.0".to_owned()));
@@ -860,14 +586,6 @@ mod tests {
                 .iter()
                 .all(|s| s.status == DeployStepStatus::Pending)
         );
-    }
-
-    #[test]
-    fn a_deploy_that_never_reconnects_says_how_long_it_waited() {
-        let message = DeployError::NotReconnected(RECONNECT_TIMEOUT).to_string();
-
-        assert!(message.contains("90 seconds"), "{message}");
-        assert!(message.contains("did not connect back"), "{message}");
     }
 
     #[test]
@@ -983,6 +701,7 @@ mod tests {
         use super::super::{DeployAgentRequest, DeployRun, begin_job, run_deploy, start_deploy};
         use crate::{
             AppState, db,
+            deploy_jobs::JobId,
             error::ApiError,
             ssh::deploy_tests::stand_in_host,
             test_support::{build_test_state, insert_auth_user},
@@ -999,6 +718,7 @@ mod tests {
         fn run_for(
             state: &AppState,
             agent_id: i64,
+            job: JobId,
             port: u16,
             binaries: &std::path::Path,
             reconnect_timeout: Duration,
@@ -1007,6 +727,7 @@ mod tests {
                 pool: state.pool.clone(),
                 registry: state.registry.clone(),
                 jobs: state.deploy_jobs.clone(),
+                job,
                 agent_id,
                 hostname: "deploy-host".to_owned(),
                 ssh_host: "127.0.0.1".to_owned(),
@@ -1023,6 +744,7 @@ mod tests {
                 server_commit_count: None,
                 reconnect_timeout,
                 reconnect_poll: Duration::from_millis(10),
+                deadline: Duration::from_secs(60),
             }
         }
 
@@ -1064,12 +786,13 @@ mod tests {
             let agent_id = agent_id(&pool).await;
             let (port, _recorded) = stand_in_host(None).await;
             let binaries = binaries().await;
-            state.deploy_jobs.start(agent_id, USER).expect("start");
+            let job = state.deploy_jobs.start(agent_id, USER).expect("start");
             reconnect_soon(&state, agent_id);
 
             run_deploy(run_for(
                 &state,
                 agent_id,
+                job,
                 port,
                 binaries.path(),
                 Duration::from_secs(30),
@@ -1104,13 +827,14 @@ mod tests {
             let agent_id = agent_id(&pool).await;
             let (port, _recorded) = stand_in_host(None).await;
             let binaries = binaries().await;
-            state.deploy_jobs.start(agent_id, USER).expect("start");
+            let job = state.deploy_jobs.start(agent_id, USER).expect("start");
             reconnect_soon(&state, agent_id);
             pool.close().await;
 
             run_deploy(run_for(
                 &state,
                 agent_id,
+                job,
                 port,
                 binaries.path(),
                 Duration::from_secs(30),
@@ -1129,11 +853,12 @@ mod tests {
             let agent_id = agent_id(&pool).await;
             let (port, _recorded) = stand_in_host(None).await;
             let binaries = binaries().await;
-            state.deploy_jobs.start(agent_id, USER).expect("start");
+            let job = state.deploy_jobs.start(agent_id, USER).expect("start");
 
             run_deploy(run_for(
                 &state,
                 agent_id,
+                job,
                 port,
                 binaries.path(),
                 Duration::from_millis(200),
@@ -1166,6 +891,57 @@ mod tests {
             );
         }
 
+        /// A host that takes the connection and never says anything must not hold
+        /// the deploy for ever: it ends at its deadline, in the step it was in.
+        #[ignore = "requires DATABASE_URL"]
+        #[sqlx::test(migrations = "./migrations")]
+        async fn a_host_that_never_answers_ends_the_deploy_at_its_deadline(pool: PgPool) {
+            let state = state(&pool);
+            let agent_id = agent_id(&pool).await;
+            let silent = tokio::net::TcpListener::bind("127.0.0.1:0")
+                .await
+                .expect("bind");
+            let port = silent.local_addr().expect("address").port();
+            let _held = tokio::spawn(async move {
+                let mut open = Vec::new();
+                while let Ok((stream, _)) = silent.accept().await {
+                    open.push(stream);
+                }
+            });
+            let binaries = binaries().await;
+            let job = state.deploy_jobs.start(agent_id, USER).expect("start");
+            let mut run = run_for(
+                &state,
+                agent_id,
+                job,
+                port,
+                binaries.path(),
+                Duration::from_secs(30),
+            );
+            run.deadline = Duration::from_millis(300);
+
+            run_deploy(run).await;
+
+            let status = state.deploy_jobs.status(agent_id, USER).expect("a result");
+            assert_eq!(status.state, DeployJobState::Failed, "{status:?}");
+            assert!(
+                status
+                    .error
+                    .as_deref()
+                    .is_some_and(|e| e.contains("did not finish")),
+                "{status:?}"
+            );
+            let steps: Vec<_> = status.steps.iter().map(|s| s.status).collect();
+            assert_eq!(steps.first(), Some(&DeployStepStatus::Failed));
+            assert!(
+                steps
+                    .iter()
+                    .skip(1)
+                    .all(|s| *s == DeployStepStatus::Pending),
+                "{status:?}"
+            );
+        }
+
         #[ignore = "requires DATABASE_URL"]
         #[sqlx::test(migrations = "./migrations")]
         async fn a_host_that_refuses_the_install_fails_the_deploy_there_and_leaves_the_agent_alone(
@@ -1175,11 +951,12 @@ mod tests {
             let agent_id = agent_id(&pool).await;
             let (port, _recorded) = stand_in_host(Some("assimilate-agent-binary-")).await;
             let binaries = binaries().await;
-            state.deploy_jobs.start(agent_id, USER).expect("start");
+            let job = state.deploy_jobs.start(agent_id, USER).expect("start");
 
             run_deploy(run_for(
                 &state,
                 agent_id,
+                job,
                 port,
                 binaries.path(),
                 Duration::from_secs(30),

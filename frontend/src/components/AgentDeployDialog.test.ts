@@ -588,6 +588,24 @@ describe('AgentDeployDialog', () => {
         expect(getMock).not.toHaveBeenCalled()
       })
 
+      it('goes back to the form, saying so, when the server has forgotten the deploy', async () => {
+        await mountUpgrade()
+        postMock.mockResolvedValueOnce({ data: deployStatus() })
+        getMock.mockRejectedValue(notFound())
+        await startDeploy()
+
+        await nextPoll()
+
+        expect(document.querySelector('.deploy-steps')).toBeNull()
+        expect(document.querySelector('input[placeholder="root"]')).not.toBeNull()
+        expect(document.querySelector('.modal-footer .form-error')?.textContent).toContain(
+          'no longer has this deploy',
+        )
+        const asked = getMock.mock.calls.length
+        await nextPoll()
+        expect(getMock).toHaveBeenCalledTimes(asked)
+      })
+
       it('keeps polling through a failed poll, and gives up after several in a row', async () => {
         await mountUpgrade()
         postMock.mockResolvedValueOnce({ data: deployStatus() })

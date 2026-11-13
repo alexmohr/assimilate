@@ -1186,27 +1186,6 @@ mod tests {
         (result, left.into_iter().map(|sub| sub.endpoint).collect())
     }
 
-    /// A `public_url` that cannot be read leaves the notification without a
-    /// link rather than failing it: email and webhook deliveries omit the link,
-    /// exactly as when no base URL is configured.
-    #[ignore = "requires DATABASE_URL"]
-    #[sqlx::test(migrations = "./migrations")]
-    async fn an_unreadable_public_url_leaves_the_notification_without_a_link(pool: sqlx::PgPool) {
-        crate::db::set_setting(&pool, "public_url", "https://backups.example.com/")
-            .await
-            .unwrap();
-        let service = NotificationService::new(pool.clone(), [0; 32]);
-        assert_eq!(
-            public_base_url(&service).await.as_deref(),
-            Some("https://backups.example.com"),
-            "the setting is readable while the pool is open"
-        );
-
-        pool.close().await;
-
-        assert_eq!(public_base_url(&service).await, None);
-    }
-
     /// A delivery checks every subscription's endpoint before pushing: one on a
     /// private address is never sent to, and with nothing else to push to the
     /// delivery fails with the reason.

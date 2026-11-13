@@ -491,7 +491,7 @@ mod tests {
         };
 
         let output = run(
-            "echo out; echo; echo err >&2",
+            "echo out; echo; echo '   '; echo err >&2",
             Duration::from_secs(10),
             Duration::from_secs(1),
             &TaskRegistry::default(),
@@ -502,7 +502,10 @@ mod tests {
         .expect("the command finished before its timeout");
         drop(log_tx);
 
-        assert_eq!(output.stdout, b"out\n\n", "collected output is unchanged");
+        assert_eq!(
+            output.stdout, b"out\n\n   \n",
+            "collected output is unchanged"
+        );
         let mut forwarded = Vec::new();
         while let Some(json) = log_rx.recv().await {
             forwarded.push(serde_json::from_str::<AgentLogLine>(&json).unwrap());
@@ -514,7 +517,11 @@ mod tests {
         };
         assert!(forwarded.contains(&line(HookStream::Stdout, "out")));
         assert!(forwarded.contains(&line(HookStream::Stderr, "err")));
-        assert_eq!(forwarded.len(), 2, "blank lines are not forwarded");
+        assert_eq!(
+            forwarded.len(),
+            2,
+            "blank and whitespace-only lines are not forwarded"
+        );
     }
 
     #[tokio::test]

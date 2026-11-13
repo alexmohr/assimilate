@@ -382,4 +382,24 @@ mod tests {
         }
         assert_eq!(lines, vec!["err-line-1", "err-line-2"]);
     }
+
+    /// A child whose stderr was already taken has nothing to stream: the wait
+    /// still finishes, with an empty stderr and no lines sent.
+    #[tokio::test]
+    async fn a_child_without_stderr_streams_no_lines() {
+        let (log_tx, mut log_rx) = mpsc::channel(16);
+        let borg = Borg::with_extra_env(PathBuf::from("sh"), Vec::new());
+        let mut guard = borg
+            .spawn_child(&["-c", "echo out; echo err >&2"], &[])
+            .unwrap();
+        let stderr = guard.take_stderr();
+
+        let output = wait_with_stderr_stream(&mut guard, log_tx).await.unwrap();
+
+        assert!(output.status.success());
+        assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "out");
+        assert!(output.stderr.is_empty());
+        assert!(log_rx.try_recv().is_err());
+        drop(stderr);
+    }
 }

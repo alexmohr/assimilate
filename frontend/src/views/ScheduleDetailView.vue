@@ -888,19 +888,27 @@ onMessage('BackupCompleted', (payload) => {
   // never clear this state either. Optional-chained rather than destructured:
   // this is websocket input, and a message without a report should be
   // ignored, not throw out of the handler.
-  const schedule_id = payload.report?.schedule_id
-  const repo_id = payload.report?.repo_id
-  if (repo_id == null) return
-  if (schedule_id != null) {
-    if (schedule_id !== Number(props.id)) return
-  } else if (!repoTargets.value.some((t) => t.repo_id === repo_id)) {
+  endBackup(payload.report?.schedule_id, payload.report?.repo_id)
+})
+
+// A backup that was cancelled, or lost with an agent that restarted, never
+// completes - this is the only event that ends its progress card.
+onMessage('BackupStopped', (payload) => {
+  endBackup(payload.schedule_id, payload.repo_id)
+})
+
+function endBackup(scheduleId: number | null | undefined, repoId: number | null | undefined): void {
+  if (repoId == null) return
+  if (scheduleId != null) {
+    if (scheduleId !== Number(props.id)) return
+  } else if (!repoTargets.value.some((t) => t.repo_id === repoId)) {
     return
   }
   backupRunning.value = false
   backupHostname.value = null
   backupArchiveName.value = null
   backupAgentId.value = null
-})
+}
 
 // A queued run's host coming back (or a running one's dropping away) changes
 // what the progress card says, so the connection state has to stay current.

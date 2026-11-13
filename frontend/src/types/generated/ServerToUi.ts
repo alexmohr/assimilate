@@ -73,6 +73,27 @@ export type ServerToUi =
     };
   }
   | {
+    "type": "BackupStopped";
+    "payload": {
+      /**
+       * The hostname of the agent the backup was on.
+       */
+      hostname: string;
+      /**
+       * The name of the backup target (repository).
+       */
+      target_name: string;
+      /**
+       * The repository the backup wrote to.
+       */
+      repo_id: number;
+      /**
+       * The schedule that triggered this backup, if any.
+       */
+      schedule_id: number | null;
+    };
+  }
+  | {
     "type": "CheckCompleted";
     "payload": {
       /**

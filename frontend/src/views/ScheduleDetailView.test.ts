@@ -1534,6 +1534,42 @@ describe('ScheduleDetailView - WebSocket handlers', () => {
     expect(wrapper.find('.live-log-card').exists()).toBe(false)
   })
 
+  it('BackupStopped hides the live progress card of a cancelled backup', async () => {
+    const wrapper = await createActiveBackupWrapper()
+
+    wsHandlers['BackupStopped']?.({
+      hostname: 'web-server-01',
+      target_name: 'server-daily',
+      repo_id: mockSchedule.repo_id,
+      schedule_id: 1,
+    })
+    await nextTick()
+
+    expect(wrapper.find('.live-log-card').exists()).toBe(false)
+  })
+
+  it('BackupStopped without a schedule matches on the target repository', async () => {
+    const wrapper = await createActiveBackupWrapper()
+
+    wsHandlers['BackupStopped']?.({
+      hostname: 'web-server-01',
+      target_name: 'server-daily',
+      repo_id: 999,
+      schedule_id: null,
+    })
+    await nextTick()
+    expect(wrapper.find('.live-log-card').exists()).toBe(true)
+
+    wsHandlers['BackupStopped']?.({
+      hostname: 'web-server-01',
+      target_name: 'server-daily',
+      repo_id: mockSchedule.repo_id,
+      schedule_id: null,
+    })
+    await nextTick()
+    expect(wrapper.find('.live-log-card').exists()).toBe(false)
+  })
+
   /**
    * The bug this guards: the handler compared `target_name` against this
    * page's primary repository, so a completion on a secondary target never

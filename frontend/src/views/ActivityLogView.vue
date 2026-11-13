@@ -348,12 +348,17 @@ onMessage('BackupStarted', (payload) => {
   liveBackupSessions.value = next
 })
 
-onMessage('BackupCompleted', (payload) => {
-  const key = liveSessionKey(payload.hostname, payload.target_name)
+onMessage('BackupCompleted', (payload) => endLiveSession(payload.hostname, payload.target_name))
+// A backup that was cancelled, or lost with an agent that restarted, never
+// completes.
+onMessage('BackupStopped', (payload) => endLiveSession(payload.hostname, payload.target_name))
+
+function endLiveSession(hostname: string, targetName: string): void {
+  const key = liveSessionKey(hostname, targetName)
   const next = new Map(liveBackupSessions.value)
   next.delete(key)
   liveBackupSessions.value = next
-})
+}
 
 onMessage('BackupLog', (payload) => {
   try {

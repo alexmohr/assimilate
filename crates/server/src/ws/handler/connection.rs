@@ -20,7 +20,7 @@ use super::handle_agent_message;
 use crate::{
     AppState, catch_up, config_assembler, db,
     restore_runs::{self},
-    ws::completion_bus::OperationOutcome,
+    ws::stopped_backup,
 };
 
 const PING_INTERVAL: Duration = Duration::from_secs(30);
@@ -252,8 +252,14 @@ where
     // again.
     catch_up::run_catch_ups_on_reconnect(&state, agent_id, &hostname).await;
 
+    let restarted = state
+        .registry
+        .record_instance(agent_id, instance_id.as_deref())
+        .await;
     if replaced_connection {
         abandon_stale_operations_on_reconnect(&state, agent_id, &hostname).await;
+    } else if restarted {
+        abandon_backups_of_previous_instance(&state, agent_id, &hostname).await;
     }
 
     state.ui_broadcast.send(ServerToUi::AgentConnected {
@@ -357,11 +363,7 @@ async fn abandon_stale_operations_on_reconnect(state: &AppState, agent_id: i64, 
                     "agent reconnected while a backup for this repo was still in flight; \
                      abandoning it"
                 );
-                state.completion_bus.publish(OperationOutcome {
-                    agent_id,
-                    repo_id,
-                    success: false,
-                });
+                stopped_backup::announce_stopped(state, agent_id, repo_id, None).await;
             }
         }
         Err(e) => {
@@ -369,6 +371,41 @@ async fn abandon_stale_operations_on_reconnect(state: &AppState, agent_id: i64, 
                 hostname = %hostname,
                 error = %e,
                 "failed to abandon stale in-flight backups on agent reconnect"
+            );
+        }
+    }
+}
+
+/// Called when an agent connects as a different process than it last did,
+/// after its previous connection had already closed (the agent was stopped
+/// or restarted). A backup that process was running died with it and will
+/// never report back, so it is marked failed and its end announced - without
+/// this it stays "in progress" forever, and a cancel finds nothing to stop.
+/// Runs that had not started yet are left for the reconnect catch-up to hand
+/// to the new process.
+async fn abandon_backups_of_previous_instance(state: &AppState, agent_id: i64, hostname: &str) {
+    match db::fail_started_backups_for_agent_restart(&state.pool, agent_id, hostname).await {
+        Ok(abandoned) => {
+            for backup in abandoned {
+                tracing::warn!(
+                    hostname = %hostname,
+                    repo_id = backup.repo_id,
+                    "agent restarted while a backup for this repo was running; abandoning it"
+                );
+                stopped_backup::announce_stopped(
+                    state,
+                    agent_id,
+                    backup.repo_id,
+                    backup.schedule_id,
+                )
+                .await;
+            }
+        }
+        Err(e) => {
+            tracing::error!(
+                hostname = %hostname,
+                error = %e,
+                "failed to abandon the previous agent process's backups"
             );
         }
     }

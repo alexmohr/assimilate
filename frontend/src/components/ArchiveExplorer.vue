@@ -15,6 +15,7 @@ import { isDirectoryEntry } from '../utils/archiveSelection'
 import type { CrossSearchEntryResponse } from '../types/generated'
 import { requestArchiveDelete } from '../composables/useArchiveBrowser'
 import { useArchiveDeletion } from '../composables/useArchiveDeletion'
+import { useQueuedDeletions } from '../composables/useQueuedDeletions'
 import {
   DEFAULT_ARCHIVE_NAME_QUERY_KEY,
   DEFAULT_ARCHIVE_PATH_QUERY_KEY,
@@ -63,6 +64,11 @@ const props = withDefaults(
      * `pathQueryKey` by a page that renders more than one explorer.
      */
     archiveQueryKey?: string
+    /**
+     * The repositories in `archives` that are append-only, when the caller
+     * already knows. Without it the explorer looks them up itself.
+     */
+    appendOnlyRepoIds?: readonly number[]
   }>(),
   {
     loading: false,
@@ -75,6 +81,7 @@ const props = withDefaults(
     emptyDescription: 'Archives appear here once a backup has run against this repository.',
     pathQueryKey: undefined,
     archiveQueryKey: DEFAULT_ARCHIVE_NAME_QUERY_KEY,
+    appendOnlyRepoIds: undefined,
   },
 )
 
@@ -245,6 +252,12 @@ const sameRepoArchives = computed<RepoArchive[]>(() => {
   return open === null ? [] : props.archives.filter((a) => a.repo_id === open.repo_id)
 })
 
+const queuedDeletions = useQueuedDeletions({
+  archives: () => props.archives,
+  isAdmin: () => props.isAdmin,
+  appendOnlyRepoIds: () => props.appendOnlyRepoIds,
+})
+
 const {
   pending,
   deleteLoading,
@@ -263,13 +276,26 @@ const {
   onDeleted: (archive) => {
     if (sameArchive(selected.value, archive)) selected.value = null
   },
+  // An append-only repository only queues the deletion: the archive stays,
+  // marked, until maintenance removes it.
+  willBeQueued: (archive) => queuedDeletions.isAppendOnly(archive.repo_id),
+  onQueued: queuedDeletions.markQueued,
 })
+
+/** Whether the delete being confirmed is only queued for maintenance. */
+const pendingIsQueued = computed(
+  () => pending.value !== null && queuedDeletions.isAppendOnly(pending.value.repo_id),
+)
 
 // `isDeleting` is a function over a private ref, so the selector - which needs
 // the whole set to render its rows - gets the copies it covers instead.
 const deletingList = computed(() => props.archives.filter(isDeleting).map(archiveKey))
 
 const selectedDeleting = computed(() => selected.value !== null && isDeleting(selected.value))
+
+const selectedQueued = computed(
+  () => selected.value !== null && queuedDeletions.isQueued(selected.value),
+)
 
 /**
  * The parent owns the WebSocket subscription, so it forwards the events that
@@ -297,7 +323,10 @@ defineExpose({
     // says nothing about what this pane is showing.
     if (sameArchive(selected.value, { repo_id: repoId, name })) selected.value = null
   },
-  onDataChanged: pruneToPresent,
+  onDataChanged(): void {
+    pruneToPresent()
+    void queuedDeletions.reload()
+  },
   onRepoIdle: sweepIdle,
 })
 </script>
@@ -315,6 +344,7 @@ defineExpose({
         :loading="loading"
         :error="error"
         :deleting-keys="deletingList"
+        :queued-keys="queuedDeletions.queuedKeys.value"
         :hide-controls="hideControls"
         :file-search="!hideControls"
         refreshable
@@ -368,10 +398,13 @@ defineExpose({
             :archives="sameRepoArchives"
             :is-admin="isAdmin"
             :deleting="selectedDeleting"
+            :queued="selectedQueued"
+            :keeping="queuedDeletions.keeping.value"
             :path-query-key="pathQueryKey"
             :route-archive-name="routeArchiveName"
             :reveal="reveal"
             @delete-archive="selected !== null && request(selected)"
+            @keep-archive="selected !== null && queuedDeletions.keep(selected)"
             @revealed="reveal = null"
           />
         </div>
@@ -381,7 +414,7 @@ defineExpose({
 
   <BaseModal
     :open="pending !== null"
-    title="Delete archive"
+    :title="pendingIsQueued ? 'Queue archive deletion' : 'Delete archive'"
     size="sm"
     @close="close"
   >
@@ -391,13 +424,27 @@ defineExpose({
       </div>
       <div>
         <p>
-          Permanently delete <strong>{{ pending?.name }}</strong>
+          {{ pendingIsQueued ? 'Queue' : 'Permanently delete' }}
+          <strong>{{ pending?.name }}</strong>
           <template v-if="pending?.repo_name">
-            from <strong>{{ pending.repo_name }}</strong>
+            {{ pendingIsQueued ? 'for deletion from' : 'from' }}
+            <strong>{{ pending.repo_name }}</strong>
           </template>
           ?
         </p>
-        <p class="muted">This archive and its stored backup data cannot be recovered.</p>
+        <p
+          v-if="pendingIsQueued"
+          class="muted"
+        >
+          This repository is append-only, so nothing is removed now. The archive is deleted at the
+          next maintenance run, and until then you can keep it.
+        </p>
+        <p
+          v-else
+          class="muted"
+        >
+          This archive and its stored backup data cannot be recovered.
+        </p>
       </div>
     </div>
     <template #footer>
@@ -413,7 +460,7 @@ defineExpose({
         :disabled="deleteLoading"
         @click="confirm"
       >
-        {{ deleteLoading ? 'Deleting...' : 'Delete archive' }}
+        {{ deleteLoading ? 'Deleting...' : pendingIsQueued ? 'Queue deletion' : 'Delete archive' }}
       </button>
     </template>
   </BaseModal>

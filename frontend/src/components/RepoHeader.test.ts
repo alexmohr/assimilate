@@ -13,7 +13,7 @@ vi.mock('../composables/useToast', () => mockToast())
 
 import { renderWithPlugins } from '../test-utils'
 import { dialogButton, findButton } from '../test-utils/dom'
-import { repoFixture as repo } from '../test-utils/repoFixtures'
+import { appendOnly, repoFixture as repo } from '../test-utils/repoFixtures'
 import { apiClient } from '../api/client'
 import RepoHeader from './RepoHeader.vue'
 
@@ -52,6 +52,29 @@ describe('RepoHeader', () => {
       // than what it holds now, so they belong to the header on every tab
       // instead of only to the Settings tab that can change them.
       expect(text).toContain('zstd,6')
+    })
+  })
+
+  describe('append-only', () => {
+    it('shows no append-only badge or pending count on an ordinary repository', () => {
+      const wrapper = mount()
+      expect(wrapper.find('.badge--violet').exists()).toBe(false)
+      expect(wrapper.find('.detail-meta').text()).not.toContain('pending deletions')
+    })
+
+    it('shows the purple badge and the queued deletions', () => {
+      const wrapper = mount({
+        repo: repo({ append_only: appendOnly({ pending_deletion_count: 4 }) }),
+      })
+      expect(wrapper.find('.badge--violet').text()).toBe('Append-only')
+      expect(wrapper.find('.detail-meta').text()).toContain('pending deletions 4')
+    })
+
+    it('adds the amber badge once maintenance stopped', () => {
+      const wrapper = mount({
+        repo: repo({ append_only: appendOnly({ maintenance_stopped: true }) }),
+      })
+      expect(wrapper.text()).toContain('Maintenance stopped')
     })
   })
 

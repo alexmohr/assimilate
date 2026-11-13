@@ -25,10 +25,14 @@ pub mod cookies;
 pub mod db;
 /// Checking, waking and waiting for dependency hosts around a backup.
 pub mod dependencies;
+/// Agent deploys running on the server, tracked while they run.
+pub mod deploy_jobs;
 /// Error types for the API.
 pub mod error;
 /// In-memory ring buffer for log entries.
 pub mod log_buffer;
+/// Server-side prune and compact of append-only repositories.
+pub mod maintenance;
 /// What the Prometheus `/metrics` endpoint collects and renders.
 pub mod metrics;
 /// Axum middleware (CSP headers).
@@ -284,6 +288,8 @@ pub struct AppState {
     /// The `/metrics` endpoint's rendering cache and the scheduler heartbeat
     /// it reports.
     pub metrics: metrics::MetricsState,
+    /// Agent deploys running on the server, and the last one of each agent.
+    pub deploy_jobs: deploy_jobs::DeployJobs,
 }
 
 impl AppState {

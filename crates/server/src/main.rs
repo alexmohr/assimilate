@@ -194,6 +194,7 @@ async fn main() -> Result<(), StartupError> {
     sqlx::migrate!("./migrations").run(&pool).await?;
 
     bootstrap_admin(&pool).await?;
+    load_append_only_logins(&pool).await?;
 
     let encryption_key = shared::crypto::derive_key(secret_key.as_bytes())?;
     let channel_key = shared::agent_channel::ChannelPrivateKey::derive(secret_key.as_bytes())?;
@@ -399,6 +400,7 @@ fn build_app_state(args: BuildAppStateArgs) -> AppState {
         deployment_mode,
         cookie_security,
         metrics: server::metrics::MetricsState::default(),
+        deploy_jobs: server::deploy_jobs::DeployJobs::default(),
     }
 }
 
@@ -664,7 +666,9 @@ fn agent_routes() -> Router<AppState> {
         )
         .route(
             "/api/agents/{hostname}/deploy",
-            post(api::deploy::deploy_agent),
+            post(api::deploy::deploy_agent)
+                .get(api::deploy::deploy_status)
+                .delete(api::deploy::dismiss_deploy),
         )
         .route(
             "/api/agents/{hostname}/service-unit",
@@ -1060,6 +1064,49 @@ fn stats_routes() -> Router<AppState> {
         )
 }
 
+/// Tells the SSH layer which logins are append-only, so everything it does on
+/// them besides borg uses the maintenance key.
+async fn load_append_only_logins(pool: &PgPool) -> Result<(), StartupError> {
+    let logins = server::db::append_only::list_logins_with_hosts(pool)
+        .await
+        .map_err(|e| std::io::Error::other(e.to_string()))?;
+    server::ssh::replace_append_only_logins(logins);
+    Ok(())
+}
+
+/// Append-only repositories: settings, maintenance and queued deletions.
+fn append_only_routes() -> Router<AppState> {
+    Router::new()
+        .route(
+            "/api/repos/{repo_id}/archives/{archive_name}/deletion",
+            delete(api::append_only::cancel_archive_deletion),
+        )
+        .route(
+            "/api/repos/{repo_id}/append-only",
+            get(api::append_only::get_append_only).put(api::append_only::set_append_only),
+        )
+        .route(
+            "/api/repos/{repo_id}/append-only/check",
+            post(api::append_only::check_append_only),
+        )
+        .route(
+            "/api/repos/{repo_id}/append-only/reapply",
+            post(api::append_only::reapply_append_only),
+        )
+        .route(
+            "/api/repos/{repo_id}/append-only/maintenance",
+            put(api::append_only::update_maintenance),
+        )
+        .route(
+            "/api/repos/{repo_id}/append-only/maintenance/run",
+            post(api::append_only::run_maintenance),
+        )
+        .route(
+            "/api/repos/{repo_id}/append-only/maintenance/resume",
+            post(api::append_only::resume_maintenance),
+        )
+}
+
 fn archive_routes() -> Router<AppState> {
     Router::new()
         .route(
@@ -1339,6 +1386,7 @@ fn build_router(state: &AppState, login_router: Router<AppState>) -> Router<AppS
         .merge(system_and_audit_routes())
         .merge(stats_routes())
         .merge(archive_routes())
+        .merge(append_only_routes())
         .merge(access_control_routes())
         .merge(tunnel_routes())
         .merge(notification_routes())

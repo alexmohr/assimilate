@@ -249,6 +249,8 @@ pub async fn run(state: AppState) {
         }
     };
 
+    let maintenance_task = run_maintenance_ticks(state.clone(), shutdown_token.clone());
+
     let session_cleanup_task = async move {
         let mut interval = tokio::time::interval(session_cleanup_interval());
         loop {
@@ -276,8 +278,33 @@ pub async fn run(state: AppState) {
         sync_task,
         repo_catch_up_task,
         power_hold_task,
+        maintenance_task,
         session_cleanup_task
     );
+}
+
+/// Runs the maintenance of append-only repositories as it comes due: the
+/// agents' key cannot delete from them, so the server prunes and compacts them.
+async fn run_maintenance_ticks(
+    state: AppState,
+    shutdown_token: tokio_util::sync::CancellationToken,
+) {
+    let mut interval = tokio::time::interval(maintenance_check_interval());
+    loop {
+        tokio::select! {
+            biased;
+            () = shutdown_token.cancelled() => return,
+            _ = interval.tick() => {}
+        }
+        crate::maintenance::run_due(&state).await;
+    }
+}
+
+/// How often the scheduler looks for append-only repositories whose
+/// maintenance has come due. Cron resolves to the minute, so a minute is as
+/// fine as it needs to be.
+fn maintenance_check_interval() -> std::time::Duration {
+    std::time::Duration::from_mins(1)
 }
 
 /// Check every repo with a `sync_schedule` cron and trigger a sync if due.
@@ -2328,6 +2355,7 @@ mod tests {
             deployment_mode: shared::types::DeploymentMode::default(),
             cookie_security: crate::cookies::CookieSecurity::default(),
             metrics: crate::metrics::MetricsState::default(),
+            deploy_jobs: crate::deploy_jobs::DeployJobs::default(),
         };
         let shutdown_token = state.shutdown_token.clone();
 
@@ -3029,6 +3057,40 @@ esac
         let (tx, rx) = mpsc::channel(32);
         registry.register(agent_id, tx, false, None, None).await;
         rx
+    }
+
+    /// With nothing due, `tick()` returns at once.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn tick_with_nothing_due_returns_ok(pool: sqlx::PgPool) {
+        let key = tick_test_key();
+        let registry = AgentRegistry::new();
+        let tunnel = dummy_tunnel(pool.clone());
+        let bus = CompletionBus::new();
+
+        tick(&TickDeps {
+            pool: &pool,
+            registry: &registry,
+            encryption_key: &key,
+            tunnel_manager: &tunnel,
+            completion_bus: &bus,
+            repo_lock: &RepoLock::default(),
+            repo_op_tracker: &RepoOpTracker::default(),
+            ui_broadcast: &UiBroadcast::new(),
+            background_task_tracker: &crate::background_tasks::BackgroundTaskTracker::default(),
+            power_sessions: &crate::power::PowerSessionTracker::default(),
+            notification_service: &crate::test_support::test_notification_service(pool.clone()),
+            task_registry: &shared::task_registry::TaskRegistry::default(),
+        })
+        .await
+        .unwrap();
+
+        let due = db::list_due_schedules(&pool, Utc::now()).await.unwrap();
+        assert_eq!(
+            due.len(),
+            0,
+            "nothing was due, so there was nothing to start"
+        );
     }
 
     /// `tick()` must send `ConfigUpdate` *before* the run trigger so the agent

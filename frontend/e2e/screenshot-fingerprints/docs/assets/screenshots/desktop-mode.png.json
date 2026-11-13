@@ -1,5 +1,5 @@
 {
   "test": "desktop mode",
   "pages": ["frontend/src/views/DashboardView.vue"],
-  "fingerprint": "b9aa72d212978a1b349cc3640e8340fafc6b46a970f55e7dddfcedecf81cff75"
+  "fingerprint": "c0c244453d8d091d6f72603cc741cc210722084c8022af6cfc0d620f86ab7052"
 }

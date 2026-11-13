@@ -21,7 +21,8 @@ use sqlx::PgPool;
 
 use self::{
     backup::{
-        BackupStartedArgs, handle_backup_cancelled, handle_backup_rejected, handle_backup_started,
+        BackupStartedArgs, handle_backup_cancelled, handle_backup_not_running,
+        handle_backup_rejected, handle_backup_started,
     },
     completion::handle_backup_completed,
     connection::handle_socket,
@@ -447,6 +448,9 @@ async fn handle_agent_message_impl(text: &str, hostname: &str, agent_id: i64, st
         }
         AgentToServer::BackupCancelled { repo_id } => {
             handle_backup_cancelled(hostname, agent_id, state, repo_id).await;
+        }
+        AgentToServer::BackupNotRunning { repo_id } => {
+            handle_backup_not_running(hostname, agent_id, state, repo_id).await;
         }
     }
 }
@@ -4978,6 +4982,239 @@ exit 0
         .await
         .expect("count started");
         assert_eq!(started, 0);
+    }
+
+    /// An agent that comes back as a new process after its previous session
+    /// already closed lost the backup it was running: that run is failed and
+    /// its end announced, while a run it had not started yet is handed to the
+    /// new process.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_restarted_agent_fails_the_backup_its_previous_process_was_running(pool: PgPool) {
+        let agent = socket_agent(&pool, "restarted-host").await;
+        let (_owner, repo, schedule) = create_agent_repo_schedule(&pool).await;
+        sqlx::query!(
+            "INSERT INTO backup_reports (agent_id, repo_id, schedule_id, started_at, finished_at, \
+             status, run_id) VALUES ($1, $2, $3, now() - interval '1 hour', now(), 'started', \
+             'run-lost'), ($1, $2, $3, now(), now(), 'pending', 'run-queued')",
+            agent.id,
+            repo.id,
+            schedule.id
+        )
+        .execute(&pool)
+        .await
+        .expect("insert started and pending runs");
+        let state = build_test_state(pool.clone());
+        // The previous process connected and has since gone away.
+        state
+            .registry
+            .record_instance(agent.id, Some("instance-0"))
+            .await;
+        let mut outcomes = state.completion_bus.subscribe();
+        let mut ui = state.ui_broadcast.subscribe();
+
+        let (sink, sent) = recording_sink();
+        Box::pin(serve_agent(
+            sink,
+            frames(vec![hello_frame("restarted-host", SOCKET_TOKEN)]),
+            state,
+        ))
+        .await;
+
+        let outcome = outcomes.try_recv().expect("the lost backup is settled");
+        assert_eq!((outcome.repo_id, outcome.success), (repo.id, false));
+        let statuses: Vec<(Option<String>, String)> = sqlx::query!(
+            "SELECT run_id, status FROM backup_reports WHERE agent_id = $1 ORDER BY started_at",
+            agent.id
+        )
+        .fetch_all(&pool)
+        .await
+        .expect("list reports")
+        .into_iter()
+        .map(|r| (r.run_id, r.status))
+        .collect();
+        assert_eq!(
+            statuses,
+            vec![
+                (Some("run-lost".to_owned()), "failed".to_owned()),
+                (Some("run-queued".to_owned()), "pending".to_owned()),
+            ]
+        );
+        let events: Vec<ServerToUi> = std::iter::from_fn(|| ui.try_recv().ok()).collect();
+        assert!(events.iter().any(|e| matches!(
+            e,
+            ServerToUi::BackupStopped { repo_id, schedule_id: Some(s), .. }
+                if *repo_id == repo.id && *s == schedule.id
+        )));
+        assert!(sent_messages(&sent).iter().any(|m| matches!(
+            m,
+            ServerToAgent::RunBackupNow { run_id: Some(run_id), .. } if run_id == "run-queued"
+        )));
+    }
+
+    /// The same agent process reconnecting (a network blip) carried on with
+    /// its backup, so the backup is left running.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_reconnecting_agent_process_keeps_its_running_backup(pool: PgPool) {
+        let agent = socket_agent(&pool, "blip-host").await;
+        let (_owner, repo, _schedule) = create_agent_repo_schedule(&pool).await;
+        crate::db::insert_backup_started(&pool, agent.id, repo.id, None, Utc::now(), None, None)
+            .await
+            .expect("insert started backup");
+        let state = build_test_state(pool.clone());
+        state
+            .registry
+            .record_instance(agent.id, Some("instance-1"))
+            .await;
+
+        let (sink, _sent) = recording_sink();
+        Box::pin(serve_agent(
+            sink,
+            frames(vec![hello_frame("blip-host", SOCKET_TOKEN)]),
+            state,
+        ))
+        .await;
+
+        let started: i64 = sqlx::query_scalar!(
+            "SELECT COUNT(*) AS \"count!\" FROM backup_reports WHERE agent_id = $1 AND status = \
+             'started'",
+            agent.id
+        )
+        .fetch_one(&pool)
+        .await
+        .expect("count started");
+        assert_eq!(started, 1);
+    }
+
+    /// An agent answering a cancel with "nothing running here" settles the
+    /// run it was handed as cancelled, so the user's cancel takes effect.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn backup_not_running_settles_the_run_as_cancelled(pool: PgPool) {
+        let (agent, repo, _schedule) = create_agent_repo_schedule(&pool).await;
+        crate::db::insert_backup_started(&pool, agent.id, repo.id, None, Utc::now(), None, None)
+            .await
+            .expect("insert started backup");
+        let state = build_test_state(pool.clone());
+        let mut outcomes = state.completion_bus.subscribe();
+        let mut ui = state.ui_broadcast.subscribe();
+
+        let msg = wire(&AgentToServer::BackupNotRunning {
+            repo_id: RepoId(repo.id),
+        });
+        handle_agent_message(&msg, &agent.hostname, agent.id, &state).await;
+
+        assert!(!outcomes.try_recv().expect("the run is settled").success);
+        let row = sqlx::query!(
+            "SELECT status, cancellation_acknowledged FROM backup_reports WHERE agent_id = $1",
+            agent.id
+        )
+        .fetch_one(&pool)
+        .await
+        .expect("load report");
+        assert_eq!(row.status, "cancelled");
+        assert!(row.cancellation_acknowledged);
+        let events: Vec<ServerToUi> = std::iter::from_fn(|| ui.try_recv().ok()).collect();
+        assert!(events.iter().any(
+            |e| matches!(e, ServerToUi::BackupStopped { repo_id, .. } if *repo_id == repo.id)
+        ));
+    }
+
+    /// A "nothing running" answer the database cannot record is logged, and
+    /// the cancellation is left unacknowledged so the next reconnect asks
+    /// again.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn backup_not_running_that_cannot_be_recorded_is_logged(pool: PgPool) {
+        let (agent, repo, _schedule) = create_agent_repo_schedule(&pool).await;
+        crate::db::insert_backup_started(&pool, agent.id, repo.id, None, Utc::now(), None, None)
+            .await
+            .expect("insert started backup");
+        reject_writes(&pool, WriteRejecting::BackupReports).await;
+        let state = build_test_state(pool);
+
+        let msg = wire(&AgentToServer::BackupNotRunning {
+            repo_id: RepoId(repo.id),
+        });
+        let ((), logs) = crate::test_support::formatted_logs_while(Box::pin(handle_agent_message(
+            &msg,
+            &agent.hostname,
+            agent.id,
+            &state,
+        )))
+        .await;
+
+        assert!(
+            logs.contains("failed to settle a backup the agent is not running"),
+            "{logs}"
+        );
+        assert!(
+            !logs.contains("failed to acknowledge cancellation"),
+            "{logs}"
+        );
+    }
+
+    /// When a restarted agent's lost backups cannot be failed, the new
+    /// session carries on and the failure is logged.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_restarted_agent_survives_a_database_that_rejects_the_cleanup(pool: PgPool) {
+        let agent = socket_agent(&pool, "restarted-db-host").await;
+        let (_owner, repo, _schedule) = create_agent_repo_schedule(&pool).await;
+        crate::db::insert_backup_started(&pool, agent.id, repo.id, None, Utc::now(), None, None)
+            .await
+            .expect("insert started backup");
+        reject_writes(&pool, WriteRejecting::BackupReports).await;
+        let state = build_test_state(pool);
+        state
+            .registry
+            .record_instance(agent.id, Some("instance-0"))
+            .await;
+
+        let (sink, _sent) = recording_sink();
+        let ((), logs) = crate::test_support::formatted_logs_while(Box::pin(serve_agent(
+            sink,
+            frames(vec![hello_frame("restarted-db-host", SOCKET_TOKEN)]),
+            state,
+        )))
+        .await;
+
+        assert!(
+            logs.contains("failed to abandon the previous agent process's backups"),
+            "{logs}"
+        );
+    }
+
+    /// The system reset asks every agent to cancel every repository, so most
+    /// answers name a repository with nothing in flight, or one the agent is
+    /// not even assigned. Those change nothing and raise no alarm.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn backup_not_running_with_nothing_in_flight_is_quiet(pool: PgPool) {
+        let (_agent, repo, _schedule) = create_agent_repo_schedule(&pool).await;
+        let other = crate::db::insert_agent(&pool, "unassigned-host", None, "hash", None, None)
+            .await
+            .expect("insert agent");
+        let state = build_test_state(pool.clone());
+        let mut outcomes = state.completion_bus.subscribe();
+        let mut ui = state.ui_broadcast.subscribe();
+
+        let msg = wire(&AgentToServer::BackupNotRunning {
+            repo_id: RepoId(repo.id),
+        });
+        handle_agent_message(&msg, &other.hostname, other.id, &state).await;
+
+        assert!(outcomes.try_recv().is_err());
+        assert!(ui.try_recv().is_err());
+        let violations: i64 = sqlx::query_scalar!(
+            "SELECT COUNT(*) AS \"count!\" FROM system_events WHERE event_type = \
+             'security_violation'"
+        )
+        .fetch_one(&pool)
+        .await
+        .expect("count security events");
+        assert_eq!(violations, 0);
     }
 
     /// When the old session's backups cannot be failed, the new session

@@ -15,7 +15,7 @@ Assimilate is configured in two places:
 | `ASSIMILATE_STATIC_DIR` | `./static` | No | Directory containing the compiled Vue SPA. If absent, the static file route is disabled. |
 | `ASSIMILATE_DOCS_DIR` | `./docs_html` | No | Directory containing the built MkDocs site served at `/docs`. If absent, the `/docs` route is disabled. |
 | `SSH_AUTH_SOCK` | — | No | Path to the SSH agent socket on the server. Required for [SSH agent forwarding](ssh-agent-forwarding.md) and borg repository initialisation. |
-| `SSH_KEY_DIR` | `/app/ssh` | No | Directory where the server stores its managed Ed25519 key pair (`id_ed25519` / `id_ed25519.pub`). |
+| `SSH_KEY_DIR` | `/app/ssh` | No | Directory where the server stores its managed Ed25519 key pair (`id_ed25519` / `id_ed25519.pub`) and, for [append-only repositories](append-only.md), its maintenance key (`id_ed25519_maintenance`, mode 0600, never loaded into the SSH agent). |
 | `BORG_BINARY` | `borg` | No | Path to the `borg` executable used by the server for repository operations (init, archive listing, extraction). |
 | `ASSIMILATE_DB_MAX_CONN` | `20` | No | Maximum number of connections in the PostgreSQL connection pool. |
 | `ASSIMILATE_BORG_LIST_STAGE_TIMEOUT_SECS` | `1800` | No | Upper bound on the total time an archive-listing stage may spend retrying `borg list` while the repository is locked by another operation (e.g. a running backup). Without this, lock-wait retries could keep an import stuck at "Listing archives" for up to 90 minutes. |

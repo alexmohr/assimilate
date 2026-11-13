@@ -15,6 +15,8 @@ pub mod post_backup_sync;
 pub mod registry;
 /// SSH agent forwarding relay over WebSocket.
 pub mod ssh_relay;
+/// Settling a backup that ends without a completion report.
+pub mod stopped_backup;
 /// Broadcast channel for UI-facing real-time events.
 pub mod ui_broadcast;
 /// WebSocket upgrade handler for UI client connections.

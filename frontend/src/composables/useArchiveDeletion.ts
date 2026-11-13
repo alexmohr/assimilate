@@ -19,13 +19,25 @@ export interface UseArchiveDeletionOptions {
    * same name exists in every target a schedule writes into.
    */
   sortedArchives: Ref<RepoArchive[]> | ComputedRef<RepoArchive[]>
-  /** Sends the delete for `archive` to the repository it names. */
+  /**
+   * Sends the delete for `archive` to the repository it names. When it
+   * resolves to a boolean, that is the server's word on whether the deletion
+   * was only queued for maintenance, and it wins over `willBeQueued`.
+   */
   deleteArchiveByName: (archive: RepoArchive) => Promise<unknown>
   /** Silent reload, so the panel does not flash a loading placeholder. */
   reloadArchives: (silent: boolean) => Promise<unknown>
   refreshRepo: () => Promise<unknown>
   /** Called after a delete is accepted, so the caller can clear a selection. */
   onDeleted?: (archive: RepoArchive) => void
+  /**
+   * Whether a delete of `archive` is only queued for the repository's next
+   * maintenance run (an append-only repository). Such an archive is not
+   * "deleting": it stays in the list, so it gets no in-flight marker, no
+   * selection is cleared, and `onQueued` fires instead of `onDeleted`.
+   */
+  willBeQueued?: (archive: RepoArchive) => boolean
+  onQueued?: (archive: RepoArchive) => void
 }
 
 /**
@@ -107,6 +119,7 @@ export function useArchiveDeletion(options: UseArchiveDeletionOptions): UseArchi
     const archive = pending.value
     if (!archive) return
     const repo = String(archive.repo_id)
+    const predicted = options.willBeQueued?.(archive) === true
     deleteLoading.value = true
     // Mark it as deleting before the request even goes out, not after it
     // resolves. On a fast repo the DELETE's DataChanged notification can
@@ -117,17 +130,30 @@ export function useArchiveDeletion(options: UseArchiveDeletionOptions): UseArchi
     // can also take a moment on its own (repo-level lock contention with
     // another queued operation, network latency), so the button must show
     // "in flight" the instant the user confirms either way.
-    markIn(repo, archive.name)
+    if (!predicted) markIn(repo, archive.name)
     try {
-      await options.deleteArchiveByName(archive)
+      const outcome = await options.deleteArchiveByName(archive)
+      // What the server did, not what was guessed: the repository may have
+      // become append-only (or stopped being) since the list last said so.
+      const queued = typeof outcome === 'boolean' ? outcome : predicted
+      if (queued && !predicted) forgetIn(repo, archive.name)
+      if (!queued && predicted) markIn(repo, archive.name)
       pending.value = null
-      options.onDeleted?.(archive)
+      if (queued) {
+        options.onQueued?.(archive)
+      } else {
+        options.onDeleted?.(archive)
+      }
       await options.refreshRepo()
-      toastSuccess('Archive deletion started. It will disappear once borg finishes.')
+      toastSuccess(
+        queued
+          ? 'Deletion queued. The archive is removed at the next maintenance run.'
+          : 'Archive deletion started. It will disappear once borg finishes.',
+      )
     } catch (e: unknown) {
       // The request never made it (or the server rejected it), so it was
       // never actually queued - undo the optimistic mark.
-      forgetIn(repo, archive.name)
+      if (!predicted) forgetIn(repo, archive.name)
       toastError(extractError(e))
     } finally {
       deleteLoading.value = false

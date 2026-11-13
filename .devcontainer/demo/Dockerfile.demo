@@ -84,7 +84,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && useradd -m -s /bin/bash borg \
     && mkdir -p /home/borg/.ssh /backup/repos \
     && chmod 700 /home/borg/.ssh \
-    && chown -R borg:borg /home/borg /backup
+    && chown -R borg:borg /home/borg /backup \
+    && useradd -m -s /bin/bash borg-ao \
+    && mkdir -p /home/borg-ao/.ssh /backup/vault \
+    && chmod 700 /home/borg-ao/.ssh \
+    && chown -R borg-ao:borg-ao /home/borg-ao /backup/vault
 
 COPY --from=builder /src/target/release/server /app/server
 COPY --from=builder /src/target/release/agent /app/agent

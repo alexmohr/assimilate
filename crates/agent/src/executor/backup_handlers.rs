@@ -111,7 +111,12 @@ impl Executor {
     ) {
         let tasks = Self::take_backup_tasks(&self.active_backup_tasks, repo_id).await;
         let Some(tasks) = tasks else {
+            // Nothing to abort: this process never got the run, or it was
+            // handed to an instance that has since stopped. Saying so lets the
+            // server settle the run, which otherwise waits on a cancellation
+            // that can never arrive.
             warn!(repo_id = ?repo_id, "cancel requested but no active backup task found");
+            send_outbound(outbound_tx, AgentToServer::BackupNotRunning { repo_id }).await;
             return;
         };
 

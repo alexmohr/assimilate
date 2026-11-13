@@ -202,6 +202,31 @@ impl RepoOpTracker {
         cleared
     }
 
+    /// Clear the running operation for `repo_id` only if it is a backup that
+    /// `agent_id` is driving. Returns whether it did. Used when such a backup
+    /// ends without the agent reporting a completion (it was cancelled, or
+    /// the agent restarted), so an unrelated operation that has since taken
+    /// the repository is left alone.
+    pub async fn clear_agent_backup(&self, repo_id: i64, agent_id: i64) -> bool {
+        let mut map = self.state.write().await;
+        let Some(state) = map.get_mut(&repo_id) else {
+            return false;
+        };
+        let is_agent_backup = state.agent_id == Some(agent_id)
+            && state
+                .active
+                .as_ref()
+                .is_some_and(|op| matches!(op.kind, RepoOpKind::AgentBackup));
+        if !is_agent_backup {
+            return false;
+        }
+        state.active = None;
+        if state.queued == 0 {
+            map.remove(&repo_id);
+        }
+        true
+    }
+
     /// Forcibly clear all tracked operations and return the affected repo IDs
     /// so callers can broadcast UI updates. Used by the emergency system reset
     /// to unstick repos whose agents will never send a completion signal.
@@ -323,6 +348,42 @@ mod tests {
         assert!(tracker.get(1).await.is_none());
         assert!(tracker.get(2).await.is_none());
         assert!(tracker.get(3).await.is_some());
+    }
+
+    #[tokio::test]
+    async fn clear_agent_backup_only_clears_that_agents_backup() {
+        let tracker = RepoOpTracker::default();
+        tracker
+            .set(1, RepoOpKind::AgentBackup, "gremlin".to_owned(), Some(1))
+            .await;
+        tracker
+            .set(2, RepoOpKind::AgentCheck, "gremlin".to_owned(), Some(1))
+            .await;
+        tracker
+            .set(3, RepoOpKind::AgentBackup, "other-host".to_owned(), Some(2))
+            .await;
+
+        assert!(tracker.clear_agent_backup(1, 1).await);
+        assert!(!tracker.clear_agent_backup(2, 1).await);
+        assert!(!tracker.clear_agent_backup(3, 1).await);
+        assert!(!tracker.clear_agent_backup(4, 1).await);
+
+        assert!(tracker.get(1).await.is_none());
+        assert!(tracker.get(2).await.is_some());
+        assert!(tracker.get(3).await.is_some());
+    }
+
+    #[tokio::test]
+    async fn clear_agent_backup_keeps_queued_entry() {
+        let tracker = RepoOpTracker::default();
+        tracker.enqueue(1).await;
+        tracker
+            .set(1, RepoOpKind::AgentBackup, "gremlin".to_owned(), Some(1))
+            .await;
+
+        assert!(tracker.clear_agent_backup(1, 1).await);
+        assert!(tracker.get(1).await.is_none());
+        assert_eq!(tracker.queued_count(1).await, 1);
     }
 
     #[tokio::test]

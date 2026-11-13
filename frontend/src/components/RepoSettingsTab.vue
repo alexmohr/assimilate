@@ -7,6 +7,7 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 import { computed } from 'vue'
 import QuotaPanel from './QuotaPanel.vue'
 import EntityTags from './EntityTags.vue'
+import RepoAppendOnlyPane from './RepoAppendOnlyPane.vue'
 import RepoBorgConsole from './RepoBorgConsole.vue'
 import RepoDangerZone from './RepoDangerZone.vue'
 import RepoOverviewCard from './RepoOverviewCard.vue'
@@ -43,6 +44,7 @@ const sections = computed<SettingsSections<RepoSettingsSection>>(() => [
   ...(props.isAdmin
     ? [
         { id: 'power', label: 'Power & dependencies' } as const,
+        { id: 'append-only', label: 'Append-only' } as const,
         { id: 'quota', label: 'Storage quota' } as const,
         { id: 'tags', label: 'Tags' } as const,
         { id: 'console', label: 'Borg console' } as const,
@@ -72,6 +74,13 @@ const sections = computed<SettingsSections<RepoSettingsSection>>(() => [
       v-else-if="currentSection === 'power'"
       :repo="repo"
       :is-admin="isAdmin"
+    />
+
+    <RepoAppendOnlyPane
+      v-else-if="currentSection === 'append-only'"
+      :repo="repo"
+      :current-op="currentOp"
+      @changed="emit('changed')"
     />
 
     <QuotaPanel

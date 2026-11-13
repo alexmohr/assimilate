@@ -8,7 +8,7 @@ vi.mock('../composables/useTimezone', () => ({
 }))
 
 import { renderWithPlugins } from '../test-utils'
-import { repoFixture } from '../test-utils/repoFixtures'
+import { appendOnly, repoFixture } from '../test-utils/repoFixtures'
 import RepoListRow from './RepoListRow.vue'
 import type { RepoWithStats } from '../types/repo'
 
@@ -71,6 +71,33 @@ describe('RepoListRow', () => {
   it('shows the archive count and the last backup', () => {
     const one = mount({ archive_count: 1, last_backup_at: null })
     expect(facts(one)).toEqual(['1 archive', 'no backup yet'])
+  })
+
+  it('names append-only, a stopped maintenance and queued deletions among the facts', () => {
+    expect(facts(mount())).toEqual(['30 archives', expect.stringMatching(/^last backup /)])
+
+    const on = mount({ append_only: appendOnly() })
+    expect(facts(on)).toEqual([
+      'append-only',
+      '30 archives',
+      expect.stringMatching(/^last backup /),
+    ])
+    // Not a risk, so it stays in the muted style and the dot stays as it was.
+    expect(statusFact(on).classes()).toEqual([])
+    expect(on.find('.status-dot').classes()).toContain('status-dot--success')
+
+    const stopped = mount({
+      append_only: appendOnly({ maintenance_stopped: true, pending_deletion_count: 3 }),
+    })
+    expect(facts(stopped).slice(0, 3)).toEqual([
+      'append-only',
+      'maintenance stopped',
+      '3 pending deletions',
+    ])
+    const oneQueued = mount({ append_only: appendOnly({ pending_deletion_count: 1 }) })
+    expect(facts(oneQueued)).toContain('1 pending deletion')
+    const stoppedFact = stopped.findAll('.repo-row-facts > span')[1]!
+    expect(stoppedFact.classes()).toContain('repo-row-status--warning')
   })
 
   it('shows just the size when the repository has no quota', () => {

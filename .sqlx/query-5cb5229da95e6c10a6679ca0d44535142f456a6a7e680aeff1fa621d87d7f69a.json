@@ -1,0 +1,18 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE repo_maintenance_runs\n         SET finished_at = NOW(), outcome = $2, archives_removed = $3, bytes_freed = $4,\n             detail = $5\n         WHERE id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Text",
+        "Int8",
+        "Int8",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "5cb5229da95e6c10a6679ca0d44535142f456a6a7e680aeff1fa621d87d7f69a"
+}

@@ -666,6 +666,8 @@ pub struct RepoWithStatsResponse {
     pub last_op_by: Option<String>,
     /// Currently active operation, if any.
     pub current_op: Option<crate::protocol::ActiveRepoOp>,
+    /// Set when the repository's login is append-only.
+    pub append_only: Option<crate::append_only::RepoAppendOnlyResponse>,
     /// This repository's own storage quota, if one is configured.
     pub quota: Option<RepoQuotaSummaryResponse>,
     /// The repository host this repository lives on. `ssh_host`,
@@ -1418,6 +1420,9 @@ pub struct DeleteArchiveResponse {
     pub success: bool,
     /// Name of the archive.
     pub archive_name: String,
+    /// Whether the deletion is only queued for the repository's next
+    /// maintenance run (an append-only repository), rather than started now.
+    pub queued: bool,
 }
 
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
@@ -2921,19 +2926,93 @@ pub struct ImportResultResponse {
     pub warnings: Vec<String>,
 }
 
+/// One stage of deploying the agent to a host, in the order they run.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Serialize,
+    Deserialize,
+    TS,
+    utoipa::ToSchema,
+    strum_macros::EnumIter,
+)]
+#[ts(export)]
+#[serde(rename_all = "snake_case")]
+pub enum DeployStep {
+    /// Opening the SSH connection and finding out the host's architecture.
+    Connect,
+    /// Uploading the agent binary.
+    Upload,
+    /// Installing the binary, the agent token and the service unit.
+    Install,
+    /// Restarting the agent's service.
+    Restart,
+    /// Waiting for the restarted agent to connect back to the server.
+    Reconnect,
+}
+
+/// Where one [`DeployStep`] stands.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS, utoipa::ToSchema)]
+#[ts(export)]
+#[serde(rename_all = "snake_case")]
+pub enum DeployStepStatus {
+    /// Not reached yet.
+    Pending,
+    /// In progress.
+    Running,
+    /// Finished.
+    Done,
+    /// Stopped the deploy.
+    Failed,
+}
+
+/// How a deploy as a whole stands.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS, utoipa::ToSchema)]
+#[ts(export)]
+#[serde(rename_all = "snake_case")]
+pub enum DeployJobState {
+    /// Still working through its steps.
+    Running,
+    /// Every step finished, or the agent was already current.
+    Succeeded,
+    /// A step failed.
+    Failed,
+}
+
+/// One step of a deploy and how it went.
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
 #[ts(export)]
-/// Response containing deploy agent.
-pub struct DeployAgentResponse {
-    /// Whether the operation was successful.
-    pub success: bool,
-    /// Whether the deployment was skipped.
+pub struct DeployStepResponse {
+    /// Which step this is.
+    pub step: DeployStep,
+    /// Where it stands.
+    pub status: DeployStepStatus,
+    /// How long it took, once it has finished or failed.
+    pub duration_ms: Option<u32>,
+}
+
+/// The state of an agent deploy running on the server, or the last one that ran.
+#[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
+#[ts(export)]
+pub struct DeployStatusResponse {
+    /// How the deploy as a whole stands.
+    pub state: DeployJobState,
+    /// Every step, in the order they run.
+    pub steps: Vec<DeployStepResponse>,
+    /// Whether nothing was done because the agent already runs the latest
+    /// version.
     pub skipped: bool,
-    /// Authentication token.
+    /// The new agent token, shown once the deploy has finished. Only the user
+    /// who started the deploy receives it.
     pub token: Option<String>,
-    /// Version available for deployment.
+    /// Latest available agent version.
     pub available_version: Option<String>,
-    /// Error message, if any.
+    /// Why the deploy failed.
     pub error: Option<String>,
 }
 

@@ -12,4 +12,9 @@ export type DeleteArchiveResponse = {
    * Name of the archive.
    */
   archive_name: string;
+  /**
+   * Whether the deletion is only queued for the repository's next
+   * maintenance run (an append-only repository), rather than started now.
+   */
+  queued: boolean;
 };

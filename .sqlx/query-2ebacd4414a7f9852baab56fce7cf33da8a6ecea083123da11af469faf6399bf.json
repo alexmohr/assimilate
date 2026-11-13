@@ -1,0 +1,52 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT m.repo_id, m.cron_expression, m.check_before_prune, m.next_run_at,\n                m.last_run_at, m.stopped_at\n         FROM repo_maintenance m\n         JOIN repos r ON r.id = m.repo_id\n         JOIN append_only_logins l\n           ON l.repo_host_id = r.repo_host_id AND l.ssh_user = r.ssh_user\n         WHERE m.stopped_at IS NULL AND m.next_run_at IS NOT NULL AND m.next_run_at <= $1\n         ORDER BY m.next_run_at",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "repo_id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "cron_expression",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "check_before_prune",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 3,
+        "name": "next_run_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 4,
+        "name": "last_run_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 5,
+        "name": "stopped_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Timestamptz"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      true,
+      true,
+      true
+    ]
+  },
+  "hash": "2ebacd4414a7f9852baab56fce7cf33da8a6ecea083123da11af469faf6399bf"
+}

@@ -9,7 +9,7 @@ use axum::{
 use serde::Deserialize;
 use shared::{
     hooks::{HookCommand, MAX_HOOK_COMMAND_TIMEOUT_SECONDS},
-    protocol::{ServerToAgent, ServerToUi},
+    protocol::ServerToAgent,
     responses::{
         CatchUpSourceResponse, CronPreviewResponse, DeleteFailedReportsResponse,
         FailedReportCountResponse, PerAgentBackupSourcesResponse, PerAgentCommandsResponse,
@@ -1619,25 +1619,13 @@ pub async fn cancel_running_backup(
                     "agent not connected for cancel_running_backup"
                 );
                 // Agent is offline - cancel the backup directly in the DB
-                if let Err(e) =
-                    db::cancel_backup_report(&state.pool, target.agent_id, *repo_id).await
-                {
-                    tracing::error!(
-                        hostname = %target.hostname,
-                        repo_id = *repo_id,
-                        error = %e,
-                        "failed to cancel backup in DB after agent not connected"
-                    );
-                }
-                state
-                    .completion_bus
-                    .publish(crate::ws::completion_bus::OperationOutcome {
-                        agent_id: target.agent_id,
-                        repo_id: *repo_id,
-                        success: false,
-                    });
-                state.ui_broadcast.clear_active_backup(*repo_id);
-                state.ui_broadcast.send(ServerToUi::DataChanged);
+                crate::ws::stopped_backup::cancel_or_log(
+                    &state,
+                    target.agent_id,
+                    *repo_id,
+                    crate::ws::stopped_backup::Announce::Always,
+                )
+                .await;
             }
         }
     }

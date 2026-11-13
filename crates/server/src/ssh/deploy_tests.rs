@@ -17,13 +17,14 @@ use russh::{
     server::{Auth, ChannelOpenHandle, Handler, Msg, Server, Session},
 };
 use russh_sftp::protocol::{FileAttributes, Handle, OpenFlags, Status, StatusCode, Version};
+use shared::responses::DeployStep;
 use tokio::net::TcpListener;
 
 use super::{DeployAgentParams, TOKEN_FILE_PATH, UNIT_PATH, deploy_agent, install_cmd, sudo_input};
 
 /// What the stand-in host was sent.
 #[derive(Default)]
-struct Recorded {
+pub(crate) struct Recorded {
     /// Every command line run, in order.
     commands: Vec<String>,
     /// Each command that read standard input, with what it read.
@@ -33,7 +34,7 @@ struct Recorded {
     files: HashMap<String, (Vec<u8>, Option<u32>)>,
 }
 
-type Shared = Arc<Mutex<Recorded>>;
+pub(crate) type Shared = Arc<Mutex<Recorded>>;
 
 /// One SSH connection to the stand-in host.
 struct Connection {
@@ -80,16 +81,7 @@ impl Handler for Connection {
         std::future::ready(Ok(Auth::Accept))
     }
 
-    async fn channel_open_session(
-        &mut self,
-        channel: Channel<Msg>,
-        reply: ChannelOpenHandle,
-        _session: &mut Session,
-    ) -> Result<(), Self::Error> {
-        self.sessions.insert(channel.id(), channel);
-        reply.accept().await;
-        Ok(())
-    }
+    keep_offered_channels!();
 
     async fn subsystem_request(
         &mut self,
@@ -194,19 +186,7 @@ fn ok(id: u32) -> Status {
 }
 
 impl russh_sftp::server::Handler for Files {
-    type Error = StatusCode;
-
-    fn unimplemented(&self) -> Self::Error {
-        StatusCode::OpUnsupported
-    }
-
-    fn init(
-        &mut self,
-        _version: u32,
-        _extensions: HashMap<String, String>,
-    ) -> impl Future<Output = Result<Version, Self::Error>> + Send {
-        std::future::ready(Ok(Version::new()))
-    }
+    sftp_handler_basics!();
 
     fn open(
         &mut self,
@@ -274,7 +254,7 @@ impl Server for StandIn {
 
 /// Starts the stand-in host on a loopback port, refusing commands that
 /// contain `refuse`, and returns the port and what it records.
-async fn stand_in_host(refuse: Option<&'static str>) -> (u16, Shared) {
+pub(crate) async fn stand_in_host(refuse: Option<&'static str>) -> (u16, Shared) {
     let recorded = Shared::default();
     let config = Arc::new(russh::server::Config {
         keys: vec![crate::test_support::generate_test_key()],
@@ -357,23 +337,96 @@ async fn a_deploy_keeps_the_token_and_the_sudo_password_off_every_command_line()
 /// Deploys to the stand-in host on `port`, as a user whose sudo needs a
 /// password.
 async fn deploy_to(port: u16) -> Result<(), super::SshError> {
+    deploy_reporting(port).await.0
+}
+
+/// Like [`deploy_to`], also returning the steps the deploy reported, in order.
+async fn deploy_reporting(port: u16) -> (Result<(), super::SshError>, Vec<DeployStep>) {
+    deploy_reporting_with(port, true).await
+}
+
+/// Like [`deploy_reporting`], for a server that has the agent binary for the
+/// host's architecture only if `with_binary`.
+async fn deploy_reporting_with(
+    port: u16,
+    with_binary: bool,
+) -> (Result<(), super::SshError>, Vec<DeployStep>) {
     let binaries = tempfile::tempdir().expect("tempdir");
-    tokio::fs::write(binaries.path().join("agent-x86_64"), b"agent")
-        .await
-        .expect("write agent binary");
-    deploy_agent(&DeployAgentParams {
-        host: "127.0.0.1",
-        user: "deployer",
-        port,
-        binary_dir: binaries.path(),
-        remote_path: "/usr/local/bin/assimilate-agent",
-        server_url: "wss://backup.example",
-        token: "t0ken-s3cret",
-        server_key: "S3rverKey=",
-        password: Some("passw0rd-s3cret"),
-        systemd_service_content: None,
-    })
-    .await
+    if with_binary {
+        tokio::fs::write(binaries.path().join("agent-x86_64"), b"agent")
+            .await
+            .expect("write agent binary");
+    }
+    let steps = Mutex::new(Vec::new());
+    let result = deploy_agent(
+        &DeployAgentParams {
+            host: "127.0.0.1",
+            user: "deployer",
+            port,
+            binary_dir: binaries.path(),
+            remote_path: "/usr/local/bin/assimilate-agent",
+            server_url: "wss://backup.example",
+            token: "t0ken-s3cret",
+            server_key: "S3rverKey=",
+            password: Some("passw0rd-s3cret"),
+            systemd_service_content: None,
+        },
+        &|step| steps.lock().expect("steps").push(step),
+    )
+    .await;
+    (result, steps.into_inner().expect("steps"))
+}
+
+/// The deploy tells its caller where it is: connecting, uploading, installing,
+/// restarting - and the agent's reconnect is for the caller to wait for.
+#[tokio::test]
+async fn a_deploy_reports_each_step_as_it_begins() {
+    let (port, _recorded) = stand_in_host(None).await;
+
+    let (result, steps) = deploy_reporting(port).await;
+
+    result.expect("the deploy succeeds");
+    assert_eq!(
+        steps,
+        [
+            DeployStep::Connect,
+            DeployStep::Upload,
+            DeployStep::Install,
+            DeployStep::Restart
+        ]
+    );
+}
+
+/// A server with no binary for the host's architecture has not failed to
+/// connect: the connection worked and the host answered. The failure belongs to
+/// the step of getting the binary onto the host, and says what is missing.
+#[tokio::test]
+async fn a_missing_binary_for_the_hosts_architecture_is_not_a_connect_failure() {
+    let (port, _recorded) = stand_in_host(None).await;
+
+    let (result, steps) = deploy_reporting_with(port, false).await;
+
+    let error = result.expect_err("the deploy fails").to_string();
+    assert!(
+        error.contains("no agent binary found for arch x86_64"),
+        "{error}"
+    );
+    assert_eq!(steps, [DeployStep::Connect, DeployStep::Upload]);
+}
+
+/// A deploy that fails stops reporting at the step it failed in, so the caller
+/// knows which step to blame and that the later ones never ran.
+#[tokio::test]
+async fn a_refused_install_is_reported_as_failing_in_the_install_step() {
+    let (port, _recorded) = stand_in_host(Some("assimilate-agent-binary-")).await;
+
+    let (result, steps) = deploy_reporting(port).await;
+
+    result.expect_err("the deploy fails");
+    assert_eq!(
+        steps,
+        [DeployStep::Connect, DeployStep::Upload, DeployStep::Install]
+    );
 }
 
 /// A host that refuses to install any of the files fails the deploy, saying

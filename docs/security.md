@@ -211,6 +211,16 @@ Assimilate enforces a **one-shot** relocation acceptance model:
 
 See [Repositories — Relocation Safety](repositories.md#repository-relocation-safety) for operational details.
 
+## Append-only Repositories
+
+An [append-only repository](append-only.md) limits what a compromised backup machine can do to its own history. The repository host enforces it: the SSH key the agents use is restricted in `authorized_keys` to `borg serve --append-only`, so no setting on the agent can lift it.
+
+- The server holds a second, unrestricted maintenance key that agents never receive. It is stored in `SSH_KEY_DIR` with mode 0600 and is never loaded into the SSH agent that the relay forwards.
+- Server-side borg uses the maintenance key with `IdentitiesOnly=yes` and no SSH agent, so it cannot fall back to the restricted key.
+- The maintenance key keeps full access to the host's login, as the server's key had before. Anyone who can read it can delete from the repository.
+- Maintenance compares the repository's archives with Assimilate's records before it writes. A deletion made over an append-only connection is permanent only once something writes with full access, so a run that finds archives it did not delete stops without writing.
+- A one-time SSH password, when needed to set the login up, is used for that request and is not stored or logged.
+
 ## Response Security Headers
 
 Every HTTP response from the server carries a standard set of hardening headers, applied by a single middleware layer ahead of all routes:

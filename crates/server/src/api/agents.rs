@@ -13,7 +13,7 @@ use shared::{
     audit::AuditEvent,
     hooks::HookCommand,
     machines::UpdateMachinePowerRequest,
-    protocol::{ServerToAgent, ServerToUi},
+    protocol::ServerToAgent,
     responses::{
         AgentResponse, CreateAgentResponse, DeleteAgentArchivesResponse, MergeAgentResponse,
     },
@@ -32,6 +32,7 @@ use crate::{
     AppState, config_assembler,
     db::{self, AgentRow, IMPORTED_TOKEN_HASH, patterns::HostnamePatternRow},
     error::{ApiError, ApiJson},
+    ws::stopped_backup,
 };
 
 /// Request payload for registering a new agent.
@@ -1055,16 +1056,7 @@ pub async fn cancel_agent_backup(
             error = %e,
             "agent not connected for cancel_agent_backup"
         );
-        db::cancel_backup_report(&state.pool, agent.id, repo_id).await?;
-        state
-            .completion_bus
-            .publish(crate::ws::completion_bus::OperationOutcome {
-                agent_id: agent.id,
-                repo_id,
-                success: false,
-            });
-        state.ui_broadcast.clear_active_backup(repo_id);
-        state.ui_broadcast.send(ServerToUi::DataChanged);
+        stopped_backup::cancel(&state, agent.id, repo_id, stopped_backup::Announce::Always).await?;
     }
 
     Ok(StatusCode::ACCEPTED)

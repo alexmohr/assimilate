@@ -169,6 +169,18 @@ describe('ArchiveSelector', () => {
     expect(rows(wrapper)[1]!.classes()).not.toContain('browser-row--dim')
   })
 
+  it.each(['By host', 'Flat list', 'By day'])(
+    'marks an archive queued for maintenance in the %s view',
+    async (mode) => {
+      const wrapper = selector({ queuedKeys: [`${DB.repo_id}/${DB.name}`] })
+      await pickFromMenu(wrapper, mode)
+
+      const marked = rows(wrapper).filter((r) => r.text().includes('Removed at next maintenance'))
+      expect(marked).toHaveLength(1)
+      expect(marked[0]!.text()).toContain(DB.name)
+    },
+  )
+
   it('shows placeholder rows while loading, and nothing else', () => {
     const wrapper = selector({ loading: true })
     expect(wrapper.find('.archive-loading').exists()).toBe(true)

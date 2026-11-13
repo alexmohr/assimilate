@@ -6,10 +6,12 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 <script setup lang="ts">
 import { ref, reactive, computed, onMounted } from 'vue'
 import { ArrowRight, Upload, KeyRound, CheckCircle } from '@lucide/vue'
-import { previewAgentServiceUnit, deployAgent } from '../api/agents'
-import type { DeployAgentResult, ServiceUnitPreviewResponse } from '../api/agents'
+import { previewAgentServiceUnit } from '../api/agents'
+import type { ServiceUnitPreviewResponse } from '../api/agents'
+import { useAgentDeploy } from '../composables/useAgentDeploy'
 import { useEscapeKey } from '../composables/useEscapeKey'
 import { extractError } from '../utils/error'
+import AgentDeployProgress from './AgentDeployProgress.vue'
 import BaseModal from './BaseModal.vue'
 import BaseDisclosure from './BaseDisclosure.vue'
 import ModalFormActions from './ModalFormActions.vue'
@@ -38,9 +40,7 @@ const emit = defineEmits<{
 
 const visible = ref(true)
 
-useEscapeKey(visible, () => {
-  emit('close')
-})
+useEscapeKey(visible, close)
 
 const isRedeploy = computed(() => props.forceRedeploy === true)
 const isUpgrade = computed(() => !isRedeploy.value && props.agentVersion !== null)
@@ -51,12 +51,21 @@ const showAvailableVersion = computed(
   () => !!props.availableVersion && props.availableVersion !== props.agentVersion,
 )
 
-const deployLoading = ref(false)
-const deployError = ref<string | null>(null)
 const fetchServiceLoading = ref(false)
 const fetchServiceError = ref<string | null>(null)
 const serviceContentTouched = ref(false)
-const deployResult = ref<DeployAgentResult | null>(null)
+// The deploy runs on the server; the dialog only follows it. Reopening the
+// dialog picks a running or recent one up again.
+const {
+  status: deployStatus,
+  starting: deployStarting,
+  error: deployError,
+  ...deploy
+} = useAgentDeploy(
+  () => props.hostname,
+  () => props.domain,
+  (version) => emit('deployed', version),
+)
 
 const deployForm = reactive({
   ssh_host: '',
@@ -101,6 +110,7 @@ onMounted(() => {
   deployForm.server_url = window.location.origin
   deployForm.systemd_service_content = defaultSystemdUnit(DEFAULT_INSTALL_PATH)
   void loadExistingServiceUnit({ silent: true })
+  void deploy.resume()
 })
 
 async function loadExistingServiceUnit(options: { silent?: boolean } = {}): Promise<void> {
@@ -129,13 +139,6 @@ async function loadExistingServiceUnit(options: { silent?: boolean } = {}): Prom
   }
 }
 
-// Both a thrown request failure and a structured unsuccessful result read the
-// same way to a user, and only one can be present at a time.
-const submitError = computed<string | null>(
-  () =>
-    deployError.value ?? (deployResult.value?.success === false ? deployResult.value.error : null),
-)
-
 function dialogTitle(): string {
   if (isRedeploy.value) return 'Redeploy'
   return props.agentVersion ? 'Upgrade' : 'Deploy'
@@ -154,33 +157,22 @@ function submitLabel(): string {
 }
 
 async function submitDeploy(): Promise<void> {
-  deployLoading.value = true
-  deployError.value = null
-  deployResult.value = null
-  try {
-    const res = await deployAgent(
-      props.hostname,
-      {
-        ssh_host: deployForm.ssh_host.trim(),
-        ssh_user: deployForm.ssh_user.trim(),
-        ssh_port: deployForm.ssh_port,
-        ssh_password: deployForm.ssh_password || undefined,
-        server_url: deployForm.server_url.trim(),
-        install_path: deployForm.install_path.trim() || undefined,
-        systemd_service_content: deployForm.systemd_service_content.trim() || undefined,
-        force: isRedeploy.value || undefined,
-      },
-      props.domain,
-    )
-    deployResult.value = res
-    if (res.success) {
-      emit('deployed', res.available_version)
-    }
-  } catch (e: unknown) {
-    deployError.value = extractError(e)
-  } finally {
-    deployLoading.value = false
-  }
+  await deploy.start({
+    ssh_host: deployForm.ssh_host.trim(),
+    ssh_user: deployForm.ssh_user.trim(),
+    ssh_port: deployForm.ssh_port,
+    ssh_password: deployForm.ssh_password || undefined,
+    server_url: deployForm.server_url.trim(),
+    install_path: deployForm.install_path.trim() || undefined,
+    systemd_service_content: deployForm.systemd_service_content.trim() || undefined,
+    force: isRedeploy.value || undefined,
+  })
+}
+
+/** Closes the dialog, dropping a finished deploy's token on the way out. */
+function close(): void {
+  if (deployStatus.value?.state !== 'running') void deploy.dismiss()
+  emit('close')
 }
 </script>
 
@@ -188,7 +180,7 @@ async function submitDeploy(): Promise<void> {
   <BaseModal
     :open="true"
     size="lg"
-    @close="emit('close')"
+    @close="close"
   >
     <template #header="{ titleId }">
       <h2
@@ -198,7 +190,32 @@ async function submitDeploy(): Promise<void> {
         {{ dialogTitle() }} Agent &mdash; {{ hostname }}
       </h2>
     </template>
-    <template v-if="!deployResult?.success">
+    <div
+      v-if="isUpgrade && deployStatus?.state !== 'succeeded'"
+      class="upgrade-hero"
+    >
+      <div class="hero-version">
+        <span class="group-label">Installed</span>
+        <span class="value mono">{{ agentVersion }}</span>
+      </div>
+      <template v-if="showAvailableVersion">
+        <span class="hero-arrow">
+          <ArrowRight :size="16" />
+        </span>
+        <div class="hero-version">
+          <span class="group-label">{{
+            deployStatus?.state === 'running' ? 'Upgrading to' : 'Available'
+          }}</span>
+          <span class="value value--next mono">{{ availableVersion }}</span>
+        </div>
+      </template>
+      <span
+        v-else-if="availableVersion"
+        class="hero-note"
+        >A newer build is available.</span
+      >
+    </div>
+    <template v-if="deployStatus === null">
       <template v-if="isRedeploy">
         <p class="deploy-info">
           Reinstall the agent binary and systemd service on this host over SSH — useful after the
@@ -206,63 +223,31 @@ async function submitDeploy(): Promise<void> {
           version <span class="mono">{{ agentVersion }}</span
           >; this does not change which version is expected to run.
         </p>
-        <ul class="icon-list">
-          <li>
-            <Upload :size="14" />
-            <span
-              >The binary is re-uploaded over SSH and the <code>assimilate-agent</code> service is
-              reinstalled and restarted.</span
-            >
-          </li>
-          <li>
-            <KeyRound :size="14" />
-            <span>A new agent token is generated and written into the service unit.</span>
-          </li>
-          <li>
-            <CheckCircle :size="14" />
-            <span>Schedules, repositories and existing archives are untouched.</span>
-          </li>
-        </ul>
       </template>
-      <template v-else-if="isUpgrade">
-        <div class="upgrade-hero">
-          <div class="hero-version">
-            <span class="group-label">Installed</span>
-            <span class="value mono">{{ agentVersion }}</span>
-          </div>
-          <template v-if="showAvailableVersion">
-            <span class="hero-arrow">
-              <ArrowRight :size="16" />
-            </span>
-            <div class="hero-version">
-              <span class="group-label">Available</span>
-              <span class="value value--next mono">{{ availableVersion }}</span>
-            </div>
-          </template>
-          <span
-            v-else-if="availableVersion"
-            class="hero-note"
-            >A newer build is available.</span
+      <ul
+        v-if="isRedeploy || isUpgrade"
+        class="icon-list"
+      >
+        <li>
+          <Upload :size="14" />
+          <span v-if="isRedeploy"
+            >The binary is re-uploaded over SSH and the <code>assimilate-agent</code> service is
+            reinstalled and restarted.</span
           >
-        </div>
-        <ul class="icon-list">
-          <li>
-            <Upload :size="14" />
-            <span
-              >The new binary is uploaded over SSH and the <code>assimilate-agent</code> service is
-              restarted.</span
-            >
-          </li>
-          <li>
-            <KeyRound :size="14" />
-            <span>A new agent token is generated and written into the service unit.</span>
-          </li>
-          <li>
-            <CheckCircle :size="14" />
-            <span>Schedules, repositories and existing archives are untouched.</span>
-          </li>
-        </ul>
-      </template>
+          <span v-else
+            >The new binary is uploaded over SSH and the <code>assimilate-agent</code> service is
+            restarted.</span
+          >
+        </li>
+        <li>
+          <KeyRound :size="14" />
+          <span>A new agent token is generated and written into the service unit.</span>
+        </li>
+        <li>
+          <CheckCircle :size="14" />
+          <span>Schedules, repositories and existing archives are untouched.</span>
+        </li>
+      </ul>
       <template v-else>
         <p class="deploy-info">
           Upload and install the agent binary on the target machine via SSH. Sudo is used
@@ -375,11 +360,11 @@ async function submitDeploy(): Promise<void> {
       </div>
     </template>
 
-    <template v-else>
+    <template v-else-if="deployStatus.state === 'succeeded'">
       <div class="token-notice">
-        <template v-if="deployResult.skipped">
+        <template v-if="deployStatus.skipped">
           <p class="deploy-skipped-msg">
-            Already on {{ deployResult.available_version }}. Nothing was changed and the token was
+            Already on {{ deployStatus.available_version }}. Nothing was changed and the token was
             not rotated.
           </p>
         </template>
@@ -389,12 +374,12 @@ async function submitDeploy(): Promise<void> {
               isRedeploy
                 ? 'Agent redeployed successfully.'
                 : isUpgrade
-                  ? `Upgraded to ${deployResult.available_version ?? 'the latest version'}.`
+                  ? `Upgraded to ${deployStatus.available_version ?? 'the latest version'}.`
                   : 'Agent deployed and service started successfully.'
             }}
           </p>
           <p
-            v-if="deployResult.available_version"
+            v-if="deployStatus.available_version"
             class="deploy-version-info"
           >
             {{
@@ -402,15 +387,30 @@ async function submitDeploy(): Promise<void> {
                 ? `${hostname} is running the reinstalled agent and has reconnected.`
                 : isUpgrade
                   ? `${hostname} is running the new agent and has reconnected.`
-                  : `Deployed version: ${deployResult.available_version}`
+                  : `Deployed version: ${deployStatus.available_version}`
             }}
           </p>
-          <p class="token-warning">A new agent token was generated for this deployment:</p>
-          <div class="token-box">
-            <code class="token-text">{{ deployResult.token }}</code>
-          </div>
+          <template v-if="deployStatus.token">
+            <p class="token-warning">A new agent token was generated for this deployment:</p>
+            <div class="token-box">
+              <code class="token-text">{{ deployStatus.token }}</code>
+            </div>
+          </template>
+          <p
+            v-else
+            class="deploy-version-info"
+          >
+            The new agent token is only shown to the user who started the deploy. The agent already
+            runs with it.
+          </p>
         </template>
       </div>
+    </template>
+    <template v-else>
+      <AgentDeployProgress
+        :steps="deployStatus.steps"
+        :state="deployStatus.state"
+      />
     </template>
 
     <template #footer>
@@ -420,22 +420,43 @@ async function submitDeploy(): Promise<void> {
            a later change to it (an aria-live region, say) reaches this dialog
            too. -->
       <ModalFormActions
-        v-if="!deployResult?.success"
-        :submitting="deployLoading"
+        v-if="deployStatus === null"
+        :submitting="deployStarting"
         :disabled="!deployForm.ssh_host || !deployForm.server_url"
-        :error="submitError"
+        :error="deployError"
         :submit-label="submitLabel()"
         :submitting-label="submittingLabel()"
         type="button"
-        @cancel="emit('close')"
+        @cancel="close"
         @confirm="submitDeploy"
       />
-      <template v-else>
+      <template v-else-if="deployStatus.state === 'succeeded'">
         <button
           class="btn btn-primary"
-          @click="emit('close')"
+          @click="close"
         >
           Done
+        </button>
+      </template>
+      <template v-else>
+        <div
+          v-if="deployStatus.error ?? deployError"
+          class="form-error"
+        >
+          {{ deployStatus.error ?? deployError }}
+        </div>
+        <button
+          class="btn btn-ghost"
+          @click="close"
+        >
+          Close
+        </button>
+        <button
+          v-if="deployStatus.state === 'failed'"
+          class="btn btn-primary"
+          @click="deploy.dismiss"
+        >
+          Try again
         </button>
       </template>
     </template>

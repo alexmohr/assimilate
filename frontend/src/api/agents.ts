@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
+import axios from 'axios'
 import { apiClient } from './client'
 import { domainParams } from '../utils/agent'
 import type { AgentHostnamePattern, AgentRow } from '../types/agent'
@@ -8,13 +9,15 @@ import type {
   AgentTagEntryResponse,
   CreateAgentResponse,
   DeleteFailedReportsResponse,
-  DeployAgentResponse,
+  DeployStatusResponse,
   FailedReportCountResponse,
   HookCommand,
   MergeAgentResponse,
   ReportListResponse,
 } from '../types/generated'
 import type { Repo } from '../types/repo'
+
+const HTTP_NOT_FOUND = 404
 
 export interface CreateAgentRequest {
   hostname: string
@@ -69,7 +72,7 @@ export interface DeployAgentRequest {
   force?: boolean
 }
 
-export type DeployAgentResult = DeployAgentResponse
+export type DeployAgentResult = DeployStatusResponse
 
 export interface DeploySshKeyRequest {
   ssh_host: string
@@ -271,6 +274,11 @@ export async function previewAgentServiceUnit(
   return response.data
 }
 
+/**
+ * Starts the deploy on the server and returns at once: the deploy itself runs
+ * there, and its progress is read with {@link getAgentDeployStatus}. An agent
+ * that already runs the latest version comes back finished and `skipped`.
+ */
 export async function deployAgent(
   hostname: string,
   data: DeployAgentRequest,
@@ -280,6 +288,31 @@ export async function deployAgent(
     params: domainParams(domain),
   })
   return response.data
+}
+
+/**
+ * How the agent's deploy is going, or `null` when it has none running or
+ * recent. The new agent token is part of a finished deploy's status, for the
+ * user who started it.
+ */
+export async function getAgentDeployStatus(
+  hostname: string,
+  domain?: string | null,
+): Promise<DeployAgentResult | null> {
+  try {
+    const response = await apiClient.get<DeployAgentResult>(`/agents/${hostname}/deploy`, {
+      params: domainParams(domain),
+    })
+    return response.data
+  } catch (e: unknown) {
+    if (axios.isAxiosError(e) && e.response?.status === HTTP_NOT_FOUND) return null
+    throw e
+  }
+}
+
+/** Drops the result of the agent's last deploy, and the token it holds. */
+export async function dismissAgentDeploy(hostname: string, domain?: string | null): Promise<void> {
+  await apiClient.delete(`/agents/${hostname}/deploy`, { params: domainParams(domain) })
 }
 
 export async function deployAgentSshKey(data: DeploySshKeyRequest): Promise<DeploySshKeyResult> {

@@ -12,7 +12,7 @@ import { useWebSocket } from '../composables/useWebSocket'
 import { logger } from '../utils/logger'
 import { formatBytes, relativeTime } from '../utils/format'
 import { useAsyncAction } from '../composables/useAsyncAction'
-import { Plus, Download, SlidersHorizontal, Database } from '@lucide/vue'
+import { Plus, Download, SlidersHorizontal, Database, Lock } from '@lucide/vue'
 import RepoCreateDialog from '../components/RepoCreateDialog.vue'
 import BaseSpinner from '../components/BaseSpinner.vue'
 import BaseSegmented, { type SegmentedOption } from '../components/BaseSegmented.vue'
@@ -42,7 +42,7 @@ const SORT_OPTIONS: readonly { field: SortField; label: string }[] = [
   { field: 'last_backup', label: 'Last backup' },
   { field: 'quota', label: 'Quota' },
 ]
-type QuotaFilter = 'all' | 'at_risk' | 'no_quota'
+type QuotaFilter = 'all' | 'at_risk' | 'no_quota' | 'append_only'
 type GroupMode = 'host' | 'tag' | 'none'
 
 /** A tag as the repositories list resolves it for one repository. */
@@ -142,6 +142,8 @@ const noQuotaCount = computed(
   () => repos.value.filter((r) => repoOwnHealth(r) === 'unconfigured').length,
 )
 
+const appendOnlyCount = computed(() => repos.value.filter((r) => Boolean(r.append_only)).length)
+
 const filteredRepos = computed<RepoWithStats[]>(() => {
   let list = [...repos.value]
 
@@ -171,6 +173,8 @@ const filteredRepos = computed<RepoWithStats[]>(() => {
     })
   } else if (quotaFilter.value === 'no_quota') {
     list = list.filter((r) => repoOwnHealth(r) === 'unconfigured')
+  } else if (quotaFilter.value === 'append_only') {
+    list = list.filter((r) => Boolean(r.append_only))
   }
 
   list.sort((a, b) => {
@@ -496,6 +500,7 @@ function onRepoImported(created: Repo): void {
       encryption: created.encryption,
       enabled: created.enabled,
       importing: true,
+      append_only: null,
       import_error: null,
       import_progress: 0,
       import_total: 0,
@@ -675,6 +680,23 @@ onMounted(loadRepos)
       </button>
     </div>
 
+    <!-- Not a quota filter, so its own group beside the quota pills. -->
+    <div
+      v-if="!isMobile || showMobileFilters"
+      class="repo-type-filters repo-filters"
+      role="group"
+      aria-label="Repository type filter"
+    >
+      <button
+        class="filter-pill"
+        :class="{ active: quotaFilter === 'append_only' }"
+        @click="quotaFilter = 'append_only'"
+      >
+        <Lock :size="12" />
+        Append-only &middot; {{ appendOnlyCount }}
+      </button>
+    </div>
+
     <BaseSpinner
       v-if="loading"
       size="lg"
@@ -810,6 +832,13 @@ onMounted(loadRepos)
 .repo-filters {
   margin-top: var(--space-4);
   margin-bottom: var(--space-8);
+}
+
+/* Sits directly under the quota pills: pulls up over their bottom margin. */
+.repo-type-filters {
+  display: flex;
+  gap: var(--space-3);
+  margin-top: calc(-1 * var(--space-5));
 }
 
 .repos-list .list-group {

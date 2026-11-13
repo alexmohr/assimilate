@@ -146,6 +146,7 @@ fn build_test_state(pool: PgPool) -> server::AppState {
         deployment_mode: shared::types::DeploymentMode::default(),
         cookie_security: server::cookies::CookieSecurity::default(),
         metrics: server::metrics::MetricsState::default(),
+        deploy_jobs: server::deploy_jobs::DeployJobs::default(),
     }
 }
 
@@ -562,8 +563,44 @@ fn build_test_app_with_idle_timeout(
         .merge(test_app_dependency_host_routes())
         .merge(test_app_stats_and_notification_routes())
         .merge(test_app_text_limit_routes())
+        .merge(test_app_append_only_routes())
         .with_state(state.clone());
     (router, state)
+}
+
+/// Append-only repositories' settings, maintenance and queued deletions.
+#[cfg(test)]
+fn test_app_append_only_routes() -> Router<server::AppState> {
+    use server::api::append_only as ao;
+    Router::new()
+        .route(
+            "/api/repos/{repo_id}/append-only",
+            get(ao::get_append_only).put(ao::set_append_only),
+        )
+        .route(
+            "/api/repos/{repo_id}/append-only/check",
+            post(ao::check_append_only),
+        )
+        .route(
+            "/api/repos/{repo_id}/append-only/reapply",
+            post(ao::reapply_append_only),
+        )
+        .route(
+            "/api/repos/{repo_id}/append-only/maintenance",
+            put(ao::update_maintenance),
+        )
+        .route(
+            "/api/repos/{repo_id}/append-only/maintenance/run",
+            post(ao::run_maintenance),
+        )
+        .route(
+            "/api/repos/{repo_id}/append-only/maintenance/resume",
+            post(ao::resume_maintenance),
+        )
+        .route(
+            "/api/repos/{repo_id}/archives/{archive_name}/deletion",
+            delete(ao::cancel_archive_deletion),
+        )
 }
 
 /// The Prometheus endpoint and its settings, mounted like the binary mounts
@@ -594,7 +631,9 @@ fn test_app_text_limit_routes() -> Router<server::AppState> {
         )
         .route(
             "/api/agents/{hostname}/deploy",
-            post(server::api::deploy::deploy_agent),
+            post(server::api::deploy::deploy_agent)
+                .get(server::api::deploy::deploy_status)
+                .delete(server::api::deploy::dismiss_deploy),
         )
         .route(
             "/api/agents/{hostname}/service-unit",
@@ -14884,8 +14923,37 @@ async fn test_metrics_settings_reject_an_invalid_network() {
     );
 }
 
-/// A deploy to a host that refuses SSH still issues a fresh token and
-/// prepares the agent's unit, default or custom, then reports the failure.
+/// Reads the deploy status of `hostname` until the deploy is no longer running;
+/// `None` if it never finishes.
+async fn finished_deploy_status(app: &mut axum::Router, hostname: &str) -> Option<Value> {
+    for _ in 0..200 {
+        let resp = oneshot(app, get_request(&format!("/api/agents/{hostname}/deploy"))).await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = body_json(resp).await;
+        if body.get("state") != Some(&json!("running")) {
+            return Some(body);
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    None
+}
+
+/// The body of a deploy request to `ssh_host:ssh_port`.
+fn deploy_body(ssh_host: &str, ssh_port: u16, unit: Option<&str>) -> Value {
+    json!({
+        "ssh_host": ssh_host,
+        "ssh_port": ssh_port,
+        "ssh_user": "root",
+        "server_url": "https://backup.example.com",
+        "systemd_service_content": unit,
+        "force": true,
+    })
+}
+
+/// A deploy runs on the server, not for the length of the request: the request
+/// starts it and answers at once, and the deploy to a host that refuses SSH
+/// still issues a fresh token and prepares the agent's unit, default or
+/// custom, then reports the failure in the step it failed in.
 #[tokio::test]
 #[ignore = "requires DATABASE_URL"]
 async fn test_deploy_to_an_unreachable_host_reports_the_ssh_failure() {
@@ -14906,20 +14974,18 @@ async fn test_deploy_to_an_unreachable_host_reports_the_ssh_failure() {
             json_request(
                 "POST",
                 "/api/agents/deploy-host/deploy",
-                Some(json!({
-                    "ssh_host": "127.0.0.1",
-                    "ssh_port": 1,
-                    "ssh_user": "root",
-                    "server_url": "https://backup.example.com",
-                    "systemd_service_content": unit,
-                    "force": true,
-                })),
+                Some(deploy_body("127.0.0.1", 1, unit)),
             ),
         )
         .await;
-        assert_eq!(resp.status(), StatusCode::OK);
-        let body = body_json(resp).await;
-        assert_eq!(body.get("success"), Some(&json!(false)), "{body}");
+        assert_eq!(resp.status(), StatusCode::ACCEPTED);
+        let started = body_json(resp).await;
+        assert_eq!(started.get("token"), Some(&Value::Null), "{started}");
+
+        let body = finished_deploy_status(&mut app, "deploy-host")
+            .await
+            .expect("the deploy finishes");
+        assert_eq!(body.get("state"), Some(&json!("failed")), "{body}");
         assert!(
             body.get("error").and_then(Value::as_str).is_some(),
             "{body}"
@@ -14928,5 +14994,1965 @@ async fn test_deploy_to_an_unreachable_host_reports_the_ssh_failure() {
             body.get("token").and_then(Value::as_str).is_some(),
             "{body}"
         );
+        let steps: Vec<(&str, &str)> = body
+            .get("steps")
+            .and_then(Value::as_array)
+            .expect("steps")
+            .iter()
+            .map(|s| {
+                (
+                    s.get("step").and_then(Value::as_str).unwrap(),
+                    s.get("status").and_then(Value::as_str).unwrap(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            steps,
+            [
+                ("connect", "failed"),
+                ("upload", "pending"),
+                ("install", "pending"),
+                ("restart", "pending"),
+                ("reconnect", "pending"),
+            ],
+            "{body}"
+        );
+    }
+}
+
+/// An agent has one deploy at a time: a second request while one is still
+/// running is refused rather than racing it over the same token and host.
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn test_a_second_deploy_while_one_runs_is_a_conflict() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+    server::db::insert_agent(&pool, "busy-host", None, "hash", None, None)
+        .await
+        .unwrap();
+    // A host that accepts the connection and then says nothing keeps the
+    // deploy in its first step.
+    let silent = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = silent.local_addr().unwrap().port();
+    let _held = tokio::spawn(async move {
+        let mut open = Vec::new();
+        while let Ok((stream, _)) = silent.accept().await {
+            open.push(stream);
+        }
+    });
+
+    let first = oneshot(
+        &mut app,
+        json_request(
+            "POST",
+            "/api/agents/busy-host/deploy",
+            Some(deploy_body("127.0.0.1", port, None)),
+        ),
+    )
+    .await;
+    assert_eq!(first.status(), StatusCode::ACCEPTED);
+    let started = body_json(first).await;
+    assert_eq!(started.get("state"), Some(&json!("running")), "{started}");
+
+    // Dismissing a deploy that is still running does nothing, so it cannot be
+    // used to free the agent for a second deploy on the same host.
+    let dismissed = oneshot(
+        &mut app,
+        json_request("DELETE", "/api/agents/busy-host/deploy", None),
+    )
+    .await;
+    assert_eq!(dismissed.status(), StatusCode::NO_CONTENT);
+
+    let second = oneshot(
+        &mut app,
+        json_request(
+            "POST",
+            "/api/agents/busy-host/deploy",
+            Some(deploy_body("127.0.0.1", port, None)),
+        ),
+    )
+    .await;
+    assert_eq!(second.status(), StatusCode::CONFLICT);
+}
+
+/// There is nothing to read for an agent that was never deployed, and a
+/// finished deploy's result, token included, is forgotten once dismissed.
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn test_a_deploy_result_is_read_until_it_is_dismissed() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+    server::db::insert_agent(&pool, "dismiss-host", None, "hash", None, None)
+        .await
+        .unwrap();
+
+    let none = oneshot(&mut app, get_request("/api/agents/dismiss-host/deploy")).await;
+    assert_eq!(none.status(), StatusCode::NOT_FOUND);
+
+    let started = oneshot(
+        &mut app,
+        json_request(
+            "POST",
+            "/api/agents/dismiss-host/deploy",
+            Some(deploy_body("127.0.0.1", 1, None)),
+        ),
+    )
+    .await;
+    assert_eq!(started.status(), StatusCode::ACCEPTED);
+    finished_deploy_status(&mut app, "dismiss-host")
+        .await
+        .expect("the deploy finishes");
+    let again =
+        body_json(oneshot(&mut app, get_request("/api/agents/dismiss-host/deploy")).await).await;
+    assert!(
+        again.get("token").and_then(Value::as_str).is_some(),
+        "a result read twice keeps its token: {again}"
+    );
+
+    let dismissed = oneshot(
+        &mut app,
+        json_request("DELETE", "/api/agents/dismiss-host/deploy", None),
+    )
+    .await;
+    assert_eq!(dismissed.status(), StatusCode::NO_CONTENT);
+    let gone = oneshot(&mut app, get_request("/api/agents/dismiss-host/deploy")).await;
+    assert_eq!(gone.status(), StatusCode::NOT_FOUND);
+
+    let twice = oneshot(
+        &mut app,
+        json_request("DELETE", "/api/agents/dismiss-host/deploy", None),
+    )
+    .await;
+    assert_eq!(
+        twice.status(),
+        StatusCode::NO_CONTENT,
+        "dismissing is idempotent"
+    );
+}
+
+/// Append-only repositories: server-side maintenance, queued deletions and the
+/// settings endpoints.
+#[cfg(test)]
+mod append_only {
+    use super::*;
+
+    /// Points `SSH_KEY_DIR` at a fresh directory holding the server's own key,
+    /// as `docker-entrypoint.sh` leaves it, until dropped.
+    struct KeyDir {
+        dir: TempDir,
+    }
+
+    impl KeyDir {
+        async fn new() -> Self {
+            let dir = tempfile::tempdir().unwrap();
+            let key = ssh_key::PrivateKey::random(
+                &mut ssh_key::rand_core::OsRng,
+                ssh_key::Algorithm::Ed25519,
+            )
+            .unwrap();
+            tokio::fs::write(
+                dir.path().join("id_ed25519.pub"),
+                format!(
+                    "{} assimilate-server\n",
+                    key.public_key().to_openssh().unwrap()
+                ),
+            )
+            .await
+            .unwrap();
+            // SAFETY: these tests run one at a time, under the borg binary lock.
+            unsafe { std::env::set_var("SSH_KEY_DIR", dir.path()) };
+            Self { dir }
+        }
+    }
+
+    impl Drop for KeyDir {
+        fn drop(&mut self) {
+            // SAFETY: see `KeyDir::new`.
+            unsafe { std::env::remove_var("SSH_KEY_DIR") };
+        }
+    }
+
+    /// A fake borg that keeps the repository's archives in a file, so a
+    /// `delete` or a `prune` really removes them, and records every call with
+    /// the SSH environment it was given.
+    struct FakeRepo {
+        dir: TempDir,
+        _guard: BorgBinaryGuard,
+    }
+
+    impl FakeRepo {
+        async fn new(archives: &[&str]) -> Self {
+            let dir = tempfile::tempdir().unwrap();
+            let d = dir.path().display().to_string();
+            tokio::fs::write(dir.path().join("archives"), archives.join("\n") + "\n")
+                .await
+                .unwrap();
+            let script = format!(
+                r#"#!/bin/sh
+set -eu
+D="{d}"
+echo "$*" >> "$D/calls.log"
+echo "$1 BORG_RSH=${{BORG_RSH:-}} SSH_AUTH_SOCK=${{SSH_AUTH_SOCK:-unset}}" >> "$D/env.log"
+remove() {{
+  grep -vx -- "$1" "$D/archives" > "$D/archives.new" || true
+  mv "$D/archives.new" "$D/archives"
+}}
+case "$1" in
+  list)
+    if [ -f "$D/fail_lists_after_delete" ] && grep -q '^delete ' "$D/calls.log"; then
+      echo "fake crash after delete" >&2
+      exit 2
+    fi
+    case " $* " in
+      *" --lock-wait 60 "*)
+        if [ -f "$D/refresh_exit" ]; then
+          echo "fake refresh failure" >&2
+          exit "$(cat "$D/refresh_exit")"
+        fi ;;
+    esac
+    case " $* " in
+      *" --json-lines "*) exit 0 ;;
+    esac
+    printf '{{"archives":['
+    first=1
+    while read -r n; do
+      [ -z "$n" ] && continue
+      [ "$first" = 1 ] || printf ','
+      printf '{{"name":"%s"}}' "$n"
+      first=0
+    done < "$D/archives"
+    printf ']}}\n'
+    ;;
+  check)
+    [ ! -f "$D/check_removes" ] || remove "$(cat "$D/check_removes")"
+    if [ -f "$D/check_exit" ]; then
+      echo "fake check failure" >&2
+      exit "$(cat "$D/check_exit")"
+    fi
+    ;;
+  delete)
+    if [ -f "$D/delete_exit" ]; then
+      if [ -f "$D/delete_stderr" ]; then
+        cat "$D/delete_stderr" >&2
+      else
+        echo "fake delete failure" >&2
+      fi
+      exit "$(cat "$D/delete_exit")"
+    fi
+    for a; do last="$a"; done
+    remove "${{last##*::}}"
+    ;;
+  prune)
+    if [ -f "$D/prune_exit" ]; then
+      echo "fake prune failure" >&2
+      exit "$(cat "$D/prune_exit")"
+    fi
+    [ ! -f "$D/prune_victims" ] || while read -r v; do remove "$v"; done < "$D/prune_victims"
+    ;;
+  compact)
+    if [ -f "$D/compact_exit" ]; then
+      echo "fake compact failure" >&2
+      exit "$(cat "$D/compact_exit")"
+    fi
+    echo "compaction freed about 1.00 GB repository space." >&2
+    ;;
+  info)
+    printf '%s' '{{"cache":{{"stats":{{"total_size":0,"total_csize":0,'
+    echo '"unique_csize":0,"total_chunks":0,"total_unique_chunks":0}}}}}}'
+    ;;
+  *)
+    exit 1
+    ;;
+esac
+"#
+            );
+            let borg_path = dir.path().join("borg");
+            tokio::fs::write(&borg_path, script).await.unwrap();
+            let mut permissions = tokio::fs::metadata(&borg_path).await.unwrap().permissions();
+            permissions.set_mode(0o755);
+            tokio::fs::set_permissions(&borg_path, permissions)
+                .await
+                .unwrap();
+            let previous = std::env::var("BORG_BINARY").ok();
+            // SAFETY: tests serialize BORG_BINARY changes with a process-local lock.
+            unsafe { std::env::set_var("BORG_BINARY", &borg_path) };
+            Self {
+                dir,
+                _guard: BorgBinaryGuard { previous },
+            }
+        }
+
+        async fn read(&self, file: &str) -> String {
+            tokio::fs::read_to_string(self.dir.path().join(file))
+                .await
+                .unwrap_or_default()
+        }
+
+        async fn calls(&self) -> Vec<String> {
+            self.read("calls.log")
+                .await
+                .lines()
+                .map(str::to_owned)
+                .collect()
+        }
+
+        async fn archives(&self) -> Vec<String> {
+            self.read("archives")
+                .await
+                .lines()
+                .map(str::to_owned)
+                .collect()
+        }
+
+        fn ran(calls: &[String], subcommand: &str) -> bool {
+            calls
+                .iter()
+                .any(|c| c.split_whitespace().next() == Some(subcommand))
+        }
+    }
+
+    /// An append-only repository with a report for each of `archives`.
+    async fn append_only_repo(pool: &PgPool, name: &str, archives: &[&str]) -> i64 {
+        let repo_id = insert_test_repo(pool, name).await;
+        sqlx::query(
+            "INSERT INTO append_only_logins (repo_host_id, ssh_user) SELECT repo_host_id, \
+             ssh_user FROM repos WHERE id = $1 ON CONFLICT DO NOTHING",
+        )
+        .bind(repo_id)
+        .execute(pool)
+        .await
+        .unwrap();
+        sqlx::query("INSERT INTO repo_maintenance (repo_id) VALUES ($1)")
+            .bind(repo_id)
+            .execute(pool)
+            .await
+            .unwrap();
+        let agent_id: i64 = sqlx::query_scalar(
+            "INSERT INTO agents (hostname, agent_token_hash) VALUES ($1, 'hash') RETURNING id",
+        )
+        .bind(format!("{name}-host"))
+        .fetch_one(pool)
+        .await
+        .unwrap();
+        for archive in archives {
+            sqlx::query(
+                "INSERT INTO backup_reports (agent_id, repo_id, started_at, finished_at, status, \
+                 matched, archive_name) VALUES ($1, $2, NOW(), NOW(), 'success', true, $3)",
+            )
+            .bind(agent_id)
+            .bind(repo_id)
+            .bind(*archive)
+            .execute(pool)
+            .await
+            .unwrap();
+        }
+        repo_id
+    }
+
+    /// A daily-retention schedule that backs `repo_id` up from `hostname`.
+    async fn add_schedule(pool: &PgPool, repo_id: i64, hostname: &str) -> i64 {
+        let schedule_id: i64 = sqlx::query_scalar(
+            "INSERT INTO schedules (repo_id, name, keep_daily, keep_weekly, keep_monthly, \
+             keep_yearly, keep_hourly) VALUES ($1, 's', 7, 0, 0, 0, 0) RETURNING id",
+        )
+        .bind(repo_id)
+        .fetch_one(pool)
+        .await
+        .unwrap();
+        sqlx::query("INSERT INTO schedule_repos (schedule_id, repo_id) VALUES ($1, $2)")
+            .bind(schedule_id)
+            .bind(repo_id)
+            .execute(pool)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO schedule_targets (schedule_id, agent_id) SELECT $1, id FROM agents WHERE \
+             hostname = $2",
+        )
+        .bind(schedule_id)
+        .bind(hostname)
+        .execute(pool)
+        .await
+        .unwrap();
+        schedule_id
+    }
+
+    /// The value at a JSON pointer, or null.
+    fn at(value: &Value, pointer: &str) -> Value {
+        value.pointer(pointer).cloned().unwrap_or(Value::Null)
+    }
+
+    async fn run_maintenance(state: &server::AppState, repo_id: i64) {
+        server::maintenance::run(state, repo_id, "test").await;
+    }
+
+    async fn last_op(pool: &PgPool, repo_id: i64) -> Option<(String, String)> {
+        sqlx::query_as("SELECT kind, by_text FROM repo_last_op WHERE repo_id = $1")
+            .bind(repo_id)
+            .fetch_optional(pool)
+            .await
+            .unwrap()
+    }
+
+    async fn latest_run(pool: &PgPool, repo_id: i64) -> (String, i64, i64, Option<String>) {
+        sqlx::query_as(
+            "SELECT outcome, archives_removed, bytes_freed, detail FROM repo_maintenance_runs \
+             WHERE repo_id = $1 ORDER BY id DESC LIMIT 1",
+        )
+        .bind(repo_id)
+        .fetch_one(pool)
+        .await
+        .unwrap()
+    }
+
+    async fn report_names(pool: &PgPool, repo_id: i64) -> Vec<String> {
+        sqlx::query_scalar(
+            "SELECT archive_name FROM backup_reports WHERE repo_id = $1 ORDER BY archive_name",
+        )
+        .bind(repo_id)
+        .fetch_all(pool)
+        .await
+        .unwrap()
+    }
+
+    #[tokio::test]
+    #[ignore = "requires DATABASE_URL"]
+    async fn maintenance_stops_when_an_archive_vanishes_during_the_check() {
+        let _borg_lock = borg_binary_lock().await;
+        let _keys = KeyDir::new().await;
+        let pool = setup_pool().await;
+        clean_tables(&pool).await;
+        let repo_id = append_only_repo(&pool, "ao-during-check", &["a-1", "a-2"]).await;
+        let borg = FakeRepo::new(&["a-1", "a-2"]).await;
+        // Somebody deletes a-2 over the append-only connection while the
+        // check is still running.
+        tokio::fs::write(borg.dir.path().join("check_removes"), "a-2")
+            .await
+            .unwrap();
+        let (_app, state) = build_test_app_with_state(pool.clone());
+
+        run_maintenance(&state, repo_id).await;
+
+        let calls = borg.calls().await;
+        assert!(FakeRepo::ran(&calls, "check"), "{calls:?}");
+        for writing in ["delete", "prune", "compact"] {
+            assert!(
+                !FakeRepo::ran(&calls, writing),
+                "{writing} must not run: {calls:?}"
+            );
+        }
+        let (outcome, _, _, detail) = latest_run(&pool, repo_id).await;
+        assert_eq!(outcome, "stopped");
+        assert!(detail.unwrap().contains("a-2"));
+    }
+
+    #[tokio::test]
+    #[ignore = "requires DATABASE_URL"]
+    async fn maintenance_stops_without_writing_when_archives_vanished() {
+        let _borg_lock = borg_binary_lock().await;
+        let _keys = KeyDir::new().await;
+        let pool = setup_pool().await;
+        clean_tables(&pool).await;
+        let repo_id = append_only_repo(&pool, "ao-vanished", &["a-1", "a-2"]).await;
+        // a-2 was deleted over the append-only connection.
+        let borg = FakeRepo::new(&["a-1"]).await;
+        sqlx::query(
+            "INSERT INTO repo_pending_deletions (repo_id, archive_name) VALUES ($1, 'a-1')",
+        )
+        .bind(repo_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+        let (_app, state) = build_test_app_with_state(pool.clone());
+
+        run_maintenance(&state, repo_id).await;
+
+        let calls = borg.calls().await;
+        assert!(FakeRepo::ran(&calls, "list"), "{calls:?}");
+        for writing in ["check", "delete", "prune", "compact"] {
+            assert!(
+                !FakeRepo::ran(&calls, writing),
+                "{writing} ran although archives had vanished: {calls:?}"
+            );
+        }
+        assert_eq!(
+            borg.archives().await,
+            vec!["a-1"],
+            "nothing was removed from the repository"
+        );
+
+        let (outcome, removed, freed, detail) = latest_run(&pool, repo_id).await;
+        assert_eq!(outcome, "stopped");
+        assert_eq!((removed, freed), (0, 0));
+        assert!(detail.unwrap().contains("a-2"));
+        assert_eq!(
+            last_op(&pool, repo_id).await,
+            Some(("maintenance".to_owned(), "test".to_owned())),
+            "a run is the repository's last operation, whatever its outcome"
+        );
+
+        let stopped: Option<chrono::DateTime<chrono::Utc>> =
+            sqlx::query_scalar("SELECT stopped_at FROM repo_maintenance WHERE repo_id = $1")
+                .bind(repo_id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert!(stopped.is_some());
+        let next: Option<chrono::DateTime<chrono::Utc>> =
+            sqlx::query_scalar("SELECT next_run_at FROM repo_maintenance WHERE repo_id = $1")
+                .bind(repo_id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert!(next.is_none(), "a stopped repository has no next run");
+        assert_eq!(
+            report_names(&pool, repo_id).await,
+            vec!["a-1", "a-2"],
+            "records are kept"
+        );
+        let queued: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM repo_pending_deletions WHERE repo_id = $1")
+                .bind(repo_id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(queued, 1, "the queued deletion is still queued");
+    }
+
+    #[tokio::test]
+    #[ignore = "requires DATABASE_URL"]
+    async fn maintenance_deletes_queued_archives_prunes_and_compacts() {
+        let _borg_lock = borg_binary_lock().await;
+        let _keys = KeyDir::new().await;
+        let pool = setup_pool().await;
+        clean_tables(&pool).await;
+        let repo_id = append_only_repo(&pool, "ao-ok", &["a-1", "a-2", "a-3"]).await;
+        let borg = FakeRepo::new(&["a-1", "a-2", "a-3"]).await;
+        // The retention prunes a-1; a user queued a-2.
+        tokio::fs::write(borg.dir.path().join("prune_victims"), "a-1\n")
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO repo_pending_deletions (repo_id, archive_name) VALUES ($1, 'a-2')",
+        )
+        .bind(repo_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+        let schedule_id = add_schedule(&pool, repo_id, "ao-ok-host").await;
+        let (_app, state) = build_test_app_with_state(pool.clone());
+
+        run_maintenance(&state, repo_id).await;
+
+        let calls = borg.calls().await;
+        let position = |sub: &str| {
+            calls
+                .iter()
+                .position(|c| c.split_whitespace().next() == Some(sub))
+                .unwrap_or_else(|| panic!("{sub} never ran: {calls:?}"))
+        };
+        assert!(position("list") < position("check"));
+        assert!(position("check") < position("delete"));
+        assert!(position("delete") < position("prune"));
+        assert!(position("prune") < position("compact"));
+        // The schedule prunes the archives it wrote, and archives from before
+        // schedule ids are pruned on their own with the most any schedule keeps.
+        let scheduled = format!("-a *ao-ok-host-s{schedule_id}-*");
+        for glob in [
+            scheduled.as_str(),
+            "-a *ao-ok-host-[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T*",
+        ] {
+            assert!(
+                calls.iter().any(|c| c.starts_with("prune ")
+                    && c.contains(glob)
+                    && c.contains("--keep-daily 7")),
+                "no prune with {glob}: {calls:?}"
+            );
+        }
+
+        assert_eq!(borg.archives().await, vec!["a-3"]);
+        assert_eq!(report_names(&pool, repo_id).await, vec!["a-3"]);
+        let (outcome, removed, freed, detail) = latest_run(&pool, repo_id).await;
+        assert_eq!(outcome, "ok", "{detail:?}");
+        assert_eq!(removed, 2);
+        assert_eq!(freed, 1_000_000_000);
+        let queued: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM repo_pending_deletions WHERE repo_id = $1")
+                .bind(repo_id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(queued, 0);
+        let next: Option<chrono::DateTime<chrono::Utc>> =
+            sqlx::query_scalar("SELECT next_run_at FROM repo_maintenance WHERE repo_id = $1")
+                .bind(repo_id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert!(next.is_some_and(|t| t > chrono::Utc::now()));
+    }
+
+    #[tokio::test]
+    #[ignore = "requires DATABASE_URL"]
+    async fn maintenance_reports_a_failed_delete_and_keeps_the_deletion_queued() {
+        let _borg_lock = borg_binary_lock().await;
+        let _keys = KeyDir::new().await;
+        let pool = setup_pool().await;
+        clean_tables(&pool).await;
+        let repo_id = append_only_repo(&pool, "ao-del", &["a-1", "a-2"]).await;
+        let borg = FakeRepo::new(&["a-1", "a-2"]).await;
+        tokio::fs::write(borg.dir.path().join("delete_exit"), "2")
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO repo_pending_deletions (repo_id, archive_name) VALUES ($1, 'a-2')",
+        )
+        .bind(repo_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+        let (_app, state) = build_test_app_with_state(pool.clone());
+
+        run_maintenance(&state, repo_id).await;
+
+        let (outcome, removed, _freed, detail) = latest_run(&pool, repo_id).await;
+        assert_eq!(outcome, "failed", "{detail:?}");
+        assert_eq!(removed, 0);
+        assert!(detail.is_some_and(|d| d.contains("a-2")));
+        assert_eq!(borg.archives().await, vec!["a-1", "a-2"]);
+        let queued: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM repo_pending_deletions WHERE repo_id = $1")
+                .bind(repo_id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(queued, 1, "a deletion that failed stays queued");
+    }
+
+    #[tokio::test]
+    #[ignore = "requires DATABASE_URL"]
+    async fn maintenance_reports_a_failed_prune_and_a_failed_compact() {
+        let _borg_lock = borg_binary_lock().await;
+        let _keys = KeyDir::new().await;
+        let pool = setup_pool().await;
+        clean_tables(&pool).await;
+        let repo_id = append_only_repo(&pool, "ao-prune", &["a-1"]).await;
+        add_schedule(&pool, repo_id, "ao-prune-host").await;
+        let borg = FakeRepo::new(&["a-1"]).await;
+        for failing in ["prune_exit", "compact_exit"] {
+            tokio::fs::write(borg.dir.path().join(failing), "2")
+                .await
+                .unwrap();
+        }
+        let (_app, state) = build_test_app_with_state(pool.clone());
+
+        run_maintenance(&state, repo_id).await;
+
+        let (outcome, _removed, freed, detail) = latest_run(&pool, repo_id).await;
+        assert_eq!(outcome, "failed", "{detail:?}");
+        assert_eq!(freed, 0);
+        let detail = detail.unwrap();
+        assert!(detail.contains("borg prune failed"), "{detail}");
+        assert!(detail.contains("borg compact failed"), "{detail}");
+        let calls = borg.calls().await;
+        assert!(FakeRepo::ran(&calls, "compact"), "{calls:?}");
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore = "requires DATABASE_URL"]
+    async fn maintenance_still_runs_when_it_cannot_record_its_own_history(pool: PgPool) {
+        let _borg_lock = borg_binary_lock().await;
+        let _keys = KeyDir::new().await;
+        let repo_id = append_only_repo(&pool, "ao-nohistory", &["a-1"]).await;
+        let borg = FakeRepo::new(&["a-1"]).await;
+        sqlx::query("DROP TABLE repo_maintenance_runs")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let (_app, state) = build_test_app_with_state(pool.clone());
+
+        run_maintenance(&state, repo_id).await;
+
+        let calls = borg.calls().await;
+        assert!(FakeRepo::ran(&calls, "compact"), "{calls:?}");
+        let next: Option<chrono::DateTime<chrono::Utc>> =
+            sqlx::query_scalar("SELECT next_run_at FROM repo_maintenance WHERE repo_id = $1")
+                .bind(repo_id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert!(next.is_some(), "the next run is still scheduled");
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore = "requires DATABASE_URL"]
+    async fn the_scheduler_does_nothing_when_it_cannot_read_the_schedules(pool: PgPool) {
+        let _borg_lock = borg_binary_lock().await;
+        let _keys = KeyDir::new().await;
+        append_only_repo(&pool, "ao-noschedule", &["a-1"]).await;
+        let borg = FakeRepo::new(&["a-1"]).await;
+        sqlx::query("DROP TABLE repo_maintenance CASCADE")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let (_app, state) = build_test_app_with_state(pool.clone());
+
+        server::maintenance::run_due(&state).await;
+
+        assert_eq!(borg.calls().await, Vec::<String>::new());
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore = "requires DATABASE_URL"]
+    async fn the_scheduler_leaves_a_repository_it_cannot_claim_for_the_next_tick(pool: PgPool) {
+        let _borg_lock = borg_binary_lock().await;
+        let _keys = KeyDir::new().await;
+        let repo_id = append_only_repo(&pool, "ao-noclaim", &["a-1"]).await;
+        let borg = FakeRepo::new(&["a-1"]).await;
+        sqlx::query("UPDATE repo_maintenance SET next_run_at = NOW() - INTERVAL '1 hour'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query(
+            "CREATE FUNCTION refuse_claims() RETURNS trigger AS $$ BEGIN RAISE EXCEPTION 'claims \
+             refused'; END $$ LANGUAGE plpgsql",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "CREATE TRIGGER refuse_claims BEFORE UPDATE ON repo_maintenance FOR EACH ROW EXECUTE \
+             FUNCTION refuse_claims()",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        let (_app, state) = build_test_app_with_state(pool.clone());
+
+        server::maintenance::run_due(&state).await;
+        assert!(
+            state
+                .background_task_tracker
+                .wait_until_idle(std::time::Duration::from_secs(5))
+                .await
+        );
+
+        assert_eq!(
+            borg.calls().await,
+            Vec::<String>::new(),
+            "nothing ran for {repo_id}"
+        );
+    }
+
+    #[tokio::test]
+    #[ignore = "requires DATABASE_URL"]
+    async fn the_scheduler_starts_only_the_maintenance_that_is_due() {
+        let _borg_lock = borg_binary_lock().await;
+        let _keys = KeyDir::new().await;
+        let pool = setup_pool().await;
+        clean_tables(&pool).await;
+        let due = append_only_repo(&pool, "ao-due", &["a-1"]).await;
+        let later = append_only_repo(&pool, "ao-later", &["b-1"]).await;
+        let _borg = FakeRepo::new(&["a-1"]).await;
+        sqlx::query(
+            "UPDATE repo_maintenance SET next_run_at = CASE WHEN repo_id = $1 THEN NOW() - \
+             INTERVAL '1 hour' ELSE NOW() + INTERVAL '1 day' END",
+        )
+        .bind(due)
+        .execute(&pool)
+        .await
+        .unwrap();
+        let (_app, state) = build_test_app_with_state(pool.clone());
+
+        server::maintenance::run_due(&state).await;
+        assert!(
+            state
+                .background_task_tracker
+                .wait_until_idle(std::time::Duration::from_mins(1))
+                .await
+        );
+
+        let (outcome, _removed, _freed, detail) = latest_run(&pool, due).await;
+        assert_eq!(outcome, "ok", "{detail:?}");
+        let runs: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM repo_maintenance_runs WHERE repo_id = $1")
+                .bind(later)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(runs, 0, "a repository that is not due is left alone");
+        let next: Option<chrono::DateTime<chrono::Utc>> =
+            sqlx::query_scalar("SELECT next_run_at FROM repo_maintenance WHERE repo_id = $1")
+                .bind(due)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert!(next.is_some_and(|t| t > chrono::Utc::now()));
+    }
+
+    async fn queue_deletion(pool: &PgPool, repo_id: i64, archive: &str) {
+        sqlx::query("INSERT INTO repo_pending_deletions (repo_id, archive_name) VALUES ($1, $2)")
+            .bind(repo_id)
+            .bind(archive)
+            .execute(pool)
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    #[ignore = "requires DATABASE_URL"]
+    async fn a_queued_deletion_for_an_archive_that_is_already_gone_is_simply_dropped() {
+        let _borg_lock = borg_binary_lock().await;
+        let _keys = KeyDir::new().await;
+        let pool = setup_pool().await;
+        clean_tables(&pool).await;
+        let repo_id = append_only_repo(&pool, "ao-ghost", &["a-1"]).await;
+        let borg = FakeRepo::new(&["a-1"]).await;
+        queue_deletion(&pool, repo_id, "ghost").await;
+        let (_app, state) = build_test_app_with_state(pool.clone());
+
+        run_maintenance(&state, repo_id).await;
+
+        let (outcome, removed, _freed, detail) = latest_run(&pool, repo_id).await;
+        assert_eq!(outcome, "ok", "{detail:?}");
+        assert_eq!(removed, 0);
+        assert!(
+            !FakeRepo::ran(&borg.calls().await, "delete"),
+            "nothing to delete"
+        );
+        let queued: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM repo_pending_deletions")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(queued, 0);
+    }
+
+    #[tokio::test]
+    #[ignore = "requires DATABASE_URL"]
+    async fn maintenance_finishes_even_when_refreshing_the_archive_list_fails() {
+        let _borg_lock = borg_binary_lock().await;
+        let _keys = KeyDir::new().await;
+        let pool = setup_pool().await;
+        clean_tables(&pool).await;
+        let repo_id = append_only_repo(&pool, "ao-refresh", &["a-1"]).await;
+        let borg = FakeRepo::new(&["a-1"]).await;
+        // Only the refresh afterwards lists with a lock wait of a minute.
+        tokio::fs::write(borg.dir.path().join("refresh_exit"), "2")
+            .await
+            .unwrap();
+        let (_app, state) = build_test_app_with_state(pool.clone());
+
+        run_maintenance(&state, repo_id).await;
+
+        let (outcome, _removed, _freed, detail) = latest_run(&pool, repo_id).await;
+        assert_eq!(outcome, "ok", "{detail:?}");
+        // The refresh did fail: it listed, and never got as far as reading
+        // an archive.
+        let calls = borg.calls().await;
+        assert!(
+            calls
+                .iter()
+                .any(|c| c.starts_with("list ") && c.contains("--lock-wait 60 ")),
+            "{calls:?}"
+        );
+        assert!(!FakeRepo::ran(&calls, "info"), "{calls:?}");
+    }
+
+    #[tokio::test]
+    #[ignore = "requires DATABASE_URL"]
+    async fn an_archive_maintenance_deleted_is_forgotten_even_if_the_run_dies_right_after() {
+        let _borg_lock = borg_binary_lock().await;
+        let _keys = KeyDir::new().await;
+        let pool = setup_pool().await;
+        clean_tables(&pool).await;
+        let repo_id = append_only_repo(&pool, "ao-crash", &["keep", "drop"]).await;
+        let borg = FakeRepo::new(&["keep", "drop"]).await;
+        queue_deletion(&pool, repo_id, "drop").await;
+        // Whatever lists the repository after the delete fails, as if the
+        // server went down at that moment.
+        tokio::fs::write(borg.dir.path().join("fail_lists_after_delete"), "")
+            .await
+            .unwrap();
+        let (_app, state) = build_test_app_with_state(pool.clone());
+
+        run_maintenance(&state, repo_id).await;
+
+        assert_eq!(borg.archives().await, vec!["keep"]);
+        assert_eq!(
+            report_names(&pool, repo_id).await,
+            vec!["keep"],
+            "no record is left of an archive Assimilate deleted itself"
+        );
+        // So the next run does not mistake it for one that vanished.
+        let (outcome, _removed, _freed, detail) = latest_run(&pool, repo_id).await;
+        assert_ne!(outcome, "stopped", "{detail:?}");
+    }
+
+    #[tokio::test]
+    #[ignore = "requires DATABASE_URL"]
+    async fn a_borg_failure_that_names_a_cause_keeps_that_cause() {
+        let _borg_lock = borg_binary_lock().await;
+        let _keys = KeyDir::new().await;
+        let pool = setup_pool().await;
+        clean_tables(&pool).await;
+        let repo_id = append_only_repo(&pool, "ao-lock", &["a-1"]).await;
+        let borg = FakeRepo::new(&["a-1"]).await;
+        queue_deletion(&pool, repo_id, "a-1").await;
+        tokio::fs::write(borg.dir.path().join("delete_exit"), "1")
+            .await
+            .unwrap();
+        // Exit code 1 is a warning to maintenance, so use a failure code with
+        // a message that borg classifies as a connection problem.
+        tokio::fs::write(borg.dir.path().join("delete_exit"), "2")
+            .await
+            .unwrap();
+        tokio::fs::write(
+            borg.dir.path().join("delete_stderr"),
+            "ssh: connect to host backup.lan port 22: Connection refused\n",
+        )
+        .await
+        .unwrap();
+        let (_app, state) = build_test_app_with_state(pool.clone());
+
+        run_maintenance(&state, repo_id).await;
+
+        let (outcome, _removed, _freed, detail) = latest_run(&pool, repo_id).await;
+        assert_eq!(outcome, "failed");
+        assert!(
+            detail.is_some_and(|d| d.contains("SSH connection failed")),
+            "the classified cause is reported as it is"
+        );
+    }
+
+    #[tokio::test]
+    #[ignore = "requires DATABASE_URL"]
+    async fn maintenance_connects_with_the_maintenance_key_and_not_the_ssh_agent() {
+        let _borg_lock = borg_binary_lock().await;
+        let keys = KeyDir::new().await;
+        let pool = setup_pool().await;
+        clean_tables(&pool).await;
+        let repo_id = append_only_repo(&pool, "ao-key", &["a-1"]).await;
+        let borg = FakeRepo::new(&["a-1"]).await;
+        // SAFETY: serialised by the borg binary lock.
+        unsafe { std::env::set_var("SSH_AUTH_SOCK", "/tmp/agent-with-the-restricted-key") };
+        let (_app, state) = build_test_app_with_state(pool.clone());
+
+        run_maintenance(&state, repo_id).await;
+
+        // SAFETY: as above.
+        unsafe { std::env::remove_var("SSH_AUTH_SOCK") };
+        let env_log = borg.read("env.log").await;
+        let lines: Vec<&str> = env_log.lines().collect();
+        // The runs's own commands: the look at the repository first, then
+        // everything that writes. The archive-list refresh afterwards only
+        // reads, and uses the agents' key like every other sync.
+        let privileged: Vec<&&str> = lines
+            .iter()
+            .enumerate()
+            .filter(|(i, line)| {
+                *i == 0
+                    || ["check ", "delete ", "prune ", "compact "]
+                        .iter()
+                        .any(|s| line.starts_with(s))
+            })
+            .map(|(_, line)| line)
+            .collect();
+        assert!(privileged.len() >= 3, "{lines:?}");
+        for line in privileged {
+            assert!(line.contains("id_ed25519_maintenance"), "{line}");
+            assert!(line.contains("IdentitiesOnly=yes"), "{line}");
+            assert!(line.contains("IdentityAgent=none"), "{line}");
+            assert!(line.contains("SSH_AUTH_SOCK=unset"), "{line}");
+        }
+        assert!(
+            tokio::fs::try_exists(keys.dir.path().join("id_ed25519_maintenance"))
+                .await
+                .unwrap()
+        );
+    }
+
+    #[tokio::test]
+    #[ignore = "requires DATABASE_URL"]
+    async fn maintenance_does_not_prune_when_the_check_fails() {
+        let _borg_lock = borg_binary_lock().await;
+        let _keys = KeyDir::new().await;
+        let pool = setup_pool().await;
+        clean_tables(&pool).await;
+        let repo_id = append_only_repo(&pool, "ao-check", &["a-1"]).await;
+        let borg = FakeRepo::new(&["a-1"]).await;
+        tokio::fs::write(borg.dir.path().join("check_exit"), "2")
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO repo_pending_deletions (repo_id, archive_name) VALUES ($1, 'a-1')",
+        )
+        .bind(repo_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+        let (_app, state) = build_test_app_with_state(pool.clone());
+
+        run_maintenance(&state, repo_id).await;
+
+        let calls = borg.calls().await;
+        for writing in ["delete", "prune", "compact"] {
+            assert!(
+                !FakeRepo::ran(&calls, writing),
+                "{writing} ran after a failed check"
+            );
+        }
+        let (outcome, _, _, detail) = latest_run(&pool, repo_id).await;
+        assert_eq!(outcome, "check_failed");
+        assert!(detail.unwrap().contains("fake check failure"));
+        let stopped: Option<chrono::DateTime<chrono::Utc>> =
+            sqlx::query_scalar("SELECT stopped_at FROM repo_maintenance WHERE repo_id = $1")
+                .bind(repo_id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert!(
+            stopped.is_none(),
+            "a failed check does not stop the schedule"
+        );
+    }
+
+    #[tokio::test]
+    #[ignore = "requires DATABASE_URL"]
+    async fn maintenance_skips_the_check_when_it_is_off() {
+        let _borg_lock = borg_binary_lock().await;
+        let _keys = KeyDir::new().await;
+        let pool = setup_pool().await;
+        clean_tables(&pool).await;
+        let repo_id = append_only_repo(&pool, "ao-nocheck", &["a-1"]).await;
+        sqlx::query("UPDATE repo_maintenance SET check_before_prune = false WHERE repo_id = $1")
+            .bind(repo_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let borg = FakeRepo::new(&["a-1"]).await;
+        let (_app, state) = build_test_app_with_state(pool.clone());
+
+        run_maintenance(&state, repo_id).await;
+
+        let calls = borg.calls().await;
+        assert!(!FakeRepo::ran(&calls, "check"), "{calls:?}");
+        assert!(FakeRepo::ran(&calls, "compact"), "{calls:?}");
+    }
+
+    #[tokio::test]
+    #[ignore = "requires DATABASE_URL"]
+    async fn maintenance_refuses_an_empty_listing_for_a_repository_with_records() {
+        let _borg_lock = borg_binary_lock().await;
+        let _keys = KeyDir::new().await;
+        let pool = setup_pool().await;
+        clean_tables(&pool).await;
+        let repo_id = append_only_repo(&pool, "ao-empty", &["a-1"]).await;
+        let borg = FakeRepo::new(&[]).await;
+        let (_app, state) = build_test_app_with_state(pool.clone());
+
+        run_maintenance(&state, repo_id).await;
+
+        let calls = borg.calls().await;
+        assert!(
+            !FakeRepo::ran(&calls, "prune") && !FakeRepo::ran(&calls, "compact"),
+            "{calls:?}"
+        );
+        let (outcome, _, _, detail) = latest_run(&pool, repo_id).await;
+        assert_eq!(outcome, "failed");
+        assert!(detail.unwrap().contains("refusing"));
+        assert_eq!(report_names(&pool, repo_id).await, vec!["a-1"]);
+    }
+
+    #[tokio::test]
+    #[ignore = "requires DATABASE_URL"]
+    async fn a_maintenance_run_that_did_not_end_ok_sends_an_alert() {
+        let _borg_lock = borg_binary_lock().await;
+        let _keys = KeyDir::new().await;
+        let pool = setup_pool().await;
+        clean_tables(&pool).await;
+        let repo_id = append_only_repo(&pool, "ao-alert", &["a-1"]).await;
+        let _borg = FakeRepo::new(&[]).await;
+        let (_app, state) = build_test_app_with_state(pool.clone());
+        let channel_id: i64 = sqlx::query_scalar(
+            "INSERT INTO notification_channels (name, channel_type, config) VALUES ('hook', \
+             'webhook', $1) RETURNING id",
+        )
+        .bind(json!({ "url": "https://hooks.example.com/notify" }))
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO notification_rules (channel_id, event_type) VALUES ($1, 'check_failed')",
+        )
+        .bind(channel_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        // The run ends `failed`: borg lists nothing for a repository with records.
+        run_maintenance(&state, repo_id).await;
+
+        // Delivery is attempted in the background; whether the webhook answers
+        // does not matter, the attempt is recorded either way.
+        let mut payload = None;
+        for _ in 0..300 {
+            payload = sqlx::query_scalar::<_, Value>(
+                "SELECT payload FROM notification_deliveries WHERE channel_id = $1 AND event_type \
+                 = 'check_failed'",
+            )
+            .bind(channel_id)
+            .fetch_optional(&pool)
+            .await
+            .unwrap();
+            if payload.is_some() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+        let payload = payload.expect("the alert was sent to the channel");
+        assert_eq!(at(&payload, "/repo_name"), "ao-alert");
+        assert!(
+            at(&payload, "/error_message")
+                .as_str()
+                .unwrap()
+                .starts_with("maintenance failed:"),
+            "{payload}"
+        );
+    }
+
+    #[tokio::test]
+    #[ignore = "requires DATABASE_URL"]
+    async fn the_append_only_endpoints_refuse_a_user_who_is_not_an_admin() {
+        let pool = setup_pool().await;
+        clean_tables(&pool).await;
+        create_test_user_and_session(&pool).await;
+        let repo_id = append_only_repo(&pool, "ao-guarded", &["a-1"]).await;
+        let viewer = insert_viewer_only_session(&pool, "ao-viewer").await;
+        let (mut app, _state) = build_test_app_with_state(pool.clone());
+
+        let base = format!("/api/repos/{repo_id}");
+        let calls = [
+            ("GET", format!("{base}/append-only"), None),
+            (
+                "PUT",
+                format!("{base}/append-only"),
+                Some(json!({ "enabled": false })),
+            ),
+            ("POST", format!("{base}/append-only/check"), None),
+            (
+                "POST",
+                format!("{base}/append-only/reapply"),
+                Some(json!({ "password": null })),
+            ),
+            (
+                "PUT",
+                format!("{base}/append-only/maintenance"),
+                Some(json!({ "cron_expression": "30 4 * * 0", "check_before_prune": true })),
+            ),
+            ("POST", format!("{base}/append-only/maintenance/run"), None),
+            (
+                "POST",
+                format!("{base}/append-only/maintenance/resume"),
+                None,
+            ),
+            ("DELETE", format!("{base}/archives/a-1/deletion"), None),
+        ];
+        for (method, uri, body) in calls {
+            let request = Request::builder()
+                .uri(&uri)
+                .method(method)
+                .header("content-type", "application/json")
+                .header("cookie", format!("session={viewer}"))
+                .body(body.map_or_else(Body::empty, |value| {
+                    Body::from(serde_json::to_vec(&value).unwrap())
+                }))
+                .unwrap();
+            let resp = oneshot(&mut app, request).await;
+            assert_eq!(resp.status(), StatusCode::FORBIDDEN, "{method} {uri}");
+        }
+
+        let logins: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM append_only_logins")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(logins, 1, "a refused request changed nothing");
+    }
+
+    #[tokio::test]
+    #[ignore = "requires DATABASE_URL"]
+    async fn a_rolled_back_repository_is_no_longer_vanished() {
+        let _borg_lock = borg_binary_lock().await;
+        let _keys = KeyDir::new().await;
+        let pool = setup_pool().await;
+        clean_tables(&pool).await;
+        let repo_id = append_only_repo(&pool, "ao-rollback", &["a-1", "a-2"]).await;
+        sqlx::query(
+            "INSERT INTO repo_vanished_archives (repo_id, archive_name) VALUES ($1, 'a-2')",
+        )
+        .bind(repo_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+        // The admin rolled the repository back on the host: a-2 is listed again.
+        let borg = FakeRepo::new(&["a-1", "a-2"]).await;
+        let (_app, state) = build_test_app_with_state(pool.clone());
+
+        run_maintenance(&state, repo_id).await;
+
+        let (outcome, _, _, detail) = latest_run(&pool, repo_id).await;
+        assert_eq!(outcome, "ok", "{detail:?}");
+        assert!(FakeRepo::ran(&borg.calls().await, "compact"));
+    }
+
+    #[tokio::test]
+    #[ignore = "requires DATABASE_URL"]
+    async fn deleting_an_archive_queues_it_on_an_append_only_repository() {
+        let _borg_lock = borg_binary_lock().await;
+        let _keys = KeyDir::new().await;
+        let pool = setup_pool().await;
+        clean_tables(&pool).await;
+        create_test_user_and_session(&pool).await;
+        let repo_id = append_only_repo(&pool, "ao-delete", &["keep", "drop"]).await;
+        let borg = FakeRepo::new(&["keep", "drop"]).await;
+        let (mut app, _state) = build_test_app_with_state(pool.clone());
+
+        let resp = oneshot(
+            &mut app,
+            delete_request(&format!("/api/repos/{repo_id}/archives/drop")),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::ACCEPTED);
+        // The answer says it was queued, so a client that guessed otherwise can
+        // correct itself.
+        let body = body_json(resp).await;
+        assert_eq!(body.get("queued"), Some(&json!(true)), "{body}");
+
+        assert_eq!(
+            borg.calls().await,
+            Vec::<String>::new(),
+            "no borg command runs when a deletion is queued"
+        );
+        assert_eq!(report_names(&pool, repo_id).await, vec!["drop", "keep"]);
+        let queued: Vec<(String, Option<String>)> = sqlx::query_as(
+            "SELECT archive_name, requested_by FROM repo_pending_deletions WHERE repo_id = $1",
+        )
+        .bind(repo_id)
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            queued,
+            vec![("drop".to_owned(), Some("integration-admin".to_owned()))]
+        );
+
+        // Deleting it again changes nothing.
+        let resp = oneshot(
+            &mut app,
+            delete_request(&format!("/api/repos/{repo_id}/archives/drop")),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::ACCEPTED);
+        let count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM repo_pending_deletions WHERE repo_id = $1")
+                .bind(repo_id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(count, 1);
+
+        // An archive Assimilate has no record of cannot be queued.
+        let resp = oneshot(
+            &mut app,
+            delete_request(&format!("/api/repos/{repo_id}/archives/nope")),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    #[ignore = "requires DATABASE_URL"]
+    async fn a_deletion_waits_for_the_login_and_is_refused_once_append_only_is_off() {
+        let _borg_lock = borg_binary_lock().await;
+        let _keys = KeyDir::new().await;
+        let pool = setup_pool().await;
+        clean_tables(&pool).await;
+        create_test_user_and_session(&pool).await;
+        let repo_id = append_only_repo(&pool, "ao-race", &["keep", "drop"]).await;
+        let (app, _state) = build_test_app_with_state(pool.clone());
+
+        let (host, user): (String, String) = sqlx::query_as(
+            "SELECT h.ssh_host, r.ssh_user FROM repos r JOIN repo_hosts h ON h.id = \
+             r.repo_host_id WHERE r.id = $1",
+        )
+        .bind(repo_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+        // Turning append-only off holds the login while the request waits.
+        let login = server::ssh::lock_login(&host, &user).await;
+        let mut waiting_app = app.clone();
+        let uri = format!("/api/repos/{repo_id}/archives/drop");
+        let request =
+            tokio::spawn(async move { oneshot(&mut waiting_app, delete_request(&uri)).await });
+        // Let the request get past its own checks, which still see append-only
+        // on, and park at the login's lock. It makes a handful of queries to
+        // get there, so a second is a wide margin even on a slow runner.
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+        assert!(!request.is_finished(), "the request waits for the login");
+        sqlx::query("DELETE FROM append_only_logins")
+            .execute(&pool)
+            .await
+            .unwrap();
+        drop(login);
+        let resp = request.await.unwrap();
+        assert_eq!(resp.status(), StatusCode::CONFLICT);
+        let count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM repo_pending_deletions WHERE repo_id = $1")
+                .bind(repo_id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(count, 0, "nothing is queued with nothing to carry it out");
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore = "requires DATABASE_URL"]
+    async fn a_deletion_is_queued_even_when_the_audit_log_cannot_be_written(pool: PgPool) {
+        let _borg_lock = borg_binary_lock().await;
+        let _keys = KeyDir::new().await;
+        create_test_user_and_session(&pool).await;
+        let repo_id = append_only_repo(&pool, "ao-noaudit", &["drop"]).await;
+        let _borg = FakeRepo::new(&["drop"]).await;
+        sqlx::query("DROP TABLE audit_log")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let (mut app, _state) = build_test_app_with_state(pool.clone());
+
+        let resp = oneshot(
+            &mut app,
+            delete_request(&format!("/api/repos/{repo_id}/archives/drop")),
+        )
+        .await;
+
+        assert_eq!(resp.status(), StatusCode::ACCEPTED);
+        let queued: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM repo_pending_deletions WHERE repo_id = $1")
+                .bind(repo_id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(queued, 1);
+    }
+
+    #[tokio::test]
+    #[ignore = "requires DATABASE_URL"]
+    async fn the_privileged_environment_of_an_ordinary_repository_is_the_ordinary_one() {
+        let pool = setup_pool().await;
+        clean_tables(&pool).await;
+        let repo_id = insert_test_repo(&pool, "plain-env").await;
+        let key = shared::crypto::derive_key(b"test-secret-key-for-integration").unwrap();
+
+        let privileged = server::api::archives::get_repo_env_privileged(&pool, &key, repo_id)
+            .await
+            .unwrap();
+        let ordinary = server::api::archives::get_repo_env(&pool, &key, repo_id)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            privileged, ordinary,
+            "no maintenance key for a repository that is not append-only"
+        );
+    }
+
+    #[tokio::test]
+    #[ignore = "requires DATABASE_URL"]
+    async fn a_queued_deletion_can_be_cancelled_once() {
+        let _borg_lock = borg_binary_lock().await;
+        let _keys = KeyDir::new().await;
+        let pool = setup_pool().await;
+        clean_tables(&pool).await;
+        create_test_user_and_session(&pool).await;
+        let repo_id = append_only_repo(&pool, "ao-cancel", &["drop"]).await;
+        sqlx::query(
+            "INSERT INTO repo_pending_deletions (repo_id, archive_name) VALUES ($1, 'drop')",
+        )
+        .bind(repo_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+        let (mut app, _state) = build_test_app_with_state(pool.clone());
+
+        let uri = format!("/api/repos/{repo_id}/archives/drop/deletion");
+        let resp = oneshot(&mut app, delete_request(&uri)).await;
+        assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+        let resp = oneshot(&mut app, delete_request(&uri)).await;
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    #[ignore = "requires DATABASE_URL"]
+    async fn a_deletion_cannot_be_taken_back_while_the_repository_is_busy() {
+        let _borg_lock = borg_binary_lock().await;
+        let _keys = KeyDir::new().await;
+        let pool = setup_pool().await;
+        clean_tables(&pool).await;
+        create_test_user_and_session(&pool).await;
+        let repo_id = append_only_repo(&pool, "ao-busy", &["drop"]).await;
+        queue_deletion(&pool, repo_id, "drop").await;
+        let (mut app, state) = build_test_app_with_state(pool.clone());
+        let uri = format!("/api/repos/{repo_id}/archives/drop/deletion");
+
+        // Maintenance holds the repository's lock while it works through the
+        // queue, so keeping an archive then would say "kept" about one the run
+        // is about to delete.
+        let maintenance = state.repo_lock.acquire(repo_id).await;
+        let resp = oneshot(&mut app, delete_request(&uri)).await;
+        assert_eq!(resp.status(), StatusCode::CONFLICT);
+        let queued: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM repo_pending_deletions WHERE repo_id = $1")
+                .bind(repo_id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(queued, 1, "the deletion is still queued");
+
+        drop(maintenance);
+        let resp = oneshot(&mut app, delete_request(&uri)).await;
+        assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+    }
+
+    #[tokio::test]
+    #[ignore = "requires DATABASE_URL"]
+    async fn an_archive_whose_deletion_is_queued_is_not_taken_for_one_that_vanished() {
+        let _borg_lock = borg_binary_lock().await;
+        let _keys = KeyDir::new().await;
+        let pool = setup_pool().await;
+        clean_tables(&pool).await;
+        // borg no longer lists a-2, but its record and its queued deletion are
+        // both still here: what is left behind when a run died after the
+        // delete and before forgetting it.
+        let repo_id = append_only_repo(&pool, "ao-leftover", &["a-1", "a-2"]).await;
+        let borg = FakeRepo::new(&["a-1"]).await;
+        queue_deletion(&pool, repo_id, "a-2").await;
+        let (_app, state) = build_test_app_with_state(pool.clone());
+
+        run_maintenance(&state, repo_id).await;
+
+        let (outcome, _removed, _freed, detail) = latest_run(&pool, repo_id).await;
+        assert_eq!(outcome, "ok", "{detail:?}");
+        assert_eq!(report_names(&pool, repo_id).await, vec!["a-1"]);
+        assert!(!FakeRepo::ran(&borg.calls().await, "delete"));
+        assert_eq!(vanished(&pool, repo_id).await, Vec::<String>::new());
+        let queued: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM repo_pending_deletions")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(queued, 0);
+    }
+
+    #[tokio::test]
+    #[ignore = "requires DATABASE_URL"]
+    async fn the_status_lists_keys_siblings_pending_deletions_and_runs() {
+        let _borg_lock = borg_binary_lock().await;
+        let _keys = KeyDir::new().await;
+        let pool = setup_pool().await;
+        clean_tables(&pool).await;
+        create_test_user_and_session(&pool).await;
+        let repo_id = append_only_repo(&pool, "ao-status", &["drop"]).await;
+        let sibling = insert_test_repo(&pool, "ao-status-sibling").await;
+        sqlx::query(
+            "INSERT INTO repo_pending_deletions (repo_id, archive_name, requested_by) VALUES ($1, \
+             'drop', 'admin')",
+        )
+        .bind(repo_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO repo_maintenance_runs (repo_id, outcome, archives_removed) VALUES ($1, \
+             'ok', 3)",
+        )
+        .bind(repo_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+        let (mut app, _state) = build_test_app_with_state(pool.clone());
+
+        let resp = oneshot(
+            &mut app,
+            get_request(&format!("/api/repos/{repo_id}/append-only")),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = body_json(resp).await;
+
+        assert_eq!(at(&body, "/enabled"), true);
+        assert_eq!(at(&body, "/login/ssh_user"), "backup");
+        assert_eq!(at(&body, "/login/sibling_repos/0/id"), sibling);
+        assert!(
+            at(&body, "/backup_key/fingerprint")
+                .as_str()
+                .unwrap()
+                .starts_with("SHA256:")
+        );
+        let line_value = at(&body, "/backup_key/authorized_keys_line");
+        let line = line_value.as_str().unwrap();
+        assert!(
+            line.starts_with("command=\"borg serve --append-only"),
+            "{line}"
+        );
+        assert!(
+            line.contains("--restrict-to-repository '/backups/test'"),
+            "{line}"
+        );
+        assert!(
+            at(&body, "/maintenance_key").is_null(),
+            "the key is generated when append-only is turned on"
+        );
+        assert_eq!(at(&body, "/maintenance/check_before_prune"), true);
+        assert_eq!(at(&body, "/pending_deletions/0/archive_name"), "drop");
+        assert_eq!(at(&body, "/pending_deletions/0/requested_by"), "admin");
+        assert_eq!(at(&body, "/recent_runs/0/outcome"), "ok");
+        assert_eq!(at(&body, "/recent_runs/0/archives_removed"), 3);
+        assert!(at(&body, "/setup_failure").is_null());
+    }
+
+    #[tokio::test]
+    #[ignore = "requires DATABASE_URL"]
+    async fn the_status_of_a_repository_that_is_not_append_only_has_no_maintenance() {
+        let _borg_lock = borg_binary_lock().await;
+        let _keys = KeyDir::new().await;
+        let pool = setup_pool().await;
+        clean_tables(&pool).await;
+        create_test_user_and_session(&pool).await;
+        let repo_id = insert_test_repo(&pool, "plain").await;
+        let (mut app, _state) = build_test_app_with_state(pool.clone());
+
+        let resp = oneshot(
+            &mut app,
+            get_request(&format!("/api/repos/{repo_id}/append-only")),
+        )
+        .await;
+        let body = body_json(resp).await;
+        assert_eq!(at(&body, "/enabled"), false);
+        assert!(at(&body, "/maintenance").is_null());
+        assert!(at(&body, "/check").is_null());
+    }
+
+    #[tokio::test]
+    #[ignore = "requires DATABASE_URL"]
+    async fn turning_it_on_for_an_unreachable_host_reports_the_failure_and_changes_nothing() {
+        let _borg_lock = borg_binary_lock().await;
+        let keys = KeyDir::new().await;
+        let pool = setup_pool().await;
+        clean_tables(&pool).await;
+        create_test_user_and_session(&pool).await;
+        let repo_id = insert_test_repo(&pool, "unreachable").await;
+        sqlx::query("UPDATE repo_hosts SET ssh_host = '127.0.0.1', ssh_port = 1")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let (mut app, _state) = build_test_app_with_state(pool.clone());
+
+        let resp = oneshot(
+            &mut app,
+            json_request(
+                "PUT",
+                &format!("/api/repos/{repo_id}/append-only"),
+                Some(json!({"enabled": true})),
+            ),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = body_json(resp).await;
+        assert_eq!(at(&body, "/enabled"), false);
+        assert_eq!(at(&body, "/setup_failure/needs_password"), false);
+        assert_ne!(at(&body, "/setup_failure/message"), json!(""));
+        assert!(at(&body, "/setup_failure/message").is_string());
+        let logins: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM append_only_logins")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(logins, 0);
+        // The maintenance key was made, ready for the retry.
+        assert!(
+            tokio::fs::try_exists(keys.dir.path().join("id_ed25519_maintenance"))
+                .await
+                .unwrap()
+        );
+    }
+
+    #[tokio::test]
+    #[ignore = "requires DATABASE_URL"]
+    async fn append_only_cannot_be_turned_off_while_deletions_are_queued() {
+        let _borg_lock = borg_binary_lock().await;
+        let _keys = KeyDir::new().await;
+        let pool = setup_pool().await;
+        clean_tables(&pool).await;
+        create_test_user_and_session(&pool).await;
+        let repo_id = append_only_repo(&pool, "ao-off", &["drop"]).await;
+        sqlx::query(
+            "INSERT INTO repo_pending_deletions (repo_id, archive_name) VALUES ($1, 'drop')",
+        )
+        .bind(repo_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+        let (mut app, _state) = build_test_app_with_state(pool.clone());
+
+        let resp = oneshot(
+            &mut app,
+            json_request(
+                "PUT",
+                &format!("/api/repos/{repo_id}/append-only"),
+                Some(json!({"enabled": false})),
+            ),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::CONFLICT);
+    }
+
+    #[tokio::test]
+    #[ignore = "requires DATABASE_URL"]
+    async fn reapply_and_maintenance_settings_need_append_only_to_be_on() {
+        let _borg_lock = borg_binary_lock().await;
+        let _keys = KeyDir::new().await;
+        let pool = setup_pool().await;
+        clean_tables(&pool).await;
+        create_test_user_and_session(&pool).await;
+        let repo_id = insert_test_repo(&pool, "plain-2").await;
+        let (mut app, _state) = build_test_app_with_state(pool.clone());
+
+        for (method, path, body) in [
+            ("POST", "reapply", json!({})),
+            (
+                "PUT",
+                "maintenance",
+                json!({"cron_expression": "0 3 * * *", "check_before_prune": true}),
+            ),
+            ("POST", "maintenance/run", json!({})),
+            ("POST", "maintenance/resume", json!({})),
+        ] {
+            let resp = oneshot(
+                &mut app,
+                json_request(
+                    method,
+                    &format!("/api/repos/{repo_id}/append-only/{path}"),
+                    Some(body),
+                ),
+            )
+            .await;
+            assert_eq!(resp.status(), StatusCode::CONFLICT, "{method} {path}");
+        }
+    }
+
+    #[tokio::test]
+    #[ignore = "requires DATABASE_URL"]
+    async fn the_maintenance_schedule_is_validated_and_moves_the_next_run() {
+        let _borg_lock = borg_binary_lock().await;
+        let _keys = KeyDir::new().await;
+        let pool = setup_pool().await;
+        clean_tables(&pool).await;
+        create_test_user_and_session(&pool).await;
+        let repo_id = append_only_repo(&pool, "ao-cron", &[]).await;
+        let (mut app, _state) = build_test_app_with_state(pool.clone());
+        let uri = format!("/api/repos/{repo_id}/append-only/maintenance");
+
+        let resp = oneshot(
+            &mut app,
+            json_request(
+                "PUT",
+                &uri,
+                Some(json!({"cron_expression": "not cron", "check_before_prune": true})),
+            ),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+
+        let resp = oneshot(
+            &mut app,
+            json_request(
+                "PUT",
+                &uri,
+                Some(json!({"cron_expression": "15 3 * * *", "check_before_prune": false})),
+            ),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = body_json(resp).await;
+        assert_eq!(at(&body, "/maintenance/cron_expression"), "15 3 * * *");
+        assert_eq!(at(&body, "/maintenance/check_before_prune"), false);
+        assert!(at(&body, "/maintenance/next_run_at").is_string());
+    }
+
+    #[tokio::test]
+    #[ignore = "requires DATABASE_URL"]
+    async fn resuming_forgets_the_vanished_archives_and_schedules_the_next_run() {
+        let _borg_lock = borg_binary_lock().await;
+        let _keys = KeyDir::new().await;
+        let pool = setup_pool().await;
+        clean_tables(&pool).await;
+        create_test_user_and_session(&pool).await;
+        let repo_id = append_only_repo(&pool, "ao-resume", &["a-1", "a-2"]).await;
+        sqlx::query(
+            "INSERT INTO repo_vanished_archives (repo_id, archive_name) VALUES ($1, 'a-2')",
+        )
+        .bind(repo_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "UPDATE repo_maintenance SET stopped_at = NOW(), next_run_at = NULL WHERE repo_id = $1",
+        )
+        .bind(repo_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+        let (mut app, _state) = build_test_app_with_state(pool.clone());
+
+        let resp = oneshot(
+            &mut app,
+            json_request("GET", &format!("/api/repos/{repo_id}/append-only"), None),
+        )
+        .await;
+        let before = body_json(resp).await;
+        assert_eq!(
+            at(&before, "/maintenance/stopped/vanished_archives/0"),
+            "a-2"
+        );
+        assert!(at(&before, "/maintenance/next_run_at").is_null());
+
+        let resp = oneshot(
+            &mut app,
+            json_request(
+                "POST",
+                &format!("/api/repos/{repo_id}/append-only/maintenance/resume"),
+                Some(json!({})),
+            ),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let after = body_json(resp).await;
+        assert!(at(&after, "/maintenance/stopped").is_null());
+        assert!(at(&after, "/maintenance/next_run_at").is_string());
+        assert_eq!(
+            report_names(&pool, repo_id).await,
+            vec!["a-1"],
+            "the vanished archive's records are gone"
+        );
+    }
+
+    #[tokio::test]
+    #[ignore = "requires DATABASE_URL"]
+    async fn the_repository_list_reports_append_only_and_queued_deletions() {
+        let _borg_lock = borg_binary_lock().await;
+        let _keys = KeyDir::new().await;
+        let pool = setup_pool().await;
+        clean_tables(&pool).await;
+        create_test_user_and_session(&pool).await;
+        let repo_id = append_only_repo(&pool, "ao-list", &["a"]).await;
+        sqlx::query("INSERT INTO repo_pending_deletions (repo_id, archive_name) VALUES ($1, 'a')")
+            .bind(repo_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let (mut app, _state) = build_test_app_with_state(pool.clone());
+
+        let resp = oneshot(&mut app, get_request(&format!("/api/repos/{repo_id}"))).await;
+        let body = body_json(resp).await;
+        assert_eq!(at(&body, "/append_only/maintenance_stopped"), false);
+        assert_eq!(at(&body, "/append_only/pending_deletion_count"), 1);
+
+        // A repository on a login that is not append-only has no summary.
+        let plain_id = insert_test_repo(&pool, "ao-list-plain").await;
+        sqlx::query("UPDATE repos SET ssh_user = 'other' WHERE id = $1")
+            .bind(plain_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let resp = oneshot(&mut app, get_request(&format!("/api/repos/{plain_id}"))).await;
+        assert!(
+            body_json(resp)
+                .await
+                .get("append_only")
+                .is_some_and(Value::is_null)
+        );
+    }
+
+    async fn vanished(pool: &PgPool, repo_id: i64) -> Vec<String> {
+        sqlx::query_scalar(
+            "SELECT archive_name FROM repo_vanished_archives WHERE repo_id = $1 ORDER BY \
+             archive_name",
+        )
+        .bind(repo_id)
+        .fetch_all(pool)
+        .await
+        .unwrap()
+    }
+
+    #[tokio::test]
+    #[ignore = "requires DATABASE_URL"]
+    async fn a_sync_keeps_the_records_of_archives_gone_from_an_append_only_repository() {
+        let _borg_lock = borg_binary_lock().await;
+        let _keys = KeyDir::new().await;
+        let pool = setup_pool().await;
+        clean_tables(&pool).await;
+        let repo_id = append_only_repo(&pool, "ao-sync", &["a-1", "a-2"]).await;
+        let borg = FakeRepo::new(&["a-1"]).await;
+        let (_app, state) = build_test_app_with_state(pool.clone());
+
+        server::api::repos::sync_new_archives(&state, repo_id, None)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            report_names(&pool, repo_id).await,
+            vec!["a-1", "a-2"],
+            "records are kept"
+        );
+        assert_eq!(vanished(&pool, repo_id).await, vec!["a-2"]);
+
+        // The admin rolled the repository back on the host: a-2 is listed again.
+        tokio::fs::write(borg.dir.path().join("archives"), "a-1\na-2\n")
+            .await
+            .unwrap();
+        server::api::repos::sync_new_archives(&state, repo_id, None)
+            .await
+            .unwrap();
+        assert_eq!(vanished(&pool, repo_id).await, Vec::<String>::new());
+    }
+
+    #[tokio::test]
+    #[ignore = "requires DATABASE_URL"]
+    async fn a_sync_does_not_mark_an_archive_whose_deletion_is_still_queued() {
+        let _borg_lock = borg_binary_lock().await;
+        let _keys = KeyDir::new().await;
+        let pool = setup_pool().await;
+        clean_tables(&pool).await;
+        let repo_id = append_only_repo(&pool, "ao-sync-queued", &["a-1", "a-2"]).await;
+        // Maintenance deleted a-2, then the server restarted before it forgot
+        // the record and the queued deletion.
+        queue_deletion(&pool, repo_id, "a-2").await;
+        let _borg = FakeRepo::new(&["a-1"]).await;
+        let (_app, state) = build_test_app_with_state(pool.clone());
+
+        server::api::repos::sync_new_archives(&state, repo_id, None)
+            .await
+            .unwrap();
+
+        assert_eq!(vanished(&pool, repo_id).await, Vec::<String>::new());
+    }
+
+    #[tokio::test]
+    #[ignore = "requires DATABASE_URL"]
+    async fn a_sync_still_drops_the_records_of_archives_pruned_from_an_ordinary_repository() {
+        let _borg_lock = borg_binary_lock().await;
+        let _keys = KeyDir::new().await;
+        let pool = setup_pool().await;
+        clean_tables(&pool).await;
+        let repo_id = append_only_repo(&pool, "plain-sync", &["a-1", "a-2"]).await;
+        sqlx::query("DELETE FROM append_only_logins")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let _borg = FakeRepo::new(&["a-1"]).await;
+        let (_app, state) = build_test_app_with_state(pool.clone());
+
+        server::api::repos::sync_new_archives(&state, repo_id, None)
+            .await
+            .unwrap();
+
+        assert_eq!(report_names(&pool, repo_id).await, vec!["a-1"]);
+        assert_eq!(vanished(&pool, repo_id).await, Vec::<String>::new());
+    }
+
+    #[tokio::test]
+    #[ignore = "requires DATABASE_URL"]
+    async fn the_archive_a_backup_just_wrote_is_never_counted_as_vanished() {
+        let _borg_lock = borg_binary_lock().await;
+        let _keys = KeyDir::new().await;
+        let pool = setup_pool().await;
+        clean_tables(&pool).await;
+        let repo_id = append_only_repo(&pool, "ao-just-written", &["a-1", "a-new"]).await;
+        let _borg = FakeRepo::new(&["a-1"]).await;
+        let (_app, state) = build_test_app_with_state(pool.clone());
+
+        // borg does not list it yet, but the run reported writing it.
+        server::api::repos::sync_new_archives(&state, repo_id, Some("a-new"))
+            .await
+            .unwrap();
+
+        assert_eq!(vanished(&pool, repo_id).await, Vec::<String>::new());
+    }
+
+    #[tokio::test]
+    #[ignore = "requires DATABASE_URL"]
+    async fn an_agent_is_told_when_its_repository_is_append_only() {
+        let _borg_lock = borg_binary_lock().await;
+        let _keys = KeyDir::new().await;
+        let pool = setup_pool().await;
+        clean_tables(&pool).await;
+        let repo_id = append_only_repo(&pool, "ao-config", &[]).await;
+        let plain_id = insert_test_repo(&pool, "plain-config").await;
+        sqlx::query("UPDATE repos SET ssh_user = 'other' WHERE id = $1")
+            .bind(plain_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let agent_id: i64 =
+            sqlx::query_scalar("SELECT id FROM agents WHERE hostname = 'ao-config-host'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        for (name, id) in [("ao", repo_id), ("plain", plain_id)] {
+            let schedule_id: i64 = sqlx::query_scalar(
+                "INSERT INTO schedules (repo_id, name) VALUES ($1, $2) RETURNING id",
+            )
+            .bind(id)
+            .bind(name)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+            sqlx::query("INSERT INTO schedule_repos (schedule_id, repo_id) VALUES ($1, $2)")
+                .bind(schedule_id)
+                .bind(id)
+                .execute(&pool)
+                .await
+                .unwrap();
+            sqlx::query("INSERT INTO schedule_targets (schedule_id, agent_id) VALUES ($1, $2)")
+                .bind(schedule_id)
+                .bind(agent_id)
+                .execute(&pool)
+                .await
+                .unwrap();
+        }
+        sqlx::query("UPDATE repo_hosts SET ssh_host_key = 'ssh-ed25519 AAAA'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let encryption_key =
+            shared::crypto::derive_key(b"test-secret-key-for-integration").unwrap();
+
+        let config = server::config_assembler::assemble_config(&pool, &encryption_key, agent_id)
+            .await
+            .unwrap();
+
+        let append_only_of = |name: &str| {
+            config
+                .repos
+                .iter()
+                .find(|r| r.name == name)
+                .unwrap_or_else(|| panic!("{name} missing from the config"))
+                .append_only
+        };
+        assert!(append_only_of("ao-config"));
+        assert!(!append_only_of("plain-config"));
     }
 }

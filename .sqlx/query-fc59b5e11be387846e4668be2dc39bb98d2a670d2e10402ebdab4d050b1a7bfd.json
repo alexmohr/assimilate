@@ -1,0 +1,34 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT archive_name, requested_at, requested_by FROM repo_pending_deletions\n         WHERE repo_id = $1 ORDER BY requested_at, archive_name",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "archive_name",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 1,
+        "name": "requested_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 2,
+        "name": "requested_by",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      true
+    ]
+  },
+  "hash": "fc59b5e11be387846e4668be2dc39bb98d2a670d2e10402ebdab4d050b1a7bfd"
+}

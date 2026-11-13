@@ -90,6 +90,9 @@ impl UiBroadcast {
             ServerToUi::BackupCompleted { report, .. } => {
                 self.clear_active_backup(report.repo_id.0);
             }
+            ServerToUi::BackupStopped { repo_id, .. } => {
+                self.clear_active_backup(*repo_id);
+            }
             ServerToUi::BackupLog {
                 hostname,
                 schedule_id,
@@ -151,6 +154,21 @@ impl UiBroadcast {
         if let Ok(mut map) = self.active_backups.write() {
             map.insert(snapshot.repo_id, snapshot);
         }
+    }
+
+    /// Announce every backup still recorded as active as stopped, which also
+    /// clears it - for the system reset, which cancels them all at once.
+    pub fn stop_all_active_backups(&self) {
+        self.current_active_backups()
+            .into_iter()
+            .for_each(|backup| {
+                self.send(ServerToUi::BackupStopped {
+                    hostname: backup.hostname,
+                    target_name: backup.target_name,
+                    repo_id: backup.repo_id,
+                    schedule_id: backup.schedule_id,
+                });
+            });
     }
 
     /// Remove the active backup entry for a repo.
@@ -228,6 +246,24 @@ mod tests {
             repo_id: 20,
             line: RUNNING_PROGRESS_LINE.to_string(),
         });
+    }
+
+    #[test]
+    fn stopping_all_active_backups_announces_and_clears_each() {
+        let broadcast = UiBroadcast::new();
+        seed_running_backup(&broadcast);
+        let mut rx = broadcast.subscribe();
+
+        broadcast.stop_all_active_backups();
+
+        assert!(broadcast.current_active_backups().is_empty());
+        let stopped = rx.try_recv().unwrap();
+        assert!(matches!(
+            stopped,
+            ServerToUi::BackupStopped { hostname, target_name, repo_id: 20, schedule_id: Some(8) }
+                if hostname == "web-server-01" && target_name == "server-daily"
+        ));
+        assert!(rx.try_recv().is_err());
     }
 
     #[test]

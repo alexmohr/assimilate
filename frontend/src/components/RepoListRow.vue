@@ -48,6 +48,11 @@ const sizeText = computed<string>(() => {
   return quotaUse.value ? `${used} of ${formatBytes(quotaUse.value.ceilingBytes)}` : used
 })
 
+const pendingDeletionsText = computed<string>(() => {
+  const count = props.repo.append_only?.pending_deletion_count ?? 0
+  return `${count} pending deletion${count === 1 ? '' : 's'}`
+})
+
 const archivesText = computed<string>(
   () => `${props.repo.archive_count} archive${props.repo.archive_count === 1 ? '' : 's'}`,
 )
@@ -59,6 +64,7 @@ const DOT_CLASS: Record<BadgeTone, string | null> = {
   info: 'status-dot--info',
   accent: 'status-dot--accent',
   neutral: null,
+  violet: null,
 }
 
 /** The status named in the facts takes a colour only when it is a risk. */
@@ -69,6 +75,7 @@ const STATUS_CLASS: Record<BadgeTone, string | null> = {
   info: null,
   accent: null,
   neutral: null,
+  violet: null,
 }
 
 const BAR_CLASS: Record<BadgeTone, string | null> = {
@@ -78,6 +85,7 @@ const BAR_CLASS: Record<BadgeTone, string | null> = {
   info: null,
   accent: null,
   neutral: 'progress-bar--muted',
+  violet: null,
 }
 
 /** The bar takes the quota's tone, not the row's: an unmatched archive says nothing about space. */
@@ -112,6 +120,22 @@ const barTone = computed<BadgeTone>(() => {
             :class="STATUS_CLASS[status.tone]"
             :title="status.detail ?? undefined"
             >{{ status.label }}</span
+          >
+          <span
+            v-if="repo.append_only"
+            title="Agents can add archives but not delete them"
+            >append-only</span
+          >
+          <span
+            v-if="repo.append_only?.maintenance_stopped"
+            class="repo-row-status--warning"
+            title="Archives vanished that Assimilate did not delete"
+            >maintenance stopped</span
+          >
+          <span
+            v-if="(repo.append_only?.pending_deletion_count ?? 0) > 0"
+            title="Archives queued for deletion at the next maintenance run"
+            >{{ pendingDeletionsText }}</span
           >
           <span>{{ archivesText }}</span>
           <span>{{ lastBackup }}</span>

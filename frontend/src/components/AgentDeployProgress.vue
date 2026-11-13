@@ -97,7 +97,7 @@ const aftermath = computed<string | null>(() => {
     v-if="state === 'running'"
     class="deploy-steps-note"
   >
-    The upgrade runs on the server. You can close this window and it will carry on.
+    The deploy runs on the server. You can close this window and it will carry on.
   </p>
   <p
     v-else-if="aftermath"

@@ -223,43 +223,31 @@ function close(): void {
           version <span class="mono">{{ agentVersion }}</span
           >; this does not change which version is expected to run.
         </p>
-        <ul class="icon-list">
-          <li>
-            <Upload :size="14" />
-            <span
-              >The binary is re-uploaded over SSH and the <code>assimilate-agent</code> service is
-              reinstalled and restarted.</span
-            >
-          </li>
-          <li>
-            <KeyRound :size="14" />
-            <span>A new agent token is generated and written into the service unit.</span>
-          </li>
-          <li>
-            <CheckCircle :size="14" />
-            <span>Schedules, repositories and existing archives are untouched.</span>
-          </li>
-        </ul>
       </template>
-      <template v-else-if="isUpgrade">
-        <ul class="icon-list">
-          <li>
-            <Upload :size="14" />
-            <span
-              >The new binary is uploaded over SSH and the <code>assimilate-agent</code> service is
-              restarted.</span
-            >
-          </li>
-          <li>
-            <KeyRound :size="14" />
-            <span>A new agent token is generated and written into the service unit.</span>
-          </li>
-          <li>
-            <CheckCircle :size="14" />
-            <span>Schedules, repositories and existing archives are untouched.</span>
-          </li>
-        </ul>
-      </template>
+      <ul
+        v-if="isRedeploy || isUpgrade"
+        class="icon-list"
+      >
+        <li>
+          <Upload :size="14" />
+          <span v-if="isRedeploy"
+            >The binary is re-uploaded over SSH and the <code>assimilate-agent</code> service is
+            reinstalled and restarted.</span
+          >
+          <span v-else
+            >The new binary is uploaded over SSH and the <code>assimilate-agent</code> service is
+            restarted.</span
+          >
+        </li>
+        <li>
+          <KeyRound :size="14" />
+          <span>A new agent token is generated and written into the service unit.</span>
+        </li>
+        <li>
+          <CheckCircle :size="14" />
+          <span>Schedules, repositories and existing archives are untouched.</span>
+        </li>
+      </ul>
       <template v-else>
         <p class="deploy-info">
           Upload and install the agent binary on the target machine via SSH. Sudo is used

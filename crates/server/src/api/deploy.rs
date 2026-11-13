@@ -338,14 +338,16 @@ pub async fn deploy_status(
         ("domain" = Option<String>, Query, description = "Required if the hostname is ambiguous"),
     ),
     responses(
-        (status = 204, description = "The result was dismissed, or there was none"),
+        (status = 204, description = "The result was dismissed, or there was none or the deploy \
+            is still running"),
         (status = 401, description = "Unauthorized"),
         (status = 403, description = "Forbidden -- upgrade agent permission required, or the \
             server runs in desktop mode"),
     )
 )]
 /// Dismiss the result of the agent's last deploy, dropping the token it holds (requires
-/// `can_upgrade_agent` permission). Only the user who started the deploy can.
+/// `can_upgrade_agent` permission). Only the user who started the deploy can, and only once
+/// it has finished: dismissing a running deploy does nothing.
 ///
 /// # Errors
 ///

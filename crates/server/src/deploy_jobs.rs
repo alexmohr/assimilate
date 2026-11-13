@@ -186,18 +186,21 @@ impl DeployJobs {
         }
     }
 
-    /// Forgets the deploy, wherever it stands. Used when it could not even
-    /// begin, and when the user dismisses a result.
+    /// Forgets the deploy, wherever it stands. Only for a deploy that could not
+    /// even begin: forgetting one that is running would free the agent for a
+    /// second deploy while the first still works on the host.
     pub fn remove(&self, agent_id: i64) {
         self.lock().remove(&agent_id);
     }
 
-    /// Forgets the deploy if `user_id` started it.
+    /// Forgets the result of a finished deploy, if `user_id` started it. A
+    /// deploy that is still running is left alone, so the agent is not freed
+    /// for another while it works on the host.
     pub fn dismiss(&self, agent_id: i64, user_id: i64) {
         let mut jobs = self.lock();
         if jobs
             .get(&agent_id)
-            .is_some_and(|job| job.requested_by == user_id)
+            .is_some_and(|job| job.requested_by == user_id && job.finished.is_some())
         {
             jobs.remove(&agent_id);
         }
@@ -415,6 +418,30 @@ mod tests {
 
         jobs.dismiss(AGENT, OWNER);
         assert!(jobs.status(AGENT, OWNER).is_none());
+    }
+
+    #[test]
+    fn dismissing_a_running_deploy_does_nothing_so_the_agent_stays_busy() {
+        let jobs = DeployJobs::default();
+        let id = jobs.start(AGENT, OWNER).unwrap();
+
+        jobs.dismiss(AGENT, OWNER);
+
+        assert_eq!(
+            jobs.status(AGENT, OWNER).unwrap().state,
+            DeployJobState::Running
+        );
+        assert_eq!(
+            jobs.start(AGENT, OTHER),
+            Err(StartError::AlreadyRunning),
+            "a second deploy must not start while the first works on the host"
+        );
+        // The running deploy still reports into the job it started.
+        jobs.finish(AGENT, id, outcome(None));
+        assert_eq!(
+            jobs.status(AGENT, OWNER).unwrap().state,
+            DeployJobState::Succeeded
+        );
     }
 
     #[test]

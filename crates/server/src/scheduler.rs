@@ -2355,6 +2355,7 @@ mod tests {
             deployment_mode: shared::types::DeploymentMode::default(),
             cookie_security: crate::cookies::CookieSecurity::default(),
             metrics: crate::metrics::MetricsState::default(),
+            deploy_jobs: crate::deploy_jobs::DeployJobs::default(),
         };
         let shutdown_token = state.shutdown_token.clone();
 

@@ -3,24 +3,72 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { AxiosError } from 'axios'
+import type { AxiosResponse } from 'axios'
 import { mount, flushPromises, type VueWrapper } from '@vue/test-utils'
 import type { ComponentPublicInstance } from 'vue'
+import type {
+  DeployStatusResponse,
+  DeployStep,
+  DeployStepResponse,
+  DeployStepStatus,
+} from '../types/generated'
 import AgentDeployDialog from './AgentDeployDialog.vue'
 import BaseModal from './BaseModal.vue'
 
 const postMock = vi.fn()
 const getMock = vi.fn()
+const deleteMock = vi.fn()
 
 vi.mock('../api/client', () => ({
   apiClient: {
     post: (...args: unknown[]): unknown => postMock(...args),
     get: (...args: unknown[]): unknown => getMock(...args),
+    delete: (...args: unknown[]): unknown => deleteMock(...args),
   },
 }))
 
 vi.mock('../utils/error', () => ({
   extractError: (_e: unknown): string => 'API error',
 }))
+
+const STEP_ORDER: DeployStep[] = ['connect', 'upload', 'install', 'restart', 'reconnect']
+
+/** The five steps, the first ones as given and the rest pending. */
+function stepList(statuses: DeployStepStatus[]): DeployStepResponse[] {
+  return STEP_ORDER.map((step, i) => ({
+    step,
+    status: statuses[i] ?? 'pending',
+    duration_ms: statuses[i] === 'done' ? 400 : null,
+  }))
+}
+
+function deployStatus(overrides: Partial<DeployStatusResponse> = {}): DeployStatusResponse {
+  return {
+    state: 'running',
+    steps: stepList(['done', 'running']),
+    skipped: false,
+    token: null,
+    available_version: null,
+    error: null,
+    ...overrides,
+  }
+}
+
+function notFound(): AxiosError {
+  return new AxiosError(
+    'Request failed with status code 404',
+    AxiosError.ERR_BAD_REQUEST,
+    undefined,
+    undefined,
+    {
+      status: 404,
+      statusText: 'Not Found',
+      data: {},
+      headers: {},
+      config: {},
+    } as AxiosResponse,
+  )
+}
 
 let wrapper: VueWrapper<ComponentPublicInstance> | null = null
 
@@ -41,7 +89,11 @@ describe('AgentDeployDialog', () => {
   beforeEach(() => {
     postMock.mockReset()
     getMock.mockReset()
+    deleteMock.mockReset()
     postMock.mockResolvedValue({ data: { content: null } })
+    // No deploy is running or recent, unless a test says so.
+    getMock.mockRejectedValue(notFound())
+    deleteMock.mockResolvedValue({})
   })
 
   afterEach(() => {
@@ -273,9 +325,33 @@ describe('AgentDeployDialog', () => {
       await flushPromises()
     }
 
+    /** Fills in the form for `hostname` and starts the deploy the dialog was mounted for. */
+    async function startDeploy(): Promise<void> {
+      await setField('SSH host', '10.0.0.5')
+      await setField('Server URL', 'https://assimilate.example.com')
+      await submit()
+    }
+
+    /** Lets the dialog's next poll of the deploy status happen. */
+    async function nextPoll(): Promise<void> {
+      await vi.advanceTimersByTimeAsync(1000)
+      await flushPromises()
+    }
+
+    /** Mounts an upgrade dialog, ready to be submitted. */
+    async function mountUpgrade(): Promise<VueWrapper<ComponentPublicInstance>> {
+      const w = mountDialog({
+        hostname: 'web-server-01',
+        agentVersion: '1.0.0',
+        availableVersion: '1.2.0',
+      })
+      await flushPromises()
+      return w
+    }
+
     it('sends every field it collected', async () => {
       const post = postMock
-      post.mockResolvedValue({ data: { success: true, skipped: false } })
+      post.mockResolvedValue({ data: deployStatus({ state: 'succeeded', skipped: true }) })
 
       mountDialog({ hostname: 'web-server-01', agentVersion: null })
       await flushPromises()
@@ -308,7 +384,7 @@ describe('AgentDeployDialog', () => {
     // so the server applies its own defaults instead of writing blanks.
     it('omits the optional fields when they are left empty', async () => {
       const post = postMock
-      post.mockResolvedValue({ data: { success: true, skipped: false } })
+      post.mockResolvedValue({ data: deployStatus({ state: 'succeeded', skipped: true }) })
 
       mountDialog({ hostname: 'web-server-01', agentVersion: null })
       await flushPromises()
@@ -325,34 +401,265 @@ describe('AgentDeployDialog', () => {
       expect(body.install_path).toBeUndefined()
     })
 
-    // After a successful deploy the form is replaced by the one-time token,
-    // and the only way out is Done - Cancel and the deploy button are gone.
-    it('shows the generated token and closes on Done', async () => {
-      postMock.mockResolvedValue({
-        data: { success: true, skipped: false, token: 'tok-abc123', available_version: '1.2.0' },
+    describe('a deploy that runs on the server', () => {
+      beforeEach(() => {
+        vi.useFakeTimers()
       })
 
-      const w = mountDialog({ hostname: 'web-server-01', agentVersion: null })
-      await flushPromises()
+      afterEach(() => {
+        vi.useRealTimers()
+      })
 
-      await setField('SSH host', '10.0.0.5')
-      await setField('Server URL', 'https://assimilate.example.com')
-      await submit()
+      it('answers at once with the steps, and keeps following them until the deploy ends', async () => {
+        const w = await mountUpgrade()
+        postMock.mockResolvedValueOnce({ data: deployStatus() })
+        getMock
+          .mockResolvedValueOnce({
+            data: deployStatus({ steps: stepList(['done', 'done', 'running']) }),
+          })
+          .mockResolvedValueOnce({
+            data: deployStatus({
+              state: 'succeeded',
+              steps: stepList(['done', 'done', 'done', 'done', 'done']),
+              token: 'tok-abc123',
+              available_version: '1.2.0',
+            }),
+          })
 
-      expect(w.emitted('deployed')).toEqual([['1.2.0']])
-      expect(document.querySelector('.token-text')?.textContent).toBe('tok-abc123')
+        await startDeploy()
 
-      const done = [...document.querySelectorAll<HTMLButtonElement>('button')].find(
-        (b) => b.textContent?.trim() === 'Done',
-      )
-      expect(done).toBeDefined()
-      done!.click()
-      await w.vm.$nextTick()
+        // The request has answered, and the form has given way to the steps.
+        expect(document.querySelectorAll('.deploy-step')).toHaveLength(5)
+        expect(document.body.textContent).toContain('Upgrading to')
+        expect(document.body.textContent).toContain('You can close this window')
+        expect(document.querySelector('.deploy-step .progress-bar')).toBeNull()
+        expect(w.emitted('deployed')).toBeUndefined()
 
-      expect(w.emitted('close')).toHaveLength(1)
+        await nextPoll()
+        expect(document.querySelectorAll('.deploy-step-icon--done')).toHaveLength(2)
+        expect(w.emitted('deployed')).toBeUndefined()
+
+        await nextPoll()
+        expect(w.emitted('deployed')).toEqual([['1.2.0']])
+        expect(document.querySelector('.token-text')?.textContent).toBe('tok-abc123')
+        expect(document.body.textContent).toContain('Upgraded to 1.2.0')
+      })
+
+      it('stops asking once the deploy has ended', async () => {
+        await mountUpgrade()
+        postMock.mockResolvedValueOnce({ data: deployStatus() })
+        getMock.mockResolvedValue({
+          data: deployStatus({
+            state: 'failed',
+            error: 'boom',
+            steps: stepList(['done', 'failed']),
+          }),
+        })
+
+        await startDeploy()
+        await nextPoll()
+        const asked = getMock.mock.calls.length
+        await nextPoll()
+        await nextPoll()
+
+        expect(getMock).toHaveBeenCalledTimes(asked)
+      })
+
+      it("shows a failure in the step it failed in, with the server's reason beside the buttons", async () => {
+        const w = await mountUpgrade()
+        postMock.mockResolvedValueOnce({ data: deployStatus() })
+        getMock.mockResolvedValue({
+          data: deployStatus({
+            state: 'failed',
+            steps: stepList(['done', 'done', 'failed']),
+            error: 'failed to install the agent binary (exit 1): Text file busy',
+          }),
+        })
+
+        await startDeploy()
+        await nextPoll()
+
+        expect(document.querySelectorAll('.deploy-step-icon--failed')).toHaveLength(1)
+        expect(document.body.textContent).toContain('Nothing was restarted')
+        const error = document.querySelector('.modal-footer .form-error')
+        expect(error?.textContent).toContain('Text file busy')
+        expect(document.querySelector('.modal-body .form-error')).toBeNull()
+        expect(w.emitted('deployed')).toBeUndefined()
+      })
+
+      it('says the new binary is already in place when the failure came after the install', async () => {
+        await mountUpgrade()
+        postMock.mockResolvedValueOnce({ data: deployStatus() })
+        getMock.mockResolvedValue({
+          data: deployStatus({
+            state: 'failed',
+            steps: stepList(['done', 'done', 'done', 'done', 'failed']),
+            error: 'the agent did not connect back',
+          }),
+        })
+
+        await startDeploy()
+        await nextPoll()
+
+        expect(document.body.textContent).toContain('already on the host')
+        expect(document.body.textContent).not.toContain('Nothing was restarted')
+      })
+
+      it("goes back to the form on Try again, dropping the failed deploy's token", async () => {
+        await mountUpgrade()
+        postMock.mockResolvedValueOnce({ data: deployStatus() })
+        getMock.mockResolvedValue({
+          data: deployStatus({
+            state: 'failed',
+            steps: stepList(['done', 'failed']),
+            error: 'boom',
+          }),
+        })
+        await startDeploy()
+        await nextPoll()
+
+        const again = [...document.querySelectorAll<HTMLButtonElement>('button')].find(
+          (b) => b.textContent?.trim() === 'Try again',
+        )
+        again?.click()
+        await flushPromises()
+
+        expect(deleteMock).toHaveBeenCalledWith('/agents/web-server-01/deploy', { params: {} })
+        expect(document.querySelector('input[placeholder="root"]')).not.toBeNull()
+        expect(document.querySelector('.deploy-steps')).toBeNull()
+      })
+
+      it('leaves a running deploy alone when the dialog is closed', async () => {
+        const w = await mountUpgrade()
+        postMock.mockResolvedValueOnce({ data: deployStatus() })
+        await startDeploy()
+
+        const close = [...document.querySelectorAll<HTMLButtonElement>('button')].find(
+          (b) => b.textContent?.trim() === 'Close' && b.classList.contains('btn'),
+        )
+        close?.click()
+        await flushPromises()
+
+        expect(w.emitted('close')).toHaveLength(1)
+        expect(deleteMock).not.toHaveBeenCalled()
+      })
+
+      it("drops a finished deploy's token when Done is pressed", async () => {
+        const w = await mountUpgrade()
+        postMock.mockResolvedValueOnce({ data: deployStatus() })
+        getMock.mockResolvedValue({
+          data: deployStatus({
+            state: 'succeeded',
+            steps: stepList(['done', 'done', 'done', 'done', 'done']),
+            token: 'tok-abc123',
+            available_version: '1.2.0',
+          }),
+        })
+        await startDeploy()
+        await nextPoll()
+
+        const done = [...document.querySelectorAll<HTMLButtonElement>('button')].find(
+          (b) => b.textContent?.trim() === 'Done',
+        )
+        done?.click()
+        await flushPromises()
+
+        expect(deleteMock).toHaveBeenCalledTimes(1)
+        expect(w.emitted('close')).toHaveLength(1)
+      })
+
+      it('reports an agent that is already current without waiting for anything', async () => {
+        const w = await mountUpgrade()
+        postMock.mockResolvedValueOnce({
+          data: deployStatus({
+            state: 'succeeded',
+            skipped: true,
+            steps: stepList([]),
+            available_version: '1.2.0',
+          }),
+        })
+        getMock.mockClear()
+
+        await startDeploy()
+
+        expect(document.body.textContent).toContain('Already on 1.2.0')
+        expect(w.emitted('deployed')).toBeUndefined()
+        await nextPoll()
+        expect(getMock).not.toHaveBeenCalled()
+      })
+
+      it('keeps polling through a failed poll, and gives up after several in a row', async () => {
+        await mountUpgrade()
+        postMock.mockResolvedValueOnce({ data: deployStatus() })
+        getMock.mockRejectedValue(new Error('offline'))
+        await startDeploy()
+
+        await nextPoll()
+        expect(document.querySelector('.deploy-steps')).not.toBeNull()
+        for (let i = 0; i < 5; i++) await nextPoll()
+
+        // extractError is stubbed to a fixed string in this file's mocks.
+        expect(document.querySelector('.modal-footer .form-error')?.textContent).toContain(
+          'API error',
+        )
+        const asked = getMock.mock.calls.length
+        await nextPoll()
+        expect(getMock).toHaveBeenCalledTimes(asked)
+      })
     })
 
-    it('reports a deploy failure rather than claiming success', async () => {
+    it('picks up a deploy that is already running when it opens', async () => {
+      getMock.mockReset()
+      getMock.mockResolvedValue({ data: deployStatus() })
+
+      mountDialog({ hostname: 'web-server-01', agentVersion: '1.0.0', availableVersion: '1.2.0' })
+      await flushPromises()
+
+      expect(document.querySelectorAll('.deploy-step')).toHaveLength(5)
+      expect(document.querySelector('input[placeholder="root"]')).toBeNull()
+    })
+
+    it('does not announce a deploy it only found already finished', async () => {
+      getMock.mockReset()
+      getMock.mockResolvedValue({
+        data: deployStatus({
+          state: 'succeeded',
+          steps: stepList(['done', 'done', 'done', 'done', 'done']),
+          token: 'tok-abc123',
+          available_version: '1.2.0',
+        }),
+      })
+
+      const w = mountDialog({
+        hostname: 'web-server-01',
+        agentVersion: '1.0.0',
+        availableVersion: '1.2.0',
+      })
+      await flushPromises()
+
+      expect(document.querySelector('.token-text')?.textContent).toBe('tok-abc123')
+      expect(w.emitted('deployed')).toBeUndefined()
+    })
+
+    it('tells a user other than the one who started the deploy where the token went', async () => {
+      getMock.mockReset()
+      getMock.mockResolvedValue({
+        data: deployStatus({
+          state: 'succeeded',
+          steps: stepList(['done', 'done', 'done', 'done', 'done']),
+          token: null,
+          available_version: '1.2.0',
+        }),
+      })
+
+      mountDialog({ hostname: 'web-server-01', agentVersion: '1.0.0', availableVersion: '1.2.0' })
+      await flushPromises()
+
+      expect(document.querySelector('.token-text')).toBeNull()
+      expect(document.body.textContent).toContain('only shown to the user who started the deploy')
+    })
+
+    it('reports a request that failed rather than claiming success', async () => {
       const post = postMock
       post.mockResolvedValue({ data: {} })
 
@@ -367,98 +674,9 @@ describe('AgentDeployDialog', () => {
       expect(w.emitted('deployed')).toBeUndefined()
       // extractError is stubbed to a fixed string in this file's mocks.
       expect(document.body.textContent).toContain('API error')
-    })
-
-    /**
-     * Fills the form for an upgrade to 1.2.0, then submits it with a request
-     * that dies without a response while the agent list reports `reported`.
-     */
-    async function submitDroppedUpgrade(
-      reported: string,
-    ): Promise<VueWrapper<ComponentPublicInstance>> {
-      const w = mountDialog({
-        hostname: 'web-server-01',
-        agentVersion: '1.0.0',
-        availableVersion: '1.2.0',
-      })
-      await flushPromises()
-      await setField('SSH host', '10.0.0.5')
-      await setField('Server URL', 'https://assimilate.example.com')
-
-      postMock.mockRejectedValueOnce(new AxiosError('Network Error', AxiosError.ERR_NETWORK))
-      getMock.mockResolvedValue({
-        data: [{ hostname: 'web-server-01', domain: null, agent_version: reported }],
-      })
-      await submit()
-      return w
-    }
-
-    // A proxy can drop the connection after the server finished the upgrade;
-    // axios then reports a bare "Network Error" with no response.
-    it('treats a dropped connection as success when the agent runs the new version', async () => {
-      const w = await submitDroppedUpgrade('1.2.0')
-
-      expect(w.emitted('deployed')).toEqual([['1.2.0']])
-      expect(document.body.textContent).toContain('Upgraded to 1.2.0')
-      expect(document.querySelector('.modal-footer .form-error')).toBeNull()
-    })
-
-    it('keeps the error when the agent did not reach the new version', async () => {
-      vi.useFakeTimers()
-      try {
-        const w = await submitDroppedUpgrade('1.0.0')
-        await vi.runAllTimersAsync()
-        await flushPromises()
-
-        expect(w.emitted('deployed')).toBeUndefined()
-        expect(document.body.textContent).toContain('API error')
-      } finally {
-        vi.useRealTimers()
-      }
-    })
-
-    it('renders the failure in the footer so it stays beside the buttons', async () => {
-      const post = postMock
-      post.mockResolvedValue({ data: {} })
-
-      const w = mountDialog({ hostname: 'web-server-01', agentVersion: null })
-      await flushPromises()
-      post.mockRejectedValueOnce(new Error('ssh refused'))
-
-      await setField('SSH host', '10.0.0.5')
-      await setField('Server URL', 'https://assimilate.example.com')
-      await submit()
-
       const error = document.querySelector('.modal-footer .form-error')
       expect(error?.textContent).toContain('API error')
       expect(document.querySelector('.modal-body .form-error')).toBeNull()
-      expect(w.emitted('deployed')).toBeUndefined()
-    })
-
-    it('renders an unsuccessful deploy result in the footer too', async () => {
-      const post = postMock
-      post.mockResolvedValue({ data: {} })
-
-      const w = mountDialog({ hostname: 'web-server-01', agentVersion: null })
-      await flushPromises()
-      post.mockResolvedValueOnce({
-        data: {
-          success: false,
-          skipped: false,
-          token: null,
-          available_version: null,
-          error: 'SSH connection failed: goblin:22',
-        },
-      })
-
-      await setField('SSH host', '10.0.0.5')
-      await setField('Server URL', 'https://assimilate.example.com')
-      await submit()
-
-      const error = document.querySelector('.modal-footer .form-error')
-      expect(error?.textContent).toContain('SSH connection failed: goblin:22')
-      expect(document.querySelector('.modal-body .form-error')).toBeNull()
-      expect(w.emitted('deployed')).toBeUndefined()
     })
   })
 })

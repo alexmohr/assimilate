@@ -256,3 +256,91 @@ test('deploy dialog defaults to a unit that loads the token from its file', asyn
   await expect(unit).toHaveValue(/EnvironmentFile=\/etc\/assimilate-agent\.env/)
   await expect(unit).not.toHaveValue(/BORG_AGENT_TOKEN/)
 })
+
+/** A deploy's five steps, the first ones as given and the rest pending. */
+function deploySteps(
+  statuses: string[],
+): { step: string; status: string; duration_ms: number | null }[] {
+  return ['connect', 'upload', 'install', 'restart', 'reconnect'].map((step, i) => ({
+    step,
+    status: statuses[i] ?? 'pending',
+    duration_ms: statuses[i] === 'done' ? 400 : null,
+  }))
+}
+
+// The upgrade runs on the server, so a proxy cutting the request that started
+// it cannot fail it: the request answers at once and the dialog follows the
+// deploy's steps until the agent is back.
+test('an upgrade runs on the server while the dialog follows its steps', async ({ page }) => {
+  await loginAsAdmin(page)
+  await interceptAgentPage(
+    page,
+    { ...BASE_AGENT, agent_version: '0.1.0' },
+    makeVersion(null, '0.2.0'),
+  )
+  await page.route(
+    (url) => url.pathname === '/api/agents/fixture-agent/service-unit',
+    async (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ content: null }),
+      }),
+  )
+  const base = { skipped: false, token: null, available_version: null, error: null }
+  let reads = 0
+  let dismissed = false
+  await page.route(
+    (url) => url.pathname === '/api/agents/fixture-agent/deploy',
+    async (route) => {
+      const method = route.request().method()
+      if (method === 'POST') {
+        return route.fulfill({
+          status: 202,
+          contentType: 'application/json',
+          body: JSON.stringify({ ...base, state: 'running', steps: deploySteps(['running']) }),
+        })
+      }
+      if (method === 'DELETE') {
+        dismissed = true
+        return route.fulfill({ status: 204 })
+      }
+      // The first read is the dialog looking for a deploy already under way.
+      reads += 1
+      if (reads === 1)
+        return route.fulfill({ status: 404, contentType: 'application/json', body: '{}' })
+      const body =
+        reads === 2
+          ? { ...base, state: 'running', steps: deploySteps(['done', 'done', 'running']) }
+          : {
+              ...base,
+              state: 'succeeded',
+              steps: deploySteps(['done', 'done', 'done', 'done', 'done']),
+              token: 'tok-e2e-0123',
+              available_version: '0.2.0',
+            }
+      return route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify(body),
+      })
+    },
+  )
+  await openAgentPage(page)
+
+  await (await deployAction(page, 'Upgrade')).click()
+  await page.getByPlaceholder('e.g. 192.168.1.10').fill('10.0.0.5')
+  await page.getByRole('button', { name: /^Upgrade to 0\.2\.0$/ }).click()
+
+  // The form gives way to the steps right away.
+  await expect(page.locator('.deploy-step')).toHaveCount(5)
+  await expect(page.locator('.upgrade-hero')).toContainText('Upgrading to')
+  await expect(page.getByText('You can close this window and it will carry on.')).toBeVisible()
+
+  await expect(page.locator('.token-text')).toHaveText('tok-e2e-0123', { timeout: 15_000 })
+  await expect(page.getByText('Upgraded to 0.2.0.')).toBeVisible()
+
+  await page.getByRole('button', { name: 'Done' }).click()
+  await expect(page.getByRole('heading', { name: /Upgrade Agent/ })).toBeHidden()
+  expect(dismissed).toBe(true)
+})

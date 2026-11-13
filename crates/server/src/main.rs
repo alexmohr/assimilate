@@ -400,6 +400,7 @@ fn build_app_state(args: BuildAppStateArgs) -> AppState {
         deployment_mode,
         cookie_security,
         metrics: server::metrics::MetricsState::default(),
+        deploy_jobs: server::deploy_jobs::DeployJobs::default(),
     }
 }
 
@@ -665,7 +666,9 @@ fn agent_routes() -> Router<AppState> {
         )
         .route(
             "/api/agents/{hostname}/deploy",
-            post(api::deploy::deploy_agent),
+            post(api::deploy::deploy_agent)
+                .get(api::deploy::deploy_status)
+                .delete(api::deploy::dismiss_deploy),
         )
         .route(
             "/api/agents/{hostname}/service-unit",

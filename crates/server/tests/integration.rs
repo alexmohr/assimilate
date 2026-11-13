@@ -146,6 +146,7 @@ fn build_test_state(pool: PgPool) -> server::AppState {
         deployment_mode: shared::types::DeploymentMode::default(),
         cookie_security: server::cookies::CookieSecurity::default(),
         metrics: server::metrics::MetricsState::default(),
+        deploy_jobs: server::deploy_jobs::DeployJobs::default(),
     }
 }
 
@@ -630,7 +631,9 @@ fn test_app_text_limit_routes() -> Router<server::AppState> {
         )
         .route(
             "/api/agents/{hostname}/deploy",
-            post(server::api::deploy::deploy_agent),
+            post(server::api::deploy::deploy_agent)
+                .get(server::api::deploy::deploy_status)
+                .delete(server::api::deploy::dismiss_deploy),
         )
         .route(
             "/api/agents/{hostname}/service-unit",
@@ -14920,8 +14923,37 @@ async fn test_metrics_settings_reject_an_invalid_network() {
     );
 }
 
-/// A deploy to a host that refuses SSH still issues a fresh token and
-/// prepares the agent's unit, default or custom, then reports the failure.
+/// Reads the deploy status of `hostname` until the deploy is no longer running;
+/// `None` if it never finishes.
+async fn finished_deploy_status(app: &mut axum::Router, hostname: &str) -> Option<Value> {
+    for _ in 0..200 {
+        let resp = oneshot(app, get_request(&format!("/api/agents/{hostname}/deploy"))).await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = body_json(resp).await;
+        if body.get("state") != Some(&json!("running")) {
+            return Some(body);
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    None
+}
+
+/// The body of a deploy request to `ssh_host:ssh_port`.
+fn deploy_body(ssh_host: &str, ssh_port: u16, unit: Option<&str>) -> Value {
+    json!({
+        "ssh_host": ssh_host,
+        "ssh_port": ssh_port,
+        "ssh_user": "root",
+        "server_url": "https://backup.example.com",
+        "systemd_service_content": unit,
+        "force": true,
+    })
+}
+
+/// A deploy runs on the server, not for the length of the request: the request
+/// starts it and answers at once, and the deploy to a host that refuses SSH
+/// still issues a fresh token and prepares the agent's unit, default or
+/// custom, then reports the failure in the step it failed in.
 #[tokio::test]
 #[ignore = "requires DATABASE_URL"]
 async fn test_deploy_to_an_unreachable_host_reports_the_ssh_failure() {
@@ -14942,20 +14974,18 @@ async fn test_deploy_to_an_unreachable_host_reports_the_ssh_failure() {
             json_request(
                 "POST",
                 "/api/agents/deploy-host/deploy",
-                Some(json!({
-                    "ssh_host": "127.0.0.1",
-                    "ssh_port": 1,
-                    "ssh_user": "root",
-                    "server_url": "https://backup.example.com",
-                    "systemd_service_content": unit,
-                    "force": true,
-                })),
+                Some(deploy_body("127.0.0.1", 1, unit)),
             ),
         )
         .await;
-        assert_eq!(resp.status(), StatusCode::OK);
-        let body = body_json(resp).await;
-        assert_eq!(body.get("success"), Some(&json!(false)), "{body}");
+        assert_eq!(resp.status(), StatusCode::ACCEPTED);
+        let started = body_json(resp).await;
+        assert_eq!(started.get("token"), Some(&Value::Null), "{started}");
+
+        let body = finished_deploy_status(&mut app, "deploy-host")
+            .await
+            .expect("the deploy finishes");
+        assert_eq!(body.get("state"), Some(&json!("failed")), "{body}");
         assert!(
             body.get("error").and_then(Value::as_str).is_some(),
             "{body}"
@@ -14964,7 +14994,135 @@ async fn test_deploy_to_an_unreachable_host_reports_the_ssh_failure() {
             body.get("token").and_then(Value::as_str).is_some(),
             "{body}"
         );
+        let steps: Vec<(&str, &str)> = body
+            .get("steps")
+            .and_then(Value::as_array)
+            .expect("steps")
+            .iter()
+            .map(|s| {
+                (
+                    s.get("step").and_then(Value::as_str).unwrap(),
+                    s.get("status").and_then(Value::as_str).unwrap(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            steps,
+            [
+                ("connect", "failed"),
+                ("upload", "pending"),
+                ("install", "pending"),
+                ("restart", "pending"),
+                ("reconnect", "pending"),
+            ],
+            "{body}"
+        );
     }
+}
+
+/// An agent has one deploy at a time: a second request while one is still
+/// running is refused rather than racing it over the same token and host.
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn test_a_second_deploy_while_one_runs_is_a_conflict() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+    server::db::insert_agent(&pool, "busy-host", None, "hash", None, None)
+        .await
+        .unwrap();
+    // A host that accepts the connection and then says nothing keeps the
+    // deploy in its first step.
+    let silent = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = silent.local_addr().unwrap().port();
+    let _held = tokio::spawn(async move {
+        let mut open = Vec::new();
+        while let Ok((stream, _)) = silent.accept().await {
+            open.push(stream);
+        }
+    });
+
+    let first = oneshot(
+        &mut app,
+        json_request(
+            "POST",
+            "/api/agents/busy-host/deploy",
+            Some(deploy_body("127.0.0.1", port, None)),
+        ),
+    )
+    .await;
+    assert_eq!(first.status(), StatusCode::ACCEPTED);
+    let started = body_json(first).await;
+    assert_eq!(started.get("state"), Some(&json!("running")), "{started}");
+
+    let second = oneshot(
+        &mut app,
+        json_request(
+            "POST",
+            "/api/agents/busy-host/deploy",
+            Some(deploy_body("127.0.0.1", port, None)),
+        ),
+    )
+    .await;
+    assert_eq!(second.status(), StatusCode::CONFLICT);
+}
+
+/// There is nothing to read for an agent that was never deployed, and a
+/// finished deploy's result, token included, is forgotten once dismissed.
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn test_a_deploy_result_is_read_until_it_is_dismissed() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+    server::db::insert_agent(&pool, "dismiss-host", None, "hash", None, None)
+        .await
+        .unwrap();
+
+    let none = oneshot(&mut app, get_request("/api/agents/dismiss-host/deploy")).await;
+    assert_eq!(none.status(), StatusCode::NOT_FOUND);
+
+    let started = oneshot(
+        &mut app,
+        json_request(
+            "POST",
+            "/api/agents/dismiss-host/deploy",
+            Some(deploy_body("127.0.0.1", 1, None)),
+        ),
+    )
+    .await;
+    assert_eq!(started.status(), StatusCode::ACCEPTED);
+    finished_deploy_status(&mut app, "dismiss-host")
+        .await
+        .expect("the deploy finishes");
+    let again =
+        body_json(oneshot(&mut app, get_request("/api/agents/dismiss-host/deploy")).await).await;
+    assert!(
+        again.get("token").and_then(Value::as_str).is_some(),
+        "a result read twice keeps its token: {again}"
+    );
+
+    let dismissed = oneshot(
+        &mut app,
+        json_request("DELETE", "/api/agents/dismiss-host/deploy", None),
+    )
+    .await;
+    assert_eq!(dismissed.status(), StatusCode::NO_CONTENT);
+    let gone = oneshot(&mut app, get_request("/api/agents/dismiss-host/deploy")).await;
+    assert_eq!(gone.status(), StatusCode::NOT_FOUND);
+
+    let twice = oneshot(
+        &mut app,
+        json_request("DELETE", "/api/agents/dismiss-host/deploy", None),
+    )
+    .await;
+    assert_eq!(
+        twice.status(),
+        StatusCode::NO_CONTENT,
+        "dismissing is idempotent"
+    );
 }
 
 /// Append-only repositories: server-side maintenance, queued deletions and the

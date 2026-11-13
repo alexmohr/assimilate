@@ -236,6 +236,24 @@ The dashboard can push the agent binary and install a systemd unit on a remote m
 
 If the agent is already at the latest version, the deploy is skipped and the existing token is preserved. The SSH user entered is remembered for this agent and prefilled the next time the dialog is opened.
 
+#### Following a deploy
+
+The deploy runs on the server, not in your browser's request. Clicking **Deploy** starts it and the dialog switches at once to its steps:
+
+1. Connecting over SSH
+2. Uploading the binary
+3. Installing the binary and the new agent token
+4. Restarting the agent service
+5. Waiting for the agent to reconnect
+
+Each finished step shows how long it took. The deploy only counts as done once the restarted agent has connected back to the server, so a successful result means the new agent is running and reachable. If it does not connect back within 90 seconds, the deploy fails in the last step and says so; the new binary and token are already on the host, so check the agent's logs there.
+
+You can close the dialog while a deploy runs: it carries on, and opening the dialog again shows where it has got to. A deploy that fails stops at the step that failed, shows the reason from the host, and leaves the later steps untouched. Nothing is restarted when it fails before step 4, so the agent keeps running the version it had. **Try again** returns to the form.
+
+The new agent token is shown when the deploy has finished, to the user who started it only. It stays available until you press **Done** or close the dialog, and in any case for ten minutes. An agent has one deploy at a time: starting another while one runs is refused. The server keeps this state in memory, so a deploy in progress when the server restarts is no longer followed, although whatever it had already done on the host stays done.
+
+Because the request that starts a deploy answers at once, a reverse proxy with a short timeout in front of the server can no longer cut a deploy short or make it look failed when it succeeded.
+
 !!! note
     SSH deploy requires admin privileges. The server uses the same Ed25519 key pair used for [SSH Agent Forwarding](ssh-agent-forwarding.md).
 

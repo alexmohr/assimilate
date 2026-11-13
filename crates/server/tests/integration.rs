@@ -15056,6 +15056,15 @@ async fn test_a_second_deploy_while_one_runs_is_a_conflict() {
     let started = body_json(first).await;
     assert_eq!(started.get("state"), Some(&json!("running")), "{started}");
 
+    // Dismissing a deploy that is still running does nothing, so it cannot be
+    // used to free the agent for a second deploy on the same host.
+    let dismissed = oneshot(
+        &mut app,
+        json_request("DELETE", "/api/agents/busy-host/deploy", None),
+    )
+    .await;
+    assert_eq!(dismissed.status(), StatusCode::NO_CONTENT);
+
     let second = oneshot(
         &mut app,
         json_request(

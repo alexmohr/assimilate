@@ -744,7 +744,7 @@ mod tests {
                 server_commit_count: None,
                 reconnect_timeout,
                 reconnect_poll: Duration::from_millis(10),
-                deadline: Duration::from_secs(60),
+                deadline: Duration::from_mins(1),
             }
         }
 

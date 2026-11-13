@@ -1416,6 +1416,11 @@ pub async fn deploy_agent(
     let sftp = open_sftp(&session).await?;
 
     let arch = detect_remote_arch(&session).await?;
+
+    // Everything from here is about getting the binary onto the host: finding
+    // the one for its architecture here counts with uploading it, since a
+    // missing binary is not a failure to connect.
+    on_step(DeployStep::Upload);
     let binary_path = params.binary_dir.join(format!("agent-{arch}"));
 
     if !tokio::fs::try_exists(&binary_path).await.unwrap_or(false) {
@@ -1436,7 +1441,6 @@ pub async fn deploy_agent(
         ))
     })?;
 
-    on_step(DeployStep::Upload);
     // Always upload to /tmp first - SFTP write to the final path often fails due to
     // missing directories or permission issues (SFTP reports these as "No such file").
     let uploaded = upload_private(&sftp, Upload::Binary, &binary_data).await?;

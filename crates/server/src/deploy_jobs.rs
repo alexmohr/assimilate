@@ -467,6 +467,21 @@ mod tests {
     }
 
     #[test]
+    fn steps_and_results_for_an_agent_without_a_deploy_are_ignored() {
+        let jobs = DeployJobs::default();
+
+        jobs.begin_step(AGENT, DeployStep::Connect);
+        jobs.finish(AGENT, outcome(None));
+
+        assert!(
+            jobs.status(AGENT, OWNER).is_none(),
+            "a late report must not conjure a deploy up"
+        );
+        jobs.start(AGENT, OWNER)
+            .expect("the agent is free to deploy");
+    }
+
+    #[test]
     fn removing_a_deploy_frees_the_agent() {
         let jobs = DeployJobs::default();
         jobs.start(AGENT, OWNER).unwrap();

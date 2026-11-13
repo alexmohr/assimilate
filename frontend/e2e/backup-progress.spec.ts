@@ -135,6 +135,14 @@ function makeArchiveProgressLine(nfiles: number, originalSize: number, path: str
   return JSON.stringify({ type: 'archive_progress', nfiles, original_size: originalSize, path })
 }
 
+function makeHookOutputLine(
+  phase: 'pre_backup' | 'post_backup',
+  stream: 'stdout' | 'stderr',
+  line: string,
+): string {
+  return JSON.stringify({ type: 'hook_output', phase, stream, line })
+}
+
 // Starts a backup for REPO_NAME and waits for the card's "waiting for
 // progress" placeholder, the state both filtered-BackupLog tests start from.
 async function startBackupAndAwaitPlaceholder(page: Page, ws: WebSocketRoute): Promise<void> {
@@ -177,6 +185,29 @@ test.describe('backup progress card', () => {
     await expect(page.locator('.live-log-title')).toContainText('Backup in progress')
     await expect(page.locator('.live-log-host-badge')).toContainText('web-server-01')
     await expect(page.locator('.live-log-empty')).toBeVisible()
+  })
+
+  test('script output replaces the waiting placeholder while a hook runs', async ({ page }) => {
+    await startBackupAndAwaitPlaceholder(page, ws!)
+
+    sendWsMsg(ws!, 'BackupLog', {
+      hostname: 'web-server-01',
+      schedule_id: SCHEDULE_ID,
+      repo_id: REPO_ID,
+      line: makeHookOutputLine('pre_backup', 'stdout', 'Quiescing the application'),
+    })
+    sendWsMsg(ws!, 'BackupLog', {
+      hostname: 'web-server-01',
+      schedule_id: SCHEDULE_ID,
+      repo_id: REPO_ID,
+      line: makeHookOutputLine('pre_backup', 'stderr', 'disk almost full'),
+    })
+
+    await expect(page.locator('.hook-output-log')).toContainText('Quiescing the application', {
+      timeout: 3_000,
+    })
+    await expect(page.locator('.hook-output-log')).toContainText('disk almost full')
+    await expect(page.locator('.live-log-empty')).not.toBeVisible()
   })
 
   test('progress data updates when BackupLog with archive_progress arrives', async ({ page }) => {
@@ -603,6 +634,26 @@ test.describe('activity log — live backup log', () => {
     await page.waitForTimeout(400)
     // archive_progress lines are filtered out - no card should appear.
     await expect(page.locator('.live-session-card')).not.toBeVisible()
+  })
+
+  test('script output is shown as text in the activity live output', async ({ page }) => {
+    sendWsMsg(ws!, 'BackupStarted', {
+      hostname: 'web-server-01',
+      target_name: REPO_NAME,
+      started_at: new Date().toISOString(),
+    })
+    sendWsMsg(ws!, 'BackupLog', {
+      hostname: 'web-server-01',
+      repo_id: REPO_ID,
+      schedule_id: null,
+      line: makeHookOutputLine('pre_backup', 'stdout', 'Quiescing the application'),
+    })
+
+    await expect(page.locator('.live-session-output')).toContainText(
+      'pre-backup: Quiescing the application',
+      { timeout: 3_000 },
+    )
+    await expect(page.locator('.live-session-output')).not.toContainText('hook_output')
   })
 
   test('live session card disappears when BackupCompleted arrives', async ({ page }) => {

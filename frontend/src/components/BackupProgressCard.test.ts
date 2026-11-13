@@ -4,6 +4,7 @@
 import { flushPromises } from '@vue/test-utils'
 import { describe, expect, it } from 'vitest'
 import { renderWithPlugins } from '../test-utils'
+import { appendHookOutput, MAX_HOOK_OUTPUT_LINES } from '../utils/hookOutput'
 import BackupProgressCard from './BackupProgressCard.vue'
 
 function mount(props: Record<string, unknown> = {}) {
@@ -94,6 +95,27 @@ describe('BackupProgressCard', () => {
     await flushPromises()
 
     expect(log.scrollTop).toBe(480)
+  })
+
+  it('keeps following the newest line once the output is at its cap', async () => {
+    const lines = Array.from({ length: MAX_HOOK_OUTPUT_LINES }, (_, i) => ({
+      type: 'hook_output' as const,
+      phase: 'pre_backup' as const,
+      stream: 'stdout' as const,
+      line: `line ${i}`,
+    }))
+    const wrapper = mount({ progress: null, hookOutput: lines })
+    const log = wrapper.find('.hook-output-log').element as HTMLElement
+    Object.defineProperty(log, 'scrollHeight', { value: 900, configurable: true })
+    expect(log.scrollTop).toBe(0)
+
+    // One line in, the oldest out: the count is unchanged.
+    const next = appendHookOutput(lines, { ...lines[0]!, line: 'newest' })
+    expect(next).toHaveLength(MAX_HOOK_OUTPUT_LINES)
+    await wrapper.setProps({ hookOutput: next })
+    await flushPromises()
+
+    expect(log.scrollTop).toBe(900)
   })
 
   it('has no script output section when no script printed anything', () => {

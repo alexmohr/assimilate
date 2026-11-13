@@ -4,6 +4,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   appendHookOutput,
+  formatHookOutput,
   MAX_HOOK_OUTPUT_LINES,
   parseHookOutput,
   type HookOutputEntry,
@@ -35,6 +36,15 @@ describe('parseHookOutput', () => {
         JSON.stringify({ type: 'hook_output', phase: 'sideways', stream: 'stdout', line: 'x' }),
       ),
     ).toBeNull()
+  })
+})
+
+describe('formatHookOutput', () => {
+  it('names the phase and keeps what the script printed', () => {
+    expect(formatHookOutput(entry('dumping'))).toBe('post-backup: dumping')
+    expect(formatHookOutput({ ...entry('mounting'), phase: 'pre_backup' })).toBe(
+      'pre-backup: mounting',
+    )
   })
 })
 

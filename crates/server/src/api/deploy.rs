@@ -166,8 +166,30 @@ pub async fn deploy_agent(
     validate_deploy_lengths(&req)?;
 
     let binary_dir = agent_binary_dir().await;
+    let (status, started) = start_deploy(
+        &state,
+        auth.user_id,
+        &hostname,
+        query.domain.as_deref(),
+        req,
+        binary_dir,
+    )
+    .await?;
+    Ok((status, Json(started)))
+}
 
-    let agent = db::get_agent_by_hostname(&state.pool, &hostname, query.domain.as_deref()).await?;
+/// Starts the deploy `req` asks for, on behalf of `user_id`, and returns how it
+/// stands: finished at once when the agent is already current, otherwise running
+/// on the server.
+async fn start_deploy(
+    state: &AppState,
+    user_id: i64,
+    hostname: &str,
+    domain: Option<&str>,
+    req: DeployAgentRequest,
+    binary_dir: PathBuf,
+) -> Result<(StatusCode, DeployStatusResponse), ApiError> {
+    let agent = db::get_agent_by_hostname(&state.pool, hostname, domain).await?;
     let tunnel_server_url = db::get_tunnel_by_agent_id(&state.pool, agent.id)
         .await
         .ok()
@@ -195,7 +217,7 @@ pub async fn deploy_agent(
             hostname = %hostname,
             "agent already at latest version, skipping deploy"
         );
-        return Ok((StatusCode::OK, Json(skipped_status(version))));
+        return Ok((StatusCode::OK, skipped_status(version)));
     }
 
     let server_key = state
@@ -204,25 +226,14 @@ pub async fn deploy_agent(
         .map_err(|e| ApiError::Internal(e.to_string()))?
         .to_string();
 
-    state
-        .deploy_jobs
-        .start(agent.id, auth.user_id)
-        .map_err(|e| ApiError::Conflict(e.to_string()))?;
-
-    let token = match issue_agent_token(&state.pool, agent.id).await {
-        Ok(token) => token,
-        Err(e) => {
-            state.deploy_jobs.remove(agent.id);
-            return Err(e);
-        }
-    };
+    let token = begin_job(state, agent.id, user_id).await?;
 
     let run = DeployRun {
         pool: state.pool.clone(),
         registry: state.registry.clone(),
         jobs: state.deploy_jobs.clone(),
         agent_id: agent.id,
-        hostname,
+        hostname: hostname.to_owned(),
         ssh_host: req.ssh_host,
         ssh_user: req.ssh_user,
         ssh_port: req.ssh_port.unwrap_or(22),
@@ -237,14 +248,29 @@ pub async fn deploy_agent(
         systemd_service_content: req.systemd_service_content,
         available_version,
         server_commit_count,
+        reconnect_timeout: RECONNECT_TIMEOUT,
+        reconnect_poll: RECONNECT_POLL,
     };
     state.task_registry.register(tokio::spawn(run_deploy(run)));
 
     let status = state
         .deploy_jobs
-        .status(agent.id, auth.user_id)
+        .status(agent.id, user_id)
         .ok_or_else(|| ApiError::Internal("the deploy was not recorded".to_owned()))?;
-    Ok((StatusCode::ACCEPTED, Json(status)))
+    Ok((StatusCode::ACCEPTED, status))
+}
+
+/// Registers the agent's deploy and issues its new token. The deploy is
+/// forgotten again if the token cannot be issued, so the agent is not left
+/// looking busy.
+async fn begin_job(state: &AppState, agent_id: i64, user_id: i64) -> Result<String, ApiError> {
+    state
+        .deploy_jobs
+        .start(agent_id, user_id)
+        .map_err(|e| ApiError::Conflict(e.to_string()))?;
+    issue_agent_token(&state.pool, agent_id)
+        .await
+        .inspect_err(|_| state.deploy_jobs.remove(agent_id))
 }
 
 #[utoipa::path(
@@ -384,6 +410,10 @@ struct DeployRun {
     systemd_service_content: Option<String>,
     available_version: Option<String>,
     server_commit_count: Option<i32>,
+    /// How long the restarted agent has to connect back.
+    reconnect_timeout: Duration,
+    /// How often the server looks for it.
+    reconnect_poll: Duration,
 }
 
 /// Why a deploy stopped.
@@ -394,9 +424,9 @@ enum DeployError {
     #[error(
         "the agent was installed and restarted but did not connect back to the server within \
          {} seconds; check the agent's logs on the host",
-        RECONNECT_TIMEOUT.as_secs()
+        .0.as_secs()
     )]
-    NotReconnected,
+    NotReconnected(Duration),
 }
 
 /// Runs a deploy to its end and records how it went. Never fails: whatever
@@ -460,15 +490,15 @@ async fn execute_deploy(run: &DeployRun, before: &Presence) -> Result<(), Deploy
         &run.registry,
         run.agent_id,
         before,
-        RECONNECT_TIMEOUT,
-        RECONNECT_POLL,
+        run.reconnect_timeout,
+        run.reconnect_poll,
     )
     .await
     {
         info!(hostname = %run.hostname, "agent reconnected after deploy");
         Ok(())
     } else {
-        Err(DeployError::NotReconnected)
+        Err(DeployError::NotReconnected(run.reconnect_timeout))
     }
 }
 
@@ -834,7 +864,7 @@ mod tests {
 
     #[test]
     fn a_deploy_that_never_reconnects_says_how_long_it_waited() {
-        let message = DeployError::NotReconnected.to_string();
+        let message = DeployError::NotReconnected(RECONNECT_TIMEOUT).to_string();
 
         assert!(message.contains("90 seconds"), "{message}");
         assert!(message.contains("did not connect back"), "{message}");
@@ -939,6 +969,285 @@ mod tests {
             ensure_agent_deploy_allowed(DeploymentMode::Desktop),
             Err(ApiError::Forbidden(msg)) if msg.contains("desktop app")
         ));
+    }
+
+    /// Deploys that run on the server, against a stand-in SSH host, a real
+    /// database and a registry the test connects the "restarted" agent to.
+    mod server_side {
+        use std::time::Duration;
+
+        use axum::http::StatusCode;
+        use shared::responses::{DeployJobState, DeployStepStatus};
+        use sqlx::PgPool;
+
+        use super::super::{DeployAgentRequest, DeployRun, begin_job, run_deploy, start_deploy};
+        use crate::{
+            AppState, db,
+            error::ApiError,
+            ssh::deploy_tests::stand_in_host,
+            test_support::{build_test_state, insert_auth_user},
+        };
+
+        const USER_PASSWORD: &str = "passw0rd-s3cret";
+
+        fn state(pool: &PgPool) -> AppState {
+            build_test_state(pool.clone(), b"agent-deploy-test-key")
+        }
+
+        /// A deploy of `agent_id` to the stand-in host on `port`, which waits
+        /// `reconnect_timeout` for the agent to come back.
+        fn run_for(
+            state: &AppState,
+            agent_id: i64,
+            port: u16,
+            binaries: &std::path::Path,
+            reconnect_timeout: Duration,
+        ) -> DeployRun {
+            DeployRun {
+                pool: state.pool.clone(),
+                registry: state.registry.clone(),
+                jobs: state.deploy_jobs.clone(),
+                agent_id,
+                hostname: "deploy-host".to_owned(),
+                ssh_host: "127.0.0.1".to_owned(),
+                ssh_user: "deployer".to_owned(),
+                ssh_port: port,
+                ssh_password: Some(USER_PASSWORD.to_owned()),
+                binary_dir: binaries.to_path_buf(),
+                install_path: "/usr/local/bin/assimilate-agent".to_owned(),
+                server_url: "wss://backup.example".to_owned(),
+                token: "t0ken-s3cret".to_owned(),
+                server_key: "S3rverKey=".to_owned(),
+                systemd_service_content: None,
+                available_version: Some("1.2.0".to_owned()),
+                server_commit_count: None,
+                reconnect_timeout,
+                reconnect_poll: Duration::from_millis(10),
+            }
+        }
+
+        async fn binaries() -> tempfile::TempDir {
+            let dir = tempfile::tempdir().expect("tempdir");
+            tokio::fs::write(dir.path().join("agent-x86_64"), b"agent")
+                .await
+                .expect("write binary");
+            dir
+        }
+
+        async fn agent_id(pool: &PgPool) -> i64 {
+            db::insert_agent(pool, "deploy-host", None, "old-hash", None, None)
+                .await
+                .expect("insert agent")
+                .id
+        }
+
+        const USER: i64 = 1;
+
+        /// Makes the agent connect, as the restarted process would.
+        fn reconnect_soon(state: &AppState, agent_id: i64) {
+            let registry = state.registry.clone();
+            tokio::spawn(async move {
+                tokio::time::sleep(Duration::from_millis(100)).await;
+                let (sender, _receiver) = tokio::sync::mpsc::channel(1);
+                registry
+                    .register(agent_id, sender, false, None, Some("new".to_owned()))
+                    .await;
+            });
+        }
+
+        #[ignore = "requires DATABASE_URL"]
+        #[sqlx::test(migrations = "./migrations")]
+        async fn a_deploy_ends_once_the_restarted_agent_has_connected_and_is_recorded(
+            pool: PgPool,
+        ) {
+            let state = state(&pool);
+            let agent_id = agent_id(&pool).await;
+            let (port, _recorded) = stand_in_host(None).await;
+            let binaries = binaries().await;
+            state.deploy_jobs.start(agent_id, USER).expect("start");
+            reconnect_soon(&state, agent_id);
+
+            run_deploy(run_for(
+                &state,
+                agent_id,
+                port,
+                binaries.path(),
+                Duration::from_secs(30),
+            ))
+            .await;
+
+            let status = state.deploy_jobs.status(agent_id, USER).expect("a result");
+            assert_eq!(status.state, DeployJobState::Succeeded, "{status:?}");
+            assert!(
+                status
+                    .steps
+                    .iter()
+                    .all(|s| s.status == DeployStepStatus::Done),
+                "{status:?}"
+            );
+            assert_eq!(status.token.as_deref(), Some("t0ken-s3cret"));
+            assert_eq!(status.error, None);
+            let agent = db::get_agent_by_hostname(&pool, "deploy-host", None)
+                .await
+                .expect("the agent");
+            assert_eq!(agent.agent_version.as_deref(), Some("1.2.0"));
+            assert_eq!(agent.last_ssh_user.as_deref(), Some("deployer"));
+        }
+
+        #[ignore = "requires DATABASE_URL"]
+        #[sqlx::test(migrations = "./migrations")]
+        async fn a_deploy_whose_agent_never_returns_fails_in_the_reconnect_step(pool: PgPool) {
+            let state = state(&pool);
+            let agent_id = agent_id(&pool).await;
+            let (port, _recorded) = stand_in_host(None).await;
+            let binaries = binaries().await;
+            state.deploy_jobs.start(agent_id, USER).expect("start");
+
+            run_deploy(run_for(
+                &state,
+                agent_id,
+                port,
+                binaries.path(),
+                Duration::from_millis(200),
+            ))
+            .await;
+
+            let status = state.deploy_jobs.status(agent_id, USER).expect("a result");
+            assert_eq!(status.state, DeployJobState::Failed, "{status:?}");
+            let steps: Vec<_> = status.steps.iter().map(|s| s.status).collect();
+            assert_eq!(
+                steps,
+                [
+                    DeployStepStatus::Done,
+                    DeployStepStatus::Done,
+                    DeployStepStatus::Done,
+                    DeployStepStatus::Done,
+                    DeployStepStatus::Failed,
+                ]
+            );
+            assert!(
+                status
+                    .error
+                    .as_deref()
+                    .is_some_and(|e| e.contains("did not connect back")),
+                "{status:?}"
+            );
+            assert!(
+                status.token.is_some(),
+                "the token is on the host, so it is kept"
+            );
+        }
+
+        #[ignore = "requires DATABASE_URL"]
+        #[sqlx::test(migrations = "./migrations")]
+        async fn a_host_that_refuses_the_install_fails_the_deploy_there_and_leaves_the_agent_alone(
+            pool: PgPool,
+        ) {
+            let state = state(&pool);
+            let agent_id = agent_id(&pool).await;
+            let (port, _recorded) = stand_in_host(Some("assimilate-agent-binary-")).await;
+            let binaries = binaries().await;
+            state.deploy_jobs.start(agent_id, USER).expect("start");
+
+            run_deploy(run_for(
+                &state,
+                agent_id,
+                port,
+                binaries.path(),
+                Duration::from_secs(30),
+            ))
+            .await;
+
+            let status = state.deploy_jobs.status(agent_id, USER).expect("a result");
+            assert_eq!(status.state, DeployJobState::Failed, "{status:?}");
+            assert!(
+                status
+                    .error
+                    .as_deref()
+                    .is_some_and(|e| e.contains("failed to install the agent binary")),
+                "{status:?}"
+            );
+            let agent = db::get_agent_by_hostname(&pool, "deploy-host", None)
+                .await
+                .expect("the agent");
+            assert_eq!(agent.agent_version, None, "a failed deploy records nothing");
+            assert_eq!(agent.last_ssh_user, None);
+        }
+
+        #[ignore = "requires DATABASE_URL"]
+        #[sqlx::test(migrations = "./migrations")]
+        async fn a_deploy_that_cannot_get_its_token_is_forgotten_so_the_agent_is_not_left_busy(
+            pool: PgPool,
+        ) {
+            let state = state(&pool);
+
+            // No such agent: the token cannot be stored.
+            let missing = begin_job(&state, 424_242, USER).await;
+
+            assert!(matches!(missing, Err(ApiError::NotFound(_))), "{missing:?}");
+            state
+                .deploy_jobs
+                .start(424_242, USER)
+                .expect("the failed attempt left no deploy behind");
+        }
+
+        #[ignore = "requires DATABASE_URL"]
+        #[sqlx::test(migrations = "./migrations")]
+        async fn a_second_attempt_while_one_runs_is_a_conflict(pool: PgPool) {
+            let state = state(&pool);
+            let agent_id = agent_id(&pool).await;
+            state.deploy_jobs.start(agent_id, USER).expect("start");
+
+            let second = begin_job(&state, agent_id, USER).await;
+
+            assert!(matches!(second, Err(ApiError::Conflict(_))), "{second:?}");
+        }
+
+        /// An agent that already runs the version on offer is not deployed to,
+        /// and no deploy is recorded for it.
+        #[cfg(unix)]
+        #[ignore = "requires DATABASE_URL"]
+        #[sqlx::test(migrations = "./migrations")]
+        async fn an_agent_that_is_already_current_is_reported_as_skipped(pool: PgPool) {
+            use std::os::unix::fs::PermissionsExt;
+
+            let state = state(&pool);
+            let agent_id = agent_id(&pool).await;
+            db::update_last_seen_and_version(&pool, agent_id, "1.2.0", None, None, None)
+                .await
+                .expect("set version");
+            let dir = tempfile::tempdir().expect("tempdir");
+            let binary = dir.path().join(format!("agent-{}", std::env::consts::ARCH));
+            tokio::fs::write(&binary, "#!/bin/sh\necho 'agent 1.2.0'\n")
+                .await
+                .expect("write binary");
+            tokio::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o755))
+                .await
+                .expect("make it executable");
+            let user = insert_auth_user(&pool, "skip-user").await;
+            let request: DeployAgentRequest = serde_json::from_value(serde_json::json!({
+                "ssh_host": "127.0.0.1",
+                "ssh_user": "root",
+                "server_url": "https://backup.example.com",
+            }))
+            .expect("request");
+
+            let (code, started) = start_deploy(
+                &state,
+                user.user_id,
+                "deploy-host",
+                None,
+                request,
+                dir.path().to_path_buf(),
+            )
+            .await
+            .expect("started");
+
+            assert_eq!(code, StatusCode::OK);
+            assert!(started.skipped, "{started:?}");
+            assert_eq!(started.available_version.as_deref(), Some("1.2.0"));
+            assert!(state.deploy_jobs.status(agent_id, user.user_id).is_none());
+        }
     }
 
     mod desktop_mode {

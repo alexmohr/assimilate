@@ -31,10 +31,11 @@ mod maintenance;
 mod parse;
 mod target;
 
+pub use shared::prune::Retention;
+
 use self::parse::MAX_FAILURE_CHARS;
 pub(crate) use self::parse::warning_status_log;
 pub use self::target::{BackupTarget, Pruning};
-pub use shared::prune::Retention;
 
 #[derive(Debug, thiserror::Error)]
 pub enum BackupError {

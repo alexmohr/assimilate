@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 /** The sections of an agent's Sources tab, in rail order. */
-export const SOURCES_SECTIONS = ['files', 'vms', 'databases'] as const
+export const SOURCES_SECTIONS = ['files', 'vms', 'databases', 'used-by'] as const
 
 export type SourcesSection = (typeof SOURCES_SECTIONS)[number]
 

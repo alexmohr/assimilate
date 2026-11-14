@@ -1,5 +1,5 @@
 {
   "test": "archive growth",
   "pages": ["frontend/src/views/RepoDetailView.vue"],
-  "fingerprint": "7e7759cd44650bb8a65afea20a0089b82ecf8c8db8e57be8135d58595adb887e"
+  "fingerprint": "2c1cad2927e56a1a3bffe9136fbd6fbfedbd6981adb92ddcc1b29642449c6e84"
 }

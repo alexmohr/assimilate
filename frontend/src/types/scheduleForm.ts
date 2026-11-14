@@ -7,6 +7,13 @@ import type { FsSnapshotMode, HookCommand, ScheduleWakeOverride } from './genera
  * The editable shape behind the schedule detail form. Lives here rather than
  * inline in the view so the tab components can be typed against it.
  */
+/**
+ * Where a schedule's file paths come from: each host's own list, a list of
+ * this schedule's that replaces it, or no files at all (a databases- or
+ * VMs-only schedule).
+ */
+export type ScheduleFilesMode = 'host' | 'custom' | 'off'
+
 export interface ScheduleFormState {
   name: string
   cron_expression: string
@@ -34,6 +41,9 @@ export interface ScheduleFormState {
   wake_override: ScheduleWakeOverride
   catch_up_min_lead_minutes: number
   backup_sources: string
+  files_mode: ScheduleFilesMode
+  /** Whether each host's own pre/post-backup commands run around the files. */
+  run_host_commands: boolean
 }
 
 /**
@@ -69,6 +79,8 @@ export const DEFAULT_SCHEDULE_FORM_STATE: ScheduleFormState = {
   wake_override: 'host_default',
   catch_up_min_lead_minutes: 120,
   backup_sources: '',
+  files_mode: 'host',
+  run_host_commands: true,
 }
 
 /**

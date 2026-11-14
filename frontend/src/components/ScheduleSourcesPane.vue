@@ -19,9 +19,9 @@ import type { ScheduleFilesMode, ScheduleFormState } from '../types/scheduleForm
  * What a backup schedule takes from each of its hosts.
  *
  * Every host lists what it has under its own Sources tab: files, virtual
- * machines and databases. A schedule usually takes all of it; this pane is
- * where one picks something narrower, such as only /home, or only the
- * databases. It replaces the backup paths that sat under Targets and the VM
+ * machines and databases. A schedule usually takes them as they are; this
+ * pane is where one sets its own paths instead (fewer, like only /home, or
+ * more), or leaves files out to back up only the databases. It replaces the backup paths that sat under Targets and the VM
  * and database switches that sat under Advanced.
  */
 const props = defineProps<{
@@ -36,7 +36,7 @@ const perHostSources = defineModel<Record<number, string>>('perHostSources', { r
 
 const FILES_OPTIONS: readonly SegmentedOption<ScheduleFilesMode>[] = [
   { value: 'host', label: "Each host's paths" },
-  { value: 'custom', label: 'Only these paths' },
+  { value: 'custom', label: 'Own paths' },
   { value: 'off', label: 'Off' },
 ]
 
@@ -121,8 +121,8 @@ const preview = computed<HostPreview[]>(() =>
   <div class="form-stack">
     <div class="pane-head">
       <p class="pane-lede">
-        Each host lists its own files, virtual machines and databases under its Sources tab. Pick
-        which of them this schedule takes.
+        Each host lists its own files, virtual machines and databases under its Sources tab. This
+        schedule takes them as they are, or sets its own paths.
       </p>
     </div>
 
@@ -135,8 +135,8 @@ const preview = computed<HostPreview[]>(() =>
         >
           <template #help>
             <strong>Each host's paths</strong> backs up what every host lists under Sources › Files.
-            <strong>Only these paths</strong> replaces that list for this schedule, for example
-            only <code>/home</code>. <strong>Off</strong> reads no files, for a schedule that only
+            <strong>Own paths</strong> replaces that list for this schedule. It can be narrower,
+            such as only <code>/home</code>, or wider, adding paths the hosts don't list. <strong>Off</strong> reads no files, for a schedule that only
             dumps databases or snapshots VMs. Each host's excludes apply whichever you pick.
           </template>
           <BaseSegmented
@@ -165,14 +165,15 @@ const preview = computed<HostPreview[]>(() =>
               />
             </PaneRow>
             <PaneRow
-              title="Only these paths"
+              title="Paths for this schedule"
+              hint="Used instead of each host's own paths."
               stack
             >
               <textarea
                 v-if="!usePerHostPaths"
                 v-model="form.backup_sources"
                 class="input area-input"
-                aria-label="Only these paths"
+                aria-label="Paths for this schedule"
                 placeholder="/home"
                 spellcheck="false"
               />

@@ -15,7 +15,8 @@ import {
 } from '../api/vms'
 import { badgeClass, type BadgeTone } from '../utils/badge'
 import { extractError } from '../utils/error'
-import { formatBytes } from '../utils/format'
+import { formatBytes, listSeparator } from '../utils/format'
+import { useSchedulesAsking } from '../composables/useHostSources'
 import BaseSegmented, { type SegmentedOption } from './BaseSegmented.vue'
 import BaseSpinner from './BaseSpinner.vue'
 import EditableSection from './EditableSection.vue'
@@ -24,6 +25,7 @@ import PaneRow from './PaneRow.vue'
 import ToggleSwitch from './ToggleSwitch.vue'
 import VmRestoreWizard from './VmRestoreWizard.vue'
 import type { AgentRow } from '../types/agent'
+import type { ScheduleRow } from '../types/schedule'
 import type {
   AgentVmResponse,
   AgentVmSnapshotResponse,
@@ -37,15 +39,23 @@ import type {
  * how long a chain of increments may grow, and what each domain may occupy.
  *
  * The settings sit on the host rather than on a schedule because the staging
- * directory is shared by every schedule that targets it; a schedule only opts
- * in. The domain table is what the agent last reported, so it is empty until
+ * directory is shared by every schedule that targets it; a schedule takes
+ * what is included here or opts out. The domain table is what the agent last reported, so it is empty until
  * the host has been scanned once.
  */
-const props = defineProps<{
-  agent: AgentRow
-  /** False for imported hosts, which have no agent to scan or push to. */
-  canEdit: boolean
-}>()
+const props = withDefaults(
+  defineProps<{
+    agent: AgentRow
+    /** False for imported hosts, which have no agent to scan or push to. */
+    canEdit: boolean
+    /** The schedules that target this host. */
+    schedules?: readonly ScheduleRow[]
+  }>(),
+  { schedules: () => [] },
+)
+
+/** This host's schedules that take VMs, which get none while no domain is included. */
+const schedulesAskingForVms = useSchedulesAsking(() => props.schedules, 'vms')
 
 const GIB = 1024 * 1024 * 1024
 
@@ -69,7 +79,6 @@ const snapshotting = ref<string | null>(null)
 /** The domain whose restore wizard is open, if any. */
 const restoring = ref<string | null>(null)
 
-const enabled = ref(false)
 const selection = ref<VmSelectionMode>('all')
 const stagingDir = ref('')
 
@@ -100,6 +109,9 @@ const timeoutSeconds = ref(1800)
 const defaultLimitGib = ref(0)
 
 const vms = computed<AgentVmResponse[]>(() => data.value?.vms ?? [])
+
+/** The domains a backup stages; none means every schedule asking gets none. */
+const includedCount = computed(() => vms.value.filter((vm) => vm.included).length)
 
 /** Bytes to whole GiB for the form, which is the unit operators think in. */
 function toGib(bytes: number): number {
@@ -195,7 +207,6 @@ function stateBadge(state: VmState): string {
 
 function applyResponse(response: AgentVmSnapshotResponse): void {
   data.value = response
-  enabled.value = response.settings.enabled
   selection.value = response.settings.selection
   stagingDir.value = response.settings.staging_dir
   fullInterval.value = response.settings.full_interval
@@ -245,7 +256,9 @@ async function save(): Promise<void> {
       await updateAgentVmSnapshot(
         props.agent.hostname,
         {
-          enabled: enabled.value,
+          // The host no longer turns VM backups off as a whole: it stages what
+          // it includes, and each schedule takes that or opts out.
+          enabled: true,
           selection: selection.value,
           staging_dir: stagingDir.value.trim(),
           full_interval: fullInterval.value,
@@ -393,7 +406,7 @@ onMounted(load)
     </p>
     <EditableSection
       lede="Stage this host's virtual machines into a directory before a backup runs, so borg
-          picks them up as ordinary files. Schedules opt in one by one."
+          picks them up as ordinary files. Every schedule takes them unless it opts out."
       :editing="editing"
       :can-edit="canEdit"
       :saving="saving"
@@ -411,8 +424,6 @@ onMounted(load)
             <span class="group-label group-label--lg">Staging</span>
           </div>
           <dl class="info-grid">
-            <dt>Allow schedules to back up virtual machines</dt>
-            <dd>{{ enabled ? 'Allowed' : 'Blocked' }}</dd>
             <dt>Which domains</dt>
             <dd>{{ SELECTION_LABELS[selection] }}</dd>
             <dt>Staging directory</dt>
@@ -424,6 +435,38 @@ onMounted(load)
             <dt>Default limit per domain</dt>
             <dd>{{ defaultLimitGib === 0 ? 'No limit' : `${defaultLimitGib} GiB` }}</dd>
           </dl>
+          <!-- The other half of the schedule's warning: they ask, this host has nothing included. -->
+          <div
+            v-if="!loading && includedCount === 0 && schedulesAskingForVms.length > 0"
+            class="notice-bar"
+            role="status"
+            data-testid="vm-backup-asked"
+          >
+            <div class="notice-bar-text">
+              <span class="notice-bar-title">
+                {{
+                  schedulesAskingForVms.length === 1
+                    ? '1 schedule takes virtual machines here'
+                    : `${schedulesAskingForVms.length} schedules take virtual machines here`
+                }}
+              </span>
+              <span>
+                <template
+                  v-for="(schedule, i) in schedulesAskingForVms"
+                  :key="schedule.id"
+                >
+                  <RouterLink
+                    :to="`/schedules/${schedule.id}`"
+                    class="vm-asked-link"
+                    >{{ schedule.name || `Schedule #${schedule.id}` }}</RouterLink
+                  >{{ listSeparator(i, schedulesAskingForVms.length) }}
+                </template>
+                {{ schedulesAskingForVms.length === 1 ? 'takes' : 'take' }} virtual machines, but
+                this host has no domain included, so their archives hold none. Scan for domains
+                below and include at least one.
+              </span>
+            </div>
+          </div>
         </section>
       </template>
 
@@ -437,93 +480,78 @@ onMounted(load)
           </div>
 
           <div class="pane-rows">
+
             <PaneRow
-              title="Allow schedules to back up virtual machines"
-              help="allow VM backups"
+              title="Which domains"
+              stack
             >
-              <template #help>
-                Each schedule decides whether its own runs include them. Blocked here means no
-                schedule backs up this host's virtual machines, whatever the schedule asks for.
-              </template>
-              <ToggleSwitch
-                v-model="enabled"
-                label="Allow schedules to back up virtual machines"
+              <BaseSegmented
+                v-model="selection"
+                :options="SELECTION_OPTIONS"
+                label="Which domains to stage"
               />
             </PaneRow>
 
-            <div class="pane-nest">
-              <PaneRow
-                title="Which domains"
-                stack
-              >
-                <BaseSegmented
-                  v-model="selection"
-                  :options="SELECTION_OPTIONS"
-                  label="Which domains to stage"
-                />
-              </PaneRow>
+            <PaneRow
+              title="Staging directory"
+              label-for="vm-staging-dir"
+              help="where domains are staged"
+              stack
+            >
+              <template #help>
+                An absolute path with one subdirectory per domain. It must be writable by the user
+                QEMU runs as, and it joins the sources of every schedule that opts in.
+              </template>
+              <input
+                id="vm-staging-dir"
+                v-model="stagingDir"
+                class="input"
+                type="text"
+                placeholder="/home/virt/backups"
+              />
+            </PaneRow>
 
-              <PaneRow
-                title="Staging directory"
-                label-for="vm-staging-dir"
-                help="where domains are staged"
-                stack
-              >
-                <template #help>
-                  An absolute path with one subdirectory per domain. It must be writable by the user
-                  QEMU runs as, and it joins the sources of every schedule that opts in.
-                </template>
-                <input
-                  id="vm-staging-dir"
-                  v-model="stagingDir"
-                  class="input"
-                  type="text"
-                  placeholder="/home/virt/backups"
-                />
-              </PaneRow>
+            <PaneRow
+              title="New full image after"
+              label-for="vm-full-interval"
+              hint="Increments per chain."
+            >
+              <input
+                id="vm-full-interval"
+                v-model.number="fullInterval"
+                class="input field-narrow"
+                type="number"
+                min="1"
+              />
+            </PaneRow>
 
-              <PaneRow
-                title="New full image after"
-                label-for="vm-full-interval"
-                hint="Increments per chain."
-              >
-                <input
-                  id="vm-full-interval"
-                  v-model.number="fullInterval"
-                  class="input field-narrow"
-                  type="number"
-                  min="1"
-                />
-              </PaneRow>
+            <PaneRow
+              title="Snapshot timeout"
+              label-for="vm-timeout"
+              hint="Seconds, per domain."
+            >
+              <input
+                id="vm-timeout"
+                v-model.number="timeoutSeconds"
+                class="input field-narrow"
+                type="number"
+                min="1"
+              />
+            </PaneRow>
 
-              <PaneRow
-                title="Snapshot timeout"
-                label-for="vm-timeout"
-                hint="Seconds, per domain."
-              >
-                <input
-                  id="vm-timeout"
-                  v-model.number="timeoutSeconds"
-                  class="input field-narrow"
-                  type="number"
-                  min="1"
-                />
-              </PaneRow>
-
-              <PaneRow
-                title="Default limit per domain"
-                label-for="vm-default-limit"
-                hint="GiB. 0 means no limit."
-              >
-                <input
-                  id="vm-default-limit"
-                  v-model.number="defaultLimitGib"
-                  class="input field-narrow"
-                  type="number"
-                  min="0"
-                />
-              </PaneRow>
-            </div>
+            <PaneRow
+              title="Default limit per domain"
+              label-for="vm-default-limit"
+              hint="GiB. 0 means no limit."
+            >
+              <input
+                id="vm-default-limit"
+                v-model.number="defaultLimitGib"
+                class="input field-narrow"
+                type="number"
+                min="0"
+              />
+            </PaneRow>
           </div>
         </section>
       </template>
@@ -695,6 +723,11 @@ onMounted(load)
 </template>
 
 <style scoped>
+.vm-asked-link {
+  font-weight: 600;
+  color: var(--accent);
+}
+
 .vm-usage {
   margin-top: var(--space-2);
 }

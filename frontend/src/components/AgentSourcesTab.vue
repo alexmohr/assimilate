@@ -67,6 +67,7 @@ const sections = computed<SettingsSections<SourcesSection>>(() => [
       v-else-if="currentSection === 'vms'"
       :agent="agent"
       :can-edit="!agent.is_imported"
+      :schedules="schedules ?? []"
     />
     <AgentDatabasesCard
       v-else-if="currentSection === 'databases'"

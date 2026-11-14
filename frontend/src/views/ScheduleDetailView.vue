@@ -6,8 +6,8 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 <script setup lang="ts">
 import { runLogLink } from '../utils/activityLink'
 import { legacyDetailLink } from '../utils/legacyDetailLink'
-import { useHostDumpSettings } from '../composables/useHostDumpSettings'
-import DatabaseDumpMismatch from '../components/DatabaseDumpMismatch.vue'
+import { useHostSources } from '../composables/useHostSources'
+import SourceNotSetUp from '../components/SourceNotSetUp.vue'
 import { ref, computed, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { storeToRefs } from 'pinia'
@@ -298,17 +298,23 @@ const agentMap = computed(() => {
 })
 
 /**
- * The saved schedule's hosts that have database dumps turned off themselves,
- * read only while the schedule asks for dumps: on those hosts its archives
- * hold no databases, which the agent only says in its own log.
+ * The saved schedule's hosts with no VMs or no database sources set up, read
+ * only while the schedule takes them: on those hosts its archives hold none,
+ * which the agent only says in its own log.
  */
-const { hostsWithDumpsOff: dumpHostsOff } = useHostDumpSettings(() =>
-  schedule.value?.database_backup_enabled
+const { hostsWithout: hostsWithoutSource } = useHostSources(() =>
+  schedule.value?.vm_snapshot_enabled || schedule.value?.database_backup_enabled
     ? selectedAgentIds.value.flatMap((id) => {
         const agent = agentMap.value.get(id)
         return agent ? [agent] : []
       })
     : [],
+)
+const vmHostsMissing = computed(() =>
+  schedule.value?.vm_snapshot_enabled ? hostsWithoutSource('vms') : [],
+)
+const dumpHostsMissing = computed(() =>
+  schedule.value?.database_backup_enabled ? hostsWithoutSource('databases') : [],
 )
 
 const headerTypeLabel = computed(() => scheduleTypeLabel(scheduleType.value))
@@ -1068,10 +1074,17 @@ watch(activeTab, (tab) => {
         <h1 class="page-title">New Schedule</h1>
       </div>
 
-      <DatabaseDumpMismatch
-        v-if="schedule.database_backup_enabled && dumpHostsOff.length > 0"
+      <SourceNotSetUp
+        v-if="vmHostsMissing.length > 0"
         class="schedule-dump-mismatch"
-        :hosts="dumpHostsOff"
+        kind="vms"
+        :hosts="vmHostsMissing"
+      />
+      <SourceNotSetUp
+        v-if="dumpHostsMissing.length > 0"
+        class="schedule-dump-mismatch"
+        kind="databases"
+        :hosts="dumpHostsMissing"
       />
 
       <BaseTabs

@@ -13,7 +13,7 @@ import {
   updateAgentDatabaseSource,
 } from '../api/databases'
 import { useAsyncAction } from '../composables/useAsyncAction'
-import { useSchedulesAskingForDumps } from '../composables/useHostDumpSettings'
+import { useSchedulesAsking } from '../composables/useHostSources'
 import { extractError } from '../utils/error'
 import { formatDate, listSeparator } from '../utils/format'
 import {
@@ -69,8 +69,8 @@ const props = withDefaults(
   { schedules: () => [] },
 )
 
-/** This host's schedules that ask for database dumps, which a blocked host ignores. */
-const { schedulesAskingForDumps } = useSchedulesAskingForDumps(() => props.schedules)
+/** This host's schedules that take database dumps, which get none while nothing is included. */
+const schedulesAskingForDumps = useSchedulesAsking(() => props.schedules, 'databases')
 
 const loading = ref(true)
 const loadError = ref<string | null>(null)
@@ -85,7 +85,6 @@ const { error: rowError, run: runRow } = useAsyncAction()
 /** The source whose switch is being saved, so only its row is disabled. */
 const rowSaving = ref<string | null>(null)
 
-const enabled = ref(false)
 const selection = ref<DatabaseSelectionMode>('all')
 const dumpDir = ref('')
 const form = ref<RuntimeForm>(runtimeForm(NO_RUNTIMES))
@@ -107,6 +106,9 @@ const SELECTION_LABELS: Record<DatabaseSelectionMode, string> = {
 
 const sources = computed<AgentDatabaseSourceResponse[]>(() => data.value?.sources ?? [])
 
+/** The sources a backup dumps; none means every schedule asking gets none. */
+const includedCount = computed(() => sources.value.filter((s) => s.included).length)
+
 const summaries = computed<RuntimeSummary[]>(() => runtimeSummaries(runtimesFromForm(form.value)))
 
 const includedHint = computed<string>(() =>
@@ -125,7 +127,6 @@ function databaseList(source: AgentDatabaseSourceResponse): string {
 
 function applySettings(response: AgentDatabasesResponse): void {
   data.value = response
-  enabled.value = response.settings.enabled
   selection.value = response.settings.selection
   dumpDir.value = response.settings.dump_dir
   form.value = runtimeForm(response.settings.runtimes)
@@ -160,7 +161,9 @@ async function save(): Promise<void> {
     updateAgentDatabaseBackup(
       props.agent.hostname,
       {
-        enabled: enabled.value,
+        // The host no longer turns dumps off as a whole: it dumps what it
+        // includes, and each schedule takes that or opts out.
+        enabled: true,
         selection: selection.value,
         dump_dir: dumpDir.value.trim(),
         runtimes: runtimesFromForm(form.value),
@@ -227,7 +230,7 @@ onMounted(load)
     <EditableSection
       lede="Dump the databases this host runs, in its Kubernetes cluster, in Docker or Podman
           containers or installed on the host itself, into its backups, streamed straight into the
-          archive without staging them on disk. Schedules opt in one by one."
+          archive without staging them on disk. Every schedule takes them unless it opts out."
       :editing="editing"
       :can-edit="canEdit"
       :saving="saving"
@@ -238,8 +241,6 @@ onMounted(load)
     >
       <template #view>
         <dl class="info-grid">
-          <dt>Allow schedules to dump databases</dt>
-          <dd>{{ enabled ? 'Allowed' : 'Blocked' }}</dd>
           <dt>Which sources</dt>
           <dd>{{ SELECTION_LABELS[selection] }}</dd>
           <template
@@ -252,9 +253,9 @@ onMounted(load)
           <dt>Dump directory</dt>
           <dd class="mono">{{ dumpDir }}</dd>
         </dl>
-        <!-- The other half of the schedule's warning: they ask, this host says no. -->
+        <!-- The other half of the schedule's warning: they ask, this host has nothing included. -->
         <div
-          v-if="!enabled && schedulesAskingForDumps.length > 0"
+          v-if="includedCount === 0 && schedulesAskingForDumps.length > 0"
           class="notice-bar"
           role="status"
           data-testid="database-dump-asked"
@@ -263,8 +264,8 @@ onMounted(load)
             <span class="notice-bar-title">
               {{
                 schedulesAskingForDumps.length === 1
-                  ? '1 schedule asks for database dumps here'
-                  : `${schedulesAskingForDumps.length} schedules ask for database dumps here`
+                  ? '1 schedule takes database dumps here'
+                  : `${schedulesAskingForDumps.length} schedules take database dumps here`
               }}
             </span>
             <span>
@@ -278,9 +279,9 @@ onMounted(load)
                   >{{ schedule.name || `Schedule #${schedule.id}` }}</RouterLink
                 >{{ listSeparator(i, schedulesAskingForDumps.length) }}
               </template>
-              {{ schedulesAskingForDumps.length === 1 ? 'asks' : 'ask' }} for database dumps, but
-              they are blocked on this host, so their archives hold none. Allow them here to include
-              them.
+              {{ schedulesAskingForDumps.length === 1 ? 'takes' : 'take' }} database dumps, but this
+              host has no database source included, so their archives hold none. Scan for sources
+              below and include at least one.
             </span>
           </div>
         </div>
@@ -288,431 +289,416 @@ onMounted(load)
 
       <template #edit>
         <div class="pane-rows">
+
           <PaneRow
-            title="Allow schedules to dump databases"
-            help="allow database dumps"
+            title="Which sources"
+            stack
           >
-            <template #help>
-              Each schedule decides whether its own runs include them. Blocked here means no
-              schedule dumps this host's databases, whatever the schedule asks for.
-            </template>
-            <ToggleSwitch
-              v-model="enabled"
-              label="Allow schedules to dump databases"
+            <BaseSegmented
+              v-model="selection"
+              :options="SELECTION_OPTIONS"
+              label="Which database sources to dump"
             />
           </PaneRow>
 
-          <div class="pane-nest">
+          <PaneRow
+            title="Search the Kubernetes cluster"
+            help="how the agent reaches the cluster"
+          >
+            <template #help>
+              The agent lists the cluster's CloudNativePG clusters and annotated pods and runs the
+              engine's own dump program inside them: pg_dump, mysqldump, mariadb-dump or
+              mongodump. Give it a service account that may list pods and exec into them, not the
+              cluster admin: running commands in a database pod is a privileged grant. The
+              kubeconfig never leaves the host.
+            </template>
+            <ToggleSwitch
+              v-model="form.kubernetes"
+              label="Search the Kubernetes cluster"
+            />
+          </PaneRow>
+          <div
+            v-if="form.kubernetes"
+            class="pane-nest"
+          >
             <PaneRow
-              title="Which sources"
+              title="Kubeconfig"
+              label-for="db-kubeconfig"
+              hint="Leave empty for the in-cluster service account or ~/.kube/config."
               stack
             >
-              <BaseSegmented
-                v-model="selection"
-                :options="SELECTION_OPTIONS"
-                label="Which database sources to dump"
-              />
-            </PaneRow>
-
-            <PaneRow
-              title="Search the Kubernetes cluster"
-              help="how the agent reaches the cluster"
-            >
-              <template #help>
-                The agent lists the cluster's CloudNativePG clusters and annotated pods and runs the
-                engine's own dump program inside them: pg_dump, mysqldump, mariadb-dump or
-                mongodump. Give it a service account that may list pods and exec into them, not the
-                cluster admin: running commands in a database pod is a privileged grant. The
-                kubeconfig never leaves the host.
-              </template>
-              <ToggleSwitch
-                v-model="form.kubernetes"
-                label="Search the Kubernetes cluster"
-              />
-            </PaneRow>
-            <div
-              v-if="form.kubernetes"
-              class="pane-nest"
-            >
-              <PaneRow
-                title="Kubeconfig"
-                label-for="db-kubeconfig"
-                hint="Leave empty for the in-cluster service account or ~/.kube/config."
-                stack
-              >
-                <input
-                  id="db-kubeconfig"
-                  v-model="form.kubeconfigPath"
-                  class="input"
-                  type="text"
-                  placeholder="/etc/assimilate/kubeconfig"
-                />
-              </PaneRow>
-            </div>
-
-            <PaneRow
-              title="Search Docker or Podman containers"
-              help="how the agent finds containers"
-            >
-              <template #help>
-                The agent lists the running containers labelled
-                assimilate.alexmohr.github.io/database=postgresql, or mysql, mariadb, mongodb,
-                sqlite, redis, valkey, influxdb or influxdb1, and runs that database's dump program
-                inside them through the engine's API socket. Access to that socket is root on the
-                host, which the agent already is.
-              </template>
-              <ToggleSwitch
-                v-model="form.docker"
-                label="Search Docker or Podman containers"
-              />
-            </PaneRow>
-            <div
-              v-if="form.docker"
-              class="pane-nest"
-            >
-              <PaneRow
-                title="Engine socket"
-                label-for="db-docker-socket"
-                hint="Leave empty for $DOCKER_HOST or /var/run/docker.sock. Podman's is /run/podman/podman.sock."
-                stack
-              >
-                <input
-                  id="db-docker-socket"
-                  v-model="form.dockerSocket"
-                  class="input"
-                  type="text"
-                  placeholder="/var/run/docker.sock"
-                />
-              </PaneRow>
-            </div>
-
-            <PaneRow
-              title="Dump PostgreSQL on this host"
-              help="how the agent signs in to the host's server"
-            >
-              <template #help>
-                The agent runs psql and pg_dump on the host as the OS user below. Over the server's
-                Unix socket, peer authentication lets that user in as the role of the same name; a
-                server that wants a password reads it from that user's ~/.pgpass. Assimilate stores
-                no database password.
-              </template>
-              <ToggleSwitch
-                v-model="form.host"
-                label="Dump PostgreSQL on this host"
-              />
-            </PaneRow>
-            <div
-              v-if="form.host"
-              class="pane-nest"
-            >
-              <PaneRow
-                title="OS user"
-                label-for="db-host-user"
-                :hint="`Leave empty for ${DEFAULT_HOST_OS_USER}.`"
-                stack
-              >
-                <input
-                  id="db-host-user"
-                  v-model="form.hostOsUser"
-                  class="input"
-                  type="text"
-                  :placeholder="DEFAULT_HOST_OS_USER"
-                />
-              </PaneRow>
-              <PaneRow
-                title="Socket directory"
-                label-for="db-host-socket"
-                hint="Leave empty for the client's default, usually /var/run/postgresql."
-                stack
-              >
-                <input
-                  id="db-host-socket"
-                  v-model="form.hostSocketDir"
-                  class="input"
-                  type="text"
-                  placeholder="/var/run/postgresql"
-                />
-              </PaneRow>
-              <PaneRow
-                title="Port"
-                label-for="db-host-port"
-                hint="Leave empty for 5432."
-                stack
-              >
-                <input
-                  id="db-host-port"
-                  v-model="form.hostPort"
-                  class="input"
-                  type="text"
-                  inputmode="numeric"
-                  placeholder="5432"
-                />
-              </PaneRow>
-              <PaneRow
-                title="Programs directory"
-                label-for="db-host-bin"
-                hint="Where pg_dump and psql live, when the server's version is not the one on the PATH."
-                stack
-              >
-                <input
-                  id="db-host-bin"
-                  v-model="form.hostBinDir"
-                  class="input"
-                  type="text"
-                  placeholder="/usr/lib/postgresql/16/bin"
-                />
-              </PaneRow>
-            </div>
-
-            <PaneRow
-              title="Dump MySQL or MariaDB on this host"
-              help="how the agent signs in to the host's MySQL or MariaDB"
-            >
-              <template #help>
-                The agent runs the server's own client programs on the host as the OS user below.
-                Over the server's socket, root is let in as the account of the same name on Debian
-                and Ubuntu; a server that wants a password reads it from that user's ~/.my.cnf.
-                Assimilate stores no database password.
-              </template>
-              <ToggleSwitch
-                v-model="form.hostMysql"
-                label="Dump MySQL or MariaDB on this host"
-              />
-            </PaneRow>
-            <div
-              v-if="form.hostMysql"
-              class="pane-nest"
-            >
-              <PaneRow
-                title="Server"
-                stack
-              >
-                <BaseSegmented
-                  v-model="form.hostMysqlEngine"
-                  :options="MYSQL_ENGINE_OPTIONS"
-                  label="Which server is installed"
-                />
-              </PaneRow>
-              <PaneRow
-                title="OS user"
-                label-for="db-host-mysql-user"
-                :hint="`Leave empty for ${DEFAULT_HOST_ROOT_USER}.`"
-                stack
-              >
-                <input
-                  id="db-host-mysql-user"
-                  v-model="form.hostMysqlOsUser"
-                  class="input"
-                  type="text"
-                  :placeholder="DEFAULT_HOST_ROOT_USER"
-                />
-              </PaneRow>
-              <PaneRow
-                title="Socket"
-                label-for="db-host-mysql-socket"
-                hint="Leave empty for the client's default, usually /run/mysqld/mysqld.sock."
-                stack
-              >
-                <input
-                  id="db-host-mysql-socket"
-                  v-model="form.hostMysqlSocket"
-                  class="input"
-                  type="text"
-                  placeholder="/run/mysqld/mysqld.sock"
-                />
-              </PaneRow>
-              <PaneRow
-                title="Port"
-                label-for="db-host-mysql-port"
-                hint="Leave empty to connect over the socket; a port, instead of a socket, connects over TCP to 127.0.0.1."
-                stack
-              >
-                <input
-                  id="db-host-mysql-port"
-                  v-model="form.hostMysqlPort"
-                  class="input"
-                  type="text"
-                  inputmode="numeric"
-                  placeholder="3306"
-                />
-              </PaneRow>
-              <PaneRow
-                title="Programs directory"
-                label-for="db-host-mysql-bin"
-                hint="Where the dump and client programs live, when they are not on the PATH."
-                stack
-              >
-                <input
-                  id="db-host-mysql-bin"
-                  v-model="form.hostMysqlBinDir"
-                  class="input"
-                  type="text"
-                  placeholder="/usr/bin"
-                />
-              </PaneRow>
-            </div>
-
-            <PaneRow
-              title="Dump MongoDB on this host"
-              help="how the agent signs in to the host's MongoDB"
-            >
-              <template #help>
-                The agent runs mongodump, mongorestore and mongosh on the host as the OS user below.
-                A server with access control on is reached through a config file of the database
-                tools on the host holding its uri, account and password included; only its path is
-                stored here. Without one, the agent connects to 127.0.0.1 without signing in.
-              </template>
-              <ToggleSwitch
-                v-model="form.hostMongodb"
-                label="Dump MongoDB on this host"
-              />
-            </PaneRow>
-            <div
-              v-if="form.hostMongodb"
-              class="pane-nest"
-            >
-              <PaneRow
-                title="OS user"
-                label-for="db-host-mongodb-user"
-                :hint="`Leave empty for ${DEFAULT_HOST_ROOT_USER}.`"
-                stack
-              >
-                <input
-                  id="db-host-mongodb-user"
-                  v-model="form.hostMongodbOsUser"
-                  class="input"
-                  type="text"
-                  :placeholder="DEFAULT_HOST_ROOT_USER"
-                />
-              </PaneRow>
-              <PaneRow
-                title="Config file"
-                label-for="db-host-mongodb-config"
-                hint="A file only that user can read, holding uri: mongodb://user:password@127.0.0.1:27017/?authSource=admin."
-                stack
-              >
-                <input
-                  id="db-host-mongodb-config"
-                  v-model="form.hostMongodbConfigFile"
-                  class="input"
-                  type="text"
-                  placeholder="/etc/assimilate/mongodump.yaml"
-                />
-              </PaneRow>
-              <PaneRow
-                title="Port"
-                label-for="db-host-mongodb-port"
-                hint="Leave empty for 27017. A config file names the server itself."
-                stack
-              >
-                <input
-                  id="db-host-mongodb-port"
-                  v-model="form.hostMongodbPort"
-                  class="input"
-                  type="text"
-                  inputmode="numeric"
-                  placeholder="27017"
-                />
-              </PaneRow>
-              <PaneRow
-                title="Programs directory"
-                label-for="db-host-mongodb-bin"
-                hint="Where mongodump, mongorestore and mongosh live, when they are not on the PATH."
-                stack
-              >
-                <input
-                  id="db-host-mongodb-bin"
-                  v-model="form.hostMongodbBinDir"
-                  class="input"
-                  type="text"
-                  placeholder="/usr/bin"
-                />
-              </PaneRow>
-            </div>
-
-            <PaneRow
-              title="Dump SQLite files on this host"
-              help="how the agent reads the host's SQLite files"
-            >
-              <template #help>
-                The agent runs sqlite3 on the host as the OS user below, which must be allowed to
-                read each file and, to restore over one, write it and its directory. A dump reads
-                the file in one transaction, so it is consistent while the application keeps
-                writing. There is no server and no account to sign in as.
-              </template>
-              <ToggleSwitch
-                v-model="form.hostSqlite"
-                label="Dump SQLite files on this host"
-              />
-            </PaneRow>
-            <div
-              v-if="form.hostSqlite"
-              class="pane-nest"
-            >
-              <PaneRow
-                title="Database files"
-                label-for="db-host-sqlite-files"
-                hint="One absolute path per line."
-                stack
-              >
-                <textarea
-                  id="db-host-sqlite-files"
-                  v-model="form.hostSqliteFiles"
-                  class="input mono area-input area-input-sm"
-                  placeholder="/var/lib/app/app.db"
-                  spellcheck="false"
-                />
-              </PaneRow>
-              <PaneRow
-                title="OS user"
-                label-for="db-host-sqlite-user"
-                :hint="`Leave empty for ${DEFAULT_HOST_ROOT_USER}.`"
-                stack
-              >
-                <input
-                  id="db-host-sqlite-user"
-                  v-model="form.hostSqliteOsUser"
-                  class="input"
-                  type="text"
-                  :placeholder="DEFAULT_HOST_ROOT_USER"
-                />
-              </PaneRow>
-              <PaneRow
-                title="Programs directory"
-                label-for="db-host-sqlite-bin"
-                hint="Where sqlite3 lives, when it is not on the PATH."
-                stack
-              >
-                <input
-                  id="db-host-sqlite-bin"
-                  v-model="form.hostSqliteBinDir"
-                  class="input"
-                  type="text"
-                  placeholder="/usr/bin"
-                />
-              </PaneRow>
-            </div>
-
-            <PaneRow
-              title="Dump directory"
-              label-for="db-dump-dir"
-              help="where the dumps are streamed from"
-              stack
-            >
-              <template #help>
-                An absolute path on the agent's host that holds one named pipe per database while a
-                backup runs. The archive stores the dumps under it. It may not be below /dev, /proc,
-                /sys or /run, which a run that dumps databases leaves out.
-              </template>
               <input
-                id="db-dump-dir"
-                v-model="dumpDir"
+                id="db-kubeconfig"
+                v-model="form.kubeconfigPath"
                 class="input"
                 type="text"
-                placeholder="/var/lib/assimilate/database-dumps"
+                placeholder="/etc/assimilate/kubeconfig"
               />
             </PaneRow>
           </div>
+
+          <PaneRow
+            title="Search Docker or Podman containers"
+            help="how the agent finds containers"
+          >
+            <template #help>
+              The agent lists the running containers labelled
+              assimilate.alexmohr.github.io/database=postgresql, or mysql, mariadb, mongodb,
+              sqlite, redis, valkey, influxdb or influxdb1, and runs that database's dump program
+              inside them through the engine's API socket. Access to that socket is root on the
+              host, which the agent already is.
+            </template>
+            <ToggleSwitch
+              v-model="form.docker"
+              label="Search Docker or Podman containers"
+            />
+          </PaneRow>
+          <div
+            v-if="form.docker"
+            class="pane-nest"
+          >
+            <PaneRow
+              title="Engine socket"
+              label-for="db-docker-socket"
+              hint="Leave empty for $DOCKER_HOST or /var/run/docker.sock. Podman's is /run/podman/podman.sock."
+              stack
+            >
+              <input
+                id="db-docker-socket"
+                v-model="form.dockerSocket"
+                class="input"
+                type="text"
+                placeholder="/var/run/docker.sock"
+              />
+            </PaneRow>
+          </div>
+
+          <PaneRow
+            title="Dump PostgreSQL on this host"
+            help="how the agent signs in to the host's server"
+          >
+            <template #help>
+              The agent runs psql and pg_dump on the host as the OS user below. Over the server's
+              Unix socket, peer authentication lets that user in as the role of the same name; a
+              server that wants a password reads it from that user's ~/.pgpass. Assimilate stores
+              no database password.
+            </template>
+            <ToggleSwitch
+              v-model="form.host"
+              label="Dump PostgreSQL on this host"
+            />
+          </PaneRow>
+          <div
+            v-if="form.host"
+            class="pane-nest"
+          >
+            <PaneRow
+              title="OS user"
+              label-for="db-host-user"
+              :hint="`Leave empty for ${DEFAULT_HOST_OS_USER}.`"
+              stack
+            >
+              <input
+                id="db-host-user"
+                v-model="form.hostOsUser"
+                class="input"
+                type="text"
+                :placeholder="DEFAULT_HOST_OS_USER"
+              />
+            </PaneRow>
+            <PaneRow
+              title="Socket directory"
+              label-for="db-host-socket"
+              hint="Leave empty for the client's default, usually /var/run/postgresql."
+              stack
+            >
+              <input
+                id="db-host-socket"
+                v-model="form.hostSocketDir"
+                class="input"
+                type="text"
+                placeholder="/var/run/postgresql"
+              />
+            </PaneRow>
+            <PaneRow
+              title="Port"
+              label-for="db-host-port"
+              hint="Leave empty for 5432."
+              stack
+            >
+              <input
+                id="db-host-port"
+                v-model="form.hostPort"
+                class="input"
+                type="text"
+                inputmode="numeric"
+                placeholder="5432"
+              />
+            </PaneRow>
+            <PaneRow
+              title="Programs directory"
+              label-for="db-host-bin"
+              hint="Where pg_dump and psql live, when the server's version is not the one on the PATH."
+              stack
+            >
+              <input
+                id="db-host-bin"
+                v-model="form.hostBinDir"
+                class="input"
+                type="text"
+                placeholder="/usr/lib/postgresql/16/bin"
+              />
+            </PaneRow>
+          </div>
+
+          <PaneRow
+            title="Dump MySQL or MariaDB on this host"
+            help="how the agent signs in to the host's MySQL or MariaDB"
+          >
+            <template #help>
+              The agent runs the server's own client programs on the host as the OS user below.
+              Over the server's socket, root is let in as the account of the same name on Debian
+              and Ubuntu; a server that wants a password reads it from that user's ~/.my.cnf.
+              Assimilate stores no database password.
+            </template>
+            <ToggleSwitch
+              v-model="form.hostMysql"
+              label="Dump MySQL or MariaDB on this host"
+            />
+          </PaneRow>
+          <div
+            v-if="form.hostMysql"
+            class="pane-nest"
+          >
+            <PaneRow
+              title="Server"
+              stack
+            >
+              <BaseSegmented
+                v-model="form.hostMysqlEngine"
+                :options="MYSQL_ENGINE_OPTIONS"
+                label="Which server is installed"
+              />
+            </PaneRow>
+            <PaneRow
+              title="OS user"
+              label-for="db-host-mysql-user"
+              :hint="`Leave empty for ${DEFAULT_HOST_ROOT_USER}.`"
+              stack
+            >
+              <input
+                id="db-host-mysql-user"
+                v-model="form.hostMysqlOsUser"
+                class="input"
+                type="text"
+                :placeholder="DEFAULT_HOST_ROOT_USER"
+              />
+            </PaneRow>
+            <PaneRow
+              title="Socket"
+              label-for="db-host-mysql-socket"
+              hint="Leave empty for the client's default, usually /run/mysqld/mysqld.sock."
+              stack
+            >
+              <input
+                id="db-host-mysql-socket"
+                v-model="form.hostMysqlSocket"
+                class="input"
+                type="text"
+                placeholder="/run/mysqld/mysqld.sock"
+              />
+            </PaneRow>
+            <PaneRow
+              title="Port"
+              label-for="db-host-mysql-port"
+              hint="Leave empty to connect over the socket; a port, instead of a socket, connects over TCP to 127.0.0.1."
+              stack
+            >
+              <input
+                id="db-host-mysql-port"
+                v-model="form.hostMysqlPort"
+                class="input"
+                type="text"
+                inputmode="numeric"
+                placeholder="3306"
+              />
+            </PaneRow>
+            <PaneRow
+              title="Programs directory"
+              label-for="db-host-mysql-bin"
+              hint="Where the dump and client programs live, when they are not on the PATH."
+              stack
+            >
+              <input
+                id="db-host-mysql-bin"
+                v-model="form.hostMysqlBinDir"
+                class="input"
+                type="text"
+                placeholder="/usr/bin"
+              />
+            </PaneRow>
+          </div>
+
+          <PaneRow
+            title="Dump MongoDB on this host"
+            help="how the agent signs in to the host's MongoDB"
+          >
+            <template #help>
+              The agent runs mongodump, mongorestore and mongosh on the host as the OS user below.
+              A server with access control on is reached through a config file of the database
+              tools on the host holding its uri, account and password included; only its path is
+              stored here. Without one, the agent connects to 127.0.0.1 without signing in.
+            </template>
+            <ToggleSwitch
+              v-model="form.hostMongodb"
+              label="Dump MongoDB on this host"
+            />
+          </PaneRow>
+          <div
+            v-if="form.hostMongodb"
+            class="pane-nest"
+          >
+            <PaneRow
+              title="OS user"
+              label-for="db-host-mongodb-user"
+              :hint="`Leave empty for ${DEFAULT_HOST_ROOT_USER}.`"
+              stack
+            >
+              <input
+                id="db-host-mongodb-user"
+                v-model="form.hostMongodbOsUser"
+                class="input"
+                type="text"
+                :placeholder="DEFAULT_HOST_ROOT_USER"
+              />
+            </PaneRow>
+            <PaneRow
+              title="Config file"
+              label-for="db-host-mongodb-config"
+              hint="A file only that user can read, holding uri: mongodb://user:password@127.0.0.1:27017/?authSource=admin."
+              stack
+            >
+              <input
+                id="db-host-mongodb-config"
+                v-model="form.hostMongodbConfigFile"
+                class="input"
+                type="text"
+                placeholder="/etc/assimilate/mongodump.yaml"
+              />
+            </PaneRow>
+            <PaneRow
+              title="Port"
+              label-for="db-host-mongodb-port"
+              hint="Leave empty for 27017. A config file names the server itself."
+              stack
+            >
+              <input
+                id="db-host-mongodb-port"
+                v-model="form.hostMongodbPort"
+                class="input"
+                type="text"
+                inputmode="numeric"
+                placeholder="27017"
+              />
+            </PaneRow>
+            <PaneRow
+              title="Programs directory"
+              label-for="db-host-mongodb-bin"
+              hint="Where mongodump, mongorestore and mongosh live, when they are not on the PATH."
+              stack
+            >
+              <input
+                id="db-host-mongodb-bin"
+                v-model="form.hostMongodbBinDir"
+                class="input"
+                type="text"
+                placeholder="/usr/bin"
+              />
+            </PaneRow>
+          </div>
+
+          <PaneRow
+            title="Dump SQLite files on this host"
+            help="how the agent reads the host's SQLite files"
+          >
+            <template #help>
+              The agent runs sqlite3 on the host as the OS user below, which must be allowed to
+              read each file and, to restore over one, write it and its directory. A dump reads
+              the file in one transaction, so it is consistent while the application keeps
+              writing. There is no server and no account to sign in as.
+            </template>
+            <ToggleSwitch
+              v-model="form.hostSqlite"
+              label="Dump SQLite files on this host"
+            />
+          </PaneRow>
+          <div
+            v-if="form.hostSqlite"
+            class="pane-nest"
+          >
+            <PaneRow
+              title="Database files"
+              label-for="db-host-sqlite-files"
+              hint="One absolute path per line."
+              stack
+            >
+              <textarea
+                id="db-host-sqlite-files"
+                v-model="form.hostSqliteFiles"
+                class="input mono area-input area-input-sm"
+                placeholder="/var/lib/app/app.db"
+                spellcheck="false"
+              />
+            </PaneRow>
+            <PaneRow
+              title="OS user"
+              label-for="db-host-sqlite-user"
+              :hint="`Leave empty for ${DEFAULT_HOST_ROOT_USER}.`"
+              stack
+            >
+              <input
+                id="db-host-sqlite-user"
+                v-model="form.hostSqliteOsUser"
+                class="input"
+                type="text"
+                :placeholder="DEFAULT_HOST_ROOT_USER"
+              />
+            </PaneRow>
+            <PaneRow
+              title="Programs directory"
+              label-for="db-host-sqlite-bin"
+              hint="Where sqlite3 lives, when it is not on the PATH."
+              stack
+            >
+              <input
+                id="db-host-sqlite-bin"
+                v-model="form.hostSqliteBinDir"
+                class="input"
+                type="text"
+                placeholder="/usr/bin"
+              />
+            </PaneRow>
+          </div>
+
+          <PaneRow
+            title="Dump directory"
+            label-for="db-dump-dir"
+            help="where the dumps are streamed from"
+            stack
+          >
+            <template #help>
+              An absolute path on the agent's host that holds one named pipe per database while a
+              backup runs. The archive stores the dumps under it. It may not be below /dev, /proc,
+              /sys or /run, which a run that dumps databases leaves out.
+            </template>
+            <input
+              id="db-dump-dir"
+              v-model="dumpDir"
+              class="input"
+              type="text"
+              placeholder="/var/lib/assimilate/database-dumps"
+            />
+          </PaneRow>
         </div>
       </template>
     </EditableSection>

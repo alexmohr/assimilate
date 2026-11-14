@@ -6,11 +6,11 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 <script setup lang="ts">
 import { computed } from 'vue'
 import BaseSegmented, { type SegmentedOption } from './BaseSegmented.vue'
-import DatabaseDumpMismatch from './DatabaseDumpMismatch.vue'
+import SourceNotSetUp from './SourceNotSetUp.vue'
 import PaneRow from './PaneRow.vue'
 import PerAgentFields from './PerAgentFields.vue'
 import ToggleSwitch from './ToggleSwitch.vue'
-import { useHostDumpSettings } from '../composables/useHostDumpSettings'
+import { useHostSources } from '../composables/useHostSources'
 import { parseLines } from '../utils/validation'
 import type { AgentRow } from '../types/agent'
 import type { ScheduleFilesMode, ScheduleFormState } from '../types/scheduleForm'
@@ -46,7 +46,26 @@ const targetAgents = computed(() =>
     .filter((agent): agent is AgentRow => agent !== undefined),
 )
 
-const { hostsWithDumpsOff } = useHostDumpSettings(() => targetAgents.value)
+const { counts, hostsWithout } = useHostSources(() => targetAgents.value)
+const hostsWithoutVms = computed(() => (form.value.vm_snapshot_enabled ? hostsWithout('vms') : []))
+const hostsWithoutDatabases = computed(() =>
+  form.value.database_backup_enabled ? hostsWithout('databases') : [],
+)
+
+/** "2 VMs", "None set up", or "Off" when this schedule leaves them out. */
+interface SourceCell {
+  text: string
+  muted: boolean
+  /** The schedule takes them, but the host has none set up. */
+  missing: boolean
+}
+
+function sourceCell(on: boolean, count: number | undefined, unit: string): SourceCell {
+  if (!on) return { text: 'Off', muted: true, missing: false }
+  if (count === undefined) return { text: '…', muted: true, missing: false }
+  if (count === 0) return { text: 'None set up', muted: false, missing: true }
+  return { text: `${count} ${unit}`, muted: false, missing: false }
+}
 
 interface HostPreview {
   id: number
@@ -56,9 +75,8 @@ interface HostPreview {
   filesNote: string | null
   commands: string
   commandsMuted: boolean
-  vms: string
-  databases: string
-  databasesOn: boolean
+  vms: SourceCell
+  databases: SourceCell
 }
 
 function filesFor(agent: AgentRow): string[] {
@@ -89,7 +107,7 @@ const preview = computed<HostPreview[]>(() =>
   targetAgents.value.map((agent) => {
     const files = filesFor(agent)
     const commands = commandsFor(agent)
-    const databasesOn = form.value.database_backup_enabled && agent.database_backup_enabled
+    const hostCounts = counts.value.get(agent.id)
     let filesNote: string | null = null
     if (form.value.files_mode === 'off') filesNote = 'Off'
     else if (files.length === 0)
@@ -105,13 +123,12 @@ const preview = computed<HostPreview[]>(() =>
       filesNote,
       commands: commands.text,
       commandsMuted: commands.muted,
-      vms: form.value.vm_snapshot_enabled ? 'Those it allows' : 'Off',
-      databases: databasesOn
-        ? 'Those it allows'
-        : form.value.database_backup_enabled
-          ? 'Off on this host'
-          : 'Off',
-      databasesOn,
+      vms: sourceCell(form.value.vm_snapshot_enabled, hostCounts?.vms, 'VMs'),
+      databases: sourceCell(
+        form.value.database_backup_enabled,
+        hostCounts?.databases,
+        'database sources',
+      ),
     }
   }),
 )
@@ -225,8 +242,8 @@ const preview = computed<HostPreview[]>(() =>
           help="VM snapshots"
         >
           <template #help>
-            Snapshots the libvirt domains each host allows under Sources › Virtual machines, before
-            the backup starts.
+            Snapshots the libvirt domains each host includes under Sources › Virtual machines,
+            before the backup starts. Turn it off to leave them out of this schedule.
           </template>
           <ToggleSwitch
             v-model="form.vm_snapshot_enabled"
@@ -238,17 +255,23 @@ const preview = computed<HostPreview[]>(() =>
           help="database dumps"
         >
           <template #help>
-            Streams a dump of the databases each host allows under Sources › Databases into the same
-            archive.
+            Streams a dump of the database sources each host includes under Sources › Databases
+            into the same archive. Turn it off to leave them out of this schedule.
           </template>
           <ToggleSwitch
             v-model="form.database_backup_enabled"
             label="Databases"
           />
         </PaneRow>
-        <DatabaseDumpMismatch
-          v-if="form.database_backup_enabled && hostsWithDumpsOff.length > 0"
-          :hosts="hostsWithDumpsOff"
+        <SourceNotSetUp
+          v-if="hostsWithoutVms.length > 0"
+          kind="vms"
+          :hosts="hostsWithoutVms"
+        />
+        <SourceNotSetUp
+          v-if="hostsWithoutDatabases.length > 0"
+          kind="databases"
+          :hosts="hostsWithoutDatabases"
         />
       </div>
     </section>
@@ -292,8 +315,17 @@ const preview = computed<HostPreview[]>(() =>
               <td :class="{ muted: row.commandsMuted }">
                 {{ row.commands }}
               </td>
-              <td :class="{ muted: !form.vm_snapshot_enabled }">{{ row.vms }}</td>
-              <td :class="{ muted: !row.databasesOn }">{{ row.databases }}</td>
+              <td :class="{ muted: row.vms.muted, 'source-missing': row.vms.missing }">
+                {{ row.vms.text }}
+              </td>
+              <td
+                :class="{
+                  muted: row.databases.muted,
+                  'source-missing': row.databases.missing,
+                }"
+              >
+                {{ row.databases.text }}
+              </td>
             </tr>
           </tbody>
         </table>
@@ -304,3 +336,10 @@ const preview = computed<HostPreview[]>(() =>
     </section>
   </div>
 </template>
+
+<style scoped>
+.source-missing {
+  color: var(--warning);
+  font-weight: 600;
+}
+</style>

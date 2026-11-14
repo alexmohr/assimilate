@@ -4,23 +4,32 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 -->
 
 <script setup lang="ts">
+import { computed } from 'vue'
 import { TriangleAlert } from '@lucide/vue'
 import type { RouteLocationRaw } from 'vue-router'
 import { domainParams } from '../utils/agent'
 import { listSeparator } from '../utils/format'
 import type { AgentRow } from '../types/agent'
+import type { HostSourceKind } from '../composables/useHostSources'
 
 /**
- * A schedule asks for database dumps, but these of its hosts have dumps
- * turned off on the host itself: their archives will hold no databases. Each
- * host links to its database settings, where dumps are allowed.
+ * A schedule takes virtual machines or databases, but these of its hosts have
+ * none set up: none found by a scan, or none selected. Their archives will
+ * hold none. Each host links to the list where it sets them up.
  */
-defineProps<{ hosts: readonly AgentRow[] }>()
+const props = defineProps<{ hosts: readonly AgentRow[]; kind: HostSourceKind }>()
+
+const COPY: Record<HostSourceKind, { noun: string; title: string }> = {
+  vms: { noun: 'virtual machines', title: 'No virtual machines will be backed up' },
+  databases: { noun: 'databases', title: 'No databases will be dumped' },
+}
+
+const copy = computed(() => COPY[props.kind])
 
 function settingsLink(host: AgentRow): RouteLocationRaw {
   return {
     path: `/agents/${encodeURIComponent(host.hostname)}`,
-    query: { tab: 'sources', section: 'databases', ...domainParams(host.domain) },
+    query: { tab: 'sources', section: props.kind, ...domainParams(host.domain) },
   }
 }
 
@@ -33,19 +42,15 @@ function hostName(host: AgentRow): string {
   <div
     class="notice-bar dump-mismatch"
     role="status"
-    data-testid="database-dump-mismatch"
+    :data-testid="`source-not-set-up-${kind}`"
   >
     <TriangleAlert :size="16" />
     <div class="notice-bar-text">
       <span class="notice-bar-title">
-        {{
-          hosts.length === 1
-            ? 'No databases will be dumped on 1 host'
-            : `No databases will be dumped on ${hosts.length} hosts`
-        }}
+        {{ copy.title }} on {{ hosts.length === 1 ? '1 host' : `${hosts.length} hosts` }}
       </span>
       <span>
-        This schedule asks for database dumps, but database dumps are turned off on
+        This schedule takes {{ copy.noun }}, but none are set up on
         <template
           v-for="(host, i) in hosts"
           :key="host.id"
@@ -56,7 +61,8 @@ function hostName(host: AgentRow): string {
             >{{ hostName(host) }}</RouterLink
           >{{ listSeparator(i, hosts.length, '.') }}
         </template>
-        Their backups run without them until dumps are allowed in each host's database settings.
+        Scan or select them in each host's Sources tab, or turn {{ copy.noun }} off for this
+        schedule.
       </span>
     </div>
   </div>

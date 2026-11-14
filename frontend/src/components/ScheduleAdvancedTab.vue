@@ -10,12 +10,10 @@ import BaseSegmented, { type SegmentedOption } from './BaseSegmented.vue'
 import ToggleSwitch from './ToggleSwitch.vue'
 import FileChangePatternsEditor from './FileChangePatternsEditor.vue'
 import CommandListEditor from './CommandListEditor.vue'
-import DatabaseDumpMismatch from './DatabaseDumpMismatch.vue'
 import PaneRow from './PaneRow.vue'
 import PerAgentFields from './PerAgentFields.vue'
 import BorgPatternReference from './BorgPatternReference.vue'
 import type { AgentRow } from '../types/agent'
-import { useHostDumpSettings } from '../composables/useHostDumpSettings'
 import { isFsSnapshotOn } from '../utils/fsSnapshot'
 import type { FsSnapshotMode } from '../types/generated'
 import type { ScheduleAgentOverrides, ScheduleFormState } from '../types/scheduleForm'
@@ -39,14 +37,6 @@ const props = withDefaults(
     agents?: readonly AgentRow[]
   }>(),
   { agents: () => [] },
-)
-
-/**
- * Target hosts that have database dumps turned off themselves: ticking "Dump
- * databases" does nothing on them, which nothing else on this form shows.
- */
-const { hostsWithDumpsOff } = useHostDumpSettings(() =>
-  props.agents.filter((agent) => props.agentIds.includes(agent.id)),
 )
 
 const form = defineModel<ScheduleFormState>('form', { required: true })
@@ -124,37 +114,6 @@ const hostsWithoutSnapshotTools = computed(() =>
             label="Compact after backup"
           />
         </PaneRow>
-        <PaneRow
-          title="Back up virtual machines"
-          help="VM snapshots"
-        >
-          <template #help>
-            Snapshots the libvirt domains of every host this schedule targets before the backup
-            starts, using each host's own staging settings. Hosts that do not allow it are skipped.
-          </template>
-          <ToggleSwitch
-            v-model="form.vm_snapshot_enabled"
-            label="Back up virtual machines"
-          />
-        </PaneRow>
-        <PaneRow
-          title="Dump databases"
-          help="database dumps"
-        >
-          <template #help>
-            Streams a dump of the Kubernetes databases of every host this schedule targets into the
-            same archive, using each host's own database settings. Hosts that do not allow it are
-            skipped.
-          </template>
-          <ToggleSwitch
-            v-model="form.database_backup_enabled"
-            label="Dump databases"
-          />
-        </PaneRow>
-        <DatabaseDumpMismatch
-          v-if="form.database_backup_enabled && hostsWithDumpsOff.length > 0"
-          :hosts="hostsWithDumpsOff"
-        />
         <PaneRow
           title="Filesystem snapshots"
           help="reading a frozen copy of the sources"

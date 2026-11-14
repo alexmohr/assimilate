@@ -43,6 +43,7 @@ import { agentPowerPhase, type AgentPowerPhase } from '../utils/badge'
 import { parseArchiveProgress } from '../utils/archiveProgress'
 import type { ScheduleHealthEntry } from '../utils/scheduleHealth'
 import { isSettingsSection, type SettingsSection } from '../utils/agentSettings'
+import { isSourcesSection, type SourcesSection } from '../utils/agentSources'
 import { domainParams } from '../utils/agent'
 import type { Repo } from '../types/repo'
 import BaseModal from '../components/BaseModal.vue'
@@ -113,9 +114,9 @@ const settingsSection = computed<SettingsSection>({
   },
 })
 
-const sourcesSection = computed<'vms' | 'databases'>({
+const sourcesSection = computed<SourcesSection>({
   get() {
-    return route.query.section === 'databases' ? 'databases' : 'vms'
+    return isSourcesSection(route.query.section) ? route.query.section : 'files'
   },
   set(val) {
     router.replace({ query: { ...route.query, section: val } })
@@ -157,7 +158,7 @@ const tabs = computed<TabOption<TabId>[]>(() => [
   { id: 'overview', label: 'Overview' },
   { id: 'schedules', label: 'Schedules', count: agentSchedules.value.length },
   { id: 'backups', label: 'Backups' },
-  ...(isAdmin.value ? [{ id: 'sources', label: 'Sources' } as const] : []),
+  { id: 'sources', label: 'Sources' },
   { id: 'settings', label: 'Settings' },
 ])
 
@@ -925,7 +926,9 @@ watch(wsStatus, (newStatus, oldStatus) => {
           v-else-if="activeTab === 'sources' && agent"
           v-model:section="sourcesSection"
           :agent="agent"
+          :is-admin="isAdmin"
           :schedules="agentSchedules"
+          @saved="onDefaultsSaved"
         />
 
         <AgentSettingsTab

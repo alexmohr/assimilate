@@ -10,6 +10,7 @@
 export const SCHEDULE_SETTINGS_SECTIONS = [
   'general',
   'targets',
+  'sources',
   'power',
   'retention',
   'advanced',

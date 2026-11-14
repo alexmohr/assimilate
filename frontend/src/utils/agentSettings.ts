@@ -8,7 +8,6 @@
  */
 export const SETTINGS_SECTIONS = [
   'identity',
-  'defaults',
   'power',
   'vms',
   'databases',

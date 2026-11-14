@@ -396,6 +396,8 @@ function populateForm(s: ScheduleRow): void {
     wake_override: s.wake_override,
     catch_up_min_lead_minutes: s.catch_up_min_lead_minutes,
     backup_sources: '',
+    files_mode: s.files_mode ?? 'host',
+    run_host_commands: s.run_host_commands ?? true,
   }
   onFailure.value = s.on_failure
 }
@@ -534,6 +536,10 @@ async function loadData(): Promise<void> {
         map[Number(entry.agent_id)] = entry.paths.join('\n')
       }
       perHostSources.value = map
+    }
+    if (scheduleRow.files_mode === undefined) {
+      form.value.files_mode =
+        perHost.length > 0 || form.value.backup_sources.trim() !== '' ? 'custom' : 'host'
     }
     const perHostExcludeEntries = sources.exclude_patterns_per_agent ?? []
     if (perHostExcludeEntries.length > 0) {
@@ -687,10 +693,12 @@ async function save(): Promise<void> {
     const payload: ScheduleFormPayload = {
       ...scheduleFormPayload(form.value),
       // Per-agent paths replace the shared list rather than adding to it.
-      ...(usePerHostPaths.value ? { backup_sources: [] } : {}),
+      ...(usePerHostPaths.value || form.value.files_mode !== 'custom'
+        ? { backup_sources: [] }
+        : {}),
     }
 
-    if (usePerHostPaths.value) {
+    if (form.value.files_mode === 'custom' && usePerHostPaths.value) {
       const perHost: { agent_id: number; paths: string[] }[] = []
       for (const id of selectedAgentIds.value) {
         const text = perHostSources.value[id] ?? ''
@@ -702,6 +710,11 @@ async function save(): Promise<void> {
       payload.backup_sources_per_agent = perHost
     }
 
+    // Not in the request type yet: see `ScheduleSourceChoice`.
+    Object.assign(payload, {
+      files_mode: form.value.files_mode,
+      run_host_commands: form.value.run_host_commands,
+    })
     Object.assign(payload, agentOverridePayload(agentOverrides.value, selectedAgentIds.value))
 
     {

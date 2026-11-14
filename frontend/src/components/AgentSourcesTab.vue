@@ -4,32 +4,48 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 -->
 
 <script setup lang="ts">
+import { computed } from 'vue'
 import SettingsRail, { type SettingsSections } from './SettingsRail.vue'
+import AgentDefaultsCard from './AgentDefaultsCard.vue'
+import AgentSourcesUsedBy from './AgentSourcesUsedBy.vue'
 import AgentVmsCard from './AgentVmsCard.vue'
 import AgentDatabasesCard from './AgentDatabasesCard.vue'
 import type { AgentRow } from '../types/agent'
 import type { ScheduleRow } from '../types/schedule'
+import type { SourcesSection } from '../utils/agentSources'
 
 /**
- * What an agent backs up beyond plain files: its virtual machines and its
- * databases. They used to be two Settings sections; they are lists of things
- * on the host as much as configuration, so they get a tab of their own.
+ * Everything on this host worth backing up: its files (paths, excludes, file
+ * change patterns and the commands that run around them), its virtual
+ * machines and its databases. A schedule takes all of it by default, or picks
+ * a slice under its own Settings › Sources.
+ *
+ * Files used to be "Backup defaults" under Settings; they answer the same
+ * question as VMs and databases, so they sit beside them.
  */
-type SourcesSection = 'vms' | 'databases'
-
-defineProps<{
+const props = defineProps<{
   agent: AgentRow
   section: SourcesSection
-  /** The schedules that target this host, so its database settings can name those asking for dumps. */
+  isAdmin: boolean
+  /** The schedules that target this host, so each section can name those taking from it. */
   schedules?: readonly ScheduleRow[]
 }>()
 
-const emit = defineEmits<{ 'update:section': [value: SourcesSection] }>()
+const emit = defineEmits<{
+  'update:section': [value: SourcesSection]
+  saved: [agent: AgentRow]
+}>()
 
-const sections: SettingsSections<SourcesSection> = [
-  { id: 'vms', label: 'Virtual machines' },
-  { id: 'databases', label: 'Databases' },
-]
+/** VMs and databases stay admin-only, as they were; files are for everyone. */
+const sections = computed<SettingsSections<SourcesSection>>(() => [
+  { id: 'files', label: 'Files' },
+  ...(props.isAdmin
+    ? ([
+        { id: 'vms', label: 'Virtual machines' },
+        { id: 'databases', label: 'Databases' },
+      ] as const)
+    : []),
+])
 </script>
 
 <template>
@@ -40,8 +56,19 @@ const sections: SettingsSections<SourcesSection> = [
     label="Agent backup sources"
     @update:section="emit('update:section', $event)"
   >
+    <template v-if="currentSection === 'files'">
+      <AgentDefaultsCard
+        :agent="agent"
+        :can-edit="!agent.is_imported"
+        @saved="emit('saved', $event)"
+      />
+      <AgentSourcesUsedBy
+        :agent="agent"
+        :schedules="schedules ?? []"
+      />
+    </template>
     <AgentVmsCard
-      v-if="currentSection === 'vms'"
+      v-else-if="currentSection === 'vms'"
       :agent="agent"
       :can-edit="!agent.is_imported"
     />

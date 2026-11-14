@@ -92,8 +92,8 @@ async function save(): Promise<void> {
 
 <template>
   <EditableSection
-    lede="What a schedule uses for this host when it does not set its own paths, patterns or
-      commands."
+    lede="Everything on this host worth backing up as files. A schedule takes all of it unless
+      it picks something narrower under its own Settings › Sources."
     :editing="editing"
     :can-edit="canEdit"
     :saving="saving"
@@ -216,9 +216,8 @@ async function save(): Promise<void> {
     </template>
 
     <template #hint>
-      Inherited by every schedule targeting this host unless the schedule overrides them.
-      Schedule-specific hook commands are appended after the agent-level ones (pre) or prepended
-      before them (post).
+      Excludes and file change patterns always apply; a schedule can only add to them. A schedule
+      can replace the paths for itself, skip the commands, or leave files out altogether.
     </template>
 
     <template #edit>

@@ -6,6 +6,7 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 <script setup lang="ts">
 import { computed } from 'vue'
 import BaseSegmented, { type SegmentedOption } from './BaseSegmented.vue'
+import FileSourcesEditor from './FileSourcesEditor.vue'
 import SourceNotSetUp from './SourceNotSetUp.vue'
 import PaneRow from './PaneRow.vue'
 import PerAgentFields from './PerAgentFields.vue'
@@ -35,8 +36,8 @@ const usePerHostPaths = defineModel<boolean>('usePerHostPaths', { required: true
 const perHostSources = defineModel<Record<number, string>>('perHostSources', { required: true })
 
 const FILES_OPTIONS: readonly SegmentedOption<ScheduleFilesMode>[] = [
-  { value: 'host', label: "Each host's paths" },
-  { value: 'custom', label: 'Own paths' },
+  { value: 'host', label: "Each host's files" },
+  { value: 'custom', label: 'Own files' },
   { value: 'off', label: 'Off' },
 ]
 
@@ -93,10 +94,13 @@ function filesFor(agent: AgentRow): string[] {
 }
 
 function commandsFor(agent: AgentRow): { text: string; muted: boolean } {
-  if (form.value.files_mode === 'off' || !form.value.run_host_commands)
-    return { text: 'Skipped', muted: true }
-  const pre = agent.default_pre_backup_commands.length
-  const post = agent.default_post_backup_commands.length
+  if (form.value.files_mode === 'off') return { text: 'None', muted: true }
+  const own = form.value.files_mode === 'custom'
+  if (!own && !form.value.run_host_commands) return { text: 'Skipped', muted: true }
+  const pre = own ? form.value.pre_backup_commands.length : agent.default_pre_backup_commands.length
+  const post = own
+    ? form.value.post_backup_commands.length
+    : agent.default_post_backup_commands.length
   return pre + post === 0
     ? { text: 'None', muted: true }
     : { text: `${pre} pre, ${post} post`, muted: false }
@@ -139,98 +143,100 @@ const preview = computed<HostPreview[]>(() =>
     <div class="pane-head">
       <p class="pane-lede">
         Each host lists its own files, virtual machines and databases under its Sources tab. This
-        schedule takes them as they are, or sets its own paths.
+        schedule takes them as they are, or sets its own files.
       </p>
     </div>
 
     <section class="pane-section">
-      <span class="group-label group-label--lg">Files</span>
       <div class="pane-rows">
         <PaneRow
-          title="Paths"
-          help="where the paths come from"
+          title="Files"
+          help="where the files come from"
         >
           <template #help>
-            <strong>Each host's paths</strong> backs up what every host lists under Sources › Files.
-            <strong>Own paths</strong> replaces that list for this schedule. It can be narrower,
-            such as only <code>/home</code>, or wider, adding paths the hosts don't list. <strong>Off</strong> reads no files, for a schedule that only
-            dumps databases or snapshots VMs. Each host's excludes apply whichever you pick.
+            <strong>Each host's files</strong> backs up what every host sets under Sources › Files:
+            its paths, excludes, file change patterns and commands. <strong>Own files</strong> sets
+            all of those for this schedule instead, with the same fields. The paths can be
+            narrower, such as only <code>/home</code>, or wider. <strong>Off</strong> reads no
+            files, for a schedule that only dumps databases or snapshots VMs.
           </template>
           <BaseSegmented
             v-model="form.files_mode"
             :options="FILES_OPTIONS"
-            label="Paths"
+            label="Files"
           />
         </PaneRow>
 
-        <div
-          v-if="form.files_mode === 'custom'"
-          class="pane-nest"
-        >
-          <div class="pane-rows">
-            <PaneRow
-              v-if="agentIds.length > 1"
-              title="Different paths per host"
-              help="splitting the paths by host"
-            >
-              <template #help>
-                Give each host its own list instead of one list for every host.
-              </template>
-              <ToggleSwitch
-                v-model="usePerHostPaths"
-                label="Different paths per host"
-              />
-            </PaneRow>
-            <PaneRow
-              title="Paths for this schedule"
-              hint="Used instead of each host's own paths."
-              stack
-            >
-              <textarea
-                v-if="!usePerHostPaths"
-                v-model="form.backup_sources"
-                class="input area-input"
-                aria-label="Paths for this schedule"
-                placeholder="/home"
-                spellcheck="false"
-              />
-              <PerAgentFields
-                v-else
-                :agent-ids="agentIds"
-                :agent-label="agentLabel"
-              >
-                <template #default="{ agentId }">
-                  <textarea
-                    :value="perHostSources[agentId] ?? ''"
-                    class="input area-input area-input-sm"
-                    placeholder="Directories to back up, one per line"
-                    spellcheck="false"
-                    @input="
-                      ($event) =>
-                        (perHostSources[agentId] = ($event.target as HTMLTextAreaElement).value)
-                    "
-                  />
-                </template>
-              </PerAgentFields>
-            </PaneRow>
-          </div>
-        </div>
-
         <PaneRow
-          v-if="form.files_mode !== 'off'"
+          v-if="form.files_mode === 'host'"
           title="Run each host's backup commands"
           help="the hosts' pre- and post-backup commands"
         >
           <template #help>
             The pre- and post-backup commands each host lists under Sources › Files, such as
-            stopping a service so its files are consistent. Turn them off for a quick backup that
-            does not need them, like an hourly /home.
+            stopping a service so its files are consistent. Turn them off for a backup that does
+            not need them.
           </template>
           <ToggleSwitch
             v-model="form.run_host_commands"
             label="Run each host's backup commands"
           />
         </PaneRow>
+
+        <PaneRow
+          v-if="form.files_mode === 'custom' && agentIds.length > 1"
+          title="Different paths per host"
+          help="splitting the paths by host"
+        >
+          <template #help>
+            Give each host its own paths. Excludes, patterns and commands stay shared.
+          </template>
+          <ToggleSwitch
+            v-model="usePerHostPaths"
+            label="Different paths per host"
+          />
+        </PaneRow>
+      </div>
+
+      <div
+        v-if="form.files_mode === 'custom'"
+        class="pane-nest own-files"
+      >
+        <FileSourcesEditor
+          v-model:paths="form.backup_sources"
+          v-model:excludes="form.exclude_patterns"
+          v-model:includes="form.include_patterns"
+          v-model:file-change-patterns="form.file_change_patterns"
+          v-model:pre-commands="form.pre_backup_commands"
+          v-model:post-commands="form.post_backup_commands"
+          id-prefix="schedule-files"
+          with-includes
+          :default-timeout-seconds="form.hook_timeout_seconds"
+        >
+          <template
+            v-if="usePerHostPaths"
+            #paths
+          >
+            <PerAgentFields
+              :agent-ids="agentIds"
+              :agent-label="agentLabel"
+            >
+              <template #default="{ agentId }">
+                <textarea
+                  :value="perHostSources[agentId] ?? ''"
+                  class="input area-input area-input-sm"
+                  placeholder="Directories to back up, one per line"
+                  spellcheck="false"
+                  @input="
+                    ($event) =>
+                      (perHostSources[agentId] = ($event.target as HTMLTextAreaElement).value)
+                  "
+                />
+              </template>
+            </PerAgentFields>
+          </template>
+          <template #pathsHint>Used instead of each host's own files.</template>
+        </FileSourcesEditor>
       </div>
     </section>
 
@@ -330,14 +336,26 @@ const preview = computed<HostPreview[]>(() =>
           </tbody>
         </table>
       </div>
-      <span class="field-hint">
-        Excludes and file change patterns from Advanced are added to each host's own.
+      <span
+        v-if="form.files_mode !== 'off'"
+        class="field-hint"
+      >
+        {{
+          form.files_mode === 'custom'
+            ? "This schedule's own excludes, patterns and commands replace each host's."
+            : "Each host's own excludes, patterns and commands apply, as set on its Sources tab."
+        }}
+        Global excludes apply unless Advanced turns them off.
       </span>
     </section>
   </div>
 </template>
 
 <style scoped>
+.own-files {
+  margin-top: var(--space-5);
+}
+
 .source-missing {
   color: var(--warning);
   font-weight: 600;

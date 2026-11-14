@@ -4,19 +4,14 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 -->
 
 <script setup lang="ts">
-import { CornerDownRight } from '@lucide/vue'
-import { computed, ref } from 'vue'
+import { computed } from 'vue'
 import BaseSegmented, { type SegmentedOption } from './BaseSegmented.vue'
 import ToggleSwitch from './ToggleSwitch.vue'
-import FileChangePatternsEditor from './FileChangePatternsEditor.vue'
-import CommandListEditor from './CommandListEditor.vue'
 import PaneRow from './PaneRow.vue'
-import PerAgentFields from './PerAgentFields.vue'
-import BorgPatternReference from './BorgPatternReference.vue'
 import type { AgentRow } from '../types/agent'
 import { isFsSnapshotOn } from '../utils/fsSnapshot'
 import type { FsSnapshotMode } from '../types/generated'
-import type { ScheduleAgentOverrides, ScheduleFormState } from '../types/scheduleForm'
+import type { ScheduleFormState } from '../types/scheduleForm'
 
 /**
  * The backup schedule's Advanced tab: borg options, filesystem snapshots,
@@ -40,9 +35,6 @@ const props = withDefaults(
 )
 
 const form = defineModel<ScheduleFormState>('form', { required: true })
-const overrides = defineModel<ScheduleAgentOverrides>('overrides', { required: true })
-
-const refOpen = ref(false)
 
 const FS_SNAPSHOT_OPTIONS: readonly SegmentedOption<FsSnapshotMode>[] = [
   { value: 'off', label: 'Off' },
@@ -70,8 +62,8 @@ const hostsWithoutSnapshotTools = computed(() =>
   <div class="form-stack">
     <div class="pane-head">
       <p class="pane-lede">
-        Settings most schedules leave alone: bandwidth and verification, the patterns that decide
-        what is skipped, and commands to run around each backup.
+        Settings most schedules leave alone: bandwidth, verification, snapshots and command
+        timeouts. What a schedule backs up, with its excludes and commands, is under Sources.
       </p>
     </div>
     <section class="pane-section">
@@ -184,209 +176,6 @@ const hostsWithoutSnapshotTools = computed(() =>
             class="input"
           />
         </PaneRow>
-      </div>
-    </section>
-
-    <section class="pane-section">
-      <span class="group-label group-label--lg">Exclude patterns</span>
-      <div class="pane-rows">
-        <PaneRow
-          v-if="agentIds.length > 1"
-          title="Configure per agent"
-          help="splitting the list by host"
-        >
-          <template #help>
-            Give each host its own patterns instead of one list for the schedule.
-          </template>
-          <ToggleSwitch
-            v-model="overrides.usePerHostExcludes"
-            label="Configure per agent (exclude patterns)"
-          />
-        </PaneRow>
-        <PaneRow
-          title="Patterns"
-          :help="overrides.usePerHostExcludes ? undefined : 'pattern syntax'"
-          stack
-        >
-          <template #help>
-            Leave empty to use only global and agent-level default excludes. Lines starting with
-            <code>#</code> are treated as comments.
-          </template>
-          <template #titleAside>
-            <button
-              type="button"
-              class="ref-toggle"
-              @click="refOpen = !refOpen"
-            >
-              {{ refOpen ? 'Close Reference' : 'Pattern Reference' }}
-            </button>
-          </template>
-          <textarea
-            v-if="!overrides.usePerHostExcludes"
-            v-model="form.exclude_patterns"
-            class="input area-input"
-            aria-label="Exclude patterns"
-            placeholder="One pattern per line&#10;# Lines starting with # are comments&#10;e.g. *.cache&#10;*/__pycache__"
-            spellcheck="false"
-          />
-          <PerAgentFields
-            v-else
-            :agent-ids="agentIds"
-            :agent-label="agentLabel"
-          >
-            <template #default="{ agentId }">
-              <textarea
-                :value="overrides.perHostExcludes[agentId] ?? ''"
-                class="input area-input area-input-sm"
-                placeholder="Exclude patterns, one per line"
-                spellcheck="false"
-                @input="
-                  ($event) =>
-                    (overrides.perHostExcludes[agentId] = (
-                      $event.target as HTMLTextAreaElement
-                    ).value)
-                "
-              />
-            </template>
-            <template #hint>
-              Leave an agent empty to use only global and agent-level default excludes.
-            </template>
-          </PerAgentFields>
-          <BorgPatternReference v-if="refOpen" />
-        </PaneRow>
-        <p class="pane-exception">
-          <CornerDownRight :size="14" />
-          Exceptions to the excludes above
-        </p>
-        <div class="pane-nest">
-          <div class="pane-rows">
-            <PaneRow
-              v-if="agentIds.length > 1"
-              title="Configure per agent"
-              help="splitting the includes by host"
-            >
-              <template #help>
-                Give each host its own patterns instead of one list for the schedule.
-              </template>
-              <ToggleSwitch
-                v-model="overrides.usePerHostIncludes"
-                label="Configure per agent (include patterns)"
-              />
-            </PaneRow>
-            <PaneRow
-              title="Patterns"
-              :help="overrides.usePerHostIncludes ? undefined : 'rescuing paths from the excludes'"
-              stack
-            >
-              <template #help>
-                Rescues paths from the exclude patterns above - checked first, so a path matching
-                one of these is backed up even if a broader exclude would otherwise skip it. Leave
-                empty to exclude everything the exclude patterns cover.
-              </template>
-              <textarea
-                v-if="!overrides.usePerHostIncludes"
-                v-model="form.include_patterns"
-                class="input area-input"
-                aria-label="Include patterns"
-                placeholder="One pattern per line&#10;# Lines starting with # are comments&#10;e.g. /home/keep&#10;pp:/var/keep"
-                spellcheck="false"
-              />
-              <PerAgentFields
-                v-else
-                :agent-ids="agentIds"
-                :agent-label="agentLabel"
-              >
-                <template #default="{ agentId }">
-                  <textarea
-                    :value="overrides.perHostIncludes[agentId] ?? ''"
-                    class="input area-input area-input-sm"
-                    placeholder="Include patterns, one per line"
-                    spellcheck="false"
-                    @input="
-                      ($event) =>
-                        (overrides.perHostIncludes[agentId] = (
-                          $event.target as HTMLTextAreaElement
-                        ).value)
-                    "
-                  />
-                </template>
-                <template #hint>
-                  Leave an agent empty to exclude everything its exclude patterns cover.
-                </template>
-              </PerAgentFields>
-            </PaneRow>
-          </div>
-        </div>
-      </div>
-    </section>
-
-    <section class="pane-section">
-      <span class="group-label group-label--lg">File change patterns</span>
-      <div class="pane-rows">
-        <PaneRow
-          v-if="agentIds.length > 1"
-          title="Configure per agent"
-          help="configure file change patterns per agent"
-        >
-          <template #help>
-            Give each host its own patterns instead of one list for the schedule.
-          </template>
-          <ToggleSwitch
-            v-model="overrides.usePerHostFileChangePatterns"
-            label="Configure per agent (file change patterns)"
-          />
-        </PaneRow>
-        <PaneRow
-          title="Patterns"
-          stack
-        >
-          <FileChangePatternsEditor
-            v-if="!overrides.usePerHostFileChangePatterns"
-            v-model="form.file_change_patterns"
-          />
-          <PerAgentFields
-            v-else
-            :agent-ids="agentIds"
-            :agent-label="agentLabel"
-          >
-            <template #default="{ agentId }">
-              <textarea
-                :value="overrides.perHostFileChangePatterns[agentId] ?? ''"
-                class="input area-input area-input-sm"
-                placeholder="File change patterns, one per line"
-                spellcheck="false"
-                @input="
-                  ($event) =>
-                    (overrides.perHostFileChangePatterns[agentId] = (
-                      $event.target as HTMLTextAreaElement
-                    ).value)
-                "
-              />
-            </template>
-            <template #hint>
-              Leave an agent empty to use schedule-level file change patterns.
-            </template>
-          </PerAgentFields>
-        </PaneRow>
-      </div>
-    </section>
-
-    <section class="pane-section">
-      <span class="group-label group-label--lg">Commands</span>
-      <div class="pane-rows">
-        <PaneRow
-          v-if="agentIds.length > 1"
-          title="Configure per agent"
-          help="configure commands per agent"
-        >
-          <template #help>
-            Give each host its own commands instead of one set for the schedule.
-          </template>
-          <ToggleSwitch
-            v-model="overrides.usePerAgentCmds"
-            label="Configure per agent (commands)"
-          />
-        </PaneRow>
         <PaneRow
           title="Hook command timeout (seconds)"
           label-for="schedule-hook-timeout"
@@ -405,91 +194,7 @@ const hostsWithoutSnapshotTools = computed(() =>
             class="input"
           />
         </PaneRow>
-        <template v-if="!overrides.usePerAgentCmds">
-          <PaneRow
-            title="Pre-backup commands"
-            stack
-          >
-            <CommandListEditor
-              v-model="form.pre_backup_commands"
-              placeholder="e.g. docker exec mydb pg_dump -U postgres mydb > /tmp/dump.sql"
-              aria-label="Pre-backup commands"
-              :default-timeout-seconds="form.hook_timeout_seconds"
-            />
-          </PaneRow>
-          <PaneRow
-            title="Post-backup commands"
-            stack
-          >
-            <CommandListEditor
-              v-model="form.post_backup_commands"
-              placeholder="e.g. rm /tmp/dump.sql (optional)"
-              aria-label="Post-backup commands"
-              :default-timeout-seconds="form.hook_timeout_seconds"
-            />
-          </PaneRow>
-        </template>
-        <PaneRow
-          v-else
-          stack
-        >
-          <PerAgentFields
-            :agent-ids="agentIds"
-            :agent-label="agentLabel"
-          >
-            <template #default="{ agentId }">
-              <label class="form-sublabel">Pre-backup</label>
-              <CommandListEditor
-                :model-value="overrides.perAgentPreCmds[agentId] ?? []"
-                placeholder="e.g. docker exec mydb pg_dump -U postgres mydb > /tmp/dump.sql"
-                aria-label="Pre-backup commands"
-                :default-timeout-seconds="form.hook_timeout_seconds"
-                @update:model-value="(v) => (overrides.perAgentPreCmds[agentId] = v)"
-              />
-              <label class="form-sublabel">Post-backup</label>
-              <CommandListEditor
-                :model-value="overrides.perAgentPostCmds[agentId] ?? []"
-                placeholder="e.g. rm /tmp/dump.sql (optional)"
-                aria-label="Post-backup commands"
-                :default-timeout-seconds="form.hook_timeout_seconds"
-                @update:model-value="(v) => (overrides.perAgentPostCmds[agentId] = v)"
-              />
-            </template>
-            <template #hint>Leave an agent empty to run no schedule-level commands.</template>
-          </PerAgentFields>
-        </PaneRow>
       </div>
     </section>
   </div>
 </template>
-
-<style scoped>
-.ref-toggle {
-  padding: var(--space-1) var(--space-4);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--text-muted);
-  font-size: var(--fs-xs);
-  font-weight: 500;
-  cursor: pointer;
-  transition:
-    color var(--duration-base),
-    background var(--duration-base);
-}
-
-.ref-toggle:hover {
-  background: var(--bg-hover);
-  color: var(--text-primary);
-}
-
-.form-sublabel {
-  font-size: var(--fs-xs);
-  font-weight: 600;
-  color: var(--text-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  margin-top: var(--space-4);
-  display: block;
-}
-</style>

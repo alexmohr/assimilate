@@ -8,7 +8,6 @@ import { computed, ref } from 'vue'
 import { formatDate } from '../utils/format'
 import HelpHint from './HelpHint.vue'
 import SettingsRail, { type SettingsSections } from './SettingsRail.vue'
-import AgentDefaultsCard from './AgentDefaultsCard.vue'
 import AgentDependenciesCard from './AgentDependenciesCard.vue'
 import AgentHostnameAliases from './AgentHostnameAliases.vue'
 import AgentProcessCard from './AgentProcessCard.vue'
@@ -63,7 +62,6 @@ const offersTokenRegeneration = computed(() => !isImported.value && !systemMode.
 /** The admin-only sections are absent rather than disabled. */
 const sections = computed<SettingsSections<SettingsSection>>(() => [
   { id: 'identity', label: 'Identity' },
-  { id: 'defaults', label: 'Backup defaults' },
   ...(props.isAdmin ? [{ id: 'power', label: 'Power & dependencies' } as const] : []),
 ])
 </script>
@@ -139,14 +137,6 @@ const sections = computed<SettingsSections<SettingsSection>>(() => [
         :hostname="agent.hostname"
         :domain="agent.domain"
         :can-edit="!isImported"
-      />
-    </template>
-
-    <template v-else-if="currentSection === 'defaults'">
-      <AgentDefaultsCard
-        :agent="agent"
-        :can-edit="!isImported"
-        @saved="emit('saved', $event)"
       />
     </template>
 

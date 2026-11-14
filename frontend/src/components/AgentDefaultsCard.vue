@@ -8,11 +8,9 @@ import { ref } from 'vue'
 import { updateAgent } from '../api/agents'
 import { extractError } from '../utils/error'
 import { dropBlankCommands, parseLines } from '../utils/validation'
-import { parseFileChangePatterns } from '../utils/fileChangePatterns'
 import EditableSection from './EditableSection.vue'
-import FileChangePatternsEditor from './FileChangePatternsEditor.vue'
-import CommandListEditor from './CommandListEditor.vue'
-import ShellScript from './ShellScript.vue'
+import FileSourcesEditor from './FileSourcesEditor.vue'
+import FileSourcesView from './FileSourcesView.vue'
 import type { AgentRow } from '../types/agent'
 import type { HookCommand } from '../types/generated'
 
@@ -55,13 +53,6 @@ function startEdit(): void {
   editing.value = true
 }
 
-/** Says which timeout a command runs under, since a blank one is inherited. */
-function timeoutLabel(cmd: HookCommand): string {
-  return cmd.timeout_seconds === null
-    ? "Timeout: the schedule's hook command timeout"
-    : `Timeout: ${cmd.timeout_seconds}s`
-}
-
 /** Holds the form open if the request fails, so nothing typed is lost. */
 async function save(): Promise<void> {
   saving.value = true
@@ -92,8 +83,8 @@ async function save(): Promise<void> {
 
 <template>
   <EditableSection
-    lede="The files this host backs up. Every schedule uses these paths unless it sets its own
-      under its Settings › Sources."
+    lede="The files this host backs up. Every schedule uses them unless it sets its own under its
+      Settings › Sources."
     :editing="editing"
     :can-edit="canEdit"
     :saving="saving"
@@ -103,237 +94,29 @@ async function save(): Promise<void> {
     @save="save"
   >
     <template #view>
-      <div class="defaults-groups">
-        <div class="defaults-group">
-          <span class="group-label group-label--lg">Backup paths</span>
-          <div
-            v-if="(agent.default_backup_paths ?? []).length > 0"
-            class="paths-list"
-          >
-            <code
-              v-for="(p, idx) in agent.default_backup_paths ?? []"
-              :key="idx"
-              class="path-item mono"
-            >
-              {{ p }}
-            </code>
-          </div>
-          <span
-            v-else
-            class="muted"
-            >No default paths configured.</span
-          >
-        </div>
-
-        <div class="defaults-group">
-          <span class="group-label group-label--lg">Exclude patterns</span>
-          <div
-            v-if="(agent.default_exclude_patterns ?? []).length > 0"
-            class="paths-list"
-          >
-            <code
-              v-for="(p, idx) in agent.default_exclude_patterns ?? []"
-              :key="idx"
-              class="path-item mono"
-            >
-              {{ p }}
-            </code>
-          </div>
-          <span
-            v-else
-            class="muted"
-            >No default excludes configured.</span
-          >
-        </div>
-
-        <div class="defaults-group">
-          <span class="group-label group-label--lg">File change patterns</span>
-          <div
-            v-if="parseFileChangePatterns(agent.default_file_change_patterns_raw ?? '').length > 0"
-            class="paths-list"
-          >
-            <code
-              v-for="(p, idx) in parseFileChangePatterns(
-                agent.default_file_change_patterns_raw ?? '',
-              )"
-              :key="idx"
-              class="path-item mono"
-            >
-              {{ p.path }} <span class="fcp-action-badge">{{ p.action }}</span>
-            </code>
-          </div>
-          <span
-            v-else
-            class="muted"
-            >No default file change patterns configured.</span
-          >
-        </div>
-
-        <div class="defaults-group">
-          <span class="group-label group-label--lg">Pre-backup commands</span>
-          <div
-            v-if="(agent.default_pre_backup_commands ?? []).length > 0"
-            class="cmd-view-list"
-          >
-            <div
-              v-for="(cmd, idx) in agent.default_pre_backup_commands ?? []"
-              :key="idx"
-              class="cmd-view-entry"
-            >
-              <ShellScript :source="cmd.command" />
-              <span class="field-hint">{{ timeoutLabel(cmd) }}</span>
-            </div>
-          </div>
-          <span
-            v-else
-            class="muted"
-            >None configured.</span
-          >
-        </div>
-
-        <div class="defaults-group">
-          <span class="group-label group-label--lg">Post-backup commands</span>
-          <div
-            v-if="(agent.default_post_backup_commands ?? []).length > 0"
-            class="cmd-view-list"
-          >
-            <div
-              v-for="(cmd, idx) in agent.default_post_backup_commands ?? []"
-              :key="idx"
-              class="cmd-view-entry"
-            >
-              <ShellScript :source="cmd.command" />
-              <span class="field-hint">{{ timeoutLabel(cmd) }}</span>
-            </div>
-          </div>
-          <span
-            v-else
-            class="muted"
-            >None configured.</span
-          >
-        </div>
-      </div>
+      <FileSourcesView
+        :paths="agent.default_backup_paths ?? []"
+        :excludes="agent.default_exclude_patterns ?? []"
+        :file-change-patterns-raw="agent.default_file_change_patterns_raw ?? ''"
+        :pre-commands="agent.default_pre_backup_commands ?? []"
+        :post-commands="agent.default_post_backup_commands ?? []"
+      />
     </template>
 
     <template #hint>
-      Excludes and file change patterns always apply; a schedule can only add to them. A schedule
-      can replace the paths for itself, skip the commands, or leave files out altogether.
+      A schedule uses all of this as it is, sets its own files instead (with the same fields), or
+      leaves files out altogether.
     </template>
 
     <template #edit>
-      <label
-        class="group-label group-label--lg"
-        for="defaults-paths"
-        >Backup paths</label
-      >
-      <textarea
-        id="defaults-paths"
-        v-model="pathsText"
-        class="input defaults-area"
-        placeholder="Directories to back up, one per line"
-        spellcheck="false"
+      <FileSourcesEditor
+        v-model:paths="pathsText"
+        v-model:excludes="excludesText"
+        v-model:file-change-patterns="fcpText"
+        v-model:pre-commands="preCmds"
+        v-model:post-commands="postCmds"
+        id-prefix="host-files"
       />
-
-      <label
-        class="group-label group-label--lg"
-        for="defaults-excludes"
-        >Exclude patterns</label
-      >
-      <textarea
-        id="defaults-excludes"
-        v-model="excludesText"
-        class="input defaults-area"
-        placeholder="Exclude patterns, one per line&#10;# Lines starting with # are comments&#10;e.g. *.cache&#10;*/__pycache__"
-        spellcheck="false"
-      />
-
-      <label class="group-label group-label--lg">File change patterns</label>
-      <FileChangePatternsEditor v-model="fcpText">
-        <template #hint>
-          Glob patterns matched against the full warning message, with actions:
-          <code>ignore</code> (no warning), <code>warn</code> (default), <code>fatal</code> (fail
-          backup). Checked after schedule-level patterns, as a fallback for this host.
-          <code>*</code> does not match <code>/</code> - to cover every file under a directory, end
-          the pattern with <code>**</code>, e.g. <code>/data/wal/**</code>.
-        </template>
-      </FileChangePatternsEditor>
-
-      <fieldset class="cmd-fieldset">
-        <legend class="group-label group-label--lg">Pre-backup commands</legend>
-        <CommandListEditor
-          v-model="preCmds"
-          placeholder="e.g. systemctl stop myapp"
-          aria-label="Pre-backup commands"
-        />
-      </fieldset>
-
-      <fieldset class="cmd-fieldset">
-        <legend class="group-label group-label--lg">Post-backup commands</legend>
-        <CommandListEditor
-          v-model="postCmds"
-          placeholder="e.g. systemctl start myapp"
-          aria-label="Post-backup commands"
-        />
-      </fieldset>
     </template>
   </EditableSection>
 </template>
-
-<style scoped>
-.cmd-view-list {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-5);
-}
-
-.cmd-view-entry {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-}
-
-.defaults-area {
-  min-height: 80px;
-  resize: vertical;
-  font-family: var(--mono);
-  font-size: var(--fs-sm);
-  line-height: 1.5;
-}
-
-.defaults-groups {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-5);
-  margin-bottom: var(--space-4);
-}
-
-.defaults-group {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-}
-
-/* A native fieldset/legend groups Pre/Post-backup commands' variable-length
-   list of fields under one accessible name, since a single `<label for>`
-   can't target more than one field. Reset to blend into `.settings-pane`'s
-   flex layout: without `min-width: 0`, a fieldset's UA-default intrinsic
-   sizing can force it wider than its container. */
-.cmd-fieldset {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-6);
-  border: 0;
-  margin: 0;
-  padding: 0;
-  min-width: 0;
-}
-
-.fcp-action-badge {
-  font-family: var(--font-sans);
-  font-size: var(--fs-2xs);
-  font-weight: 600;
-  color: var(--text-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-}
-</style>

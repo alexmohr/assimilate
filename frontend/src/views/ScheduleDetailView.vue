@@ -1149,7 +1149,6 @@ watch(activeTab, (tab) => {
           v-else-if="activeTab === 'settings'"
           v-model:section="settingsSection"
           v-model:form="form"
-          v-model:overrides="agentOverrides"
           v-model:selected-agent-ids="selectedAgentIds"
           v-model:repo-targets="repoTargets"
           v-model:on-failure="onFailure"

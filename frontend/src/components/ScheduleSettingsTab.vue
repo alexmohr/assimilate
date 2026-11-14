@@ -19,7 +19,7 @@ import SchedulePowerTab from './SchedulePowerTab.vue'
 import ScheduleDependenciesTab from './ScheduleDependenciesTab.vue'
 import SettingsRail, { type SettingsSections } from './SettingsRail.vue'
 import type { ScheduleRepoTarget } from '../api/schedules'
-import type { ScheduleAgentOverrides, ScheduleFormState } from '../types/scheduleForm'
+import type { ScheduleFormState } from '../types/scheduleForm'
 import type { AgentRow } from '../types/agent'
 import type { Repo } from '../types/repo'
 import type { ScheduleSettingsSection } from '../utils/scheduleSettings'
@@ -68,7 +68,6 @@ const emit = defineEmits<{
 }>()
 
 const form = defineModel<ScheduleFormState>('form', { required: true })
-const overrides = defineModel<ScheduleAgentOverrides>('overrides', { required: true })
 const selectedAgentIds = defineModel<number[]>('selectedAgentIds', { required: true })
 const repoTargets = defineModel<ScheduleRepoTarget[]>('repoTargets', { required: true })
 const onFailure = defineModel<'stop' | 'continue'>('onFailure', { required: true })
@@ -427,7 +426,6 @@ const catchUpSourceLinks = computed(() => {
     <ScheduleAdvancedTab
       v-else-if="currentSection === 'advanced'"
       v-model:form="form"
-      v-model:overrides="overrides"
       :agent-ids="selectedAgentIds"
       :agent-label="agentLabel"
       :agents="agents"

@@ -12,8 +12,8 @@ import type { ScheduleRow } from '../types/schedule'
 
 /**
  * Which schedules take what from this host. The host lists everything it
- * has; each schedule picks all of it or a slice (only /home, only the
- * databases), and this is the one place that shows those picks side by side.
+ * has; each schedule takes its files as they are, sets its own paths (fewer
+ * or more), or leaves files out, and this shows those choices side by side.
  */
 const props = defineProps<{
   agent: AgentRow
@@ -68,7 +68,11 @@ watch(() => [props.schedules, props.agent.id], load, { immediate: true })
 
 <template>
   <section class="pane-section">
-    <span class="group-label group-label--lg">Used by</span>
+    <div class="pane-head">
+      <p class="pane-lede">
+        The backup schedules that target this host, and what each takes from it.
+      </p>
+    </div>
     <p
       v-if="rows.length === 0"
       class="muted"

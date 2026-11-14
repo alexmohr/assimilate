@@ -92,8 +92,8 @@ async function save(): Promise<void> {
 
 <template>
   <EditableSection
-    lede="Everything on this host worth backing up as files. A schedule takes all of it unless
-      it picks something narrower under its own Settings › Sources."
+    lede="The files this host backs up. Every schedule uses these paths unless it sets its own
+      under its Settings › Sources."
     :editing="editing"
     :can-edit="canEdit"
     :saving="saving"

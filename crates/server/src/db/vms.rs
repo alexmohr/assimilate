@@ -19,8 +19,6 @@ use crate::error::ApiError;
 /// A host's staging settings as stored on its agent row.
 #[derive(Debug, Clone)]
 pub struct AgentVmSnapshotRow {
-    /// Whether this host stages its domains at all.
-    pub vm_snapshot_enabled: bool,
     /// Absolute directory receiving one subdirectory per domain.
     pub vm_snapshot_dir: String,
     /// Increments written before a new full image is taken.
@@ -41,8 +39,6 @@ pub struct AgentVmSnapshotRow {
 /// and be silently reverted by this one.
 #[derive(Debug, Clone, Copy)]
 pub struct VmSnapshotPatch<'a> {
-    /// Whether this host stages its domains at all.
-    pub enabled: bool,
     /// Absolute directory receiving one subdirectory per domain.
     pub dir: &'a str,
     /// Increments written before a new full image is taken.
@@ -109,9 +105,9 @@ pub async fn get_agent_vm_snapshot(
 ) -> Result<AgentVmSnapshotRow, ApiError> {
     sqlx::query_as!(
         AgentVmSnapshotRow,
-        "SELECT vm_snapshot_enabled, vm_snapshot_dir, vm_snapshot_full_interval, \
-         vm_snapshot_timeout_seconds, vm_snapshot_default_limit_bytes, vm_snapshot_selection AS \
-         \"vm_snapshot_selection: VmSelectionMode\" FROM agents WHERE id = $1",
+        "SELECT vm_snapshot_dir, vm_snapshot_full_interval, vm_snapshot_timeout_seconds, \
+         vm_snapshot_default_limit_bytes, vm_snapshot_selection AS \"vm_snapshot_selection: \
+         VmSelectionMode\" FROM agents WHERE id = $1",
         agent_id,
     )
     .fetch_one(pool)
@@ -132,15 +128,13 @@ pub async fn update_agent_vm_snapshot(
 ) -> Result<AgentVmSnapshotRow, ApiError> {
     sqlx::query_as!(
         AgentVmSnapshotRow,
-        "UPDATE agents SET vm_snapshot_enabled = $2, vm_snapshot_dir = $3, \
-         vm_snapshot_full_interval = $4, vm_snapshot_timeout_seconds = $5, \
-         vm_snapshot_default_limit_bytes = $6, vm_snapshot_selection = COALESCE($7, \
-         agents.vm_snapshot_selection) WHERE id = $1 RETURNING vm_snapshot_enabled, \
-         vm_snapshot_dir, vm_snapshot_full_interval, vm_snapshot_timeout_seconds, \
+        "UPDATE agents SET vm_snapshot_dir = $2, vm_snapshot_full_interval = $3, \
+         vm_snapshot_timeout_seconds = $4, vm_snapshot_default_limit_bytes = $5, \
+         vm_snapshot_selection = COALESCE($6, agents.vm_snapshot_selection) WHERE id = $1 \
+         RETURNING vm_snapshot_dir, vm_snapshot_full_interval, vm_snapshot_timeout_seconds, \
          vm_snapshot_default_limit_bytes, vm_snapshot_selection AS \"vm_snapshot_selection: \
          VmSelectionMode\"",
         agent_id,
-        patch.enabled,
         patch.dir,
         patch.full_interval,
         patch.timeout_seconds,
@@ -351,7 +345,9 @@ pub async fn load_config(pool: &PgPool, agent_id: i64) -> Result<VmSnapshotConfi
     let vms = list_agent_vms(pool, agent_id).await?;
 
     Ok(VmSnapshotConfig {
-        enabled: settings.vm_snapshot_enabled,
+        // A host no longer turns staging off as a whole; the field stays in
+        // the protocol for agents that still read it.
+        enabled: true,
         staging_dir: settings.vm_snapshot_dir,
         full_interval: u32::try_from(settings.vm_snapshot_full_interval).unwrap_or(1),
         timeout_seconds: u32::try_from(settings.vm_snapshot_timeout_seconds).unwrap_or(1),

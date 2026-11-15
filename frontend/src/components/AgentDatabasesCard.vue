@@ -161,9 +161,6 @@ async function save(): Promise<void> {
     updateAgentDatabaseBackup(
       props.agent.hostname,
       {
-        // The host no longer turns dumps off as a whole: it dumps what it
-        // includes, and each schedule takes that or opts out.
-        enabled: true,
         selection: selection.value,
         dump_dir: dumpDir.value.trim(),
         runtimes: runtimesFromForm(form.value),
@@ -289,7 +286,6 @@ onMounted(load)
 
       <template #edit>
         <div class="pane-rows">
-
           <PaneRow
             title="Which sources"
             stack
@@ -307,10 +303,10 @@ onMounted(load)
           >
             <template #help>
               The agent lists the cluster's CloudNativePG clusters and annotated pods and runs the
-              engine's own dump program inside them: pg_dump, mysqldump, mariadb-dump or
-              mongodump. Give it a service account that may list pods and exec into them, not the
-              cluster admin: running commands in a database pod is a privileged grant. The
-              kubeconfig never leaves the host.
+              engine's own dump program inside them: pg_dump, mysqldump, mariadb-dump or mongodump.
+              Give it a service account that may list pods and exec into them, not the cluster
+              admin: running commands in a database pod is a privileged grant. The kubeconfig never
+              leaves the host.
             </template>
             <ToggleSwitch
               v-model="form.kubernetes"
@@ -343,10 +339,10 @@ onMounted(load)
           >
             <template #help>
               The agent lists the running containers labelled
-              assimilate.alexmohr.github.io/database=postgresql, or mysql, mariadb, mongodb,
-              sqlite, redis, valkey, influxdb or influxdb1, and runs that database's dump program
-              inside them through the engine's API socket. Access to that socket is root on the
-              host, which the agent already is.
+              assimilate.alexmohr.github.io/database=postgresql, or mysql, mariadb, mongodb, sqlite,
+              redis, valkey, influxdb or influxdb1, and runs that database's dump program inside
+              them through the engine's API socket. Access to that socket is root on the host, which
+              the agent already is.
             </template>
             <ToggleSwitch
               v-model="form.docker"
@@ -380,8 +376,8 @@ onMounted(load)
             <template #help>
               The agent runs psql and pg_dump on the host as the OS user below. Over the server's
               Unix socket, peer authentication lets that user in as the role of the same name; a
-              server that wants a password reads it from that user's ~/.pgpass. Assimilate stores
-              no database password.
+              server that wants a password reads it from that user's ~/.pgpass. Assimilate stores no
+              database password.
             </template>
             <ToggleSwitch
               v-model="form.host"
@@ -456,10 +452,10 @@ onMounted(load)
             help="how the agent signs in to the host's MySQL or MariaDB"
           >
             <template #help>
-              The agent runs the server's own client programs on the host as the OS user below.
-              Over the server's socket, root is let in as the account of the same name on Debian
-              and Ubuntu; a server that wants a password reads it from that user's ~/.my.cnf.
-              Assimilate stores no database password.
+              The agent runs the server's own client programs on the host as the OS user below. Over
+              the server's socket, root is let in as the account of the same name on Debian and
+              Ubuntu; a server that wants a password reads it from that user's ~/.my.cnf. Assimilate
+              stores no database password.
             </template>
             <ToggleSwitch
               v-model="form.hostMysql"
@@ -544,10 +540,10 @@ onMounted(load)
             help="how the agent signs in to the host's MongoDB"
           >
             <template #help>
-              The agent runs mongodump, mongorestore and mongosh on the host as the OS user below.
-              A server with access control on is reached through a config file of the database
-              tools on the host holding its uri, account and password included; only its path is
-              stored here. Without one, the agent connects to 127.0.0.1 without signing in.
+              The agent runs mongodump, mongorestore and mongosh on the host as the OS user below. A
+              server with access control on is reached through a config file of the database tools
+              on the host holding its uri, account and password included; only its path is stored
+              here. Without one, the agent connects to 127.0.0.1 without signing in.
             </template>
             <ToggleSwitch
               v-model="form.hostMongodb"
@@ -622,10 +618,10 @@ onMounted(load)
             help="how the agent reads the host's SQLite files"
           >
             <template #help>
-              The agent runs sqlite3 on the host as the OS user below, which must be allowed to
-              read each file and, to restore over one, write it and its directory. A dump reads
-              the file in one transaction, so it is consistent while the application keeps
-              writing. There is no server and no account to sign in as.
+              The agent runs sqlite3 on the host as the OS user below, which must be allowed to read
+              each file and, to restore over one, write it and its directory. A dump reads the file
+              in one transaction, so it is consistent while the application keeps writing. There is
+              no server and no account to sign in as.
             </template>
             <ToggleSwitch
               v-model="form.hostSqlite"

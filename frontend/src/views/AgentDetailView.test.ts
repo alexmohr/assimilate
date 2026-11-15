@@ -8,6 +8,7 @@ import { dismissModal, openModals, renderWithPlugins } from '../test-utils'
 import AgentDetailView from './AgentDetailView.vue'
 import MergeAgentDialog from '../components/MergeAgentDialog.vue'
 import { logger } from '../utils/logger'
+import { machine } from '../test-utils/machineFixtures'
 
 vi.mock('../api/client', () => ({
   apiClient: {
@@ -824,9 +825,10 @@ describe('AgentDetailView — power phase badge', () => {
   })
 })
 
-async function openDefaultsSettings(wrapper: VueWrapper<ComponentPublicInstance>): Promise<void> {
+/** The host's files, which moved from Settings › Backup defaults to Sources › Files. */
+async function openSourcesFiles(wrapper: VueWrapper<ComponentPublicInstance>): Promise<void> {
   const router = (wrapper.vm as { $router: { push: (loc: unknown) => Promise<void> } }).$router
-  await router.push({ query: { tab: 'settings', section: 'defaults' } })
+  await router.push({ query: { tab: 'sources', section: 'files' } })
   await flushPromises()
 }
 
@@ -842,9 +844,9 @@ describe('AgentDetailView — default file change patterns', () => {
       storeState: { auth: { user: { role: 'admin' } } },
     })
     await flushPromises()
-    await openDefaultsSettings(wrapper)
+    await openSourcesFiles(wrapper)
 
-    expect(wrapper.text()).toContain('No default file change patterns configured.')
+    expect(wrapper.text()).toContain('No file change patterns configured.')
   })
 
   it('lists parsed patterns with their action', async () => {
@@ -869,7 +871,7 @@ describe('AgentDetailView — default file change patterns', () => {
       storeState: { auth: { user: { role: 'admin' } } },
     })
     await flushPromises()
-    await openDefaultsSettings(wrapper)
+    await openSourcesFiles(wrapper)
 
     const text = wrapper.text()
     expect(text).toContain('*/tmp/*')
@@ -888,7 +890,7 @@ describe('AgentDetailView — default file change patterns', () => {
       storeState: { auth: { user: { role: 'admin' } } },
     })
     await flushPromises()
-    await openDefaultsSettings(wrapper)
+    await openSourcesFiles(wrapper)
 
     const findCard = (): DOMWrapper<Element> => wrapper.find('.settings-pane')
 
@@ -1349,6 +1351,25 @@ describe('AgentDetailView - links to places that moved', () => {
   })
 })
 
+/** What the Power & dependencies pane reads off the agent, for the tests that open it. */
+const POWERED = {
+  machine_id: 20,
+  power: {
+    wake: {
+      wake_enabled: false,
+      wake_mac_address: null,
+      wake_broadcast_address: null,
+      wake_timeout_seconds: 180,
+      shutdown_after_backup: false,
+    },
+    start_agent_enabled: false,
+    stop_agent_after_backup: false,
+    ssh_host: null,
+    ssh_port: 22,
+    agent_service_name: 'assimilate-agent',
+  },
+}
+
 describe('AgentDetailView - tab structure and settings', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -1373,6 +1394,8 @@ describe('AgentDetailView - tab structure and settings', () => {
     const agent = { ...mockAgent, ...agentOverrides }
     vi.mocked(apiClient.get).mockImplementation((url: string) => {
       if (url === '/agents') return Promise.resolve({ data: [agent] })
+      // The Power & dependencies pane loads the agent's machine.
+      if (url.startsWith('/machines/')) return Promise.resolve({ data: machine() })
       if (url === '/agents/test-host/repos')
         return Promise.resolve({ data: [{ id: 10, name: 'shared-repo' }] })
       if (url === '/schedules') return Promise.resolve({ data: schedules })
@@ -1430,13 +1453,44 @@ describe('AgentDetailView - tab structure and settings', () => {
     ])
   })
 
-  it('lists virtual machines and databases on the sources tab', async () => {
+  // Files (the old Settings › Backup defaults) lead the Sources tab and open
+  // first; Used by names the schedules taking from the host.
+  it('lists files, virtual machines, databases and used by on the sources tab', async () => {
     const wrapper = await render()
     await goTo(wrapper, { tab: 'sources' })
 
-    expect(sectionTitles(wrapper)).toEqual(['Virtual machines', 'Databases'])
+    expect(sectionTitles(wrapper)).toEqual(['Files', 'Virtual machines', 'Databases', 'Used by'])
+    expect(openSections(wrapper)).toEqual(['Files'])
+    expect(wrapper.findComponent({ name: 'AgentDefaultsCard' }).exists()).toBe(true)
+  })
+
+  it('deep-links to the virtual machines on the sources tab, handing it the schedules', async () => {
+    const wrapper = await render()
+    await goTo(wrapper, { tab: 'sources', section: 'vms' })
+
     expect(openSections(wrapper)).toEqual(['Virtual machines'])
-    expect(wrapper.findComponent({ name: 'AgentVmsCard' }).exists()).toBe(true)
+    const card = wrapper.findComponent({ name: 'AgentVmsCard' })
+    expect(card.exists()).toBe(true)
+    expect((card.props('schedules') as { id: number }[]).map((x) => x.id)).toEqual([1])
+  })
+
+  it('opens Files for a sources section it does not know', async () => {
+    const wrapper = await render()
+    await goTo(wrapper, { tab: 'sources', section: 'nonsense' })
+
+    expect(openSections(wrapper)).toEqual(['Files'])
+  })
+
+  it('merges an agent saved from the files form back into the page', async () => {
+    const wrapper = await render()
+    await goTo(wrapper, { tab: 'sources', section: 'files' })
+
+    wrapper
+      .findComponent({ name: 'AgentDefaultsCard' })
+      .vm.$emit('saved', { ...mockAgent, display_name: 'Renamed Host' })
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('Renamed Host')
   })
 
   it('deep-links to the databases on the sources tab, handing it the schedules', async () => {
@@ -1463,7 +1517,7 @@ describe('AgentDetailView - tab structure and settings', () => {
       wrapper.vm as { $router: { currentRoute: { value: { query: Record<string, string> } } } }
     ).$router
     expect(router.currentRoute.value.query).toMatchObject({ tab: 'sources', section: 'databases' })
-    expect(openSections(wrapper)).toEqual(['Virtual machines', 'Databases'])
+    expect(openSections(wrapper)).toEqual(['Files', 'Databases'])
   })
 
   it('opens the settings tab in place, without leaving the route', async () => {
@@ -1479,10 +1533,20 @@ describe('AgentDetailView - tab structure and settings', () => {
   })
 
   it('deep-links to a settings section', async () => {
+    const wrapper = await render(POWERED)
+    await goTo(wrapper, { tab: 'settings', section: 'power' })
+
+    expect(openSections(wrapper)).toEqual(['Power & dependencies'])
+  })
+
+  // Backup defaults became Sources › Files; an old link lands on Identity
+  // rather than on an empty pane.
+  it('opens a stale backup defaults link on Identity', async () => {
     const wrapper = await render()
     await goTo(wrapper, { tab: 'settings', section: 'defaults' })
 
-    expect(openSections(wrapper)).toEqual(['Backup defaults'])
+    expect(openSections(wrapper)).toEqual(['Identity'])
+    expect(wrapper.findComponent({ name: 'AgentDefaultsCard' }).exists()).toBe(false)
   })
 
   // Hostname aliases used to be a section of their own; an old link to it
@@ -1496,30 +1560,32 @@ describe('AgentDetailView - tab structure and settings', () => {
   })
 
   it('records the chosen settings section in the URL', async () => {
-    const wrapper = await render()
+    const wrapper = await render(POWERED)
     await goTo(wrapper, { tab: 'settings' })
 
     await wrapper
       .findAll('.accordion-head')
-      .find((b) => b.text() === 'Backup defaults')!
+      .find((b) => b.text() === 'Power & dependencies')!
       .trigger('click')
     await flushPromises()
 
     const router = (
       wrapper.vm as { $router: { currentRoute: { value: { query: Record<string, string> } } } }
     ).$router
-    expect(router.currentRoute.value.query.section).toBe('defaults')
+    expect(router.currentRoute.value.query.section).toBe('power')
   })
 
   // Configuration used to stack up under the agent's status on the landing
   // tab, so the build timestamp got the same billing as an overdue backup.
   it('keeps configuration off the landing tab', async () => {
     const wrapper = await render()
-    expect(wrapper.text()).not.toContain('Backup defaults')
+    expect(wrapper.findComponent({ name: 'AgentDefaultsCard' }).exists()).toBe(false)
+    expect(wrapper.text()).not.toContain('Backup paths')
     expect(wrapper.text()).not.toContain('Danger zone')
 
-    await goTo(wrapper, { tab: 'settings', section: 'defaults' })
-    expect(wrapper.text()).toContain('Backup defaults')
+    await goTo(wrapper, { tab: 'sources', section: 'files' })
+    expect(wrapper.findComponent({ name: 'AgentDefaultsCard' }).exists()).toBe(true)
+    expect(wrapper.text()).toContain('Backup paths')
   })
 
   // An empty tab that explains itself beats a tab bar whose contents shift
@@ -1559,9 +1625,21 @@ describe('AgentDetailView - tab structure and settings', () => {
     await flushPromises()
     await goTo(wrapper, { tab: 'settings' })
 
-    expect(sectionTitles(wrapper)).toEqual(['Identity', 'Backup defaults'])
-    // Sources holds only admin settings, so the tab is absent too.
-    expect(tabLabels(wrapper)).toEqual(['Overview', 'Schedules 0', 'Backups', 'Settings'])
+    expect(sectionTitles(wrapper)).toEqual(['Identity'])
+    // Sources now holds the host's files and Used by, which are for everyone,
+    // so the tab stays; only its VM and database sections are admin-only.
+    expect(tabLabels(wrapper)).toEqual([
+      'Overview',
+      'Schedules 0',
+      'Backups',
+      'Sources',
+      'Settings',
+    ])
+
+    await goTo(wrapper, { tab: 'sources', section: 'databases' })
+    expect(sectionTitles(wrapper)).toEqual(['Files', 'Used by'])
+    expect(openSections(wrapper)).toEqual(['Files'])
+    expect(wrapper.findComponent({ name: 'AgentDatabasesCard' }).exists()).toBe(false)
   })
 
   // Removing the host used to be a Settings section of its own; it now sits

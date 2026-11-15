@@ -307,9 +307,13 @@ test.describe('signed in', () => {
     await visit(page, '/agents/edge-proxy')
     await shot(page, 'host-domain-picker')
 
-    // db-server-01 carries the seeded default file change patterns.
-    await visit(page, '/agents/db-server-01?tab=settings&section=defaults')
+    // db-server-01 carries the seeded file set, file change patterns included.
+    await visit(page, '/agents/db-server-01?tab=sources&section=files')
     await shot(page, 'host-file-change-patterns')
+
+    await visit(page, '/agents/db-server-01?tab=sources&section=used-by')
+    await expect(page.getByRole('link', { name: 'Everything on db-server-01' })).toBeVisible()
+    await shot(page, 'agent-sources-used-by')
 
     await visit(page, '/agents/media-store-01?tab=settings&section=power')
     await shot(page, 'agent-power')
@@ -545,6 +549,13 @@ test.describe('signed in', () => {
 
     await visit(page, `/schedules/${dual}?tab=settings&section=power`)
     await shot(page, 'schedule-power')
+
+    // The databases-only schedule warns that web-server-01 has none set up
+    // (seed-demo.sh), next to the table of what each host backs up.
+    const dumps = await seededIdByName(page, '/api/schedules', 'Database dumps')
+    await visit(page, `/schedules/${dumps}?tab=settings&section=sources`)
+    await expect(page.getByTestId('source-not-set-up-databases').first()).toBeVisible()
+    await shot(page, 'schedule-sources')
 
     const share = await seededIdByName(page, '/api/schedules', 'Media share nightly')
     await visit(page, `/schedules/${share}?tab=settings&section=power`)

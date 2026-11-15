@@ -32,35 +32,55 @@ interface UsedByRow {
 
 const rows = ref<UsedByRow[]>([])
 
+/** "All 3 paths", "1 path", or that the host lists none. */
+function hostPathsLabel(): string {
+  const count = (props.agent.default_backup_paths ?? []).length
+  if (count === 0) return 'No paths set on this host'
+  return count === 1 ? "The host's 1 path" : `All ${count} paths`
+}
+
+/** The paths a schedule with its own files reads here: this host's own split, else the shared list. */
+async function ownPaths(scheduleId: number): Promise<string[] | null> {
+  try {
+    const sources = await getScheduleBackupSources(scheduleId)
+    const perHost = sources.backup_sources_per_agent.find((e) => e.agent_id === props.agent.id)
+    return perHost?.paths ?? sources.backup_sources
+  } catch (e: unknown) {
+    logger.error('loading schedule sources failed', e)
+    return null
+  }
+}
+
+async function rowFor(s: ScheduleRow): Promise<UsedByRow> {
+  const base = {
+    id: s.id,
+    name: s.name || `Schedule ${s.id}`,
+    vms: s.vm_snapshot_enabled,
+    databases: s.database_backup_enabled,
+  }
+  if (s.files_mode === 'off') {
+    return { ...base, files: 'Off', filesCustom: false, filesOff: true }
+  }
+  if (s.files_mode === 'host') {
+    return { ...base, files: hostPathsLabel(), filesCustom: false, filesOff: false }
+  }
+  const paths = await ownPaths(s.id)
+  if (paths === null) {
+    return {
+      ...base,
+      files: 'Own paths (could not be loaded)',
+      filesCustom: false,
+      filesOff: false,
+    }
+  }
+  return paths.length > 0
+    ? { ...base, files: paths.join(' '), filesCustom: true, filesOff: false }
+    : { ...base, files: 'Own files, no paths', filesCustom: false, filesOff: false }
+}
+
 async function load(): Promise<void> {
   const backups = props.schedules.filter((s) => s.schedule_type === 'backup')
-  rows.value = await Promise.all(
-    backups.map(async (s): Promise<UsedByRow> => {
-      let custom: string[] = []
-      try {
-        const sources = await getScheduleBackupSources(s.id)
-        const perHost = sources.backup_sources_per_agent.find((e) => e.agent_id === props.agent.id)
-        custom = perHost?.paths ?? sources.backup_sources
-      } catch (e: unknown) {
-        logger.error('loading schedule sources failed', e)
-      }
-      const hostCount = props.agent.default_backup_paths.length
-      const filesOff = s.files_mode === 'off'
-      const filesCustom = !filesOff && custom.length > 0
-      let files = `All ${hostCount} paths`
-      if (filesOff) files = 'Off'
-      else if (filesCustom) files = custom.join(' ')
-      return {
-        id: s.id,
-        name: s.name || `Schedule ${s.id}`,
-        files,
-        filesCustom,
-        filesOff,
-        vms: s.vm_snapshot_enabled,
-        databases: s.database_backup_enabled,
-      }
-    }),
-  )
+  rows.value = await Promise.all(backups.map(rowFor))
 }
 
 watch(() => [props.schedules, props.agent.id], load, { immediate: true })

@@ -25,6 +25,7 @@ const AGENT = {
   display_name: 'Web 01',
   default_backup_paths: ['/srv', '/etc'],
   default_exclude_patterns: ['*.cache'],
+  default_include_patterns: ['/srv/keep'],
   default_pre_backup_commands: [hookCommand('systemctl stop app')],
   default_post_backup_commands: [],
   default_file_change_patterns_raw: '/data/wal/** ignore',
@@ -43,19 +44,21 @@ describe('AgentDefaultsCard', () => {
     vi.mocked(apiClient.put).mockResolvedValue({ data: AGENT } as never)
   })
 
-  // The four separate cards became one pane with five labelled sections, so
+  // The four separate cards became one pane with labelled sections, so
   // saving can no longer write a stale copy of a sibling field. The settings
   // rail names the pane, so the pane itself carries a lede rather than a
-  // heading repeating that name.
+  // heading repeating that name. Include patterns joined the excludes they
+  // make exceptions to.
   it('renders a single pane holding every group of defaults', async () => {
     const wrapper = mount()
     expect(wrapper.findAll('.pane-head')).toHaveLength(1)
 
-    expect(wrapper.find('.pane-lede').text()).toContain('What a schedule uses for this host')
+    expect(wrapper.find('.pane-lede').text()).toContain('The files this host backs up.')
 
     expect(wrapper.findAll('.group-label').map((l) => l.text())).toEqual([
       'Backup paths',
       'Exclude patterns',
+      'Include patterns',
       'File change patterns',
       'Pre-backup commands',
       'Post-backup commands',
@@ -67,6 +70,7 @@ describe('AgentDefaultsCard', () => {
     expect(text).toContain('/srv')
     expect(text).toContain('/etc')
     expect(text).toContain('*.cache')
+    expect(text).toContain('/srv/keep')
     expect(text).toContain('systemctl stop app')
     // Post-backup has none configured.
     expect(text).toContain('None configured.')
@@ -120,10 +124,16 @@ describe('AgentDefaultsCard', () => {
 
   it('shows the empty message when a group has no values at all', () => {
     const wrapper = mount({
-      agent: { ...AGENT, default_backup_paths: [], default_exclude_patterns: [] },
+      agent: {
+        ...AGENT,
+        default_backup_paths: [],
+        default_exclude_patterns: [],
+        default_include_patterns: [],
+      },
     })
-    expect(wrapper.text()).toContain('No default paths configured.')
-    expect(wrapper.text()).toContain('No default excludes configured.')
+    expect(wrapper.text()).toContain('No paths configured.')
+    expect(wrapper.text()).toContain('No excludes configured.')
+    expect(wrapper.text()).toContain('No include patterns configured.')
   })
 
   it('renders the file change patterns with their action', () => {
@@ -156,8 +166,15 @@ describe('AgentDefaultsCard', () => {
     const wrapper = mount()
     await startEditingSection(wrapper)
 
-    expect(wrapper.find<HTMLTextAreaElement>('#defaults-paths').element.value).toBe('/srv\n/etc')
-    expect(wrapper.find<HTMLTextAreaElement>('#defaults-excludes').element.value).toBe('*.cache')
+    expect(wrapper.find<HTMLTextAreaElement>('#file-sources-paths').element.value).toBe(
+      '/srv\n/etc',
+    )
+    expect(wrapper.find<HTMLTextAreaElement>('#file-sources-excludes').element.value).toBe(
+      '*.cache',
+    )
+    expect(wrapper.find<HTMLTextAreaElement>('#file-sources-includes').element.value).toBe(
+      '/srv/keep',
+    )
     const editors = wrapper.findAllComponents({ name: 'CommandListEditor' })
     expect(editors[0].props('modelValue')).toEqual([hookCommand('systemctl stop app')])
     expect(editors[1].props('modelValue')).toEqual([])
@@ -176,7 +193,7 @@ describe('AgentDefaultsCard', () => {
   it('sends every defaults field in a single request', async () => {
     const wrapper = mount()
     await startEditingSection(wrapper)
-    await wrapper.find('#defaults-paths').setValue('/var\n/opt')
+    await wrapper.find('#file-sources-paths').setValue('/var\n/opt')
     await wrapper
       .findAllComponents({ name: 'CommandListEditor' })[1]
       .vm.$emit('update:modelValue', [hookCommand('systemctl start app')])
@@ -190,6 +207,7 @@ describe('AgentDefaultsCard', () => {
         domain: undefined,
         default_backup_paths: ['/var', '/opt'],
         default_exclude_patterns: ['*.cache'],
+        default_include_patterns: ['/srv/keep'],
         default_pre_backup_commands: [hookCommand('systemctl stop app')],
         default_post_backup_commands: [hookCommand('systemctl start app')],
         default_file_change_patterns_raw: '/data/wal/** ignore',
@@ -220,7 +238,7 @@ describe('AgentDefaultsCard', () => {
   it('stays in edit mode and shows the error when the save fails', async () => {
     vi.mocked(apiClient.put).mockRejectedValue(new Error('agent offline'))
     const wrapper = mount()
-    await expectSaveErrorKeepsEditing(wrapper, 'agent offline', '#defaults-paths')
+    await expectSaveErrorKeepsEditing(wrapper, 'agent offline', '#file-sources-paths')
   })
 
   it('leaves edit mode after a successful save', async () => {
@@ -228,7 +246,7 @@ describe('AgentDefaultsCard', () => {
     await startEditingSection(wrapper)
     await clickSectionButton(wrapper, 'Save')
 
-    expect(wrapper.find('#defaults-paths').exists()).toBe(false)
+    expect(wrapper.find('#file-sources-paths').exists()).toBe(false)
   })
 
   it('leaves the card without saving on Cancel', async () => {
@@ -246,7 +264,7 @@ describe('AgentDefaultsCard', () => {
   it('saves edited exclude patterns as a list, dropping blank lines', async () => {
     const wrapper = mount()
     await startEditingSection(wrapper)
-    await wrapper.find('#defaults-excludes').setValue('*.cache\n\n/var/tmp\n')
+    await wrapper.find('#file-sources-excludes').setValue('*.cache\n\n/var/tmp\n')
 
     await clickSectionButton(wrapper, 'Save')
 
@@ -255,6 +273,50 @@ describe('AgentDefaultsCard', () => {
       expect.objectContaining({ default_exclude_patterns: ['*.cache', '/var/tmp'] }),
       { params: {} },
     )
+  })
+
+  // A comment line saved into the host's list would reach borg as a pattern.
+  it('leaves # comment lines out of the saved excludes and includes', async () => {
+    const wrapper = mount()
+    await startEditingSection(wrapper)
+    await wrapper.find('#file-sources-excludes').setValue('# caches\n*.cache')
+    await wrapper.find('#file-sources-includes').setValue('# keep\n/srv/keep')
+
+    await clickSectionButton(wrapper, 'Save')
+
+    expect(apiClient.put).toHaveBeenCalledWith(
+      '/agents/web-01',
+      expect.objectContaining({
+        default_exclude_patterns: ['*.cache'],
+        default_include_patterns: ['/srv/keep'],
+      }),
+      { params: {} },
+    )
+  })
+
+  it('saves edited include patterns as a list, dropping blank lines', async () => {
+    const wrapper = mount()
+    await startEditingSection(wrapper)
+    await wrapper.find('#file-sources-includes').setValue('/srv/keep\n\npp:/var/keep\n')
+
+    await clickSectionButton(wrapper, 'Save')
+
+    expect(apiClient.put).toHaveBeenCalledWith(
+      '/agents/web-01',
+      expect.objectContaining({ default_include_patterns: ['/srv/keep', 'pp:/var/keep'] }),
+      { params: {} },
+    )
+  })
+
+  // An agent row from before include patterns existed has no such field.
+  it('starts editing with no include patterns when the field is missing entirely', async () => {
+    const agent = { ...AGENT }
+    delete (agent as { default_include_patterns?: string[] }).default_include_patterns
+    const wrapper = mount({ agent })
+    expect(wrapper.text()).toContain('No include patterns configured.')
+    await startEditingSection(wrapper)
+
+    expect(wrapper.find<HTMLTextAreaElement>('#file-sources-includes').element.value).toBe('')
   })
 
   // File change patterns are stored as raw text, not split into a list, so
@@ -281,10 +343,12 @@ describe('AgentDefaultsCard', () => {
   it('reopens a cancelled card with the stored value, not the discarded edit', async () => {
     const wrapper = mount()
     await startEditingSection(wrapper)
-    await wrapper.find('#defaults-excludes').setValue('discarded')
+    await wrapper.find('#file-sources-excludes').setValue('discarded')
     await clickSectionButton(wrapper, 'Cancel')
 
     await startEditingSection(wrapper)
-    expect(wrapper.find<HTMLTextAreaElement>('#defaults-excludes').element.value).toBe('*.cache')
+    expect(wrapper.find<HTMLTextAreaElement>('#file-sources-excludes').element.value).toBe(
+      '*.cache',
+    )
   })
 })

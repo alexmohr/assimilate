@@ -64,9 +64,22 @@ const NO_WAKE = {
   shutdown_after_backup: false,
 }
 
+/** What the Sources step's preview reads from each host's own files. */
+const HOST_FILES = {
+  default_backup_paths: ['/etc'],
+  default_pre_backup_commands: [],
+  default_post_backup_commands: [],
+}
+
 const AGENTS = [
-  { id: 10, hostname: 'web-server-01', display_name: 'Web Server', power: { wake: NO_WAKE } },
-  { id: 11, hostname: 'db-server-01', display_name: null, power: { wake: NO_WAKE } },
+  {
+    id: 10,
+    hostname: 'web-server-01',
+    display_name: 'Web Server',
+    power: { wake: NO_WAKE },
+    ...HOST_FILES,
+  },
+  { id: 11, hostname: 'db-server-01', display_name: null, power: { wake: NO_WAKE }, ...HOST_FILES },
 ]
 
 const REPOS = [
@@ -92,6 +105,9 @@ function setup(repos: unknown[] = REPOS): void {
   mockApiClient.get.mockImplementation((url: string) => {
     if (url === '/agents') return Promise.resolve({ data: AGENTS })
     if (url === '/repos') return Promise.resolve({ data: repos })
+    // The Sources step counts what each host includes, to warn about none.
+    if (url.endsWith('/vms')) return Promise.resolve({ data: { vms: [] } })
+    if (url.endsWith('/databases')) return Promise.resolve({ data: { sources: [] } })
     return Promise.resolve({ data: [] })
   })
 }
@@ -127,6 +143,34 @@ async function continueTo(
     await button(wrapper, 'Continue')!.trigger('click')
   }
   throw new Error(`never reached the ${label} step`)
+}
+
+/** Picks one of the Sources step's Files choices by its label. */
+async function chooseFilesMode(
+  wrapper: ReturnType<typeof renderWithPlugins>,
+  label: string,
+): Promise<void> {
+  await wrapper
+    .findAll('[role="radiogroup"][aria-label="Files"] button')
+    .find((b) => b.text() === label)!
+    .trigger('click')
+}
+
+async function toggleNamed(
+  wrapper: ReturnType<typeof renderWithPlugins>,
+  label: string,
+  value: boolean,
+): Promise<void> {
+  await wrapper
+    .findAllComponents({ name: 'ToggleSwitch' })
+    .find((t) => t.props('label') === label)!
+    .vm.$emit('update:modelValue', value)
+}
+
+/** The Review step's value for one of its rows. */
+function reviewRow(wrapper: ReturnType<typeof renderWithPlugins>, term: string): string {
+  const dt = wrapper.findAll('.review-block dt').find((d) => d.text() === term)!
+  return (dt.element.nextElementSibling as HTMLElement).textContent!.trim()
 }
 
 async function selectFirstAgent(wrapper: ReturnType<typeof renderWithPlugins>): Promise<void> {
@@ -450,12 +494,18 @@ describe('ScheduleCreateView', () => {
     await wrapper.findComponent({ name: 'ToggleSwitch' }).vm.$emit('update:modelValue', false)
     await button(wrapper, 'Continue')!.trigger('click')
 
-    // Sources: two hosts, paths.
+    // Sources: two hosts, and the schedule's own files with their paths and
+    // excludes (the excludes moved here from the Advanced step).
     await wrapper.find('.multi-select-trigger').trigger('click')
     const boxes = wrapper.findAll('.multi-select-item input[type="checkbox"]')
     await boxes[0].trigger('change')
     await boxes[1].trigger('change')
-    await wrapper.find('#backup-paths').setValue('/etc\n/srv')
+    await chooseFilesMode(wrapper, 'Own files')
+    await button(wrapper, 'Edit')!.trigger('click')
+    await wrapper.find('#file-sources-paths').setValue('/etc\n/srv')
+    await wrapper.find('#file-sources-excludes').setValue('*.tmp')
+    await button(wrapper, 'Save')!.trigger('click')
+    await toggleNamed(wrapper, 'Databases', true)
     await button(wrapper, 'Continue')!.trigger('click')
 
     // Targets: the on-failure select the second host revealed, then Timing
@@ -483,7 +533,6 @@ describe('ScheduleCreateView', () => {
     await advanced.vm.$emit('update:form', {
       ...(advanced.props('form') as ScheduleFormState),
       rate_limit_kbps: 2048,
-      exclude_patterns: '*.tmp',
     })
     await button(wrapper, 'Continue')!.trigger('click')
 
@@ -497,6 +546,9 @@ describe('ScheduleCreateView', () => {
         enabled: false,
         agent_ids: [10, 11],
         on_failure: 'continue',
+        files_mode: 'own',
+        run_host_commands: true,
+        database_backup_enabled: true,
         backup_sources: ['/etc', '/srv'],
         cron_expression: '0 4 * * *',
         missed_backup_threshold: 5,
@@ -512,12 +564,13 @@ describe('ScheduleCreateView', () => {
   })
 
   /**
-   * The bug this guards: the Advanced step offers per-host excludes,
-   * file-change patterns and commands, but `submit()` built the payload from
-   * the form alone, so a schedule created with them came out without them -
-   * silently, since the request still succeeded.
+   * The bug this guards: the wizard carries per-host excludes, file-change
+   * patterns and commands, but `submit()` built the payload from the form
+   * alone, so a schedule created with them came out without them - silently,
+   * since the request still succeeded. The overrides used to be edited on the
+   * Advanced step; they now travel through the Sources step's pane.
    */
-  it('sends the Advanced step per-host overrides with the new schedule', async () => {
+  it('sends the per-host overrides with the new schedule', async () => {
     const wrapper = await open()
     mockApiClient.post.mockResolvedValue({ data: { id: 9 } })
 
@@ -528,21 +581,19 @@ describe('ScheduleCreateView', () => {
     const boxes = wrapper.findAll('.multi-select-item input[type="checkbox"]')
     await boxes[0].trigger('change')
     await boxes[1].trigger('change')
-    await continueTo(wrapper, 'Timing')
-    await wrapper.findComponent({ name: 'CronBuilder' }).vm.$emit('update:modelValue', '0 4 * * *')
-    await button(wrapper, 'Continue')!.trigger('click')
-    await button(wrapper, 'Continue')!.trigger('click')
 
-    const advanced = wrapper.findComponent({ name: 'ScheduleAdvancedTab' })
-    await advanced.vm.$emit('update:overrides', {
-      ...(advanced.props('overrides') as ScheduleAgentOverrides),
+    const sources = wrapper.findComponent({ name: 'ScheduleSourcesPane' })
+    await sources.vm.$emit('update:overrides', {
+      ...(sources.props('overrides') as ScheduleAgentOverrides),
       usePerHostExcludes: true,
       perHostExcludes: { 10: '/var/cache', 11: '/tmp' },
       usePerAgentCmds: true,
       perAgentPreCmds: { 10: [{ command: 'systemctl stop nginx', timeout_seconds: null }] },
     })
-    await button(wrapper, 'Continue')!.trigger('click')
 
+    await continueTo(wrapper, 'Timing')
+    await wrapper.findComponent({ name: 'CronBuilder' }).vm.$emit('update:modelValue', '0 4 * * *')
+    await wrapper.findAll('.wizard-step').at(-1)!.trigger('click')
     await button(wrapper, 'Create schedule')!.trigger('click')
     await flushPromises()
 
@@ -570,6 +621,122 @@ describe('ScheduleCreateView', () => {
     // Untouched overrides stay off rather than sending empty per-agent lists.
     const payload = mockApiClient.post.mock.calls[0][1] as Record<string, unknown>
     expect(payload.file_change_patterns_per_agent).toBeUndefined()
+  })
+
+  it("takes each host's own files and commands unless told otherwise", async () => {
+    const wrapper = await open()
+    mockApiClient.post.mockResolvedValue({ data: { id: 9 } })
+
+    await fillBasicsAndContinue(wrapper)
+    await selectFirstAgent(wrapper)
+    expect(wrapper.findComponent({ name: 'ScheduleSourcesPane' }).exists()).toBe(true)
+    await toggleNamed(wrapper, "Run each host's backup commands", false)
+
+    await wrapper.findAll('.wizard-step').at(-1)!.trigger('click')
+    expect(reviewRow(wrapper, 'Files')).toBe("Each host's files")
+    expect(reviewRow(wrapper, 'VMs and databases')).toBe('Neither')
+    await button(wrapper, 'Create schedule')!.trigger('click')
+    await flushPromises()
+
+    const payload = mockApiClient.post.mock.calls[0][1] as Record<string, unknown>
+    expect(payload).toMatchObject({
+      files_mode: 'host',
+      run_host_commands: false,
+      // The schedule names no paths of its own: each host's are used.
+      backup_sources: [],
+    })
+    expect(payload.backup_sources_per_agent).toBeUndefined()
+  })
+
+  it('sends paths split per host as one list per host', async () => {
+    const wrapper = await open()
+    mockApiClient.post.mockResolvedValue({ data: { id: 9 } })
+
+    await fillBasicsAndContinue(wrapper)
+    await wrapper.find('.multi-select-trigger').trigger('click')
+    const boxes = wrapper.findAll('.multi-select-item input[type="checkbox"]')
+    await boxes[0].trigger('change')
+    await boxes[1].trigger('change')
+    await chooseFilesMode(wrapper, 'Own files')
+    await toggleNamed(wrapper, 'Different paths per host', true)
+    await button(wrapper, 'Edit')!.trigger('click')
+    const fields = wrapper.findAll('textarea[placeholder="Directories to back up, one per line"]')
+    expect(fields).toHaveLength(2)
+    await fields[0].setValue('/home\n/etc')
+    await button(wrapper, 'Save')!.trigger('click')
+    await toggleNamed(wrapper, 'Virtual machines', true)
+
+    await wrapper.findAll('.wizard-step').at(-1)!.trigger('click')
+    expect(reviewRow(wrapper, 'Files')).toBe('Own files, paths per host')
+    expect(reviewRow(wrapper, 'VMs and databases')).toBe('VMs')
+    await button(wrapper, 'Create schedule')!.trigger('click')
+    await flushPromises()
+
+    expect(mockApiClient.post).toHaveBeenCalledWith(
+      '/schedules',
+      expect.objectContaining({
+        files_mode: 'own',
+        vm_snapshot_enabled: true,
+        backup_sources: [],
+        // A host given no paths is left out rather than sent an empty list.
+        backup_sources_per_agent: [{ agent_id: 10, paths: ['/home', '/etc'] }],
+      }),
+    )
+  })
+
+  it('reads no files for a schedule with files off', async () => {
+    const wrapper = await open()
+    mockApiClient.post.mockResolvedValue({ data: { id: 9 } })
+
+    await fillBasicsAndContinue(wrapper)
+    await selectFirstAgent(wrapper)
+    await chooseFilesMode(wrapper, 'Off')
+    await toggleNamed(wrapper, 'Virtual machines', true)
+    await toggleNamed(wrapper, 'Databases', true)
+
+    await wrapper.findAll('.wizard-step').at(-1)!.trigger('click')
+    expect(reviewRow(wrapper, 'Files')).toBe('Off')
+    expect(reviewRow(wrapper, 'VMs and databases')).toBe('VMs and databases')
+    await button(wrapper, 'Create schedule')!.trigger('click')
+    await flushPromises()
+
+    expect(mockApiClient.post).toHaveBeenCalledWith(
+      '/schedules',
+      expect.objectContaining({ files_mode: 'off', backup_sources: [] }),
+    )
+  })
+
+  it("names the schedule's own paths on the review step", async () => {
+    const wrapper = await open()
+    await fillBasicsAndContinue(wrapper)
+    await selectFirstAgent(wrapper)
+    await chooseFilesMode(wrapper, 'Own files')
+
+    await wrapper.findAll('.wizard-step').at(-1)!.trigger('click')
+    expect(reviewRow(wrapper, 'Files')).toBe('Own files, no paths yet')
+
+    await wrapper.findAll('.wizard-step')[1].trigger('click')
+    await button(wrapper, 'Edit')!.trigger('click')
+    await wrapper.find('#file-sources-paths').setValue('/srv\n/home')
+    await button(wrapper, 'Save')!.trigger('click')
+    await wrapper.findAll('.wizard-step').at(-1)!.trigger('click')
+    expect(reviewRow(wrapper, 'Files')).toBe('/srv, /home')
+  })
+
+  it('offers no file, VM or database choices for a schedule type that backs nothing up', async () => {
+    const wrapper = await open()
+    await wrapper.find('#schedule-type').setValue('check')
+    await fillBasicsAndContinue(wrapper)
+    expect(wrapper.findComponent({ name: 'ScheduleSourcesPane' }).exists()).toBe(false)
+  })
+
+  it('no longer edits patterns or commands on the Advanced step', async () => {
+    const wrapper = await open()
+    await wrapper.findAll('.wizard-step')[6].trigger('click')
+    const advanced = wrapper.findComponent({ name: 'ScheduleAdvancedTab' })
+    expect(advanced.exists()).toBe(true)
+    expect(advanced.find('textarea').exists()).toBe(false)
+    expect(advanced.findComponent({ name: 'CommandListEditor' }).exists()).toBe(false)
   })
 
   /**

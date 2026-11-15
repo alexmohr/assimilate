@@ -19,7 +19,7 @@ use shared::{
     },
     schedule::{calculate_next_run, validate_cron},
     snapshot::{DEFAULT_LVM_SNAPSHOT_PERCENT, FsSnapshotMode, is_valid_lvm_snapshot_percent},
-    types::{OnFailure, RepoId, ScheduleType, ScheduleWakeOverride},
+    types::{OnFailure, RepoId, ScheduleFilesMode, ScheduleType, ScheduleWakeOverride},
 };
 use sqlx::PgPool;
 
@@ -190,10 +190,9 @@ pub struct CreateScheduleRequest {
     /// Whether canary backups are enabled (defaults to true).
     pub canary_enabled: Option<bool>,
     /// Whether this schedule stages the host's virtual machines before
-    /// backing up. Requires the host itself to have staging enabled.
+    /// backing up: the ones each host includes.
     pub vm_snapshot_enabled: Option<bool>,
     /// Whether this schedule dumps the host's databases into its archive.
-    /// Requires the host itself to have database dumps enabled.
     pub database_backup_enabled: Option<bool>,
     /// Whether this schedule's backups read from filesystem snapshots of
     /// their sources.
@@ -201,6 +200,14 @@ pub struct CreateScheduleRequest {
     /// Size of an LVM snapshot, in percent of the volume it snapshots: 1 to
     /// 100.
     pub lvm_snapshot_percent: Option<u8>,
+    /// Where the schedule's files come from: each host's own file set, the
+    /// schedule's own set instead, or none. Left out on create, a schedule
+    /// that sends paths of its own takes its own files and any other takes
+    /// each host's.
+    pub files_mode: Option<ScheduleFilesMode>,
+    /// Whether a schedule taking each host's files runs the hosts' pre- and
+    /// post-backup commands (defaults to true).
+    pub run_host_commands: Option<bool>,
     /// Raw exclude pattern text.
     pub exclude_patterns_raw: Option<String>,
     /// Raw include pattern text, rescuing paths from a broader exclude.
@@ -274,10 +281,9 @@ pub struct UpdateScheduleRequest {
     /// Whether canary backups are enabled.
     pub canary_enabled: Option<bool>,
     /// Whether this schedule stages the host's virtual machines before
-    /// backing up. Requires the host itself to have staging enabled.
+    /// backing up: the ones each host includes.
     pub vm_snapshot_enabled: Option<bool>,
     /// Whether this schedule dumps the host's databases into its archive.
-    /// Requires the host itself to have database dumps enabled.
     pub database_backup_enabled: Option<bool>,
     /// Whether this schedule's backups read from filesystem snapshots of
     /// their sources.
@@ -285,6 +291,14 @@ pub struct UpdateScheduleRequest {
     /// Size of an LVM snapshot, in percent of the volume it snapshots: 1 to
     /// 100.
     pub lvm_snapshot_percent: Option<u8>,
+    /// Where the schedule's files come from: each host's own file set, the
+    /// schedule's own set instead, or none. Left out on create, a schedule
+    /// that sends paths of its own takes its own files and any other takes
+    /// each host's.
+    pub files_mode: Option<ScheduleFilesMode>,
+    /// Whether a schedule taking each host's files runs the hosts' pre- and
+    /// post-backup commands (defaults to true).
+    pub run_host_commands: Option<bool>,
     /// Raw exclude pattern text.
     pub exclude_patterns_raw: Option<String>,
     /// Raw include pattern text, rescuing paths from a broader exclude.
@@ -611,6 +625,8 @@ pub async fn create_schedule(
         database_backup_enabled: req.database_backup_enabled.unwrap_or(false),
         fs_snapshot: req.fs_snapshot.unwrap_or_default(),
         lvm_snapshot_percent,
+        files_mode: req.files_mode.unwrap_or_else(|| default_files_mode(&req)),
+        run_host_commands: req.run_host_commands.unwrap_or(true),
         exclude_patterns_raw: &exclude_patterns_raw,
         include_patterns_raw: &include_patterns_raw,
         ignore_global_excludes: req.ignore_global_excludes.unwrap_or(false),
@@ -910,6 +926,8 @@ pub async fn update_schedule(
             .unwrap_or(existing.database_backup_enabled),
         fs_snapshot: req.fs_snapshot.unwrap_or(existing.fs_snapshot),
         lvm_snapshot_percent,
+        files_mode: req.files_mode.unwrap_or(existing.files_mode),
+        run_host_commands: req.run_host_commands.unwrap_or(existing.run_host_commands),
         exclude_patterns_raw: &values.exclude_patterns_raw,
         include_patterns_raw: &values.include_patterns_raw,
         ignore_global_excludes: req.ignore_global_excludes.unwrap_or(false),
@@ -1223,6 +1241,25 @@ fn validate_catch_up_min_lead_minutes(minutes: i32) -> Result<i32, ApiError> {
 ///
 /// An import clamps the size into that range instead, like the hook
 /// timeouts, rather than refusing the whole file.
+/// The files mode of a schedule created without one: a client that predates
+/// the choice and sends paths of its own means them, so it gets its own files;
+/// any other schedule takes each host's.
+fn default_files_mode(req: &CreateScheduleRequest) -> ScheduleFilesMode {
+    let has_shared = req
+        .backup_sources
+        .as_ref()
+        .is_some_and(|paths| !paths.is_empty());
+    let has_per_agent = req
+        .backup_sources_per_agent
+        .as_ref()
+        .is_some_and(|entries| entries.iter().any(|entry| !entry.paths.is_empty()));
+    if has_shared || has_per_agent {
+        ScheduleFilesMode::Own
+    } else {
+        ScheduleFilesMode::Host
+    }
+}
+
 fn validate_lvm_snapshot_percent(percent: u8) -> Result<i16, ApiError> {
     if !is_valid_lvm_snapshot_percent(percent) {
         return Err(ApiError::BadRequest(

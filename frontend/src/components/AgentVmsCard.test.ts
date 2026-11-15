@@ -8,6 +8,7 @@ import { apiClient } from '../api/client'
 import AgentVmsCard from './AgentVmsCard.vue'
 import VmRestoreWizard from './VmRestoreWizard.vue'
 import type { AgentRow } from '../types/agent'
+import type { ScheduleRow } from '../types/schedule'
 import type { AgentVmResponse, AgentVmSnapshotResponse, VmSelectionMode } from '../types/generated'
 
 vi.mock('../api/client', () => ({
@@ -43,7 +44,6 @@ function response(
 ): AgentVmSnapshotResponse {
   return {
     settings: {
-      enabled: true,
       staging_dir: '/srv/vm-staging',
       full_interval: 7,
       timeout_seconds: 1800,
@@ -142,14 +142,9 @@ describe('AgentVmsCard', () => {
     expect(wrapper.text()).toContain('agent is not connected')
   })
 
-  it('discloses the VM backup and staging directory explanations behind their HelpHints', async () => {
+  it('discloses the staging directory explanation behind its HelpHint', async () => {
     const wrapper = await mount()
     await startEditingSection(wrapper)
-
-    await wrapper.find('[aria-label="Help: allow VM backups"]').trigger('click')
-    expect(wrapper.find('.help-hint-pop').text()).toContain(
-      'Blocked here means no schedule backs up this host',
-    )
 
     await wrapper.find('[aria-label="Help: where domains are staged"]').trigger('click')
     expect(wrapper.find('.help-hint-pop').text()).toContain('one subdirectory per domain')
@@ -167,7 +162,6 @@ describe('AgentVmsCard', () => {
     expect(apiClient.put).toHaveBeenCalledWith(
       '/agents/virt-host-01/vm-snapshot',
       {
-        enabled: true,
         staging_dir: '/data/vm-staging',
         full_interval: 14,
         timeout_seconds: 1800,
@@ -310,19 +304,101 @@ describe('AgentVmsCard', () => {
     expect(wrapper.text()).toContain('/srv/vm-staging')
   })
 
-  it('saves the staging toggle and the timeout the operator set', async () => {
+  it('saves the timeout the operator set', async () => {
     const wrapper = await mount()
     await startEditingSection(wrapper)
 
     await wrapper.find<HTMLInputElement>('#vm-timeout').setValue('900')
-    await wrapper.find('[role="switch"]').trigger('click')
     await clickSectionButton(wrapper, 'Save')
 
     expect(apiClient.put).toHaveBeenCalledWith(
       '/agents/virt-host-01/vm-snapshot',
-      expect.objectContaining({ enabled: false, timeout_seconds: 900 }),
+      expect.objectContaining({ timeout_seconds: 900 }),
       { params: {} },
     )
+  })
+
+  // The host no longer turns VM backups off as a whole: it stages what it
+  // includes, and each schedule takes that or opts out. So the form has no
+  // host-wide switch, and the request carries no on/off flag.
+  it('offers no host-wide switch for VM backups', async () => {
+    const wrapper = await mount()
+    expect(wrapper.text()).not.toContain('Allow schedules to back up virtual machines')
+    await startEditingSection(wrapper)
+
+    expect(wrapper.find('.pane-rows [role="switch"]').exists()).toBe(false)
+    expect(wrapper.find('[aria-label="Help: allow VM backups"]').exists()).toBe(false)
+    await clickSectionButton(wrapper, 'Save')
+
+    const payload = vi.mocked(apiClient.put).mock.calls[0][1] as Record<string, unknown>
+    expect('enabled' in payload).toBe(false)
+  })
+
+  // The other half of a schedule's "no virtual machines will be backed up"
+  // warning: the host names the schedules that take VMs while it includes none.
+  describe('schedules taking VMs a host includes none of', () => {
+    function schedule(id: number, name: string, vms = true): ScheduleRow {
+      return { id, name, vm_snapshot_enabled: vms } as unknown as ScheduleRow
+    }
+
+    function noneIncluded(): void {
+      vi.mocked(apiClient.get).mockResolvedValue({
+        data: response([vm({ included: false })]),
+      } as never)
+    }
+
+    function notice(wrapper: Awaited<ReturnType<typeof mount>>): string {
+      return wrapper.get('[data-testid="vm-backup-asked"]').text().replace(/\s+/g, ' ')
+    }
+
+    it('names the one schedule taking VMs and links to it', async () => {
+      noneIncluded()
+      const wrapper = await mount({
+        schedules: [schedule(4, 'Nightly'), schedule(5, 'Files', false)],
+      })
+
+      expect(notice(wrapper)).toContain('1 schedule takes virtual machines here')
+      expect(notice(wrapper)).toContain(
+        'Nightly takes virtual machines, but this host has no domain included',
+      )
+      expect(notice(wrapper)).not.toContain('Files')
+      const links = wrapper.findAll('[data-testid="vm-backup-asked"] a')
+      expect(links.map((l) => l.attributes('href'))).toEqual(['/schedules/4'])
+    })
+
+    it('counts and joins several schedules', async () => {
+      noneIncluded()
+      const wrapper = await mount({
+        schedules: [schedule(4, 'Nightly'), schedule(5, 'Weekly'), schedule(6, 'Monthly')],
+      })
+
+      expect(notice(wrapper)).toContain('3 schedules take virtual machines here')
+      expect(notice(wrapper)).toContain('Nightly, Weekly and Monthly take virtual machines')
+    })
+
+    it('names an unnamed schedule by its number', async () => {
+      noneIncluded()
+      const wrapper = await mount({ schedules: [schedule(9, '')] })
+      expect(notice(wrapper)).toContain('Schedule #9 takes virtual machines')
+    })
+
+    it('stays quiet once the host includes a domain', async () => {
+      const wrapper = await mount({ schedules: [schedule(4, 'Nightly')] })
+      expect(wrapper.find('[data-testid="vm-backup-asked"]').exists()).toBe(false)
+    })
+
+    it('stays quiet when no schedule takes VMs', async () => {
+      noneIncluded()
+      const wrapper = await mount({ schedules: [schedule(5, 'Files', false)] })
+      expect(wrapper.find('[data-testid="vm-backup-asked"]').exists()).toBe(false)
+    })
+
+    // A host never scanned has no domain included either.
+    it('also warns a host that has never been scanned', async () => {
+      vi.mocked(apiClient.get).mockResolvedValue({ data: response([]) } as never)
+      const wrapper = await mount({ schedules: [schedule(4, 'Nightly')] })
+      expect(notice(wrapper)).toContain('Scan for domains below and include at least one.')
+    })
   })
 
   it('excludes a domain from staging when its include switch is turned off', async () => {

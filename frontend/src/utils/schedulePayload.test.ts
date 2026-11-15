@@ -63,6 +63,16 @@ describe('scheduleFormPayload', () => {
     expect(payload.missed_backup_threshold).toBe(5)
     expect(payload.rate_limit_kbps).toBe(2048)
   })
+
+  it("sends where the files come from and whether the hosts' commands run", () => {
+    expect(scheduleFormPayload(form())).toMatchObject({
+      files_mode: 'host',
+      run_host_commands: true,
+    })
+    expect(
+      scheduleFormPayload(form({ files_mode: 'off', run_host_commands: false })),
+    ).toMatchObject({ files_mode: 'off', run_host_commands: false })
+  })
 })
 
 function overrides(patch: Partial<ScheduleAgentOverrides> = {}): ScheduleAgentOverrides {
@@ -155,6 +165,23 @@ describe('agentOverridePayload', () => {
         post_backup_commands: [{ command: 'systemctl start nginx', timeout_seconds: 30 }],
       },
     ])
+  })
+
+  // "Use the shared values" turns every override off; without the flag that
+  // would send nothing, and the server would keep the per-host rows it has.
+  it('sends empty per-agent lists once the per-host values are to be cleared', () => {
+    expect(agentOverridePayload(overrides({ clearPerHost: true }), [1, 2])).toEqual({
+      exclude_patterns_per_agent: [],
+      include_patterns_per_agent: [],
+      file_change_patterns_per_agent: [],
+      commands_per_agent: [],
+    })
+  })
+
+  it('leaves the shared values alone when clearing the per-host ones', () => {
+    const payload = agentOverridePayload(overrides({ clearPerHost: true }), [1])
+    expect(payload.exclude_patterns_raw).toBeUndefined()
+    expect(payload.pre_backup_commands).toBeUndefined()
   })
 })
 

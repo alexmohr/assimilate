@@ -19,7 +19,7 @@ import SchedulePowerTab from './SchedulePowerTab.vue'
 import ScheduleDependenciesTab from './ScheduleDependenciesTab.vue'
 import SettingsRail, { type SettingsSections } from './SettingsRail.vue'
 import type { ScheduleRepoTarget } from '../api/schedules'
-import type { ScheduleFormState } from '../types/scheduleForm'
+import type { ScheduleAgentOverrides, ScheduleFormState } from '../types/scheduleForm'
 import type { AgentRow } from '../types/agent'
 import type { Repo } from '../types/repo'
 import type { ScheduleSettingsSection } from '../utils/scheduleSettings'
@@ -73,6 +73,7 @@ const form = defineModel<ScheduleFormState>('form', { required: true })
 const selectedAgentIds = defineModel<number[]>('selectedAgentIds', { required: true })
 const repoTargets = defineModel<ScheduleRepoTarget[]>('repoTargets', { required: true })
 const onFailure = defineModel<'stop' | 'continue'>('onFailure', { required: true })
+const overrides = defineModel<ScheduleAgentOverrides>('overrides', { required: true })
 const usePerHostPaths = defineModel<boolean>('usePerHostPaths', { required: true })
 const perHostSources = defineModel<Record<number, string>>('perHostSources', { required: true })
 
@@ -327,16 +328,16 @@ const catchUpSourceLinks = computed(() => {
             </div>
           </div>
         </PaneRow>
-
       </div>
     </template>
 
     <ScheduleSourcesPane
       v-else-if="currentSection === 'sources'"
       v-model:form="form"
-      :commit="commit"
+      v-model:overrides="overrides"
       v-model:use-per-host-paths="usePerHostPaths"
       v-model:per-host-sources="perHostSources"
+      :commit="commit"
       :agent-ids="selectedAgentIds"
       :agent-label="agentLabel"
       :agents="agents"

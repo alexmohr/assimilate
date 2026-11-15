@@ -12,7 +12,6 @@ import type {
 
 /** New staging settings for a host. */
 export interface UpdateAgentVmSnapshotRequest {
-  enabled: boolean
   staging_dir: string
   full_interval: number
   timeout_seconds: number

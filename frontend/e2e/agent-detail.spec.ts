@@ -81,7 +81,7 @@ test.describe('Agent detail', () => {
     // not preview them.
     await expect(page.getByRole('heading', { name: 'Repositories' })).toBeVisible()
     await expect(page.getByRole('heading', { name: 'Recent backups' })).toHaveCount(0)
-    await expect(page.getByText('Backup defaults')).toHaveCount(0)
+    await expect(page.getByText('Include patterns')).toHaveCount(0)
     await expect(page.getByText('Danger zone')).toHaveCount(0)
   })
 
@@ -322,38 +322,45 @@ test.describe('Agent detail', () => {
     await expect(page).toHaveURL(/\/agents\/web-server-01\?.*tab=settings/)
     await expect(page.locator('.detail-name')).toHaveText('web-server-01')
 
-    // Virtual machines and databases moved to the Sources tab, tags to the header.
-    await expect(page.locator('.accordion-head')).toHaveText([
-      'Identity',
-      'Backup defaults',
-      'Power & dependencies',
-    ])
-
-    // The four defaults cards became one card with five sections and one save.
-    const defaults = await openSettingsSection(page, 'Backup defaults')
-    await expect(page).toHaveURL(/section=defaults/)
-    await expect(defaults).toContainText(
-      'What a schedule uses for this host when it does not set its own paths',
-    )
-    await expect(defaults.locator('.group-label')).toHaveText([
-      'Backup paths',
-      'Exclude patterns',
-      'File change patterns',
-      'Pre-backup commands',
-      'Post-backup commands',
-    ])
+    // Everything the host backs up moved to the Sources tab, tags to the header.
+    await expect(page.locator('.accordion-head')).toHaveText(['Identity', 'Power & dependencies'])
 
     // Required dependencies live with the machine's power settings now.
     const power = await openSettingsSection(page, 'Power & dependencies')
     await expect(power.locator('.group-label', { hasText: 'Required dependencies' })).toBeVisible()
   })
 
-  test('virtual machines and databases are the Sources tab', async ({ page }) => {
+  test('files, virtual machines and databases are the Sources tab', async ({ page }) => {
     await openAgent(page, 'db-server-01')
     await page.getByRole('tab', { name: 'Sources' }).click()
 
     await expect(page).toHaveURL(/\/agents\/db-server-01\?.*tab=sources/)
-    await expect(page.locator('.accordion-head')).toHaveText(['Virtual machines', 'Databases'])
+    await expect(page.locator('.accordion-head')).toHaveText([
+      'Files',
+      'Virtual machines',
+      'Databases',
+      'Used by',
+    ])
+
+    // One card with every field of the host's file set and one save; a
+    // schedule's own files use the same form.
+    const files = await openSettingsSection(page, 'Files')
+    await expect(page).toHaveURL(/section=files/)
+    await expect(files).toContainText('The files this host backs up')
+    await expect(files.locator('.group-label')).toHaveText([
+      'Backup paths',
+      'Exclude patterns',
+      'Include patterns',
+      'File change patterns',
+      'Pre-backup commands',
+      'Post-backup commands',
+    ])
+    await expect(files).toContainText('/var/lib/postgresql')
+
+    // Used by names every backup schedule taking from the host.
+    const usedBy = await openSettingsSection(page, 'Used by')
+    await expect(usedBy.getByRole('link', { name: 'Everything on db-server-01' })).toBeVisible()
+
     const databases = await openSettingsSection(page, 'Databases')
     await expect(page).toHaveURL(/section=databases/)
     await expect(databases).toContainText('shop/orders-db')
@@ -362,12 +369,12 @@ test.describe('Agent detail', () => {
   // A hook command is a whole script. Rendered inline the browser collapses
   // its newlines and indentation into single spaces, so the demo's multi-line
   // agent default arrived as one unreadable paragraph.
-  test('Backup defaults shows a multi-line hook command with its lines and timeout', async ({
+  test("a host's Files show a multi-line hook command with its lines and timeout", async ({
     page,
   }) => {
     await openAgent(page, 'media-store-01')
-    await page.getByRole('tab', { name: 'Settings' }).click()
-    const defaults = await openSettingsSection(page, 'Backup defaults')
+    await page.getByRole('tab', { name: 'Sources' }).click()
+    const defaults = await openSettingsSection(page, 'Files')
 
     const script = defaults.locator('.detail-pre').first()
     await expect(script).toBeVisible()

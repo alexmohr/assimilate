@@ -7,7 +7,7 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 import { computed, ref } from 'vue'
 import { updateAgent } from '../api/agents'
 import { extractError } from '../utils/error'
-import { dropBlankCommands, parseLines } from '../utils/validation'
+import { dropBlankCommands, parseLines, parsePatternLines } from '../utils/validation'
 import FileSourcesSection from './FileSourcesSection.vue'
 import type { AgentRow } from '../types/agent'
 import type { FileSet } from '../types/fileSet'
@@ -52,9 +52,8 @@ async function save(next: FileSet): Promise<void> {
         display_name: props.agent.display_name,
         domain: props.agent.domain,
         default_backup_paths: parseLines(next.paths),
-        default_exclude_patterns: parseLines(next.excludes),
-        // Not in the request type yet: see `AgentFileSetExtras`.
-        ...{ default_include_patterns: parseLines(next.includes) },
+        default_exclude_patterns: parsePatternLines(next.excludes),
+        default_include_patterns: parsePatternLines(next.includes),
         default_pre_backup_commands: dropBlankCommands(next.preCommands),
         default_post_backup_commands: dropBlankCommands(next.postCommands),
         default_file_change_patterns_raw: next.fileChangePatterns,

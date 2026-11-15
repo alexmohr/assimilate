@@ -8,7 +8,7 @@ import { ref } from 'vue'
 import EditableSection from './EditableSection.vue'
 import FileSourcesEditor from './FileSourcesEditor.vue'
 import FileSourcesView from './FileSourcesView.vue'
-import { parseLines } from '../utils/validation'
+import { parseLines, parsePatternLines } from '../utils/validation'
 import type { FileSet } from '../types/fileSet'
 import type { HookCommand } from '../types/generated'
 
@@ -97,8 +97,8 @@ defineExpose({ close, editing })
     <template #view>
       <FileSourcesView
         :paths="parseLines(value.paths)"
-        :excludes="parseLines(value.excludes)"
-        :includes="parseLines(value.includes)"
+        :excludes="parsePatternLines(value.excludes)"
+        :includes="parsePatternLines(value.includes)"
         :file-change-patterns-raw="value.fileChangePatterns"
         :pre-commands="value.preCommands"
         :post-commands="value.postCommands"

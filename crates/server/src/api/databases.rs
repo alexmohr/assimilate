@@ -44,8 +44,6 @@ const MAX_OS_USER_LEN: usize = 32;
 /// New dump settings for a host.
 #[derive(Debug, Clone, Deserialize, ToSchema)]
 pub struct UpdateAgentDatabaseBackupRequest {
-    /// Whether this host dumps databases at all.
-    pub enabled: bool,
     /// Absolute directory on the host that holds the dump pipes while a
     /// backup runs. Not below `/dev`, `/proc`, `/sys` or `/run`, which a
     /// dumping run leaves out of the archive.
@@ -115,7 +113,6 @@ async fn build_response(
     let selection = settings.selection;
     Ok(AgentDatabasesResponse {
         settings: AgentDatabaseSettingsResponse {
-            enabled: settings.enabled,
             dump_dir: settings.dump_dir,
             runtimes: settings.runtimes,
             selection,
@@ -349,7 +346,6 @@ pub async fn update_agent_database_backup(
         &state.pool,
         agent.id,
         db::databases::DatabaseBackupPatch {
-            enabled: req.enabled,
             dump_dir: req.dump_dir.trim(),
             runtimes: &runtimes,
             selection: req.selection,

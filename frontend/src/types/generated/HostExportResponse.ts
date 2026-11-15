@@ -27,6 +27,10 @@ export type HostExportResponse = {
    */
   default_exclude_patterns: Array<string>;
   /**
+   * Include patterns: exceptions to the excludes.
+   */
+  default_include_patterns: Array<string>;
+  /**
    * Default commands to run before backups.
    */
   default_pre_backup_commands: Array<HookCommand>;

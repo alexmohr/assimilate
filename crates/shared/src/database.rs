@@ -588,8 +588,9 @@ impl DatabaseRuntimes {
 /// configuration.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DatabaseBackupConfig {
-    /// Whether this host dumps databases at all. A schedule that asks for them
-    /// while this is off backs up none of them.
+    /// Whether this host dumps databases at all. A server no longer has this
+    /// switch and always sends `true`; an agent still honours `false` from an
+    /// older server, which dumps none of them.
     pub enabled: bool,
     /// Absolute directory on the agent host that holds the dump pipes and the
     /// manifest while a backup runs. It is what the archive stores them under.

@@ -15,6 +15,15 @@ export function parseLines(text: string): string[] {
  * before saving. Never trims the surviving entries' content - a command is a
  * whole script, and leading whitespace can be meaningful indentation.
  */
+/**
+ * A pattern list as borg reads it: one entry per line, with blank lines and
+ * lines starting with `#` (comments) left out, as the server does for a
+ * schedule's own patterns.
+ */
+export function parsePatternLines(text: string): string[] {
+  return parseLines(text).filter((line) => !line.startsWith('#'))
+}
+
 export function dropBlankCommands(commands: HookCommand[]): HookCommand[] {
   return commands.filter((c) => c.command.trim().length > 0)
 }

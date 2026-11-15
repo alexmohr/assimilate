@@ -248,7 +248,7 @@ Restore `paths` are archive paths, checked like download paths: no `..`, no lead
 | `GET` | `/api/schedules/{id}/sources` | List the schedule's backup sources |
 | `GET` | `/api/schedules/{id}/catch-up` | List the schedule's agents and repository hosts that are marked as not always online |
 | `GET` / `PUT` | `/api/schedules/{id}/dependencies` | Get or set the [dependency hosts](dependency-hosts.md) each target agent needs, and list the runs waiting on one |
-| `GET` / `PUT` | `/api/agents/{hostname}/dependencies` | Get or set the dependency hosts an agent's backup defaults require (changes: admin only) |
+| `GET` / `PUT` | `/api/agents/{hostname}/dependencies` | Get or set the dependency hosts an agent's files require (changes: admin only) |
 | `GET` / `PUT` | `/api/schedules/{id}/machines` | Get every [machine](power-management.md#per-schedule-overrides) a schedule needs, or set its own choice for each: `wake`, `no_wake` or `wait` (`wait` not for an agent's machine) |
 | `GET` | `/api/schedules/{id}/targets` | List the schedule's target repositories |
 

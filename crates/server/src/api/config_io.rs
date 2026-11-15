@@ -15,6 +15,7 @@ pub use shared::responses::{
 use shared::{
     crypto::encrypt_passphrase,
     hooks::{HookCommand, MAX_HOOK_COMMAND_TIMEOUT_SECONDS},
+    types::ScheduleFilesMode,
 };
 
 mod text_limits;
@@ -84,6 +85,7 @@ pub async fn export_config(
             domain: agent.domain.clone(),
             default_backup_paths: agent.default_backup_paths.clone(),
             default_exclude_patterns: agent.default_exclude_patterns.clone(),
+            default_include_patterns: agent.default_include_patterns.clone(),
             default_pre_backup_commands: agent.default_pre_backup_commands.0.clone(),
             default_post_backup_commands: agent.default_post_backup_commands.0.clone(),
             default_file_change_patterns_raw: agent.default_file_change_patterns_raw.clone(),
@@ -198,6 +200,8 @@ async fn build_schedule_export(
         database_backup_enabled: sched.database_backup_enabled,
         fs_snapshot: sched.fs_snapshot,
         lvm_snapshot_percent: sched.lvm_snapshot_percent,
+        files_mode: Some(sched.files_mode),
+        run_host_commands: sched.run_host_commands,
         execution_mode: sched.execution_mode,
         on_failure: sched.on_failure,
         exclude_patterns_raw: sched.exclude_patterns_raw.clone(),
@@ -541,6 +545,7 @@ async fn import_host(
                 domain: host.domain.as_deref(),
                 default_backup_paths: &host.default_backup_paths,
                 default_exclude_patterns: &host.default_exclude_patterns,
+                default_include_patterns: &host.default_include_patterns,
                 default_pre_backup_commands: &default_pre_backup_commands,
                 default_post_backup_commands: &default_post_backup_commands,
                 default_file_change_patterns_raw: &host.default_file_change_patterns_raw,
@@ -570,6 +575,7 @@ async fn import_host(
                 domain: host.domain.as_deref(),
                 default_backup_paths: &host.default_backup_paths,
                 default_exclude_patterns: &host.default_exclude_patterns,
+                default_include_patterns: &host.default_include_patterns,
                 default_pre_backup_commands: &default_pre_backup_commands,
                 default_post_backup_commands: &default_post_backup_commands,
                 default_file_change_patterns_raw: &host.default_file_change_patterns_raw,
@@ -630,6 +636,29 @@ fn resolve_imported_repo_targets(
     (None, warnings)
 }
 
+/// The files mode of a schedule from an export written before schedules had
+/// the choice: one that set any file field of its own took its own files.
+fn files_mode_of_older_export(sched: &ScheduleExport) -> ScheduleFilesMode {
+    let set = |text: &str| !text.trim().is_empty();
+    let schedule_sets_files = !sched.backup_sources.is_empty()
+        || set(&sched.exclude_patterns_raw)
+        || set(&sched.include_patterns_raw)
+        || set(&sched.file_change_patterns_raw)
+        || !sched.pre_backup_commands.is_empty()
+        || !sched.post_backup_commands.is_empty();
+    let a_target_sets_files = sched.targets.iter().any(|target| {
+        !target.backup_sources.is_empty()
+            || set(&target.exclude_patterns)
+            || set(&target.include_patterns)
+            || set(&target.file_change_patterns)
+    });
+    if schedule_sets_files || a_target_sets_files {
+        ScheduleFilesMode::Own
+    } else {
+        ScheduleFilesMode::Host
+    }
+}
+
 async fn import_schedule(
     pool: &sqlx::PgPool,
     sched: &ScheduleExport,
@@ -678,6 +707,10 @@ async fn import_schedule(
         // Clamped like the hook timeouts below: an uploaded export is
         // untrusted input, and the column refuses a size out of range.
         lvm_snapshot_percent: sched.lvm_snapshot_percent.clamp(1, 100),
+        files_mode: sched
+            .files_mode
+            .unwrap_or_else(|| files_mode_of_older_export(sched)),
+        run_host_commands: sched.run_host_commands,
         exclude_patterns_raw: &sched.exclude_patterns_raw,
         include_patterns_raw: &sched.include_patterns_raw,
         file_change_patterns_raw: &sched.file_change_patterns_raw,
@@ -906,6 +939,8 @@ mod tests {
             database_backup_enabled: false,
             fs_snapshot: shared::snapshot::FsSnapshotMode::Off,
             lvm_snapshot_percent: 10,
+            files_mode: Some(shared::types::ScheduleFilesMode::Host),
+            run_host_commands: true,
             execution_mode: ExecutionMode::default(),
             on_failure: OnFailure::default(),
             exclude_patterns_raw: String::new(),

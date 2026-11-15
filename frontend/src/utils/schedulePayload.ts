@@ -32,6 +32,8 @@ export function scheduleFormPayload(form: ScheduleFormState): ScheduleFormPayloa
     ...(isFsSnapshotOn(form.fs_snapshot) || isValidLvmSnapshotPercent(form.lvm_snapshot_percent)
       ? { lvm_snapshot_percent: form.lvm_snapshot_percent }
       : {}),
+    files_mode: form.files_mode,
+    run_host_commands: form.run_host_commands,
     exclude_patterns_raw: form.exclude_patterns,
     include_patterns_raw: form.include_patterns,
     file_change_patterns_raw: form.file_change_patterns,
@@ -69,7 +71,14 @@ export function agentOverridePayload(
   overrides: ScheduleAgentOverrides,
   agentIds: readonly number[],
 ): Partial<ScheduleFormPayload> {
-  const payload: Partial<ScheduleFormPayload> = {}
+  const payload: Partial<ScheduleFormPayload> = overrides.clearPerHost
+    ? {
+        exclude_patterns_per_agent: [],
+        include_patterns_per_agent: [],
+        file_change_patterns_per_agent: [],
+        commands_per_agent: [],
+      }
+    : {}
 
   if (overrides.usePerHostExcludes) {
     payload.exclude_patterns_raw = ''

@@ -12,7 +12,6 @@ import type {
 
 /** New database dump settings for a host. */
 export interface UpdateAgentDatabaseBackupRequest {
-  enabled: boolean
   dump_dir: string
   /** Where the host looks for databases. Empty paths mean the agent's defaults. */
   runtimes: DatabaseRuntimes

@@ -189,16 +189,11 @@ onMounted(load)
 
 /** The review step's line for where the files come from. */
 const filesSummary = computed<{ text: string; mono: boolean }>(() => {
-  switch (form.value.files_mode) {
-    case 'off':
-      return { text: 'Off', mono: false }
-    case 'host':
-      return { text: "Each host's files", mono: false }
-    case 'custom':
-      return usePerHostPaths.value
-        ? { text: 'Own files, paths per host', mono: false }
-        : { text: parseLines(form.value.backup_sources).join(', ') || 'Own files, no paths yet', mono: true }
-  }
+  if (form.value.files_mode === 'off') return { text: 'Off', mono: false }
+  if (form.value.files_mode === 'host') return { text: "Each host's files", mono: false }
+  if (usePerHostPaths.value) return { text: 'Own files, paths per host', mono: false }
+  const paths = parseLines(form.value.backup_sources).join(', ')
+  return paths ? { text: paths, mono: true } : { text: 'Own files, no paths yet', mono: false }
 })
 
 const vmsDbsSummary = computed(() => {
@@ -217,7 +212,7 @@ async function submit(): Promise<void> {
     const created = await createSchedule({
       ...scheduleFormPayload(form.value),
       ...agentOverridePayload(agentOverrides.value, selectedAgentIds.value),
-      ...(form.value.files_mode === 'custom'
+      ...(form.value.files_mode === 'own'
         ? usePerHostPaths.value
           ? {
               backup_sources: [],
@@ -227,8 +222,6 @@ async function submit(): Promise<void> {
             }
           : {}
         : { backup_sources: [] }),
-      // Not in the request type yet: see `ScheduleSourceChoice`.
-      ...{ files_mode: form.value.files_mode, run_host_commands: form.value.run_host_commands },
       agent_ids: selectedAgentIds.value,
       repo_id: primaryRepoId(repoTargets.value),
       repo_targets: repoTargets.value,
@@ -370,6 +363,7 @@ async function submit(): Promise<void> {
         <ScheduleSourcesPane
           v-if="isBackup"
           v-model:form="form"
+          v-model:overrides="agentOverrides"
           v-model:use-per-host-paths="usePerHostPaths"
           v-model:per-host-sources="perHostSources"
           :agent-ids="selectedAgentIds"

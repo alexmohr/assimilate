@@ -222,6 +222,7 @@ export type { ScheduleDependenciesResponse } from './ScheduleDependenciesRespons
 export type { ScheduleDependencyInput } from './ScheduleDependencyInput'
 export type { ScheduleDependencyResponse } from './ScheduleDependencyResponse'
 export type { ScheduleExportResponse } from './ScheduleExportResponse'
+export type { ScheduleFilesMode } from './ScheduleFilesMode'
 export type { ScheduleListResponse } from './ScheduleListResponse'
 export type { ScheduleMachineInput } from './ScheduleMachineInput'
 export type { ScheduleMachinePowerResponse } from './ScheduleMachinePowerResponse'

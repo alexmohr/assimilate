@@ -106,6 +106,7 @@ fn host_set() -> FileSet {
     }
 }
 
+#[ignore = "requires DATABASE_URL"]
 #[sqlx::test(migrations = "./migrations")]
 async fn a_schedule_taking_each_hosts_files_reads_the_hosts_set_only(pool: PgPool) {
     let agent = host(&pool, "fs-host").await;
@@ -114,6 +115,7 @@ async fn a_schedule_taking_each_hosts_files_reads_the_hosts_set_only(pool: PgPoo
     assert_eq!(resolve(&pool, &schedule, &agent).await.unwrap(), host_set());
 }
 
+#[ignore = "requires DATABASE_URL"]
 #[sqlx::test(migrations = "./migrations")]
 async fn a_schedule_can_take_the_hosts_files_without_their_commands(pool: PgPool) {
     let agent = host(&pool, "fs-host-quiet").await;
@@ -125,6 +127,7 @@ async fn a_schedule_can_take_the_hosts_files_without_their_commands(pool: PgPool
     assert!(files.pre_backup_commands.is_empty() && files.post_backup_commands.is_empty());
 }
 
+#[ignore = "requires DATABASE_URL"]
 #[sqlx::test(migrations = "./migrations")]
 async fn own_files_replace_the_hosts_set_as_a_whole(pool: PgPool) {
     let agent = host(&pool, "fs-own").await;
@@ -148,6 +151,7 @@ async fn own_files_replace_the_hosts_set_as_a_whole(pool: PgPool) {
     );
 }
 
+#[ignore = "requires DATABASE_URL"]
 #[sqlx::test(migrations = "./migrations")]
 async fn own_files_take_a_hosts_own_values_where_the_schedule_splits_them(pool: PgPool) {
     let agent = host(&pool, "fs-split").await;
@@ -171,6 +175,7 @@ async fn own_files_take_a_hosts_own_values_where_the_schedule_splits_them(pool: 
     assert_eq!(files.includes, strings(&["/srv/keep"]));
 }
 
+#[ignore = "requires DATABASE_URL"]
 #[sqlx::test(migrations = "./migrations")]
 async fn a_schedule_with_files_off_reads_nothing_and_runs_no_commands(pool: PgPool) {
     let agent = host(&pool, "fs-off").await;

@@ -694,6 +694,12 @@ async function refreshSchedule(): Promise<void> {
   }
 }
 
+/** A section's own Save: the page's save, with its error handed back. */
+async function commitFromSection(): Promise<string | null> {
+  await save()
+  return saveError.value
+}
+
 async function save(): Promise<void> {
   saving.value = true
   saveError.value = null
@@ -1169,6 +1175,7 @@ watch(activeTab, (tab) => {
           :saving="saving"
           :catch-up-sources="catchUpSources"
           :schedule-id="schedule.id"
+          :commit="commitFromSection"
           @dependencies-saved="loadDependencies()"
         />
       </div>

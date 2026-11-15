@@ -59,6 +59,8 @@ const props = defineProps<{
    * its own. Without one there is nothing to attach them to yet.
    */
   scheduleId?: number | null
+  /** Saves the schedule from inside a section, for the own-files Save. */
+  commit?: () => Promise<string | null>
 }>()
 
 const emit = defineEmits<{
@@ -332,6 +334,7 @@ const catchUpSourceLinks = computed(() => {
     <ScheduleSourcesPane
       v-else-if="currentSection === 'sources'"
       v-model:form="form"
+      :commit="commit"
       v-model:use-per-host-paths="usePerHostPaths"
       v-model:per-host-sources="perHostSources"
       :agent-ids="selectedAgentIds"

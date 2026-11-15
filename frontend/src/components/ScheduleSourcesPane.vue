@@ -4,9 +4,9 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 -->
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import BaseSegmented, { type SegmentedOption } from './BaseSegmented.vue'
-import FileSourcesEditor from './FileSourcesEditor.vue'
+import FileSourcesSection from './FileSourcesSection.vue'
 import SourceNotSetUp from './SourceNotSetUp.vue'
 import PaneRow from './PaneRow.vue'
 import PerAgentFields from './PerAgentFields.vue'
@@ -14,6 +14,7 @@ import ToggleSwitch from './ToggleSwitch.vue'
 import { useHostSources } from '../composables/useHostSources'
 import { parseLines } from '../utils/validation'
 import type { AgentRow } from '../types/agent'
+import type { FileSet } from '../types/fileSet'
 import type { ScheduleFilesMode, ScheduleFormState } from '../types/scheduleForm'
 
 /**
@@ -29,11 +30,47 @@ const props = defineProps<{
   agentIds: number[]
   agentLabel: (id: number) => string
   agents: readonly AgentRow[]
+  /**
+   * Saves the schedule once the own-files section's Save has put its values
+   * into the form, and says whether that worked. Absent in the new-schedule
+   * wizard, where Save only keeps them until the schedule is created.
+   */
+  commit?: () => Promise<string | null>
 }>()
 
 const form = defineModel<ScheduleFormState>('form', { required: true })
 const usePerHostPaths = defineModel<boolean>('usePerHostPaths', { required: true })
 const perHostSources = defineModel<Record<number, string>>('perHostSources', { required: true })
+
+/** The same section a host's Sources › Files shows, over this schedule's own values. */
+const ownFiles = ref<InstanceType<typeof FileSourcesSection> | null>(null)
+const committing = ref(false)
+const commitError = ref<string | null>(null)
+
+const ownFileSet = computed<FileSet>(() => ({
+  paths: form.value.backup_sources,
+  excludes: form.value.exclude_patterns,
+  includes: form.value.include_patterns,
+  fileChangePatterns: form.value.file_change_patterns,
+  preCommands: form.value.pre_backup_commands,
+  postCommands: form.value.post_backup_commands,
+}))
+
+async function saveOwnFiles(next: FileSet): Promise<void> {
+  form.value.backup_sources = next.paths
+  form.value.exclude_patterns = next.excludes
+  form.value.include_patterns = next.includes
+  form.value.file_change_patterns = next.fileChangePatterns
+  form.value.pre_backup_commands = next.preCommands
+  form.value.post_backup_commands = next.postCommands
+  if (props.commit) {
+    committing.value = true
+    commitError.value = await props.commit()
+    committing.value = false
+    if (commitError.value) return
+  }
+  ownFiles.value?.close()
+}
 
 const FILES_OPTIONS: readonly SegmentedOption<ScheduleFilesMode>[] = [
   { value: 'host', label: "Each host's files" },
@@ -202,20 +239,32 @@ const preview = computed<HostPreview[]>(() =>
         v-if="form.files_mode === 'custom'"
         class="pane-nest own-files"
       >
-        <FileSourcesEditor
-          v-model:paths="form.backup_sources"
-          v-model:excludes="form.exclude_patterns"
-          v-model:includes="form.include_patterns"
-          v-model:file-change-patterns="form.file_change_patterns"
-          v-model:pre-commands="form.pre_backup_commands"
-          v-model:post-commands="form.post_backup_commands"
-          id-prefix="schedule-files"
-          with-includes
+        <FileSourcesSection
+          ref="ownFiles"
+          :value="ownFileSet"
+          :saving="committing"
+          :error="commitError"
           :default-timeout-seconds="form.hook_timeout_seconds"
+          lede="This schedule's own files, used instead of each host's."
+          @save="saveOwnFiles"
         >
           <template
             v-if="usePerHostPaths"
-            #paths
+            #viewPaths
+          >
+            <dl class="info-grid">
+              <template
+                v-for="id in agentIds"
+                :key="id"
+              >
+                <dt>{{ agentLabel(id) }}</dt>
+                <dd class="mono">{{ parseLines(perHostSources[id] ?? '').join(' ') || '-' }}</dd>
+              </template>
+            </dl>
+          </template>
+          <template
+            v-if="usePerHostPaths"
+            #editPaths
           >
             <PerAgentFields
               :agent-ids="agentIds"
@@ -235,8 +284,7 @@ const preview = computed<HostPreview[]>(() =>
               </template>
             </PerAgentFields>
           </template>
-          <template #pathsHint>Used instead of each host's own files.</template>
-        </FileSourcesEditor>
+        </FileSourcesSection>
       </div>
     </section>
 

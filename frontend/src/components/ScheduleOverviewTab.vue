@@ -426,19 +426,14 @@ const dependencySummaries = computed(() =>
   margin-left: auto;
 }
 
-/* Each repository's status on its own line: the badges wrap into a second
-   row on a phone rather than pushing the name out of the value column. */
+/* One repository, or one dependency, per line: its badges and note wrap
+   under the name on a phone rather than pushing the next entry, or the
+   badge itself, past the panel's edge. */
 .repo-runs,
-/* Name | pill, as a two-column grid so every pill starts on the same line. */
 .dependency-list {
-  display: grid;
-  grid-template-columns: max-content max-content;
-  align-items: center;
-  gap: var(--space-4) var(--space-6);
-}
-
-.dependency-list > .dependency-item {
-  display: contents;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
 }
 
 .repo-run,

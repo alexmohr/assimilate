@@ -42,6 +42,31 @@ test.describe('Schedule with several target repositories', () => {
     await expect(bestEffort.locator('.badge--danger')).toBeVisible()
   })
 
+  // On a phone the repositories used to sit side by side in two columns, so
+  // the second one and its badge ran off the panel's right edge.
+  test('on a phone each repository has its own line inside the panel', async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 })
+    await openDualTargetSchedule(page)
+
+    const repoRows = page.locator('.repo-run')
+    await expect(repoRows).toHaveCount(2)
+
+    const layout = await page.locator('.info-grid').evaluate((grid) => {
+      const box = grid.getBoundingClientRect()
+      const rows = [...grid.querySelectorAll('.repo-run')].map((row) => row.getBoundingClientRect())
+      const badges = [...grid.querySelectorAll('.badge')].map((b) => b.getBoundingClientRect())
+      return {
+        overflow: grid.scrollWidth - grid.clientWidth,
+        firstBottom: rows[0]?.bottom ?? 0,
+        secondTop: rows[1]?.top ?? 0,
+        clipped: badges.filter((b) => b.right > box.right + 0.5).length,
+      }
+    })
+    expect(layout.overflow).toBe(0)
+    expect(layout.secondTop).toBeGreaterThanOrEqual(layout.firstBottom)
+    expect(layout.clipped).toBe(0)
+  })
+
   test('recent runs are drawn one strip per repository', async ({ page }) => {
     await openDualTargetSchedule(page)
 

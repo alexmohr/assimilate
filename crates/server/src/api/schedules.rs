@@ -458,10 +458,34 @@ pub async fn list_schedules(
     Ok(Json(visible))
 }
 
-/// A backup schedule needs sources from somewhere: the request, its per-agent
-/// overrides, or the first agent's own defaults. Checked before the schedule is
-/// written, so one that could never back anything up is refused rather than
-/// created and left to fail at run time.
+/// Why a new backup schedule could never back anything up, if it could not.
+///
+/// What it needs depends on where its files come from: its own files need a
+/// path, each host's files need the host to list some, and a schedule that
+/// reads no files has to take virtual machines or databases instead.
+fn backup_sources_problem(
+    files_mode: ScheduleFilesMode,
+    has_own_paths: bool,
+    takes_vms_or_databases: bool,
+    host_has_paths: impl FnOnce() -> bool,
+) -> Option<&'static str> {
+    match files_mode {
+        ScheduleFilesMode::Own if !has_own_paths => {
+            Some("a schedule with its own files needs at least one backup path")
+        }
+        ScheduleFilesMode::Host if !host_has_paths() => {
+            Some("no backup sources provided and agent has no default backup paths configured")
+        }
+        ScheduleFilesMode::Off if !takes_vms_or_databases => {
+            Some("a schedule that reads no files has to back up virtual machines or databases")
+        }
+        ScheduleFilesMode::Own | ScheduleFilesMode::Host | ScheduleFilesMode::Off => None,
+    }
+}
+
+/// A backup schedule needs something to back up. Checked before the schedule
+/// is written, so one that could never back anything up is refused rather
+/// than created and left to fail at run time.
 async fn ensure_backup_sources_available(
     state: &AppState,
     req: &CreateScheduleRequest,
@@ -470,27 +494,30 @@ async fn ensure_backup_sources_available(
     if schedule_type != ScheduleType::Backup {
         return Ok(());
     }
-    let has_backup_sources = req.backup_sources.as_ref().is_some_and(|v| !v.is_empty());
-    let has_per_agent_sources = req
-        .backup_sources_per_agent
-        .as_ref()
-        .is_some_and(|v| !v.is_empty());
-    if has_backup_sources || has_per_agent_sources {
-        return Ok(());
-    }
-
+    let has_own_paths = req.backup_sources.as_ref().is_some_and(|v| !v.is_empty())
+        || req
+            .backup_sources_per_agent
+            .as_ref()
+            .is_some_and(|entries| entries.iter().any(|entry| !entry.paths.is_empty()));
     let Some(&first_agent_id) = req.agent_ids.first() else {
         return Err(ApiError::BadRequest(
             "agent_ids must contain at least one entry".into(),
         ));
     };
-    let agent = db::get_agent_by_id(&state.pool, first_agent_id).await?;
-    if agent.default_backup_paths.is_empty() {
-        return Err(ApiError::BadRequest(
-            "no backup sources provided and agent has no default backup paths configured".into(),
-        ));
-    }
-    Ok(())
+    let files_mode = req.files_mode.unwrap_or_else(|| default_files_mode(req));
+    let host_paths = if files_mode == ScheduleFilesMode::Host {
+        db::get_agent_by_id(&state.pool, first_agent_id)
+            .await?
+            .default_backup_paths
+    } else {
+        Vec::new()
+    };
+    let takes_vms_or_databases =
+        req.vm_snapshot_enabled.unwrap_or(false) || req.database_backup_enabled.unwrap_or(false);
+    backup_sources_problem(files_mode, has_own_paths, takes_vms_or_databases, || {
+        !host_paths.is_empty()
+    })
+    .map_or(Ok(()), |problem| Err(ApiError::BadRequest(problem.into())))
 }
 
 /// Normalises the repositories a create/update request asks for into
@@ -2058,6 +2085,20 @@ pub async fn preview_cron(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_schedule_must_have_something_to_back_up_in_every_files_mode() {
+        use shared::types::ScheduleFilesMode::{Host, Off, Own};
+
+        let problem =
+            |mode, own, extras, host| super::backup_sources_problem(mode, own, extras, || host);
+        assert_eq!(problem(Own, true, false, false), None);
+        assert!(problem(Own, false, true, true).is_some());
+        assert_eq!(problem(Host, false, false, true), None);
+        assert!(problem(Host, true, true, false).is_some());
+        assert_eq!(problem(Off, false, true, false), None);
+        assert!(problem(Off, true, false, true).is_some());
+    }
+
     use super::*;
 
     fn utc(y: i32, mo: u32, d: u32, h: u32, m: u32) -> chrono::DateTime<chrono::Utc> {

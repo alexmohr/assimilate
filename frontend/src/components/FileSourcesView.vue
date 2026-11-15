@@ -17,14 +17,14 @@ const props = withDefaults(
   defineProps<{
     paths: readonly string[]
     excludes: readonly string[]
-    includes?: readonly string[]
+    includes: readonly string[]
     fileChangePatternsRaw: string
     preCommands: readonly HookCommand[]
     postCommands: readonly HookCommand[]
     /** What a command without its own timeout runs under, in words. */
     inheritedTimeout?: string
   }>(),
-  { includes: undefined, inheritedTimeout: "the schedule's hook command timeout" },
+  { inheritedTimeout: "the schedule's hook command timeout" },
 )
 
 const fileChangePatterns = computed(() => parseFileChangePatterns(props.fileChangePatternsRaw))
@@ -80,10 +80,7 @@ function timeoutLabel(cmd: HookCommand): string {
       >
     </div>
 
-    <div
-      v-if="includes !== undefined"
-      class="file-sources-group"
-    >
+    <div class="file-sources-group">
       <span class="group-label group-label--lg">Include patterns</span>
       <div
         v-if="includes.length > 0"
@@ -99,7 +96,7 @@ function timeoutLabel(cmd: HookCommand): string {
       <span
         v-else
         class="muted"
-        >None.</span
+        >No include patterns configured.</span
       >
     </div>
 

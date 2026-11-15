@@ -21,17 +21,15 @@ const props = withDefaults(
   defineProps<{
     /** Prefix for element ids, so two editors on one page do not clash. */
     idPrefix: string
-    /** Shows the include patterns field, which only a schedule has so far. */
-    withIncludes?: boolean
     /** The timeout a command without its own inherits, shown in its placeholder. */
     defaultTimeoutSeconds?: number
   }>(),
-  { withIncludes: false, defaultTimeoutSeconds: undefined },
+  { defaultTimeoutSeconds: undefined },
 )
 
 const paths = defineModel<string>('paths', { required: true })
 const excludes = defineModel<string>('excludes', { required: true })
-const includes = defineModel<string>('includes', { default: '' })
+const includes = defineModel<string>('includes', { required: true })
 const fileChangePatterns = defineModel<string>('fileChangePatterns', { required: true })
 const preCommands = defineModel<HookCommand[]>('preCommands', { required: true })
 const postCommands = defineModel<HookCommand[]>('postCommands', { required: true })
@@ -55,11 +53,6 @@ const postCommands = defineModel<HookCommand[]>('postCommands', { required: true
           spellcheck="false"
         />
       </slot>
-      <span
-        v-if="$slots.pathsHint"
-        class="field-hint"
-        ><slot name="pathsHint"
-      /></span>
     </div>
 
     <div class="file-sources-field">
@@ -77,10 +70,7 @@ const postCommands = defineModel<HookCommand[]>('postCommands', { required: true
       />
     </div>
 
-    <div
-      v-if="withIncludes"
-      class="file-sources-field"
-    >
+    <div class="file-sources-field">
       <label
         class="group-label group-label--lg"
         :for="`${props.idPrefix}-includes`"

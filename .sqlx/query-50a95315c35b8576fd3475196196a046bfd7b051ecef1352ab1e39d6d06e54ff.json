@@ -1,76 +1,76 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT p.pattern, a.id, a.hostname, a.display_name, a.agent_version, a.agent_git_sha, a.agent_build_time, a.agent_commit_count, a.created_at, a.last_seen_at, a.owner_id, a.visibility AS \"visibility: Visibility\", a.default_backup_paths, a.default_exclude_patterns, a.default_pre_backup_commands AS \"default_pre_backup_commands: HookCommands\", a.default_post_backup_commands AS \"default_post_backup_commands: HookCommands\", a.default_file_change_patterns_raw, a.agent_token_hash, a.is_hidden, a.last_ssh_user, a.domain, am.wake_enabled, am.wake_mac_address, am.wake_broadcast_address, am.wake_timeout_seconds, am.shutdown_after_backup, a.start_agent_enabled, a.stop_agent_after_backup, a.ssh_host, a.ssh_port, a.agent_service_name, a.machine_id, a.database_backup_enabled FROM agent_hostname_patterns p JOIN agents a ON a.id = p.agent_id JOIN machines am ON am.id = a.machine_id ORDER BY p.pattern",
+  "query": "SELECT a.id, hostname, display_name, agent_version, agent_git_sha, agent_build_time, agent_commit_count, a.created_at, last_seen_at, owner_id, visibility AS \"visibility: Visibility\", default_backup_paths, default_exclude_patterns, default_include_patterns, default_pre_backup_commands AS \"default_pre_backup_commands: HookCommands\", default_post_backup_commands AS \"default_post_backup_commands: HookCommands\", default_file_change_patterns_raw, agent_token_hash, is_hidden, last_ssh_user, domain, wake_enabled, wake_mac_address, wake_broadcast_address, wake_timeout_seconds, shutdown_after_backup, start_agent_enabled, stop_agent_after_backup, ssh_host, ssh_port, agent_service_name, a.machine_id FROM agents a JOIN machines m ON m.id = a.machine_id WHERE is_hidden = false ORDER BY hostname",
   "describe": {
     "columns": [
       {
         "ordinal": 0,
-        "name": "pattern",
-        "type_info": "Text"
-      },
-      {
-        "ordinal": 1,
         "name": "id",
         "type_info": "Int8"
       },
       {
-        "ordinal": 2,
+        "ordinal": 1,
         "name": "hostname",
         "type_info": "Text"
       },
       {
-        "ordinal": 3,
+        "ordinal": 2,
         "name": "display_name",
         "type_info": "Text"
       },
       {
-        "ordinal": 4,
+        "ordinal": 3,
         "name": "agent_version",
         "type_info": "Text"
       },
       {
-        "ordinal": 5,
+        "ordinal": 4,
         "name": "agent_git_sha",
         "type_info": "Text"
       },
       {
-        "ordinal": 6,
+        "ordinal": 5,
         "name": "agent_build_time",
         "type_info": "Text"
       },
       {
-        "ordinal": 7,
+        "ordinal": 6,
         "name": "agent_commit_count",
         "type_info": "Int4"
       },
       {
-        "ordinal": 8,
+        "ordinal": 7,
         "name": "created_at",
         "type_info": "Timestamptz"
       },
       {
-        "ordinal": 9,
+        "ordinal": 8,
         "name": "last_seen_at",
         "type_info": "Timestamptz"
       },
       {
-        "ordinal": 10,
+        "ordinal": 9,
         "name": "owner_id",
         "type_info": "Int8"
       },
       {
-        "ordinal": 11,
+        "ordinal": 10,
         "name": "visibility: Visibility",
         "type_info": "Text"
       },
       {
-        "ordinal": 12,
+        "ordinal": 11,
         "name": "default_backup_paths",
         "type_info": "TextArray"
       },
       {
-        "ordinal": 13,
+        "ordinal": 12,
         "name": "default_exclude_patterns",
+        "type_info": "TextArray"
+      },
+      {
+        "ordinal": 13,
+        "name": "default_include_patterns",
         "type_info": "TextArray"
       },
       {
@@ -162,11 +162,6 @@
         "ordinal": 31,
         "name": "machine_id",
         "type_info": "Int8"
-      },
-      {
-        "ordinal": 32,
-        "name": "database_backup_enabled",
-        "type_info": "Bool"
       }
     ],
     "parameters": {
@@ -175,7 +170,6 @@
     "nullable": [
       false,
       false,
-      false,
       true,
       true,
       true,
@@ -192,21 +186,21 @@
       false,
       false,
       false,
-      true,
-      true,
       false,
       true,
       true,
       false,
+      true,
+      true,
+      false,
       false,
       false,
       false,
       true,
-      false,
       false,
       false,
       false
     ]
   },
-  "hash": "dd69765e57830defca99b24f169e470ae0836a7f8275cd9f521c1d84986913ea"
+  "hash": "50a95315c35b8576fd3475196196a046bfd7b051ecef1352ab1e39d6d06e54ff"
 }

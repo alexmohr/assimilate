@@ -256,9 +256,6 @@ async function save(): Promise<void> {
       await updateAgentVmSnapshot(
         props.agent.hostname,
         {
-          // The host no longer turns VM backups off as a whole: it stages what
-          // it includes, and each schedule takes that or opts out.
-          enabled: true,
           selection: selection.value,
           staging_dir: stagingDir.value.trim(),
           full_interval: fullInterval.value,
@@ -480,7 +477,6 @@ onMounted(load)
           </div>
 
           <div class="pane-rows">
-
             <PaneRow
               title="Which domains"
               stack

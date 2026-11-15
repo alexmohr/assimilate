@@ -20,8 +20,6 @@ use crate::error::ApiError;
 /// A host's dump settings as stored on its agent row.
 #[derive(Debug, Clone)]
 pub struct AgentDatabaseBackupRow {
-    /// Whether this host dumps databases at all.
-    pub enabled: bool,
     /// Absolute directory that holds the dump pipes while a backup runs.
     pub dump_dir: String,
     /// Where the host looks for databases.
@@ -34,8 +32,6 @@ pub struct AgentDatabaseBackupRow {
 /// resolved inside the `UPDATE` so a concurrent save cannot be reverted.
 #[derive(Debug, Clone, Copy)]
 pub struct DatabaseBackupPatch<'a> {
-    /// Whether this host dumps databases at all.
-    pub enabled: bool,
     /// Absolute directory that holds the dump pipes.
     pub dump_dir: &'a str,
     /// Where the host looks for databases.
@@ -174,25 +170,24 @@ pub async fn get_agent_database_backup(
     agent_id: i64,
 ) -> Result<AgentDatabaseBackupRow, ApiError> {
     let row = sqlx::query!(
-        "SELECT database_backup_enabled, database_dump_dir, database_selection AS \
-         \"database_selection: DatabaseSelectionMode\", database_kubernetes_enabled, \
-         database_kubeconfig_path, database_docker_enabled, database_docker_socket, \
-         database_host_enabled, database_host_os_user, database_host_socket_dir, \
-         database_host_port, database_host_bin_dir, database_host_mysql_enabled, \
-         database_host_mysql_engine AS \"database_host_mysql_engine: MysqlEngine\", \
-         database_host_mysql_os_user, database_host_mysql_socket, database_host_mysql_port, \
-         database_host_mysql_bin_dir, database_host_mongodb_enabled, \
-         database_host_mongodb_os_user, database_host_mongodb_port, \
-         database_host_mongodb_config_file, database_host_mongodb_bin_dir, \
-         database_host_sqlite_enabled, database_host_sqlite_os_user, database_host_sqlite_files, \
-         database_host_sqlite_bin_dir FROM agents WHERE id = $1",
+        "SELECT database_dump_dir, database_selection AS \"database_selection: \
+         DatabaseSelectionMode\", database_kubernetes_enabled, database_kubeconfig_path, \
+         database_docker_enabled, database_docker_socket, database_host_enabled, \
+         database_host_os_user, database_host_socket_dir, database_host_port, \
+         database_host_bin_dir, database_host_mysql_enabled, database_host_mysql_engine AS \
+         \"database_host_mysql_engine: MysqlEngine\", database_host_mysql_os_user, \
+         database_host_mysql_socket, database_host_mysql_port, database_host_mysql_bin_dir, \
+         database_host_mongodb_enabled, database_host_mongodb_os_user, \
+         database_host_mongodb_port, database_host_mongodb_config_file, \
+         database_host_mongodb_bin_dir, database_host_sqlite_enabled, \
+         database_host_sqlite_os_user, database_host_sqlite_files, database_host_sqlite_bin_dir \
+         FROM agents WHERE id = $1",
         agent_id,
     )
     .fetch_one(pool)
     .await
     .map_err(super::agent_row_error(agent_id))?;
     Ok(AgentDatabaseBackupRow {
-        enabled: row.database_backup_enabled,
         dump_dir: row.database_dump_dir,
         selection: row.database_selection,
         runtimes: DatabaseRuntimes {
@@ -246,21 +241,20 @@ pub async fn update_agent_database_backup(
     let mongodb = &runtimes.host_mongodb;
     let sqlite = &runtimes.host_sqlite;
     sqlx::query!(
-        "UPDATE agents SET database_backup_enabled = $2, database_dump_dir = $3, \
-         database_selection = COALESCE($4, agents.database_selection), \
-         database_kubernetes_enabled = $5, database_kubeconfig_path = $6, database_docker_enabled \
-         = $7, database_docker_socket = $8, database_host_enabled = $9, database_host_os_user = \
-         $10, database_host_socket_dir = $11, database_host_port = $12, database_host_bin_dir = \
-         $13, database_host_mysql_enabled = $14, database_host_mysql_engine = $15, \
-         database_host_mysql_os_user = $16, database_host_mysql_socket = $17, \
-         database_host_mysql_port = $18, database_host_mysql_bin_dir = $19, \
-         database_host_mongodb_enabled = $20, database_host_mongodb_os_user = $21, \
-         database_host_mongodb_port = $22, database_host_mongodb_config_file = $23, \
-         database_host_mongodb_bin_dir = $24, database_host_sqlite_enabled = $25, \
-         database_host_sqlite_os_user = $26, database_host_sqlite_files = $27, \
-         database_host_sqlite_bin_dir = $28 WHERE id = $1 RETURNING id",
+        "UPDATE agents SET database_dump_dir = $2, database_selection = COALESCE($3, \
+         agents.database_selection), database_kubernetes_enabled = $4, database_kubeconfig_path = \
+         $5, database_docker_enabled = $6, database_docker_socket = $7, database_host_enabled = \
+         $8, database_host_os_user = $9, database_host_socket_dir = $10, database_host_port = \
+         $11, database_host_bin_dir = $12, database_host_mysql_enabled = $13, \
+         database_host_mysql_engine = $14, database_host_mysql_os_user = $15, \
+         database_host_mysql_socket = $16, database_host_mysql_port = $17, \
+         database_host_mysql_bin_dir = $18, database_host_mongodb_enabled = $19, \
+         database_host_mongodb_os_user = $20, database_host_mongodb_port = $21, \
+         database_host_mongodb_config_file = $22, database_host_mongodb_bin_dir = $23, \
+         database_host_sqlite_enabled = $24, database_host_sqlite_os_user = $25, \
+         database_host_sqlite_files = $26, database_host_sqlite_bin_dir = $27 WHERE id = $1 \
+         RETURNING id",
         agent_id,
-        patch.enabled,
         patch.dump_dir,
         patch.selection.map(|selection| selection.to_string()) as Option<String>,
         runtimes.kubernetes,
@@ -449,7 +443,9 @@ pub async fn load_config(pool: &PgPool, agent_id: i64) -> Result<DatabaseBackupC
     let settings = get_agent_database_backup(pool, agent_id).await?;
     let sources = list_agent_database_sources(pool, agent_id).await?;
     Ok(DatabaseBackupConfig {
-        enabled: settings.enabled,
+        // A host no longer turns dumps off as a whole; the field stays in the
+        // protocol for agents that still read it.
+        enabled: true,
         dump_dir: settings.dump_dir,
         runtimes: settings.runtimes,
         selection: settings.selection,

@@ -1,18 +1,19 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
-import type { FsSnapshotMode, HookCommand, ScheduleWakeOverride } from './generated'
+import type {
+  FsSnapshotMode,
+  HookCommand,
+  ScheduleFilesMode,
+  ScheduleWakeOverride,
+} from './generated'
+
+export type { ScheduleFilesMode }
 
 /**
  * The editable shape behind the schedule detail form. Lives here rather than
  * inline in the view so the tab components can be typed against it.
  */
-/**
- * Where a schedule's file paths come from: each host's own list, a list of
- * this schedule's that replaces it, or no files at all (a databases- or
- * VMs-only schedule).
- */
-export type ScheduleFilesMode = 'host' | 'custom' | 'off'
 
 export interface ScheduleFormState {
   name: string
@@ -97,4 +98,9 @@ export interface ScheduleAgentOverrides {
   usePerAgentCmds: boolean
   perAgentPreCmds: Record<number, HookCommand[]>
   perAgentPostCmds: Record<number, HookCommand[]>
+  /**
+   * Set when the user asked every host to use the schedule's shared values:
+   * the next save deletes the per-host rows rather than leaving them alone.
+   */
+  clearPerHost?: boolean
 }

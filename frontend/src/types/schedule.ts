@@ -6,21 +6,10 @@ import type {
   ScheduleResponse,
   ScheduleType as GeneratedScheduleType,
 } from './generated'
-import type { ScheduleFilesMode } from './scheduleForm'
 
 export type ScheduleType = GeneratedScheduleType
 export type ScheduleFailureAction = OnFailure
-/**
- * The two source fields the server does not have yet: where a schedule's file
- * paths come from, and whether the hosts' backup commands run. Optional until
- * the backend adds them to `ScheduleResponse`.
- */
-export interface ScheduleSourceChoice {
-  files_mode?: ScheduleFilesMode
-  run_host_commands?: boolean
-}
-
-export type ScheduleRow = ScheduleResponse & ScheduleSourceChoice
+export type ScheduleRow = ScheduleResponse
 
 /**
  * One repository a schedule writes into, resolved to its name.

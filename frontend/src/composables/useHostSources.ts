@@ -82,8 +82,6 @@ export function useSchedulesAsking(
   kind: HostSourceKind,
 ): ComputedRef<ScheduleRow[]> {
   return computed(() =>
-    schedules().filter((s) =>
-      kind === 'vms' ? s.vm_snapshot_enabled : s.database_backup_enabled,
-    ),
+    schedules().filter((s) => (kind === 'vms' ? s.vm_snapshot_enabled : s.database_backup_enabled)),
   )
 }

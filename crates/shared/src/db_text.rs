@@ -22,8 +22,8 @@ use crate::{
     snapshot::FsSnapshotMode,
     types::{
         ApiTokenScope, BorgEncryption, Compression, ExecutionMode, MachineWakeMode, OnFailure,
-        QuotaAction, ReportStatus, RestoreRunStatus, RunEventTarget, RunEventType, ScheduleType,
-        ScheduleWakeOverride, Visibility,
+        QuotaAction, ReportStatus, RestoreRunStatus, RunEventTarget, RunEventType,
+        ScheduleFilesMode, ScheduleType, ScheduleWakeOverride, Visibility,
     },
     vm::{VmSelectionMode, VmSnapshotMode, VmState},
 };
@@ -69,6 +69,7 @@ text_column!(
     RestoreRunStatus,
     RunEventTarget,
     RunEventType,
+    ScheduleFilesMode,
     ScheduleType,
     ScheduleWakeOverride,
     Visibility,

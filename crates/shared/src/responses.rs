@@ -238,6 +238,9 @@ pub struct AgentResponse {
     pub default_backup_paths: Vec<String>,
     /// Default exclude patterns.
     pub default_exclude_patterns: Vec<String>,
+    /// Include patterns: exceptions to the excludes.
+    #[serde(default)]
+    pub default_include_patterns: Vec<String>,
     /// Default commands to run before backups.
     pub default_pre_backup_commands: Vec<HookCommand>,
     /// Default commands to run after backups.
@@ -273,10 +276,6 @@ pub struct AgentResponse {
     /// The machine this agent runs on, whose Power & dependencies pane holds
     /// its wake and availability settings.
     pub machine_id: i64,
-    /// Whether the host allows database dumps. A schedule that asks for them
-    /// dumps nothing on a host where this is off.
-    #[serde(default)]
-    pub database_backup_enabled: bool,
     /// Power-management settings: waking this agent's host before a backup,
     /// and starting/stopping the agent process itself over SSH.
     pub power: AgentPowerSettingsResponse,
@@ -302,8 +301,6 @@ pub struct AgentDatabasesResponse {
 #[ts(export)]
 /// How a host dumps its databases into a backup.
 pub struct AgentDatabaseSettingsResponse {
-    /// Whether this host dumps databases at all.
-    pub enabled: bool,
     /// Directory on the host that holds the dump pipes while a backup runs.
     pub dump_dir: String,
     /// Where the host looks for databases.
@@ -361,8 +358,6 @@ pub struct AgentVmSnapshotResponse {
 /// belong to the host because the staging directory is shared by every
 /// schedule that targets it.
 pub struct AgentVmSnapshotSettingsResponse {
-    /// Whether this host stages its domains at all.
-    pub enabled: bool,
     /// Absolute directory receiving one subdirectory per domain.
     pub staging_dir: String,
     /// Increments written before a new full image is taken.
@@ -883,12 +878,12 @@ pub struct ScheduleResponse {
     pub enabled: bool,
     /// Whether canary deployments are enabled.
     pub canary_enabled: bool,
-    /// Whether this schedule stages the host's virtual machines before backing
-    /// up. Requires the host itself to have staging enabled.
+    /// Whether this schedule stages the virtual machines each host includes
+    /// before backing up.
     #[serde(default)]
     pub vm_snapshot_enabled: bool,
-    /// Whether this schedule dumps the host's databases into its archive.
-    /// Requires the host itself to have database dumps enabled.
+    /// Whether this schedule dumps the database sources each host includes
+    /// into its archive.
     #[serde(default)]
     pub database_backup_enabled: bool,
     /// Whether this schedule's backups read from filesystem snapshots of
@@ -898,6 +893,14 @@ pub struct ScheduleResponse {
     /// Size of an LVM snapshot, in percent of the volume it snapshots.
     #[serde(default = "default_lvm_snapshot_percent")]
     pub lvm_snapshot_percent: i16,
+    /// Where this schedule's files come from: each host's own file set, the
+    /// schedule's own set instead, or no files at all.
+    #[serde(default)]
+    pub files_mode: crate::types::ScheduleFilesMode,
+    /// Whether a schedule taking each host's files also runs the hosts'
+    /// pre- and post-backup commands.
+    #[serde(default = "default_true")]
+    pub run_host_commands: bool,
     /// Timestamp of when the last run occurred.
     pub last_run_at: Option<DateTime<Utc>>,
     /// Timestamp of when the next run occurred.
@@ -2760,6 +2763,9 @@ pub struct HostExportResponse {
     pub default_backup_paths: Vec<String>,
     /// Default exclude patterns.
     pub default_exclude_patterns: Vec<String>,
+    /// Include patterns: exceptions to the excludes.
+    #[serde(default)]
+    pub default_include_patterns: Vec<String>,
     /// Default commands to run before backups.
     pub default_pre_backup_commands: Vec<HookCommand>,
     /// Default commands to run after backups.
@@ -2828,12 +2834,12 @@ pub struct ScheduleExportResponse {
     pub enabled: bool,
     /// Whether canary deployments are enabled.
     pub canary_enabled: bool,
-    /// Whether this schedule stages the host's virtual machines before backing
-    /// up. Requires the host itself to have staging enabled.
+    /// Whether this schedule stages the virtual machines each host includes
+    /// before backing up.
     #[serde(default)]
     pub vm_snapshot_enabled: bool,
-    /// Whether this schedule dumps the host's databases into its archive.
-    /// Requires the host itself to have database dumps enabled.
+    /// Whether this schedule dumps the database sources each host includes
+    /// into its archive.
     #[serde(default)]
     pub database_backup_enabled: bool,
     /// Whether this schedule's backups read from filesystem snapshots of
@@ -2843,6 +2849,14 @@ pub struct ScheduleExportResponse {
     /// Size of an LVM snapshot, in percent of the volume it snapshots.
     #[serde(default = "default_lvm_snapshot_percent")]
     pub lvm_snapshot_percent: i16,
+    /// Where this schedule's files come from. Absent from an export written
+    /// before schedules had the choice; the import then works it out from
+    /// whether the schedule set any file field of its own.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub files_mode: Option<crate::types::ScheduleFilesMode>,
+    /// Whether a schedule taking each host's files runs the hosts' commands.
+    #[serde(default = "default_true")]
+    pub run_host_commands: bool,
     #[ts(type = "string")]
     /// Execution mode for the schedule.
     pub execution_mode: ExecutionMode,

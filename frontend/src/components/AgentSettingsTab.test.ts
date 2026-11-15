@@ -87,15 +87,16 @@ describe('AgentSettingsTab', () => {
       }) as never)
   })
 
-  // Virtual machines and databases moved to the Sources tab and tags into
-  // the page header, so Settings holds only what configures the agent.
+  // Virtual machines, databases and the backup defaults (now Sources ›
+  // Files) moved to the Sources tab and tags into the page header, so
+  // Settings holds only what configures the agent.
   it('lists every settings section for an admin', () => {
-    expect(sectionTitles(mount())).toEqual(['Identity', 'Backup defaults', 'Power & dependencies'])
+    expect(sectionTitles(mount())).toEqual(['Identity', 'Power & dependencies'])
   })
 
   // Power is admin-only, so it is absent rather than present-and-disabled.
   it('hides the admin-only sections from everyone else', () => {
-    expect(sectionTitles(mount({ isAdmin: false }))).toEqual(['Identity', 'Backup defaults'])
+    expect(sectionTitles(mount({ isAdmin: false }))).toEqual(['Identity'])
   })
 
   // Hiding the nav button is not gating: `?section=` comes straight from the
@@ -176,15 +177,17 @@ describe('AgentSettingsTab', () => {
     })
   })
 
-  it('keeps the required dependencies off Backup defaults', () => {
-    expect(
-      mount({ section: 'defaults' }).findComponent({ name: 'AgentDependenciesCard' }).exists(),
-    ).toBe(false)
+  // Backup defaults became the Sources tab's Files section, so an old
+  // `?section=defaults` link lands on Identity instead of an empty pane.
+  it('opens Identity for a stale defaults link, since the defaults moved to Sources', () => {
+    const wrapper = mount({ section: 'defaults' })
+    expect(wrapper.findComponent({ name: 'AgentDefaultsCard' }).exists()).toBe(false)
+    expect(openSections(wrapper)).toEqual(['Identity'])
   })
 
   it('marks the current section', () => {
-    const wrapper = mount({ section: 'defaults' })
-    expect(openSections(wrapper)).toEqual(['Backup defaults'])
+    const wrapper = mount({ section: 'power' })
+    expect(openSections(wrapper)).toEqual(['Power & dependencies'])
   })
 
   it('asks the view to record the chosen section', async () => {
@@ -305,14 +308,6 @@ describe('AgentSettingsTab', () => {
       expect(wrapper.text()).not.toContain('Agent version')
       expect(wrapper.findAll('button').some((b) => b.text().trim() === 'Edit')).toBe(false)
     })
-  })
-
-  it('forwards a saved agent from the defaults form', async () => {
-    const wrapper = mount({ section: 'defaults' })
-    wrapper.findComponent({ name: 'AgentDefaultsCard' }).vm.$emit('saved', AGENT)
-    await flushPromises()
-
-    expect(wrapper.emitted('saved')).toEqual([[AGENT]])
   })
 
   // The view renames the agent, then offers to keep the old hostname as a

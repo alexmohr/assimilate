@@ -13,15 +13,14 @@ File change patterns let you control how warnings about files that change during
 
 ## Configuration
 
-File change patterns can be configured at three levels:
+File change patterns are part of a file set, with the paths, excludes and commands they belong to:
 
-- **Schedule level** — applies to every agent targeted by the schedule.
-- **Per-agent override within a schedule** — overrides the schedule-level patterns for specific hosts, when a schedule targets multiple agents.
-- **Agent default** — configured once on the host itself and applied as a fallback to _every_ schedule that targets it, so you don't have to repeat the same patterns on every schedule.
+- **On a host** — **Agents** → select a host → **Sources** → **Files**. Every schedule that takes the host's files uses them.
+- **On a schedule with its own files** — **Schedules** → select a schedule → **Settings** → **Sources**, with **Files** set to **Own files** (or the **Sources** step of a new schedule). They replace the host's patterns for that schedule, together with the rest of the host's file set.
 
-### Schedule-level patterns
+A run uses the patterns of exactly one set; the two are never combined. See [Sources](scheduling.md#sources).
 
-Navigate to **Schedules** → select a schedule → **Settings** → **Advanced**, and its **File change patterns** block (or the **Advanced** step of a new schedule).
+### Writing patterns
 
 Each line is a glob pattern, optionally followed by an action keyword. Patterns are matched against the full warning message text, which is the path plus borg's `: file changed while we backed it up` (see [Pattern Syntax](#pattern-syntax) below) — write the path out from the root and let a trailing `*` or `**` cover the rest of the message:
 
@@ -39,24 +38,13 @@ If no action is specified, `warn` is assumed:
 
 Blank lines and lines starting with `#` are skipped, so patterns can be commented.
 
-### Per-agent override within a schedule
+### Patterns on a host
 
-When a schedule targets multiple agents, you can toggle **Configure per agent** and provide different patterns for each host. A host with an empty override falls back to the schedule-level patterns above.
+Patterns on a host are useful for host-specific noise, such as a database's WAL files, that every schedule backing up the host should ignore.
 
-### Agent default patterns
+![File change patterns configured on a host](assets/screenshots/host-file-change-patterns.png)
 
-Navigate to **Agents** → select a host → **Settings** → **Backup defaults**, and its **File change patterns** block. Patterns are entered the same way as at the schedule level (glob plus optional action). These patterns apply to every schedule that targets the host, so they're useful for host-specific noise (e.g. a database's WAL files) that would otherwise need to be repeated on every schedule backing up that host.
-
-![Default file change patterns configured on a host](assets/screenshots/host-file-change-patterns.png)
-
-### Precedence
-
-For a given agent and schedule, patterns are checked in this order, and the **first match wins**:
-
-1. The per-agent override for that schedule, if one is configured; otherwise the schedule-level patterns.
-2. The agent's default patterns, checked only for warnings the previous step didn't match.
-
-This means schedule-specific configuration always takes priority over a host's defaults, while the host's defaults still catch anything the schedule doesn't explicitly handle.
+The **first matching pattern wins**, so put a narrower pattern above a broader one.
 
 ## Action Reference
 

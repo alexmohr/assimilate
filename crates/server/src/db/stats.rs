@@ -8,7 +8,8 @@ use serde::Serialize;
 use shared::{
     snapshot::FsSnapshotMode,
     types::{
-        ExecutionMode, OnFailure, ReportStatus, ScheduleType, ScheduleWakeOverride, Visibility,
+        ExecutionMode, OnFailure, ReportStatus, ScheduleFilesMode, ScheduleType,
+        ScheduleWakeOverride, Visibility,
     },
 };
 use sqlx::PgPool;
@@ -547,8 +548,9 @@ pub async fn get_enabled_schedules_for_calendar(
         ScheduleRow,
         "SELECT id, repo_id, name, schedule_type AS \"schedule_type: ScheduleType\", \
          cron_expression, enabled, canary_enabled, vm_snapshot_enabled, database_backup_enabled, \
-         fs_snapshot AS \"fs_snapshot: FsSnapshotMode\", lvm_snapshot_percent, last_run_at, \
-         next_run_at, exclude_patterns_raw, include_patterns_raw, file_change_patterns_raw, \
+         fs_snapshot AS \"fs_snapshot: FsSnapshotMode\", lvm_snapshot_percent, files_mode AS \
+         \"files_mode: ScheduleFilesMode\", run_host_commands, last_run_at, next_run_at, \
+         exclude_patterns_raw, include_patterns_raw, file_change_patterns_raw, \
          ignore_global_excludes, keep_hourly, keep_daily, keep_weekly, keep_monthly, keep_yearly, \
          compact_enabled, rate_limit_kbps, pre_backup_commands AS \"pre_backup_commands: \
          HookCommands\", post_backup_commands AS \"post_backup_commands: HookCommands\", \

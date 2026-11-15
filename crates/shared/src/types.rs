@@ -474,6 +474,39 @@ pub enum ScheduleWakeOverride {
     Disabled,
 }
 
+/// Where a backup schedule's files come from.
+///
+/// A host defines its own file set under Sources > Files: paths, excludes,
+/// include patterns, file change patterns and pre/post-backup commands. A
+/// schedule takes that set as it is, defines its own set of the same fields
+/// that replaces each host's as a whole, or reads no files at all.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    Default,
+    TS,
+    ToSchema,
+    strum_macros::Display,
+    strum_macros::EnumString,
+)]
+#[ts(export)]
+#[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case")]
+pub enum ScheduleFilesMode {
+    /// Back up each host's own file set.
+    #[default]
+    Host,
+    /// Back up the schedule's own file set instead of each host's.
+    Own,
+    /// Read no files: the schedule only dumps databases or snapshots VMs.
+    Off,
+}
+
 impl ScheduleWakeOverride {
     /// Resolves this override against a host's own `wake_enabled` flag into
     /// the single answer a run acts on.
@@ -1768,11 +1801,10 @@ pub struct ScheduleConfig {
     #[serde(default)]
     pub canary_enabled: bool,
     /// Whether this schedule stages the host's virtual machines before backing
-    /// up. Requires the host itself to have staging enabled.
+    /// up: the ones each host includes.
     #[serde(default)]
     pub vm_snapshot_enabled: bool,
     /// Whether this schedule dumps the host's databases into its archive.
-    /// Requires the host itself to have database dumps enabled.
     #[serde(default)]
     pub database_backup_enabled: bool,
     /// Whether this schedule's backups read from filesystem snapshots of

@@ -2,6 +2,7 @@
 import type { FsSnapshotMode } from "./FsSnapshotMode";
 import type { HookCommand } from "./HookCommand";
 import type { OnFailure } from "./OnFailure";
+import type { ScheduleFilesMode } from "./ScheduleFilesMode";
 import type { ScheduleType } from "./ScheduleType";
 import type { ScheduleWakeOverride } from "./ScheduleWakeOverride";
 
@@ -38,13 +39,13 @@ export type ScheduleResponse = {
    */
   canary_enabled: boolean;
   /**
-   * Whether this schedule stages the host's virtual machines before backing
-   * up. Requires the host itself to have staging enabled.
+   * Whether this schedule stages the virtual machines each host includes
+   * before backing up.
    */
   vm_snapshot_enabled: boolean;
   /**
-   * Whether this schedule dumps the host's databases into its archive.
-   * Requires the host itself to have database dumps enabled.
+   * Whether this schedule dumps the database sources each host includes
+   * into its archive.
    */
   database_backup_enabled: boolean;
   /**
@@ -56,6 +57,16 @@ export type ScheduleResponse = {
    * Size of an LVM snapshot, in percent of the volume it snapshots.
    */
   lvm_snapshot_percent: number;
+  /**
+   * Where this schedule's files come from: each host's own file set, the
+   * schedule's own set instead, or no files at all.
+   */
+  files_mode: ScheduleFilesMode;
+  /**
+   * Whether a schedule taking each host's files also runs the hosts'
+   * pre- and post-backup commands.
+   */
+  run_host_commands: boolean;
   /**
    * Timestamp of when the last run occurred.
    */

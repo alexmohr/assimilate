@@ -83,7 +83,6 @@ test.describe('Virtual machine staging', () => {
     test.afterEach(async ({ page }) => {
       await page.request.put('/api/agents/db-server-01/vm-snapshot', {
         data: {
-          enabled: true,
           selection: 'all',
           staging_dir: '/srv/vm-staging',
           full_interval: 7,
@@ -168,7 +167,6 @@ test.describe('Virtual machine staging', () => {
         contentType: 'application/json',
         body: JSON.stringify({
           settings: {
-            enabled: true,
             staging_dir: '/srv/vm-staging',
             full_interval: 7,
             timeout_seconds: 1800,
@@ -226,24 +224,24 @@ test.describe('Virtual machine staging', () => {
     await expect(dialog).toContainText('Define the domain, leave it shut off')
   })
 
-  test('a schedule opts in from its advanced settings', async ({ page }) => {
+  test('a schedule takes them from its Sources settings', async ({ page }) => {
     await loginAsAdmin(page)
 
     // The schedule is found by the flag rather than by clicking a card: the
     // list shows a schedule's name and repository, never its agent's hostname,
     // and the demo gives db-server-01 several schedules of which only the
-    // hourly one opts in.
+    // hourly one takes them.
     const schedules = await (await page.request.get('/api/schedules')).json()
     const optedIn = (schedules as { id: number; vm_snapshot_enabled: boolean }[]).find(
       (s) => s.vm_snapshot_enabled,
     )
     expect(optedIn, 'seed-demo.sh seeds one schedule with vm_snapshot_enabled').toBeDefined()
 
-    await page.goto(`/schedules/${optedIn!.id}?tab=settings&section=advanced`)
+    await page.goto(`/schedules/${optedIn!.id}?tab=settings&section=sources`)
     await page.waitForLoadState('networkidle')
 
     const pane = page.locator('.settings-pane')
-    const optIn = pane.locator('.pane-row', { hasText: 'Back up virtual machines' })
+    const optIn = pane.locator('.pane-row', { hasText: 'Virtual machines' })
     await expect(optIn).toBeVisible()
     await expect(optIn.locator('[role="switch"]')).toHaveAttribute('aria-checked', 'true')
   })

@@ -12258,7 +12258,7 @@ async fn test_agent_vms_defaults_and_settings_round_trip() {
     let response = oneshot(&mut app, get_request("/api/agents/vm-host/vms")).await;
     assert_eq!(response.status(), StatusCode::OK);
     let body = body_json(response).await;
-    assert_eq!(body.get("settings").unwrap().get("enabled").unwrap(), false);
+    assert!(body.get("settings").unwrap().get("enabled").is_none());
     assert_eq!(body.get("vms").unwrap().as_array().unwrap().len(), 0);
 
     let response = oneshot(
@@ -12267,7 +12267,6 @@ async fn test_agent_vms_defaults_and_settings_round_trip() {
             "PUT",
             "/api/agents/vm-host/vm-snapshot",
             Some(serde_json::json!({
-                "enabled": true,
                 "selection": "all",
                 "staging_dir": "/var/lib/assimilate/vms",
                 "full_interval": 7,
@@ -12280,7 +12279,7 @@ async fn test_agent_vms_defaults_and_settings_round_trip() {
     assert_eq!(response.status(), StatusCode::OK);
     let settings = body_json(response).await;
     let settings = settings.get("settings").unwrap();
-    assert_eq!(settings.get("enabled").unwrap(), true);
+    assert!(settings.get("enabled").is_none());
     assert_eq!(settings.get("full_interval").unwrap(), 7);
     assert_eq!(
         settings.get("staging_dir").unwrap(),
@@ -14348,7 +14347,7 @@ async fn test_agent_databases_settings_and_sources_round_trip() {
     assert_eq!(response.status(), StatusCode::OK);
     let body = body_json(response).await;
     let settings = body.get("settings").unwrap();
-    assert_eq!(settings.get("enabled").unwrap(), false);
+    assert!(settings.get("enabled").is_none());
     assert_eq!(
         settings.get("dump_dir").unwrap(),
         "/var/lib/assimilate/database-dumps"
@@ -14361,7 +14360,6 @@ async fn test_agent_databases_settings_and_sources_round_trip() {
             "PUT",
             "/api/agents/db-host/database-backup",
             Some(serde_json::json!({
-                "enabled": true,
                 "dump_dir": "/srv/dumps",
                 "runtimes": {
                     "kubernetes": true,
@@ -14379,7 +14377,7 @@ async fn test_agent_databases_settings_and_sources_round_trip() {
     assert_eq!(response.status(), StatusCode::OK);
     let body = body_json(response).await;
     let settings = body.get("settings").unwrap();
-    assert_eq!(settings.get("enabled").unwrap(), true);
+    assert!(settings.get("enabled").is_none());
     assert_eq!(settings.get("dump_dir").unwrap(), "/srv/dumps");
     let runtimes = settings.get("runtimes").unwrap();
     assert_eq!(

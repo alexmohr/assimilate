@@ -1,0 +1,31 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO agents (hostname, display_name, agent_token_hash, default_backup_paths, default_exclude_patterns, default_pre_backup_commands, default_post_backup_commands, default_file_change_patterns_raw, domain, default_include_patterns) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text",
+        "Text",
+        "TextArray",
+        "TextArray",
+        "Jsonb",
+        "Jsonb",
+        "Text",
+        "Text",
+        "TextArray"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "e267b89b79d6139827d977720f87c2a72b028d36ef0dc4da0a67bb2b95341032"
+}

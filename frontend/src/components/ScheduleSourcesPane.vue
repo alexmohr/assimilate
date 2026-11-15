@@ -15,7 +15,11 @@ import { useHostSources } from '../composables/useHostSources'
 import { parseLines } from '../utils/validation'
 import type { AgentRow } from '../types/agent'
 import type { FileSet } from '../types/fileSet'
-import type { ScheduleFilesMode, ScheduleFormState } from '../types/scheduleForm'
+import type {
+  ScheduleAgentOverrides,
+  ScheduleFilesMode,
+  ScheduleFormState,
+} from '../types/scheduleForm'
 
 /**
  * What a backup schedule takes from each of its hosts.
@@ -41,6 +45,44 @@ const props = defineProps<{
 const form = defineModel<ScheduleFormState>('form', { required: true })
 const usePerHostPaths = defineModel<boolean>('usePerHostPaths', { required: true })
 const perHostSources = defineModel<Record<number, string>>('perHostSources', { required: true })
+const overrides = defineModel<ScheduleAgentOverrides>('overrides', { required: true })
+
+/**
+ * Hosts that keep their own excludes, include patterns, file change patterns
+ * or commands for this schedule. Only the paths can be split per host here;
+ * the rest come from schedules whose hosts had different files before
+ * schedules could set their own, and are listed so they never act unseen.
+ */
+const hostsWithOwnValues = computed<{ id: number; label: string; fields: string }[]>(() =>
+  props.agentIds
+    .map((id) => {
+      const fields = [
+        overrides.value.usePerHostExcludes ? 'excludes' : null,
+        overrides.value.usePerHostIncludes ? 'include patterns' : null,
+        overrides.value.usePerHostFileChangePatterns ? 'file change patterns' : null,
+        overrides.value.usePerAgentCmds ? 'commands' : null,
+      ].filter((field): field is string => field !== null)
+      return { id, label: props.agentLabel(id), fields: fields.join(', ') }
+    })
+    .filter((host) => host.fields.length > 0),
+)
+
+/** Every host takes the shared values shown above from the next save on. */
+function useSharedValues(): void {
+  overrides.value = {
+    ...overrides.value,
+    usePerHostExcludes: false,
+    perHostExcludes: {},
+    usePerHostIncludes: false,
+    perHostIncludes: {},
+    usePerHostFileChangePatterns: false,
+    perHostFileChangePatterns: {},
+    usePerAgentCmds: false,
+    perAgentPreCmds: {},
+    perAgentPostCmds: {},
+    clearPerHost: true,
+  }
+}
 
 /** The same section a host's Sources › Files shows, over this schedule's own values. */
 const ownFiles = ref<InstanceType<typeof FileSourcesSection> | null>(null)
@@ -74,7 +116,7 @@ async function saveOwnFiles(next: FileSet): Promise<void> {
 
 const FILES_OPTIONS: readonly SegmentedOption<ScheduleFilesMode>[] = [
   { value: 'host', label: "Each host's files" },
-  { value: 'custom', label: 'Own files' },
+  { value: 'own', label: 'Own files' },
   { value: 'off', label: 'Off' },
 ]
 
@@ -98,11 +140,15 @@ interface SourceCell {
   missing: boolean
 }
 
-function sourceCell(on: boolean, count: number | undefined, unit: string): SourceCell {
+function sourceCell(
+  on: boolean,
+  count: number | undefined,
+  units: { one: string; many: string },
+): SourceCell {
   if (!on) return { text: 'Off', muted: true, missing: false }
-  if (count === undefined) return { text: '…', muted: true, missing: false }
+  if (count === undefined) return { text: '...', muted: true, missing: false }
   if (count === 0) return { text: 'None set up', muted: false, missing: true }
-  return { text: `${count} ${unit}`, muted: false, missing: false }
+  return { text: `${count} ${count === 1 ? units.one : units.many}`, muted: false, missing: false }
 }
 
 interface HostPreview {
@@ -121,7 +167,7 @@ function filesFor(agent: AgentRow): string[] {
   switch (form.value.files_mode) {
     case 'off':
       return []
-    case 'custom':
+    case 'own':
       return usePerHostPaths.value
         ? parseLines(perHostSources.value[agent.id] ?? '')
         : parseLines(form.value.backup_sources)
@@ -132,7 +178,7 @@ function filesFor(agent: AgentRow): string[] {
 
 function commandsFor(agent: AgentRow): { text: string; muted: boolean } {
   if (form.value.files_mode === 'off') return { text: 'None', muted: true }
-  const own = form.value.files_mode === 'custom'
+  const own = form.value.files_mode === 'own'
   if (!own && !form.value.run_host_commands) return { text: 'Skipped', muted: true }
   const pre = own ? form.value.pre_backup_commands.length : agent.default_pre_backup_commands.length
   const post = own
@@ -154,7 +200,7 @@ const preview = computed<HostPreview[]>(() =>
     else if (files.length === 0)
       filesNote =
         form.value.files_mode === 'host' ? 'No paths set on this host' : 'No paths given for it'
-    else if (form.value.files_mode === 'custom')
+    else if (form.value.files_mode === 'own')
       filesNote = `replaces the host's ${agent.default_backup_paths.length}`
     return {
       id: agent.id,
@@ -164,12 +210,11 @@ const preview = computed<HostPreview[]>(() =>
       filesNote,
       commands: commands.text,
       commandsMuted: commands.muted,
-      vms: sourceCell(form.value.vm_snapshot_enabled, hostCounts?.vms, 'VMs'),
-      databases: sourceCell(
-        form.value.database_backup_enabled,
-        hostCounts?.databases,
-        'database sources',
-      ),
+      vms: sourceCell(form.value.vm_snapshot_enabled, hostCounts?.vms, { one: 'VM', many: 'VMs' }),
+      databases: sourceCell(form.value.database_backup_enabled, hostCounts?.databases, {
+        one: 'database source',
+        many: 'database sources',
+      }),
     }
   }),
 )
@@ -193,9 +238,9 @@ const preview = computed<HostPreview[]>(() =>
           <template #help>
             <strong>Each host's files</strong> backs up what every host sets under Sources › Files:
             its paths, excludes, file change patterns and commands. <strong>Own files</strong> sets
-            all of those for this schedule instead, with the same fields. The paths can be
-            narrower, such as only <code>/home</code>, or wider. <strong>Off</strong> reads no
-            files, for a schedule that only dumps databases or snapshots VMs.
+            all of those for this schedule instead, with the same fields. The paths can be narrower,
+            such as only <code>/home</code>, or wider. <strong>Off</strong> reads no files, for a
+            schedule that only dumps databases or snapshots VMs.
           </template>
           <BaseSegmented
             v-model="form.files_mode"
@@ -211,8 +256,8 @@ const preview = computed<HostPreview[]>(() =>
         >
           <template #help>
             The pre- and post-backup commands each host lists under Sources › Files, such as
-            stopping a service so its files are consistent. Turn them off for a backup that does
-            not need them.
+            stopping a service so its files are consistent. Turn them off for a backup that does not
+            need them.
           </template>
           <ToggleSwitch
             v-model="form.run_host_commands"
@@ -221,7 +266,7 @@ const preview = computed<HostPreview[]>(() =>
         </PaneRow>
 
         <PaneRow
-          v-if="form.files_mode === 'custom' && agentIds.length > 1"
+          v-if="form.files_mode === 'own' && agentIds.length > 1"
           title="Different paths per host"
           help="splitting the paths by host"
         >
@@ -236,7 +281,7 @@ const preview = computed<HostPreview[]>(() =>
       </div>
 
       <div
-        v-if="form.files_mode === 'custom'"
+        v-if="form.files_mode === 'own'"
         class="pane-nest own-files"
       >
         <FileSourcesSection
@@ -285,6 +330,35 @@ const preview = computed<HostPreview[]>(() =>
             </PerAgentFields>
           </template>
         </FileSourcesSection>
+        <div
+          v-if="hostsWithOwnValues.length > 0"
+          class="notice-bar"
+          role="status"
+          data-testid="per-host-file-values"
+        >
+          <div class="notice-bar-text">
+            <span class="notice-bar-title">Some hosts use their own values</span>
+            <span>
+              These were kept per host because the hosts had different files before this schedule
+              set its own. They are used instead of the shared values above:
+              <template
+                v-for="(host, i) in hostsWithOwnValues"
+                :key="host.id"
+              >
+                {{ host.label }} ({{ host.fields }}){{
+                  i < hostsWithOwnValues.length - 1 ? '; ' : '.'
+                }}
+              </template>
+            </span>
+          </div>
+          <button
+            type="button"
+            class="btn btn-sm btn-ghost"
+            @click="useSharedValues"
+          >
+            Use the shared values
+          </button>
+        </div>
       </div>
     </section>
 
@@ -309,8 +383,8 @@ const preview = computed<HostPreview[]>(() =>
           help="database dumps"
         >
           <template #help>
-            Streams a dump of the database sources each host includes under Sources › Databases
-            into the same archive. Turn it off to leave them out of this schedule.
+            Streams a dump of the database sources each host includes under Sources › Databases into
+            the same archive. Turn it off to leave them out of this schedule.
           </template>
           <ToggleSwitch
             v-model="form.database_backup_enabled"
@@ -389,7 +463,7 @@ const preview = computed<HostPreview[]>(() =>
         class="field-hint"
       >
         {{
-          form.files_mode === 'custom'
+          form.files_mode === 'own'
             ? "This schedule's own excludes, patterns and commands replace each host's."
             : "Each host's own excludes, patterns and commands apply, as set on its Sources tab."
         }}

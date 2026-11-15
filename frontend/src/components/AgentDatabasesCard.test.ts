@@ -52,7 +52,6 @@ function response(
 ): AgentDatabasesResponse {
   return {
     settings: {
-      enabled: true,
       dump_dir: '/var/lib/assimilate/database-dumps',
       runtimes: CLUSTER,
       selection: 'all',
@@ -82,7 +81,6 @@ describe('AgentDatabasesCard', () => {
 
   it('summarizes the host settings and lists each source with its databases', async () => {
     const text = (await mount()).text()
-    expect(text).toContain('Allowed')
     expect(text).toContain('/etc/assimilate/kubeconfig')
     expect(text).toContain('/var/lib/assimilate/database-dumps')
     expect(text).toContain('shop/orders-db')
@@ -139,7 +137,6 @@ describe('AgentDatabasesCard', () => {
     expect(apiClient.put).toHaveBeenCalledWith(
       '/agents/k3s-node-01/database-backup',
       {
-        enabled: true,
         selection: 'all',
         dump_dir: '/srv/dumps',
         runtimes: { ...CLUSTER, kubeconfig_path: null },
@@ -481,22 +478,36 @@ describe('AgentDatabasesCard', () => {
     expect(wrapper.text()).toContain('agent offline')
   })
 
-  it('saves a change to the permission and the selection mode', async () => {
+  it('saves a change to the selection mode', async () => {
     const wrapper = await mount()
     await startEditingSection(wrapper)
-    wrapper.findComponent(ToggleSwitch).vm.$emit('update:modelValue', false)
     wrapper.findComponent({ name: 'BaseSegmented' }).vm.$emit('update:modelValue', 'selected')
     await clickSectionButton(wrapper, 'Save')
 
     expect(apiClient.put).toHaveBeenCalledWith(
       '/agents/k3s-node-01/database-backup',
-      expect.objectContaining({ enabled: false, selection: 'selected' }),
+      expect.objectContaining({ selection: 'selected' }),
       expect.anything(),
     )
   })
 
+  // The host no longer turns dumps off as a whole: it dumps what it includes,
+  // and each schedule takes that or opts out. So there is no host-wide switch
+  // to show, explain or send.
+  it('offers no host-wide switch for database dumps', async () => {
+    const wrapper = await mount()
+    expect(wrapper.text()).not.toContain('Allowed')
+    await startEditingSection(wrapper)
+
+    expect(wrapper.text()).not.toContain('Allow schedules to dump databases')
+    expect(wrapper.find('[aria-label="Help: allow database dumps"]').exists()).toBe(false)
+    await clickSectionButton(wrapper, 'Save')
+
+    const payload = vi.mocked(apiClient.put).mock.calls[0][1] as Record<string, unknown>
+    expect('enabled' in payload).toBe(false)
+  })
+
   it.each([
-    ['allow database dumps', 'Each schedule decides whether its own runs include them'],
     ['how the agent reaches the cluster', 'running commands in a database pod is a privileged'],
     ['how the agent finds containers', 'assimilate.alexmohr.github.io/database=postgresql'],
     ["how the agent signs in to the host's server", 'stores no database password'],
@@ -519,16 +530,17 @@ describe('AgentDatabasesCard', () => {
     expect(wrapper.text()).not.toContain('Scan for databases')
   })
 
-  // A schedule's own switch asks for dumps; this host's switch can refuse them.
-  // When it does, the host's pane names the schedules left without dumps.
-  describe('schedules asking for dumps a host blocks', () => {
+  // A schedule's own switch takes dumps; a host that includes no database
+  // source has none to give. When so, the host's pane names the schedules
+  // left without dumps.
+  describe('schedules taking dumps a host includes no source for', () => {
     function sched(id: number, name: string, dumps: boolean): ScheduleRow {
       return { id, name, database_backup_enabled: dumps } as unknown as ScheduleRow
     }
 
     function blocked(): void {
       vi.mocked(apiClient.get).mockResolvedValue({
-        data: response([source()], { enabled: false }),
+        data: response([source({ included: false })]),
       } as never)
     }
 
@@ -539,11 +551,13 @@ describe('AgentDatabasesCard', () => {
       })
       const notice = wrapper.get('[data-testid="database-dump-asked"]')
       expect(notice.attributes('role')).toBe('status')
-      expect(notice.get('.notice-bar-title').text()).toBe('1 schedule asks for database dumps here')
+      expect(notice.get('.notice-bar-title').text()).toBe('1 schedule takes database dumps here')
       const links = notice.findAll('a.dump-asked-link')
       expect(links.map((l) => l.text())).toEqual(['Nightly'])
       expect(links[0].attributes('href')).toBe('/schedules/5')
-      expect(notice.text()).toContain('Nightly asks for database dumps, but they are blocked')
+      expect(notice.text().replace(/\s+/g, ' ')).toContain(
+        'Nightly takes database dumps, but this host has no database source included',
+      )
     })
 
     it('joins two schedules with "and"', async () => {
@@ -552,8 +566,8 @@ describe('AgentDatabasesCard', () => {
         schedules: [sched(5, 'Nightly', true), sched(6, 'Weekly', true)],
       })
       const notice = wrapper.get('[data-testid="database-dump-asked"]')
-      expect(notice.get('.notice-bar-title').text()).toBe('2 schedules ask for database dumps here')
-      expect(notice.text()).toContain('Nightly and Weekly ask for database dumps')
+      expect(notice.get('.notice-bar-title').text()).toBe('2 schedules take database dumps here')
+      expect(notice.text()).toContain('Nightly and Weekly take database dumps')
     })
 
     it('lists three or more with commas and a final "and"', async () => {
@@ -562,7 +576,7 @@ describe('AgentDatabasesCard', () => {
         schedules: [sched(5, 'Nightly', true), sched(6, 'Weekly', true), sched(7, 'Hourly', true)],
       })
       const notice = wrapper.get('[data-testid="database-dump-asked"]')
-      expect(notice.text()).toContain('Nightly, Weekly and Hourly ask for database dumps')
+      expect(notice.text()).toContain('Nightly, Weekly and Hourly take database dumps')
       expect(notice.findAll('a.dump-asked-link').map((l) => l.attributes('href'))).toEqual([
         '/schedules/5',
         '/schedules/6',
@@ -588,9 +602,18 @@ describe('AgentDatabasesCard', () => {
       expect(wrapper.find('[data-testid="database-dump-asked"]').exists()).toBe(false)
     })
 
-    it('says nothing once the host allows dumps', async () => {
+    it('says nothing once the host includes a source', async () => {
       const wrapper = await mount({ schedules: [sched(5, 'Nightly', true)] })
       expect(wrapper.find('[data-testid="database-dump-asked"]').exists()).toBe(false)
+    })
+
+    // A host that never found a source has none included either.
+    it('also warns a host with no sources found', async () => {
+      vi.mocked(apiClient.get).mockResolvedValue({ data: response([]) } as never)
+      const wrapper = await mount({ schedules: [sched(5, 'Nightly', true)] })
+      expect(wrapper.get('[data-testid="database-dump-asked"]').text()).toContain(
+        'Scan for sources below and include at least one.',
+      )
     })
   })
 })

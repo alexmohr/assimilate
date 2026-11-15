@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT a.id, hostname, display_name, agent_version, agent_git_sha, agent_build_time, agent_commit_count, a.created_at, last_seen_at, owner_id, visibility AS \"visibility: Visibility\", default_backup_paths, default_exclude_patterns, default_pre_backup_commands AS \"default_pre_backup_commands: HookCommands\", default_post_backup_commands AS \"default_post_backup_commands: HookCommands\", default_file_change_patterns_raw, agent_token_hash, is_hidden, last_ssh_user, domain, wake_enabled, wake_mac_address, wake_broadcast_address, wake_timeout_seconds, shutdown_after_backup, start_agent_enabled, stop_agent_after_backup, ssh_host, ssh_port, agent_service_name, a.machine_id, a.database_backup_enabled FROM agents a JOIN machines m ON m.id = a.machine_id WHERE hostname = $1 AND domain = $2",
+  "query": "SELECT a.id, hostname, display_name, agent_version, agent_git_sha, agent_build_time, agent_commit_count, a.created_at, last_seen_at, owner_id, visibility AS \"visibility: Visibility\", default_backup_paths, default_exclude_patterns, default_include_patterns, default_pre_backup_commands AS \"default_pre_backup_commands: HookCommands\", default_post_backup_commands AS \"default_post_backup_commands: HookCommands\", default_file_change_patterns_raw, agent_token_hash, is_hidden, last_ssh_user, domain, wake_enabled, wake_mac_address, wake_broadcast_address, wake_timeout_seconds, shutdown_after_backup, start_agent_enabled, stop_agent_after_backup, ssh_host, ssh_port, agent_service_name, a.machine_id FROM agents a JOIN machines m ON m.id = a.machine_id WHERE hostname = $1 AND domain = $2",
   "describe": {
     "columns": [
       {
@@ -70,98 +70,98 @@
       },
       {
         "ordinal": 13,
+        "name": "default_include_patterns",
+        "type_info": "TextArray"
+      },
+      {
+        "ordinal": 14,
         "name": "default_pre_backup_commands: HookCommands",
         "type_info": "Jsonb"
       },
       {
-        "ordinal": 14,
+        "ordinal": 15,
         "name": "default_post_backup_commands: HookCommands",
         "type_info": "Jsonb"
       },
       {
-        "ordinal": 15,
+        "ordinal": 16,
         "name": "default_file_change_patterns_raw",
         "type_info": "Text"
       },
       {
-        "ordinal": 16,
+        "ordinal": 17,
         "name": "agent_token_hash",
         "type_info": "Text"
       },
       {
-        "ordinal": 17,
+        "ordinal": 18,
         "name": "is_hidden",
         "type_info": "Bool"
       },
       {
-        "ordinal": 18,
+        "ordinal": 19,
         "name": "last_ssh_user",
         "type_info": "Text"
       },
       {
-        "ordinal": 19,
+        "ordinal": 20,
         "name": "domain",
         "type_info": "Text"
       },
       {
-        "ordinal": 20,
+        "ordinal": 21,
         "name": "wake_enabled",
         "type_info": "Bool"
       },
       {
-        "ordinal": 21,
+        "ordinal": 22,
         "name": "wake_mac_address",
         "type_info": "Text"
       },
       {
-        "ordinal": 22,
+        "ordinal": 23,
         "name": "wake_broadcast_address",
         "type_info": "Text"
       },
       {
-        "ordinal": 23,
+        "ordinal": 24,
         "name": "wake_timeout_seconds",
         "type_info": "Int4"
       },
       {
-        "ordinal": 24,
+        "ordinal": 25,
         "name": "shutdown_after_backup",
         "type_info": "Bool"
       },
       {
-        "ordinal": 25,
+        "ordinal": 26,
         "name": "start_agent_enabled",
         "type_info": "Bool"
       },
       {
-        "ordinal": 26,
+        "ordinal": 27,
         "name": "stop_agent_after_backup",
         "type_info": "Bool"
       },
       {
-        "ordinal": 27,
+        "ordinal": 28,
         "name": "ssh_host",
         "type_info": "Text"
       },
       {
-        "ordinal": 28,
+        "ordinal": 29,
         "name": "ssh_port",
         "type_info": "Int4"
       },
       {
-        "ordinal": 29,
+        "ordinal": 30,
         "name": "agent_service_name",
         "type_info": "Text"
       },
       {
-        "ordinal": 30,
+        "ordinal": 31,
         "name": "machine_id",
         "type_info": "Int8"
-      },
-      {
-        "ordinal": 31,
-        "name": "database_backup_enabled",
-        "type_info": "Bool"
       }
     ],
     "parameters": {
@@ -189,21 +189,21 @@
       false,
       false,
       false,
-      true,
-      true,
       false,
       true,
       true,
       false,
+      true,
+      true,
+      false,
       false,
       false,
       false,
       true,
-      false,
       false,
       false,
       false
     ]
   },
-  "hash": "adf5989d9659fed36068e5e6ca386cc1dd2a2004153d0a2d32ce55e95bc49408"
+  "hash": "5fd78f35a422335094c1df4dbd009353e5feacc8bc536b1cfcad014ac5e682b5"
 }

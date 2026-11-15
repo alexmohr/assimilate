@@ -40,6 +40,15 @@ vi.mock('../api/machines', () => ({
   updateScheduleMachines: vi.fn(),
 }))
 
+// The Sources section counts the VMs and databases each host includes, to
+// warn about hosts with none; answer with none found so no request goes out.
+vi.mock('../api/vms', () => ({
+  getAgentVms: vi.fn().mockResolvedValue({ vms: [] }),
+}))
+vi.mock('../api/databases', () => ({
+  getAgentDatabases: vi.fn().mockResolvedValue({ sources: [] }),
+}))
+
 vi.mock('../api/dependencyHosts', () => ({
   getScheduleDependencies: vi.fn(),
   listDependencyHosts: vi.fn(),
@@ -59,9 +68,22 @@ function agentPower(wakeEnabled: boolean) {
   }
 }
 
+/** What the Sources section's preview reads from each host. */
+const HOST_FILES = {
+  default_backup_paths: ['/etc'],
+  default_pre_backup_commands: [],
+  default_post_backup_commands: [],
+}
+
 const AGENTS = [
-  { id: 10, hostname: 'web-server-01', display_name: 'Web Server', power: agentPower(true) },
-  { id: 11, hostname: 'db-server-01', display_name: null, power: agentPower(false) },
+  {
+    id: 10,
+    hostname: 'web-server-01',
+    display_name: 'Web Server',
+    power: agentPower(true),
+    ...HOST_FILES,
+  },
+  { id: 11, hostname: 'db-server-01', display_name: null, power: agentPower(false), ...HOST_FILES },
 ] as unknown as AgentRow[]
 
 const REPOS = [
@@ -135,10 +157,11 @@ function openSections(wrapper: ReturnType<typeof mount>): string[] {
 }
 
 describe('ScheduleSettingsTab', () => {
-  it('shows all five sections for a backup schedule', () => {
+  it('shows all six sections for a backup schedule', () => {
     expect(navLabels(mount())).toEqual([
       'General',
       'Targets',
+      'Sources',
       'Power & dependencies',
       'Retention',
       'Advanced',
@@ -296,27 +319,54 @@ describe('ScheduleSettingsTab', () => {
     expect(wrapper.emitted('update:selectedAgentIds')).toBeUndefined()
   })
 
-  it('switches between a shared and a per-agent backup paths editor', async () => {
+  // The backup paths and their per-host switch moved from Targets to the
+  // Sources section (ScheduleSourcesPane), next to the rest of what a
+  // schedule backs up.
+  it('keeps the backup paths out of the Targets section', () => {
     const wrapper = mount({ section: 'targets', selectedAgentIds: [10, 11] })
-    expect(wrapper.findAll('textarea')).toHaveLength(1)
-
-    const perAgentToggle = wrapper
-      .findAllComponents({ name: 'ToggleSwitch' })
-      .find((c) => c.props('label') === 'Configure paths per agent')!
-    await perAgentToggle.vm.$emit('update:modelValue', true)
-    expect(wrapper.emitted('update:usePerHostPaths')?.at(-1)?.[0]).toBe(true)
-
-    await wrapper.setProps({ usePerHostPaths: true })
-    expect(wrapper.findAll('textarea')).toHaveLength(2)
+    expect(wrapper.find('textarea').exists()).toBe(false)
+    expect(wrapper.text()).not.toContain('Configure paths per agent')
+    expect(wrapper.text()).toContain('What it backs up from each host is under Sources.')
   })
 
-  it('discloses what splitting the backup paths per host does', async () => {
-    const wrapper = mount({ section: 'targets', selectedAgentIds: [10, 11] })
+  it('renders the Sources section via ScheduleSourcesPane, over the selected hosts', () => {
+    const commit = vi.fn()
+    const overrides = { ...baseOverrides(), usePerAgentCmds: true }
+    const perHostSources = { 10: '/data' }
+    const wrapper = mount({
+      section: 'sources',
+      overrides,
+      usePerHostPaths: true,
+      perHostSources,
+      commit,
+    })
+    const pane = wrapper.findComponent({ name: 'ScheduleSourcesPane' })
+    expect(pane.exists()).toBe(true)
+    expect(pane.props()).toMatchObject({
+      agentIds: [10, 11],
+      agents: AGENTS,
+      overrides,
+      usePerHostPaths: true,
+      perHostSources,
+      commit,
+    })
+  })
 
-    await wrapper.find('[aria-label="Help: splitting the paths by host"]').trigger('click')
-    expect(wrapper.find('.help-hint-pop').text()).toBe(
-      'Give each host its own backup paths instead of one list for the schedule.',
-    )
+  it('propagates ScheduleSourcesPane updates for every model it edits', async () => {
+    const wrapper = mount({ section: 'sources' })
+    const pane = wrapper.findComponent({ name: 'ScheduleSourcesPane' })
+
+    const newForm = { ...baseForm(), files_mode: 'own' as const }
+    const newOverrides = { ...baseOverrides(), clearPerHost: true }
+    await pane.vm.$emit('update:form', newForm)
+    await pane.vm.$emit('update:overrides', newOverrides)
+    await pane.vm.$emit('update:usePerHostPaths', true)
+    await pane.vm.$emit('update:perHostSources', { 11: '/srv' })
+
+    expect(wrapper.emitted('update:form')?.at(-1)?.[0]).toEqual(newForm)
+    expect(wrapper.emitted('update:overrides')?.at(-1)?.[0]).toEqual(newOverrides)
+    expect(wrapper.emitted('update:usePerHostPaths')?.at(-1)?.[0]).toBe(true)
+    expect(wrapper.emitted('update:perHostSources')?.at(-1)?.[0]).toEqual({ 11: '/srv' })
   })
 
   it('says in the Retention pane head what the section covers', () => {
@@ -347,8 +397,11 @@ describe('ScheduleSettingsTab', () => {
 
   it('renders the Advanced section via ScheduleAdvancedTab', () => {
     const wrapper = mount({ section: 'advanced' })
-    expect(wrapper.text()).toContain('Exclude patterns')
+    expect(wrapper.findComponent({ name: 'ScheduleAdvancedTab' }).exists()).toBe(true)
     expect(wrapper.text()).toContain('Remote rate limit')
+    expect(wrapper.text()).toContain('Hook command timeout (seconds)')
+    // The exclude patterns moved to Sources with the rest of the file set.
+    expect(wrapper.text()).not.toContain('Exclude patterns')
   })
 
   it('closes the agent dropdown when clicking outside it', async () => {
@@ -534,21 +587,38 @@ describe('ScheduleSettingsTab', () => {
     expect(wrapper.emitted('update:onFailure')?.at(-1)?.[0]).toBe('continue')
   })
 
-  it('writes into the shared Backup Paths textarea', async () => {
-    const form = baseForm()
-    const wrapper = mount({ section: 'targets', selectedAgentIds: [10, 11], form })
-    await wrapper.find('textarea').setValue('/data\n/etc')
+  it("writes the Sources section's own backup paths into the form and saves", async () => {
+    const form = { ...baseForm(), files_mode: 'own' as const }
+    const commit = vi.fn().mockResolvedValue(null)
+    const wrapper = mount({ section: 'sources', selectedAgentIds: [10, 11], form, commit })
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text() === 'Edit')!
+      .trigger('click')
+    await wrapper.find('#file-sources-paths').setValue('/data\n/etc')
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text() === 'Save')!
+      .trigger('click')
+    await flushPromises()
+
     expect(form.backup_sources).toBe('/data\n/etc')
+    expect(commit).toHaveBeenCalledTimes(1)
   })
 
-  it('writes into a per-agent Backup Paths textarea', async () => {
+  it('writes into a per-host Backup Paths textarea in the Sources section', async () => {
     const perHostSources: Record<number, string> = {}
     const wrapper = mount({
-      section: 'targets',
+      section: 'sources',
       selectedAgentIds: [10, 11],
+      form: { ...baseForm(), files_mode: 'own' },
       usePerHostPaths: true,
       perHostSources,
     })
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text() === 'Edit')!
+      .trigger('click')
     await wrapper.findAll('textarea')[0].setValue('/custom/path')
     expect(perHostSources[10]).toBe('/custom/path')
   })
@@ -570,18 +640,17 @@ describe('ScheduleSettingsTab', () => {
     expect(form.keep_yearly).toBe(20)
   })
 
-  it('propagates ScheduleAdvancedTab updates for form and overrides', async () => {
+  // The per-host overrides left Advanced for Sources; their propagation is
+  // covered by the ScheduleSourcesPane test above.
+  it('propagates ScheduleAdvancedTab updates for the form', async () => {
     const wrapper = mount({ section: 'advanced' })
     const advancedTab = wrapper.findComponent({ name: 'ScheduleAdvancedTab' })
     expect(advancedTab.exists()).toBe(true)
 
     const newForm = { ...baseForm(), rate_limit_kbps: 500 }
-    const newOverrides = { ...baseOverrides(), usePerHostExcludes: true }
     await advancedTab.vm.$emit('update:form', newForm)
-    await advancedTab.vm.$emit('update:overrides', newOverrides)
 
     expect(wrapper.emitted('update:form')?.at(-1)?.[0]).toEqual(newForm)
-    expect(wrapper.emitted('update:overrides')?.at(-1)?.[0]).toEqual(newOverrides)
   })
 
   it('shows the per-machine choices and the dependencies of a saved backup schedule', async () => {

@@ -105,6 +105,7 @@ struct PatternAgentJoinRow {
     pub visibility: Visibility,
     pub default_backup_paths: Vec<String>,
     pub default_exclude_patterns: Vec<String>,
+    pub default_include_patterns: Vec<String>,
     pub default_pre_backup_commands: HookCommands,
     pub default_post_backup_commands: HookCommands,
     pub default_file_change_patterns_raw: String,
@@ -123,7 +124,6 @@ struct PatternAgentJoinRow {
     pub ssh_port: i32,
     pub agent_service_name: String,
     pub machine_id: i64,
-    pub database_backup_enabled: bool,
 }
 
 /// Looks up an agent whose registered hostname pattern glob-matches the
@@ -142,15 +142,14 @@ pub async fn find_agent_by_pattern(
         "SELECT p.pattern, a.id, a.hostname, a.display_name, a.agent_version, a.agent_git_sha, \
          a.agent_build_time, a.agent_commit_count, a.created_at, a.last_seen_at, a.owner_id, \
          a.visibility AS \"visibility: Visibility\", a.default_backup_paths, \
-         a.default_exclude_patterns, a.default_pre_backup_commands AS \
+         a.default_exclude_patterns, a.default_include_patterns, a.default_pre_backup_commands AS \
          \"default_pre_backup_commands: HookCommands\", a.default_post_backup_commands AS \
          \"default_post_backup_commands: HookCommands\", a.default_file_change_patterns_raw, \
          a.agent_token_hash, a.is_hidden, a.last_ssh_user, a.domain, am.wake_enabled, \
          am.wake_mac_address, am.wake_broadcast_address, am.wake_timeout_seconds, \
          am.shutdown_after_backup, a.start_agent_enabled, a.stop_agent_after_backup, a.ssh_host, \
-         a.ssh_port, a.agent_service_name, a.machine_id, a.database_backup_enabled FROM \
-         agent_hostname_patterns p JOIN agents a ON a.id = p.agent_id JOIN machines am ON am.id = \
-         a.machine_id ORDER BY p.pattern",
+         a.ssh_port, a.agent_service_name, a.machine_id FROM agent_hostname_patterns p JOIN \
+         agents a ON a.id = p.agent_id JOIN machines am ON am.id = a.machine_id ORDER BY p.pattern",
     )
     .fetch_all(pool)
     .await
@@ -174,6 +173,7 @@ pub async fn find_agent_by_pattern(
         visibility: row.visibility,
         default_backup_paths: row.default_backup_paths.clone(),
         default_exclude_patterns: row.default_exclude_patterns.clone(),
+        default_include_patterns: row.default_include_patterns.clone(),
         default_pre_backup_commands: row.default_pre_backup_commands.clone(),
         default_post_backup_commands: row.default_post_backup_commands.clone(),
         default_file_change_patterns_raw: row.default_file_change_patterns_raw.clone(),
@@ -192,6 +192,5 @@ pub async fn find_agent_by_pattern(
         ssh_port: row.ssh_port,
         agent_service_name: row.agent_service_name.clone(),
         machine_id: row.machine_id,
-        database_backup_enabled: row.database_backup_enabled,
     }))
 }

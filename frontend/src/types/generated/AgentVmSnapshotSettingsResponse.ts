@@ -8,10 +8,6 @@ import type { VmSelectionMode } from "./VmSelectionMode";
  */
 export type AgentVmSnapshotSettingsResponse = {
   /**
-   * Whether this host stages its domains at all.
-   */
-  enabled: boolean;
-  /**
    * Absolute directory receiving one subdirectory per domain.
    */
   staging_dir: string;

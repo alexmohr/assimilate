@@ -8,6 +8,7 @@ import type {
   DeleteFailedReportsResponse,
   FailedReportCountResponse,
   FsSnapshotMode,
+  ScheduleFilesMode,
   HookCommand,
   ReportListResponse,
   ScheduleCatchUpSourcesResponse,
@@ -54,6 +55,10 @@ export interface CreateScheduleRequest {
   fs_snapshot?: FsSnapshotMode
   /** Size of an LVM snapshot, in percent of its volume: 1 to 100. */
   lvm_snapshot_percent?: number
+  /** Where the files come from: each host's set, the schedule's own, or none. */
+  files_mode: ScheduleFilesMode
+  /** Whether a schedule taking each host's files runs the hosts' commands. */
+  run_host_commands: boolean
   exclude_patterns_raw: string
   include_patterns_raw: string
   file_change_patterns_raw: string

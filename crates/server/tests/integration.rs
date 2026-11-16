@@ -6339,6 +6339,66 @@ async fn an_edit_cannot_leave_a_backup_schedule_with_nothing_to_back_up(pool: sq
     )
     .await;
     assert_eq!(resp.status(), StatusCode::OK);
+
+    // An edit that leaves the hosts out checks the schedule's own targets.
+    let to_host_files = || {
+        json_request(
+            "PUT",
+            &format!("/api/schedules/{schedule_id}"),
+            Some(json!({
+                "cron_expression": "0 3 * * *",
+                "enabled": false,
+                "files_mode": "host",
+            })),
+        )
+    };
+    let resp = oneshot(&mut app, to_host_files()).await;
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    sqlx::query("UPDATE agents SET default_backup_paths = ARRAY['/etc'] WHERE id = $1")
+        .bind(agent_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let resp = oneshot(&mut app, to_host_files()).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    // With no target left there is no host whose files it could take.
+    sqlx::query("UPDATE schedules SET files_mode = 'off' WHERE id = $1")
+        .bind(schedule_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM schedule_targets WHERE schedule_id = $1")
+        .bind(schedule_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let resp = oneshot(&mut app, to_host_files()).await;
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+
+    // A schedule that backs nothing up (a check) has no sources to lose.
+    sqlx::query(
+        "UPDATE schedules SET schedule_type = 'check', database_backup_enabled = false WHERE id = \
+         $1",
+    )
+    .bind(schedule_id)
+    .execute(&pool)
+    .await
+    .unwrap();
+    let resp = oneshot(
+        &mut app,
+        json_request(
+            "PUT",
+            &format!("/api/schedules/{schedule_id}"),
+            Some(json!({
+                "cron_expression": "0 3 * * *",
+                "enabled": false,
+                "files_mode": "off",
+            })),
+        ),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
 }
 
 /// Regression test for: saving an already-enabled schedule re-probed SSH

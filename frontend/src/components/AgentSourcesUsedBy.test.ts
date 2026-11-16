@@ -232,4 +232,31 @@ describe('AgentSourcesUsedBy', () => {
 
     expect(rows(wrapper).map((r) => r[0])).toEqual(['Nightly', 'Weekly'])
   })
+
+  // Switching hosts while the first host's schedules still load: the late
+  // answer for the first host never replaces the second's rows.
+  it('keeps the rows of the host shown when an earlier load settles late', async () => {
+    let releaseSlow: (value: unknown) => void = () => {}
+    vi.mocked(apiClient.get).mockImplementation(((url: string) =>
+      url === '/schedules/1/sources'
+        ? new Promise((resolve) => {
+            releaseSlow = resolve
+          })
+        : Promise.resolve({ data: sources({ backup_sources: ['/opt'] }) })) as never)
+    const wrapper = renderWithPlugins(AgentSourcesUsedBy, {
+      props: { agent: AGENT, schedules: [schedule(1, { files_mode: 'own', name: 'Old' })] },
+    })
+    await flushPromises()
+
+    await wrapper.setProps({
+      agent: { ...AGENT, id: 4 },
+      schedules: [schedule(2, { files_mode: 'own', name: 'New' })],
+    })
+    await flushPromises()
+    expect(rows(wrapper).map((r) => r[0])).toEqual(['New'])
+
+    releaseSlow({ data: sources({ backup_sources: ['/old'] }) })
+    await flushPromises()
+    expect(rows(wrapper).map((r) => r[0])).toEqual(['New'])
+  })
 })

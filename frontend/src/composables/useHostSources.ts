@@ -5,6 +5,7 @@ import { computed, ref, watch, type ComputedRef, type Ref } from 'vue'
 import { getAgentDatabases } from '../api/databases'
 import { getAgentVms } from '../api/vms'
 import { logger } from '../utils/logger'
+import { useAsyncAction } from './useAsyncAction'
 import type { AgentRow } from '../types/agent'
 import type { ScheduleRow } from '../types/schedule'
 
@@ -44,6 +45,7 @@ export function useHostSources(
   hostsWithout: (kind: HostSourceKind) => AgentRow[]
 } {
   const counts = ref(new Map<number, HostSourceCounts>())
+  const { runLatest } = useAsyncAction('loading host sources')
   const unreadable = ref(new Set<number>())
 
   /** Each list is read on its own, so one that fails or is not the viewer's to read never hides the other. */
@@ -77,19 +79,22 @@ export function useHostSources(
 
   watch(
     () => hosts().map((h) => h.id),
-    async () => {
-      const list = hosts()
-      const results = await Promise.all(list.map(countFor))
-      const next = new Map<number, HostSourceCounts>()
-      const failed = new Set<number>()
-      list.forEach((host, i) => {
-        const result = results[i]
-        if (result) next.set(host.id, result)
-        else failed.add(host.id)
-      })
-      counts.value = next
-      unreadable.value = failed
-    },
+    () =>
+      runLatest(async (isCurrent) => {
+        const list = hosts()
+        const results = await Promise.all(list.map(countFor))
+        // A later host list supersedes this one: its counts are not written.
+        if (!isCurrent()) return
+        const next = new Map<number, HostSourceCounts>()
+        const failed = new Set<number>()
+        list.forEach((host, i) => {
+          const result = results[i]
+          if (result) next.set(host.id, result)
+          else failed.add(host.id)
+        })
+        counts.value = next
+        unreadable.value = failed
+      }),
     { immediate: true },
   )
 

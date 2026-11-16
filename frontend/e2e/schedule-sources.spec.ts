@@ -168,7 +168,7 @@ test.describe('Schedule sources', () => {
 
       // Each host's row of the table reads its own paths.
       const table = sources.locator('.data-table')
-      await expect(table.locator('tr', { hasText: 'db-server-01' })).toContainText(
+      await expect(table.locator('tr', { hasText: /db-server-01|Primary Database/ })).toContainText(
         '/var/lib/postgresql',
       )
       await expect(

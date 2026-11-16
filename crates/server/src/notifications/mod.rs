@@ -1667,6 +1667,53 @@ mod tests {
         );
     }
 
+    /// Deterministic coverage of `build_absolute_activity_url` itself, without going through
+    /// `dispatch` and its background delivery tasks: an unset `public_url` yields no link, and a
+    /// configured one has its trailing slash trimmed before the Activity Log path is appended.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn absolute_activity_url_trims_public_url_and_omits_when_unset(pool: sqlx::PgPool) {
+        let service = crate::test_support::test_notification_service(pool.clone());
+        let event = NotificationEvent {
+            event_type: EventType::BackupFailed,
+            hostname: "myhost".to_owned(),
+            repo_name: "test-repo".to_owned(),
+            status: "failed".to_owned(),
+            error_message: Some("repository is locked".to_owned()),
+            timestamp: Utc::now(),
+            repo_id: None,
+            agent_id: None,
+            schedule_id: None,
+            schedule_name: None,
+            archive_name: None,
+            run_id: Some("run-123".to_owned()),
+            duration_secs: Some(10),
+            original_size: None,
+            compressed_size: None,
+            deduplicated_size: None,
+            files_processed: None,
+            warnings: Vec::new(),
+            next_run_at: None,
+            activity_url: None,
+        };
+
+        assert_eq!(
+            build_absolute_activity_url(&service, &event).await,
+            None,
+            "no absolute link may be built while public_url is unset"
+        );
+
+        crate::db::set_setting(&pool, "public_url", "https://backups.example.com/")
+            .await
+            .unwrap();
+
+        assert_eq!(
+            build_absolute_activity_url(&service, &event).await.as_deref(),
+            Some("https://backups.example.com/activity?category=backup&run_id=run-123"),
+            "the public_url trailing slash must be trimmed before appending the path"
+        );
+    }
+
     #[test]
     fn channel_type_from_str() {
         assert_eq!(ChannelType::from_str("email"), Ok(ChannelType::Email));

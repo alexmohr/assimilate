@@ -25,7 +25,7 @@ on:
 # Requires the caller to have run build-agent.yml and build-desktop.yml in the
 # same workflow run, and to grant contents: write, id-token: write and
 # attestations: write. Attaches the desktop installers, the agent binaries
-# (the Windows one as a zip with borg), a SHA256SUMS file and their build
+# (the Windows one as a zip and the macOS ones as tarballs, with borg), a SHA256SUMS file and their build
 # provenance to the tag's GitHub release.
 jobs:
   publish:
@@ -56,6 +56,9 @@ jobs:
           done
           # The Windows agent is already a named zip, with borg inside.
           cp agents/agent-windows-x86_64/assimilate-agent-*.zip dist/
+          # So are the macOS agents, as tarballs that keep borg's links and
+          # executable bits.
+          cp agents/agent-macos-*/assimilate-agent-*.tar.gz dist/
       - name: Write checksums
         working-directory: dist
         run: sha256sum -- * > SHA256SUMS

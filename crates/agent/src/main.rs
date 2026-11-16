@@ -9,10 +9,17 @@ mod borg;
 mod database;
 mod endpoint;
 mod executor;
+#[cfg(target_os = "macos")]
+mod launchd;
 mod live_file;
 mod pipe;
+// Pure, so it is tested on every platform.
+#[cfg(any(target_os = "macos", test))]
+mod launchd_plist;
 #[cfg(windows)]
 mod service;
+#[cfg(any(windows, target_os = "macos", test))]
+mod service_config;
 mod snapshot;
 mod ssh_forward;
 mod systemd;
@@ -102,8 +109,8 @@ pub fn agent_version_string() -> &'static str {
 const TOKEN_VAR: &str = "BORG_AGENT_TOKEN";
 
 /// The command line. Without a subcommand the agent connects and runs in the
-/// foreground; on Windows, `service` installs, removes or runs it as a
-/// Windows service instead.
+/// foreground; on Windows and macOS, `service` installs, removes or runs it
+/// as a Windows service or launchd daemon instead.
 #[derive(Parser)]
 #[command(
     version = agent_version_string(),
@@ -120,9 +127,9 @@ struct Cli {
     #[arg(long, env = "BORG_SERVER_KEY", required = true)]
     server_key: Option<ChannelPublicKey>,
 
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "macos"))]
     #[command(subcommand)]
-    command: Option<service::Command>,
+    command: Option<service_config::Command>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -133,7 +140,7 @@ enum StartupError {
     Runtime(std::io::Error),
     #[error("--server-url and --server-key are required, and BORG_AGENT_TOKEN must be set")]
     MissingArgs,
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "macos"))]
     #[error(transparent)]
     Service(#[from] service::ServiceError),
 }
@@ -146,10 +153,9 @@ fn main() -> Result<ExitCode, StartupError> {
         .map_err(|_| StartupError::RustlsProvider)?;
 
     let cli = Cli::parse();
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "macos"))]
     if let Some(command) = cli.command {
-        service::run(command)?;
-        return Ok(ExitCode::SUCCESS);
+        return Ok(service::run(command)?);
     }
 
     tracing_subscriber::fmt()
@@ -355,7 +361,7 @@ mod cli_tests {
         let cli = |server_url: Option<&str>, server_key| Cli {
             server_url: server_url.map(str::to_owned),
             server_key,
-            #[cfg(windows)]
+            #[cfg(any(windows, target_os = "macos"))]
             command: None,
         };
         let secret = || Some("secret".to_owned());
@@ -378,13 +384,13 @@ mod cli_tests {
         assert!(Cli::try_parse_from(["agent", "--server-url", "https://backup.example"]).is_err());
     }
 
-    /// `service` is the documented way to set the agent up on Windows, so its
-    /// command lines must parse without the connect flags the agent otherwise
-    /// requires.
-    #[cfg(windows)]
+    /// `service` is the documented way to set the agent up on Windows and
+    /// macOS, so its command lines must parse without the connect flags the
+    /// agent otherwise requires.
+    #[cfg(any(windows, target_os = "macos"))]
     #[test]
     fn service_command_lines_parse_without_server_or_token() {
-        use service::{Action, Command};
+        use service_config::{Action, Command};
 
         let run = Cli::try_parse_from(["agent", "service", "run"]).unwrap();
         assert!(matches!(

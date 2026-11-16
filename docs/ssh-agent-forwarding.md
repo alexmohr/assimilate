@@ -49,6 +49,8 @@ sequenceDiagram
 
 Before each backup the agent creates a temporary Unix domain socket in a private directory under `$TMPDIR`. For every connection borg makes to that socket the agent opens a new WebSocket to the server's relay endpoint at `/ws/ssh-agent/{hostname}`, completes the encrypted channel handshake against the server key it pins, and sends its token as the first encrypted message. The server authenticates the request by verifying the token against the bcrypt hash stored in the database, then connects to its own `SSH_AUTH_SOCK` and relays bytes bidirectionally between the encrypted WebSocket and the local agent socket. As soon as either side closes, the server closes the other, so no connection to the SSH agent outlives its WebSocket. When the backup finishes the temporary socket directory is removed automatically.
 
+On a macOS agent the temporary socket is a unix socket as on Linux.
+
 On a Windows agent the temporary socket is a named pipe instead, `\\.\pipe\assimilate-ssh-agent-<random>`, which only the agent's own user, Administrators and LocalSystem can open. It is closed when the backup finishes.
 
 ## Server Setup

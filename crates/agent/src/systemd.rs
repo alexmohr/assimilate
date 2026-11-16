@@ -1,15 +1,15 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
-#[cfg(unix)]
+#[cfg(all(unix, not(target_os = "macos")))]
 use std::process::Stdio;
 
-#[cfg(unix)]
+#[cfg(all(unix, not(target_os = "macos")))]
 use tokio::process::Command;
-#[cfg(unix)]
+#[cfg(all(unix, not(target_os = "macos")))]
 use tracing::debug;
 
-#[cfg(unix)]
+#[cfg(all(unix, not(target_os = "macos")))]
 const SERVICE_NAME: &str = "assimilate-agent";
 
 pub struct RestartCapability {
@@ -31,7 +31,20 @@ pub fn detect_restart_capability() -> std::future::Ready<RestartCapability> {
     })
 }
 
-#[cfg(unix)]
+/// Run from a console, the agent has no service manager to start it again;
+/// the launchd daemon (`service run`) reports its own capability.
+#[cfg(target_os = "macos")]
+pub fn detect_restart_capability() -> std::future::Ready<RestartCapability> {
+    std::future::ready(RestartCapability {
+        supported: false,
+        unavailable_reason: Some(
+            "the agent restarts itself only when it runs as the launchd daemon (`service install`)"
+                .to_owned(),
+        ),
+    })
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
 pub async fn detect_restart_capability() -> RestartCapability {
     let Some(systemctl) = which_systemctl() else {
         return RestartCapability {
@@ -87,26 +100,31 @@ pub async fn detect_restart_capability() -> RestartCapability {
     }
 }
 
-#[cfg(unix)]
+#[cfg(all(unix, not(target_os = "macos")))]
 fn which_systemctl() -> Option<String> {
     which::which("systemctl")
         .ok()
         .map(|p| p.to_string_lossy().into_owned())
 }
 
-#[cfg(all(test, windows))]
+#[cfg(all(test, any(windows, target_os = "macos")))]
 mod tests {
     use super::*;
 
     #[tokio::test]
-    async fn a_console_agent_on_windows_points_at_the_service() {
+    async fn a_console_agent_points_at_the_service() {
+        let manager = if cfg!(windows) {
+            "Windows service"
+        } else {
+            "launchd daemon"
+        };
         let capability = detect_restart_capability().await;
 
         assert!(!capability.supported);
         assert!(
             capability
                 .unavailable_reason
-                .is_some_and(|reason| reason.contains("Windows service"))
+                .is_some_and(|reason| reason.contains(manager))
         );
     }
 }

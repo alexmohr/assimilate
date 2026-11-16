@@ -12,15 +12,12 @@
 use std::{
     ffi::OsString,
     path::{Path, PathBuf},
+    process::ExitCode,
     sync::Arc,
     time::Duration,
 };
 
-use serde::{Deserialize, Serialize};
-use shared::{
-    agent_channel::ChannelPublicKey,
-    windows_acl::{Access, create_private_dir, create_private_file, open_private_log},
-};
+use shared::windows_acl::{Access, create_private_dir, create_private_file, open_private_log};
 use tokio::{io::AsyncWriteExt as _, sync::Notify};
 use tracing_subscriber::EnvFilter;
 use windows_service::{
@@ -35,7 +32,10 @@ use windows_service::{
     service_manager::{ServiceManager, ServiceManagerAccess},
 };
 
-use crate::{ServerEndpoint, systemd::RestartCapability};
+use crate::{
+    service_config::{Action, Command, ConfigError, StoredConfig},
+    systemd::RestartCapability,
+};
 
 /// The service's name, the same as the systemd unit's.
 const SERVICE_NAME: &str = "assimilate-agent";
@@ -52,38 +52,6 @@ const RESTART_DELAY: Duration = Duration::from_secs(10);
 /// How long a run of restarts counts before the SCM starts over.
 const RESTART_RESET: Duration = Duration::from_hours(24);
 
-/// `assimilate-agent service ...`.
-#[derive(clap::Subcommand)]
-pub enum Command {
-    /// Install, remove or run the agent as a Windows service.
-    Service {
-        #[command(subcommand)]
-        action: Action,
-    },
-}
-
-#[derive(clap::Subcommand)]
-pub enum Action {
-    /// Register the service, store its server URL, token and server key,
-    /// and start it. Run again to change any of them; the service is
-    /// restarted.
-    ///
-    /// The token is read from the `BORG_AGENT_TOKEN` environment variable
-    /// only: a command line can be read by other local users while it runs.
-    Install {
-        #[arg(long, env = "BORG_SERVER_URL")]
-        server_url: String,
-        /// The server's agent channel key.
-        #[arg(long, env = "BORG_SERVER_KEY")]
-        server_key: ChannelPublicKey,
-    },
-    /// Stop and remove the service and its stored configuration.
-    Uninstall,
-    /// Run as the service. Only the Service Control Manager starts this.
-    #[command(hide = true)]
-    Run,
-}
-
 #[derive(Debug, thiserror::Error)]
 pub enum ServiceError {
     #[error("Windows service error: {0}")]
@@ -93,68 +61,16 @@ pub enum ServiceError {
         context: String,
         source: std::io::Error,
     },
-    #[error("invalid service configuration {}: {source}", path.display())]
-    Config {
-        path: PathBuf,
-        source: serde_json::Error,
-    },
+    #[error(transparent)]
+    Config(#[from] ConfigError),
     #[error("%ProgramData% is not set")]
     NoProgramData,
-    #[error("set the agent token in the BORG_AGENT_TOKEN environment variable")]
-    NoToken,
-    #[error(
-        "the stored configuration {} has no valid server key; run `service install` again with \
-         --server-key",
-        path.display()
-    )]
-    NoServerKey { path: PathBuf },
 }
 
 impl ServiceError {
     fn io(context: impl Into<String>) -> impl FnOnce(std::io::Error) -> Self {
         let context = context.into();
         move |source| Self::Io { context, source }
-    }
-}
-
-/// What `install` stores for `run`.
-#[derive(Serialize, Deserialize)]
-struct StoredConfig {
-    server_url: String,
-    token: String,
-    /// Missing from configurations stored before the agent channel was
-    /// encrypted; such an agent refuses to start until installed again.
-    #[serde(default)]
-    server_key: Option<String>,
-}
-
-impl StoredConfig {
-    /// What `install` stores: the server, its key and the agent `token`,
-    /// which must be set.
-    fn install(
-        server_url: String,
-        server_key: &ChannelPublicKey,
-        token: Option<String>,
-    ) -> Result<Self, ServiceError> {
-        Ok(Self {
-            server_url,
-            token: token.ok_or(ServiceError::NoToken)?,
-            server_key: Some(server_key.to_string()),
-        })
-    }
-
-    fn endpoint(self, path: &Path) -> Result<ServerEndpoint, ServiceError> {
-        let key = self
-            .server_key
-            .and_then(|key| key.parse::<ChannelPublicKey>().ok())
-            .ok_or_else(|| ServiceError::NoServerKey {
-                path: path.to_path_buf(),
-            })?;
-        Ok(ServerEndpoint {
-            url: self.server_url,
-            token: self.token,
-            key,
-        })
     }
 }
 
@@ -190,7 +106,7 @@ impl ServicePaths {
 ///
 /// Fails if the service can't be installed, removed or run, or its
 /// configuration can't be written or read.
-pub fn run(command: Command) -> Result<(), ServiceError> {
+pub fn run(command: Command) -> Result<ExitCode, ServiceError> {
     let Command::Service { action } = command;
     if !matches!(action, Action::Run) {
         tracing_subscriber::fmt()
@@ -212,6 +128,7 @@ pub fn run(command: Command) -> Result<(), ServiceError> {
         }
         Action::Run => Ok(service_dispatcher::start(SERVICE_NAME, ffi_service_main)?),
     }
+    .map(|()| ExitCode::SUCCESS)
 }
 
 fn runtime() -> Result<tokio::runtime::Runtime, ServiceError> {
@@ -225,10 +142,7 @@ async fn write_config(config: &StoredConfig) -> Result<(), ServiceError> {
     let paths = ServicePaths::from_env()?;
     create_service_dir(&paths.dir).await?;
     let path = paths.config();
-    let json = serde_json::to_vec_pretty(config).map_err(|source| ServiceError::Config {
-        path: path.clone(),
-        source,
-    })?;
+    let json = config.to_json(&path)?;
     let context = format!("writing {}", path.display());
     let file = create_private_file(&path, Access::SystemAndAdministrators)
         .await
@@ -254,10 +168,7 @@ async fn read_config(path: &Path) -> Result<StoredConfig, ServiceError> {
     let json = tokio::fs::read(path)
         .await
         .map_err(ServiceError::io(format!("reading {}", path.display())))?;
-    serde_json::from_slice(&json).map_err(|source| ServiceError::Config {
-        path: path.to_path_buf(),
-        source,
-    })
+    Ok(StoredConfig::from_json(&json, path)?)
 }
 
 fn service_info() -> Result<ServiceInfo, ServiceError> {
@@ -606,66 +517,6 @@ mod tests {
         assert!(actions.iter().all(|action| {
             action.action_type == ServiceActionType::Restart && action.delay == RESTART_DELAY
         }));
-    }
-
-    #[tokio::test]
-    async fn the_stored_config_round_trips() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("agent.json");
-        let key = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
-        let json = serde_json::to_vec(&StoredConfig {
-            server_url: "wss://backup.example".to_owned(),
-            token: "t0ken".to_owned(),
-            server_key: Some(key.to_owned()),
-        })
-        .unwrap();
-        tokio::fs::write(&path, json).await.unwrap();
-
-        let endpoint = read_config(&path).await.unwrap().endpoint(&path).unwrap();
-
-        assert_eq!(endpoint.url, "wss://backup.example");
-        assert_eq!(endpoint.token, "t0ken");
-        assert_eq!(endpoint.key.to_string(), key);
-    }
-
-    #[test]
-    fn install_stores_the_token_from_the_environment() {
-        let key: ChannelPublicKey = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
-            .parse()
-            .unwrap();
-
-        let config = StoredConfig::install(
-            "wss://backup.example".to_owned(),
-            &key,
-            Some("t0ken".to_owned()),
-        )
-        .unwrap();
-        let missing = StoredConfig::install("wss://backup.example".to_owned(), &key, None);
-
-        assert_eq!(config.token, "t0ken");
-        assert_eq!(config.server_key, Some(key.to_string()));
-        assert!(matches!(missing, Err(ServiceError::NoToken)));
-    }
-
-    #[tokio::test]
-    async fn a_config_stored_without_a_server_key_is_refused() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("agent.json");
-        tokio::fs::write(
-            &path,
-            br#"{"server_url":"wss://backup.example","token":"t0ken"}"#,
-        )
-        .await
-        .unwrap();
-
-        let error = read_config(&path)
-            .await
-            .unwrap()
-            .endpoint(&path)
-            .err()
-            .unwrap();
-
-        assert!(error.to_string().contains("--server-key"), "{error}");
     }
 
     #[tokio::test]

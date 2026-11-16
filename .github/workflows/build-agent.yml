@@ -17,7 +17,8 @@ env:
   RUST_STABLE_TOOLCHAIN: "1.98"
 # Builds the agent natively for every architecture Dockerfile.server bundles and
 # uploads each binary as an agent-<arch> artifact for the stage-agent-binaries
-# action, plus the standalone Windows agent package (agent-windows-x86_64).
+# action, plus the standalone Windows (agent-windows-x86_64) and macOS
+# (agent-macos-<arch>) agent packages.
 jobs:
   build:
     name: Build Agent (${{ matrix.arch }})
@@ -167,4 +168,142 @@ jobs:
         with:
           name: agent-windows-x86_64
           path: dist/*.zip
+          if-no-files-found: error
+  # The standalone macOS agents: assimilate-agent with the borg pinned for
+  # macOS in desktop/bundle.toml, as one tarball per architecture (see
+  # docs/agents.md). Like the Windows one, they aren't bundled into the server
+  # image, which only deploys to Linux hosts. macos-latest runs on Apple
+  # silicon, so only that architecture runs here; the Intel agent is
+  # cross-compiled and checked for its architecture.
+  build-macos:
+    name: Build Agent (${{ matrix.arch }} macOS)
+    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: aarch64
+            target: aarch64-apple-darwin
+          - arch: x86_64
+            target: x86_64-apple-darwin
+    env:
+      TARGET: ${{ matrix.target }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Compute agent version
+        id: crate-version
+        if: inputs.version == ''
+        uses: ./.github/actions/crate-version
+        with:
+          crate: agent
+      - name: Resolve version
+        env:
+          VERSION: ${{ inputs.version || steps.crate-version.outputs.version }}
+        run: echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install Rust stable
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: ${{ env.RUST_STABLE_TOOLCHAIN }}
+          target: ${{ matrix.target }}
+      - name: Build agent
+        env:
+          APP_VERSION_OVERRIDE: ${{ env.VERSION }}
+        run: cargo "+${RUST_STABLE_TOOLCHAIN}" build --release --locked -p agent --target "$TARGET"
+      - name: Package the agent with borg
+        run: >
+          python3 scripts/desktop_bundle.py stage-agent --target "$TARGET" --agent "target/$TARGET/release/agent" --out "dist/assimilate-agent-${VERSION}-${TARGET}.tar.gz"
+      - name: Check the package
+        run: |
+          unpacked="$RUNNER_TEMP/agent"
+          mkdir "$unpacked"
+          tar -xzf dist/*.tar.gz -C "$unpacked"
+          test -f "$unpacked/assimilate-agent/licenses/borgbackup.txt"
+          case "$TARGET" in
+            aarch64-*) arch=arm64 ;;
+            *) arch=x86_64 ;;
+          esac
+          for binary in assimilate-agent borg/borg.exe; do
+            lipo -archs "$unpacked/assimilate-agent/$binary" | grep -qw "$arch"
+          done
+      # The rest runs the agent itself, which the Intel one can't here.
+      - name: Smoke-test the package
+        if: matrix.arch == 'aarch64'
+        run: |
+          sudo mkdir -p /usr/local/lib
+          # Installed the documented way: owned by root, as the daemon,
+          # which runs as root, requires.
+          sudo tar -xzf dist/*.tar.gz --no-same-owner -C /usr/local/lib
+          agent=/usr/local/lib/assimilate-agent
+          "$agent/assimilate-agent" --version
+          "$agent/borg/borg.exe" --version
+      # The packaged borg backs a folder up and restores it, the work the
+      # agent asks of it.
+      - name: Back up and restore with the packaged borg
+        if: matrix.arch == 'aarch64'
+        run: |
+          borg=/usr/local/lib/assimilate-agent/borg/borg.exe
+          work="$RUNNER_TEMP/borg-roundtrip"
+          mkdir -p "$work/source" "$work/restore"
+          echo "hello from macOS" > "$work/source/file.txt"
+          export BORG_PASSPHRASE=ci-smoke-test BORG_BASE_DIR="$work/base"
+          "$borg" init --encryption=repokey "$work/repo"
+          "$borg" create "$work/repo::smoke" "$work/source"
+          (cd "$work/restore" && "$borg" extract "$work/repo::smoke")
+          diff "$work/source/file.txt" "$work/restore${work}/source/file.txt"
+      # The daemon the documented way: root installs it, launchd runs it as
+      # root and starts it again after it exits, before it is removed. Nothing
+      # listens on the server URL; the agent keeps retrying it, so it stays
+      # running.
+      - name: Install, start, restart and remove the agent daemon
+        if: matrix.arch == 'aarch64'
+        run: |
+          agent=/usr/local/lib/assimilate-agent/assimilate-agent
+          label=com.assimilate.agent
+          export BORG_SERVER_URL=http://127.0.0.1:9
+          export BORG_AGENT_TOKEN=ci-smoke-test-token
+          export BORG_SERVER_KEY=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+          sudo --preserve-env=BORG_SERVER_URL,BORG_AGENT_TOKEN,BORG_SERVER_KEY "$agent" service install
+          daemon_pid() {
+            sudo launchctl print "system/$label" | awk '$1 == "pid" { print $3 }'
+          }
+          wait_for() {
+            for _ in $(seq 60); do
+              if "$@"; then return 0; fi
+              sleep 1
+            done
+            return 1
+          }
+          logged() { sudo grep -q 'service starting' /var/log/assimilate-agent.log; }
+          running() { [ -n "$(daemon_pid)" ]; }
+          failed=0
+          wait_for logged && wait_for running || failed=1
+          if [ "$failed" = 0 ]; then
+            before=$(daemon_pid)
+            sudo kill -9 "$before"
+            # launchd starts it again after its throttle interval (10 s).
+            restarted() { [ -n "$(daemon_pid)" ] && [ "$(daemon_pid)" != "$before" ]; }
+            wait_for restarted || failed=2
+          fi
+          if [ "$failed" != 0 ]; then
+            sudo launchctl print "system/$label" || true
+            sudo cat /var/log/assimilate-agent.log || true
+          fi
+          sudo "$agent" service uninstall
+          test ! -e /Library/LaunchDaemons/$label.plist
+          test ! -e "/Library/Application Support/Assimilate/agent/agent.json"
+          if ! sudo launchctl print "system/$label" > /dev/null 2>&1; then :; else
+            echo "the daemon is still loaded after uninstall"; failed=3
+          fi
+          exit "$failed"
+      - name: Upload the agent package
+        uses: actions/upload-artifact@v4
+        with:
+          name: agent-macos-${{ matrix.arch }}
+          path: dist/*.tar.gz
           if-no-files-found: error

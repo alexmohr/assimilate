@@ -569,6 +569,35 @@ class StageAgentTest(unittest.TestCase):
             assert zipped.read("assimilate-agent/assimilate-agent.exe") == b"agent"
             assert zipped.read("assimilate-agent/borg/borg.exe") == b"borg"
 
+    def test_packs_a_macos_agent_as_a_tarball_that_keeps_executable_bits(self) -> None:
+        out = self.root / "dist" / "assimilate-agent.tar.gz"
+        db.stage_agent(
+            target="aarch64-apple-darwin",
+            downloads=self.downloads({"borg.exe": b"borg"}),
+            agent=self.agent,
+            cache=self.root / "cache",
+            out=out,
+        )
+
+        with tarfile.open(out) as packed:
+            members = {member.name: member for member in packed.getmembers() if member.isfile()}
+            assert sorted(members) == [
+                "assimilate-agent/assimilate-agent",
+                "assimilate-agent/borg/borg.exe",
+                "assimilate-agent/licenses/borgbackup.txt",
+            ]
+            assert members["assimilate-agent/assimilate-agent"].mode & 0o111 == 0o111
+
+    def test_refuses_an_archive_that_is_neither_zip_nor_tarball(self) -> None:
+        with expect_error(db.BundleError, "agent.rar is neither a .zip nor a .tar.gz"):
+            db.stage_agent(
+                target=WINDOWS,
+                downloads=self.downloads({"borg.exe": b""}),
+                agent=self.agent,
+                cache=self.root / "cache",
+                out=self.root / "agent.rar",
+            )
+
     def test_refuses_a_borg_archive_without_the_binary(self) -> None:
         with expect_error(db.BundleError, "borg.zip has no borg.exe"):
             self.stage(self.downloads({"borg": b""}))

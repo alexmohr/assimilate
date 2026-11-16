@@ -32,7 +32,8 @@ libxml2's license text.
 
 `stage-agent` writes the standalone agent's release archive for a target
 instead: the agent with the same pinned borg and its license texts, which
-the Windows agent ships with since Windows has no borg package to install.
+the Windows and macOS agents ship with since neither has a borg package to
+install. The archive is a .zip or a .tar.gz, as `--out` is named.
 
     python3 scripts/desktop_bundle.py stage-agent --target x86_64-pc-windows-msvc \\
         --agent target/release/agent.exe --out dist/assimilate-agent.zip
@@ -377,10 +378,13 @@ AGENT_ARCHIVE_DIR = "assimilate-agent"
 def stage_agent(
     *, target: str, downloads: TargetDownloads, agent: Path, cache: Path, out: Path
 ) -> None:
-    """Writes `out`, a .zip holding the agent for `target` as
-    assimilate-agent[.exe], borg under borg/ (where the agent looks for it
-    next to itself) and the license texts under licenses/, all below one
-    top-level directory."""
+    """Writes `out`, a .zip (Windows) or .tar.gz (macOS, whose archives keep
+    the executable bits and links borg's build relies on) holding the agent
+    for `target` as assimilate-agent[.exe], borg under borg/ (where the agent
+    looks for it next to itself) and the license texts under licenses/, all
+    below one top-level directory."""
+    if not out.name.endswith((".zip", ".tar.gz")):
+        raise BundleError(f"{out.name} is neither a .zip nor a .tar.gz")
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp) / AGENT_ARCHIVE_DIR
         borg_dir = root / "borg"
@@ -395,6 +399,10 @@ def stage_agent(
         _install_binary(agent, root / f"assimilate-agent{exe_suffix(target)}")
 
         out.parent.mkdir(parents=True, exist_ok=True)
+        if out.name.endswith(".tar.gz"):
+            with tarfile.open(out, "w:gz") as packed:
+                packed.add(root, arcname=AGENT_ARCHIVE_DIR)
+            return
         with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as zipped:
             for path in sorted(root.rglob("*")):
                 if path.is_file():
@@ -478,7 +486,7 @@ def main(argv: list[str] | None = None) -> int:
         "--libxml2", type=Path, help="the libxml2.so.2 built by scripts/build-libxml2.sh"
     )
     agent_cmd.add_argument("--agent", type=Path, required=True)
-    agent_cmd.add_argument("--out", type=Path, required=True, help="the .zip to write")
+    agent_cmd.add_argument("--out", type=Path, required=True, help="the .zip or .tar.gz to write")
     args = parser.parse_args(argv)
 
     try:

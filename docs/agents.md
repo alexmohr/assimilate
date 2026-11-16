@@ -195,6 +195,40 @@ Running `assimilate-agent.exe` without `service` starts the agent in the console
 
 On Windows the agent runs [hook commands](scheduling.md#pre-and-post-backup-commands) with `cmd.exe`. [VM snapshots](vm-snapshots.md) and [database dumps](database-dumps.md) need a Linux agent: a Windows agent fails a backup that asks for either, saying why. **Deploy agent** installs on Linux only.
 
+### macOS
+
+Download `assimilate-agent-<version>-aarch64-apple-darwin.tar.gz` (Apple silicon) or `assimilate-agent-<version>-x86_64-apple-darwin.tar.gz` (Intel) from the assets of a [GitHub release](https://github.com/alexmohr/assimilate/releases). The archive holds `assimilate-agent`, BorgBackup's own macOS build of borg 1.4 in a `borg` folder next to it, and borg's license text. The agent uses that borg unless `BORG_BINARY` names another one. The release's `SHA256SUMS` file lists it, and it carries GitHub build provenance, which `gh attestation verify <file> --repo alexmohr/assimilate` checks.
+
+The daemon runs as root, so the agent and its folder must be owned by root and writable by no one else; `service install` refuses to use any other. Extract the archive with `sudo`, then run the agent as a launchd daemon:
+
+```bash
+sudo mkdir -p /usr/local/lib
+sudo tar -xzf assimilate-agent-<version>-aarch64-apple-darwin.tar.gz --no-same-owner -C /usr/local/lib
+sudo xattr -dr com.apple.quarantine /usr/local/lib/assimilate-agent
+sudo BORG_SERVER_URL=https://your-server BORG_AGENT_TOKEN=<token> BORG_SERVER_KEY=<server key> \
+  /usr/local/lib/assimilate-agent/assimilate-agent service install
+```
+
+The `xattr` command clears the quarantine flag macOS puts on a file downloaded with a browser; without it, Gatekeeper blocks the unsigned agent. `service install` writes `/Library/LaunchDaemons/com.assimilate.agent.plist`, which runs the agent at boot with `KeepAlive`, so launchd starts it again after every exit, and loads it. The token is read from `BORG_AGENT_TOKEN` only, never from the command line, which other local users can read while it runs.
+
+The daemon keeps the server URL, token and server key in `/Library/Application Support/Assimilate/agent/agent.json`, which only root can open, and logs to `/var/log/assimilate-agent.log`, which only root can read. macOS doesn't rotate that file; add it to `/etc/newsyslog.d` if it grows. Run `service install` again to change the URL, token or server key; the daemon restarts with them. `service uninstall` unloads the daemon and removes its property list and stored configuration, but leaves the log. Both need `sudo`.
+
+Running `assimilate-agent` without `service` starts the agent in the terminal instead, with `BORG_SERVER_URL`, `BORG_AGENT_TOKEN` and `BORG_SERVER_KEY` read from the environment as on Linux. Such an agent can't be restarted from the dashboard.
+
+#### Full Disk Access
+
+macOS stops even root from reading folders such as `~/Library`, Mail, Messages, Safari and Photos until the program is allowed to. Without that, borg skips them with `Operation not permitted`. Grant **Full Disk Access** to the agent and to the borg it runs:
+
+1. Open **System Settings > Privacy & Security > Full Disk Access**.
+2. Click **+**, press <kbd>Cmd</kbd>+<kbd>Shift</kbd>+<kbd>G</kbd>, and add `/usr/local/lib/assimilate-agent/assimilate-agent`, then `/usr/local/lib/assimilate-agent/borg/borg.exe` the same way.
+3. Restart the daemon so it picks the permission up: `sudo launchctl kickstart -k system/com.assimilate.agent`.
+
+macOS may ask for the grant again after you replace the agent with a newer one.
+
+#### What macOS agents don't do
+
+[VM snapshots](vm-snapshots.md) and [filesystem snapshots](filesystem-snapshots.md) need a Linux agent: a macOS agent fails a backup that asks for either, saying why. [Database dumps](database-dumps.md) work as long as the dump's client tools are installed; the daemon's `PATH` includes `/opt/homebrew/bin` and `/usr/local/bin`, so Homebrew's are found. **Deploy agent** installs on Linux only: install a macOS agent as above. [SSH agent forwarding](ssh-agent-forwarding.md) works as on Linux, through a temporary unix socket.
+
 ## Encrypted connection
 
 Every connection between an agent and the server is encrypted end to end with the [Noise protocol](https://noiseprotocol.org/) (`Noise_NK_25519_ChaChaPoly_BLAKE2s`), inside the WebSocket, whether or not TLS is used and wherever a reverse proxy ends it. The agent's main connection and every [SSH agent forwarding](ssh-agent-forwarding.md) relay open with the same handshake.
@@ -327,7 +361,7 @@ The dashboard can send a remote restart command to a connected agent.
 **Requirements:**
 
 - The agent must be currently connected (online).
-- The agent must report the `supports_restart` capability. This is available when the agent is managed by systemd and can signal its own service manager, or runs as the Windows service, which the Service Control Manager starts again after it exits.
+- The agent must report the `supports_restart` capability. This is available when the agent is managed by systemd and can signal its own service manager, runs as the Windows service, which the Service Control Manager starts again after it exits, or runs as the macOS launchd daemon, which launchd starts again after it exits.
 
 To restart:
 

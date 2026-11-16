@@ -116,6 +116,14 @@ describe('useHostSources', () => {
     expect(hostsWithout('databases').map((h) => h.id)).toEqual([1])
   })
 
+  it('names the hosts whose lists could not be read at all', async () => {
+    included = { 'host-1': [[], []] }
+    const { unreadable } = useHostSources(() => [host(1), host(2)], admin)
+    await flushPromises()
+
+    expect([...unreadable.value]).toEqual([2])
+  })
+
   it('reads only the VMs for a viewer who may not read database lists', async () => {
     included = { 'host-1': [[false], [false]] }
     const { counts, hostsWithout } = useHostSources(() => [host(1)], notAdmin)

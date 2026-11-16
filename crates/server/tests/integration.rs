@@ -8023,6 +8023,151 @@ async fn test_import_config_warns_on_missing_repo(pool: sqlx::PgPool) {
     assert_ne!(warnings.len(), 0);
 }
 
+/// An export from before files modes that sets only some of a schedule's
+/// own file fields is imported as "own", and the host values that schedule
+/// used to inherit are written into it, as the migration does: its paths
+/// when the export gives none, and its excludes, file change patterns and
+/// commands combined with the schedule's. Without that it would back up
+/// nothing at all.
+#[sqlx::test(migrations = "./migrations")]
+async fn importing_an_older_export_keeps_what_its_backups_read(pool: sqlx::PgPool) {
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+    insert_test_repo(&pool, "older-repo").await;
+
+    let full: i64 = sqlx::query_scalar(
+        "INSERT INTO agents (hostname, agent_token_hash, default_backup_paths, \
+         default_exclude_patterns, default_file_change_patterns_raw, default_pre_backup_commands, \
+         default_post_backup_commands) VALUES ('older-full', 'real-token', ARRAY['/etc', '/srv'], \
+         ARRAY['*.cache'], '/var/** ignore', '[{\"command\": \"stop app\"}]', '[{\"command\": \
+         \"start app\"}]') RETURNING id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let bare: i64 = sqlx::query_scalar(
+        "INSERT INTO agents (hostname, agent_token_hash) VALUES ('older-bare', 'real-token') \
+         RETURNING id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    // No files_mode: written before there was one.
+    let payload = json!({
+        "version": 1,
+        "exported_at": "2026-01-01T00:00:00Z",
+        "hosts": [],
+        "schedules": [{
+            "name": "older-schedule",
+            "schedule_type": "backup",
+            "cron_expression": "0 3 * * *",
+            "enabled": false,
+            "canary_enabled": false,
+            "execution_mode": "parallel",
+            "on_failure": "stop",
+            "exclude_patterns_raw": "*.tmp",
+            "ignore_global_excludes": false,
+            "keep_hourly": 0,
+            "keep_daily": 7,
+            "keep_weekly": 4,
+            "keep_monthly": 6,
+            "keep_yearly": 0,
+            "compact_enabled": true,
+            "rate_limit_kbps": null,
+            "pre_backup_commands": ["sync"],
+            "post_backup_commands": [],
+            "repo_name": "older-repo",
+            "backup_sources": [],
+            "targets": [
+                { "hostname": "older-full", "execution_order": 0, "backup_sources": [],
+                  "exclude_patterns": "" },
+                { "hostname": "older-bare", "execution_order": 1, "backup_sources": [],
+                  "exclude_patterns": "" }
+            ]
+        }]
+    });
+    let resp = oneshot(
+        &mut app,
+        json_request("POST", "/api/config/import", Some(payload)),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let (schedule_id, files_mode): (i64, String) =
+        sqlx::query_as("SELECT id, files_mode FROM schedules WHERE name = 'older-schedule'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(files_mode, "own");
+
+    let resp = oneshot(
+        &mut app,
+        get_request(&format!("/api/schedules/{schedule_id}/sources")),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let sources = body_json(resp).await;
+    let for_host = |field: &str, agent_id: i64| {
+        sources
+            .get(field)
+            .unwrap()
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|entry| entry.get("agent_id").unwrap().as_i64() == Some(agent_id))
+            .cloned()
+    };
+
+    // The full host's own values, as the old merge read them.
+    assert_eq!(
+        for_host("backup_sources_per_agent", full)
+            .unwrap()
+            .get("paths")
+            .unwrap(),
+        &json!(["/etc", "/srv"])
+    );
+    assert_eq!(
+        for_host("exclude_patterns_per_agent", full)
+            .unwrap()
+            .get("raw_text")
+            .unwrap(),
+        &json!("*.cache\n*.tmp")
+    );
+    assert_eq!(
+        for_host("file_change_patterns_per_agent", full)
+            .unwrap()
+            .get("raw_text")
+            .unwrap(),
+        &json!("/var/** ignore")
+    );
+    let commands = for_host("commands_per_agent", full).unwrap();
+    let names = |list: &serde_json::Value| -> Vec<String> {
+        list.as_array()
+            .unwrap()
+            .iter()
+            .map(|c| c.get("command").unwrap().as_str().unwrap().to_owned())
+            .collect()
+    };
+    assert_eq!(
+        names(commands.get("pre_backup_commands").unwrap()),
+        ["stop app", "sync"]
+    );
+    assert_eq!(
+        names(commands.get("post_backup_commands").unwrap()),
+        ["start app"]
+    );
+
+    // A host with nothing of its own adds nothing, and read no paths before.
+    for field in [
+        "backup_sources_per_agent",
+        "exclude_patterns_per_agent",
+        "file_change_patterns_per_agent",
+        "commands_per_agent",
+    ] {
+        assert!(for_host(field, bare).is_none(), "{field}");
+    }
+}
+
 #[sqlx::test(migrations = "./migrations")]
 async fn test_import_config_creates_schedule_with_matching_repo(pool: sqlx::PgPool) {
     create_test_user_and_session(&pool).await;

@@ -742,6 +742,7 @@ async fn import_schedule(
         on_failure: sched.on_failure,
     };
 
+    let older_own = sched.files_mode.is_none() && params.files_mode == ScheduleFilesMode::Own;
     let new_sched = db::insert_schedule(pool, repo_id, &params, None).await?;
     db::insert_schedule_targets(pool, new_sched.id, &target_ids).await?;
 
@@ -767,8 +768,111 @@ async fn import_schedule(
     }
 
     insert_schedule_target_overrides(pool, new_sched.id, sched, hostname_to_id).await?;
+    if older_own {
+        bake_inherited_host_files(
+            pool,
+            new_sched.id,
+            sched,
+            &pre_backup_commands,
+            &post_backup_commands,
+            hostname_to_id,
+        )
+        .await?;
+    }
 
     result.schedules_created = result.schedules_created.saturating_add(1);
+    Ok(())
+}
+
+/// Writes into an older export's "own" schedule the host values it used to
+/// inherit, as the files-mode migration does for a schedule already stored.
+///
+/// Before files modes, a schedule's own paths replaced the host's but its
+/// excludes, file change patterns and commands were combined with the host's,
+/// and a schedule with no paths took the host's. An "own" schedule now reads
+/// only its own set, so for each target host this writes, per host, the
+/// host's paths where the export gives none and the combined excludes, file
+/// change patterns and commands where the host adds any. Include patterns
+/// were never inherited. Every imported backup reads what it read before.
+async fn bake_inherited_host_files(
+    pool: &sqlx::PgPool,
+    schedule_id: i64,
+    sched: &ScheduleExport,
+    pre_backup_commands: &[HookCommand],
+    post_backup_commands: &[HookCommand],
+    hostname_to_id: &HashMap<(String, Option<String>), i64>,
+) -> Result<(), ApiError> {
+    fn joined(parts: [&str; 2]) -> String {
+        parts
+            .into_iter()
+            .filter(|part| !part.is_empty())
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+    for target in &sched.targets {
+        let key = (target.hostname.clone(), target.domain.clone());
+        let Some(&agent_id) = hostname_to_id.get(&key) else {
+            continue;
+        };
+        let host = db::get_agent_by_id(pool, agent_id).await?;
+
+        if target.backup_sources.is_empty() && sched.backup_sources.is_empty() {
+            for (i, path) in host.default_backup_paths.iter().enumerate() {
+                let sort_order = i32::try_from(i).unwrap_or(0);
+                db::insert_backup_source_for_schedule_agent(
+                    pool,
+                    schedule_id,
+                    agent_id,
+                    path,
+                    sort_order,
+                )
+                .await?;
+            }
+        }
+
+        if !host.default_exclude_patterns.is_empty() {
+            let own = if target.exclude_patterns.is_empty() {
+                sched.exclude_patterns_raw.as_str()
+            } else {
+                target.exclude_patterns.as_str()
+            };
+            let hosts = host.default_exclude_patterns.join("\n");
+            db::upsert_per_agent_excludes_raw(pool, schedule_id, agent_id, &joined([&hosts, own]))
+                .await?;
+        }
+
+        if !host.default_file_change_patterns_raw.is_empty() {
+            let own = if target.file_change_patterns.is_empty() {
+                sched.file_change_patterns_raw.as_str()
+            } else {
+                target.file_change_patterns.as_str()
+            };
+            db::upsert_per_agent_file_change_patterns_raw(
+                pool,
+                schedule_id,
+                agent_id,
+                &joined([own, &host.default_file_change_patterns_raw]),
+            )
+            .await?;
+        }
+
+        if !host.default_pre_backup_commands.is_empty()
+            || !host.default_post_backup_commands.is_empty()
+        {
+            let pre: Vec<HookCommand> = host
+                .default_pre_backup_commands
+                .iter()
+                .chain(pre_backup_commands)
+                .cloned()
+                .collect();
+            let post: Vec<HookCommand> = post_backup_commands
+                .iter()
+                .chain(host.default_post_backup_commands.iter())
+                .cloned()
+                .collect();
+            db::upsert_per_agent_commands(pool, schedule_id, agent_id, &pre, &post).await?;
+        }
+    }
     Ok(())
 }
 

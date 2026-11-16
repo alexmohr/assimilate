@@ -225,7 +225,7 @@ Global excludes apply in every mode unless **Advanced → Ignore global excludes
 With **Own files** on a multi-host schedule, turn on **Different paths per host** to give each host its own paths; the excludes, patterns and commands stay shared.
 
 !!! note "Schedules from before files modes"
-    A schedule that set any paths, excludes, include patterns, file change patterns or commands of its own became **Own files**, with the host values it used to inherit written into its own set, so it reads exactly what it read before. Where its hosts had different values, they are kept per host and listed under the form; **Use the shared values** drops them.
+    A schedule that set any paths, excludes, include patterns, file change patterns or commands of its own became **Own files**, with the host values it used to inherit written into its own set, so it reads exactly what it read before. Where its hosts had different values, they are kept per host and listed under the form; **Use the shared values** drops them. Importing a configuration exported before files modes does the same: each schedule gets the mode and the inherited host values it would have had on an upgrade.
 
 ### Virtual machines and databases
 

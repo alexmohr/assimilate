@@ -289,13 +289,14 @@ describe('sourcesProblem', () => {
     expect(sourcesProblem(form({ files_mode: 'host' }), shared, [1])).toBeNull()
   })
 
-  it("needs the first host to list paths when it takes each host's files", () => {
-    const paths: Record<number, string[]> = { 1: [], 2: ['/etc'] }
+  it("needs every host to list paths when it takes each host's files", () => {
+    const paths: Record<number, string[]> = { 1: [], 2: ['/etc'], 4: ['/srv'] }
     const lookup = (id: number) => paths[id]
-    expect(sourcesProblem(form({ files_mode: 'host' }), shared, [1, 2], lookup)).toBe(
-      "paths on its first host, or its own files: that host's Sources list none",
-    )
-    expect(sourcesProblem(form({ files_mode: 'host' }), shared, [2, 1], lookup)).toBeNull()
+    const bare = "paths on every host, or its own files: a host's Sources list none"
+    expect(sourcesProblem(form({ files_mode: 'host' }), shared, [1, 2], lookup)).toBe(bare)
+    // Not only the first host.
+    expect(sourcesProblem(form({ files_mode: 'host' }), shared, [2, 1], lookup)).toBe(bare)
+    expect(sourcesProblem(form({ files_mode: 'host' }), shared, [2, 4], lookup)).toBeNull()
     // A host it knows nothing about is left to the server.
     expect(sourcesProblem(form({ files_mode: 'host' }), shared, [3], lookup)).toBeNull()
   })

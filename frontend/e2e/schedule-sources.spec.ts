@@ -187,7 +187,8 @@ test.describe('Schedule sources', () => {
     const id = await pausedSchedule(
       page,
       `e2e vms missing ${Date.now()}`,
-      { vm_snapshot_enabled: true },
+      // No files: web-server-01 lists no paths of its own to take.
+      { files_mode: 'off', vm_snapshot_enabled: true },
       ['db-server-01', 'web-server-01'],
     )
     try {

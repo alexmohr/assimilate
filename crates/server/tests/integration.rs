@@ -6257,6 +6257,60 @@ async fn test_schedule_fs_snapshot_settings_are_saved_and_validated(pool: sqlx::
     assert_eq!(persisted, ("best_effort".to_owned(), 100));
 }
 
+/// A schedule taking each host's files reads every host's own paths, so each
+/// host has to list some. Before this, only the first host was checked, and
+/// a later one with none backed up nothing.
+#[sqlx::test(migrations = "./migrations")]
+async fn creating_a_schedule_of_each_hosts_files_needs_every_host_to_list_paths(
+    pool: sqlx::PgPool,
+) {
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+
+    let with_paths: i64 = sqlx::query_scalar(
+        "INSERT INTO agents (hostname, agent_token_hash, default_backup_paths) VALUES \
+         ('create-paths-host', 'hash', ARRAY['/etc']) RETURNING id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let without_paths: i64 = sqlx::query_scalar(
+        "INSERT INTO agents (hostname, agent_token_hash) VALUES ('create-bare-host', 'hash') \
+         RETURNING id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let repo_id = insert_test_repo(&pool, "create-paths-repo").await;
+    let create = |agent_ids: &[i64]| {
+        json_request(
+            "POST",
+            "/api/schedules",
+            Some(json!({
+                "agent_ids": agent_ids,
+                "repo_id": repo_id,
+                "cron_expression": "0 3 * * *",
+                "enabled": false,
+                "files_mode": "host",
+            })),
+        )
+    };
+
+    // Not only the first host: a later one that lists none is refused too.
+    let resp = oneshot(&mut app, create(&[with_paths, without_paths])).await;
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    let resp = oneshot(&mut app, create(&[without_paths, with_paths])).await;
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+
+    sqlx::query("UPDATE agents SET default_backup_paths = ARRAY['/srv'] WHERE id = $1")
+        .bind(without_paths)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let resp = oneshot(&mut app, create(&[with_paths, without_paths])).await;
+    assert_eq!(resp.status(), StatusCode::CREATED);
+}
+
 /// An edit is held to the same rule as a create: a backup schedule has to
 /// be left with something to back up. Before this, only creating one was
 /// checked, so a schedule could be edited into reading nothing at all.

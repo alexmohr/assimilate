@@ -101,9 +101,9 @@ const REPOS = [
   },
 ]
 
-function setup(repos: unknown[] = REPOS): void {
+function setup(repos: unknown[] = REPOS, agents: unknown[] = AGENTS): void {
   mockApiClient.get.mockImplementation((url: string) => {
-    if (url === '/agents') return Promise.resolve({ data: AGENTS })
+    if (url === '/agents') return Promise.resolve({ data: agents })
     if (url === '/repos') return Promise.resolve({ data: repos })
     // The Sources step counts what each host includes, to warn about none.
     if (url.endsWith('/vms')) return Promise.resolve({ data: { vms: [] } })
@@ -407,6 +407,18 @@ describe('ScheduleCreateView', () => {
     expect(wrapper.text()).toContain('virtual machines or databases, since it reads no files')
     await toggleNamed(wrapper, 'Databases', true)
     expect(wrapper.text()).not.toContain('since it reads no files')
+  })
+
+  it('holds the Sources step while its first host lists no paths of its own', async () => {
+    setup(REPOS, [{ ...AGENTS[0], default_backup_paths: [] }, AGENTS[1]])
+    const wrapper = renderWithPlugins(ScheduleCreateView)
+    await flushPromises()
+    await fillBasicsAndContinue(wrapper)
+    await selectFirstAgent(wrapper)
+
+    expect(wrapper.text()).toContain("that host's Sources list none")
+    await chooseFilesMode(wrapper, 'Own files')
+    expect(wrapper.text()).not.toContain("that host's Sources list none")
   })
 
   it('keeps the create action out of reach while any step is unanswered', async () => {

@@ -20,16 +20,24 @@ async function hostId(page: Page, hostname: string): Promise<number> {
   return agent!.id
 }
 
-async function pausedSchedule(page: Page, name: string): Promise<number> {
+async function pausedSchedule(
+  page: Page,
+  name: string,
+  extra: Record<string, unknown> = {},
+  hostnames: string[] = ['db-server-01'],
+): Promise<number> {
+  const agentIds: number[] = []
+  for (const hostname of hostnames) agentIds.push(await hostId(page, hostname))
   const created = await page.request.post('/api/schedules', {
     data: {
       name,
-      agent_ids: [await hostId(page, 'db-server-01')],
+      agent_ids: agentIds,
       repo_id: await seededIdByName(page, '/api/repos', 'server-daily'),
       cron_expression: '0 3 * * *',
       enabled: false,
       files_mode: 'host',
       keep_daily: 7,
+      ...extra,
     },
   })
   expect(created.ok()).toBe(true)
@@ -115,6 +123,85 @@ test.describe('Schedule sources', () => {
         files_mode: 'off',
         database_backup_enabled: true,
       })
+    } finally {
+      expect((await page.request.delete(`/api/schedules/${id}`)).ok()).toBe(true)
+    }
+  })
+
+  test('own files can give each host its own paths', async ({ page }) => {
+    await loginAsAdmin(page)
+    const db = await hostId(page, 'db-server-01')
+    const web = await hostId(page, 'web-server-01')
+    const id = await pausedSchedule(
+      page,
+      `e2e per-host files ${Date.now()}`,
+      { files_mode: 'own', backup_sources: ['/srv'] },
+      ['db-server-01', 'web-server-01'],
+    )
+    try {
+      await page.goto(`/schedules/${id}?tab=settings&section=sources`)
+      const sources = await openSettingsSection(page, 'Sources')
+      await sources.getByRole('switch', { name: 'Different paths per host' }).click()
+
+      const own = sources.locator('.own-files')
+      await own.getByRole('button', { name: 'Edit' }).click()
+      const perHost = own.getByPlaceholder('Directories to back up, one per line')
+      await expect(perHost).toHaveCount(2)
+      await perHost.nth(0).fill('/var/lib/postgresql')
+      await perHost.nth(1).fill('/var/www')
+      const [saved] = await Promise.all([
+        page.waitForResponse(
+          (resp) =>
+            resp.url().endsWith(`/api/schedules/${id}`) && resp.request().method() === 'PUT',
+        ),
+        own.getByRole('button', { name: 'Save' }).click(),
+      ])
+      expect(saved.ok()).toBe(true)
+      const body = saved.request().postDataJSON() as {
+        backup_sources: string[]
+        backup_sources_per_agent: { agent_id: number; paths: string[] }[]
+      }
+      expect(body.backup_sources).toEqual([])
+      expect(
+        Object.fromEntries(body.backup_sources_per_agent.map((e) => [e.agent_id, e.paths])),
+      ).toEqual({ [db]: ['/var/lib/postgresql'], [web]: ['/var/www'] })
+
+      // Each host's row of the table reads its own paths.
+      const table = sources.locator('.data-table')
+      await expect(table.locator('tr', { hasText: 'db-server-01' })).toContainText(
+        '/var/lib/postgresql',
+      )
+      await expect(
+        table.locator('tr', { hasText: /web-server-01|Production Web Server/ }),
+      ).toContainText('/var/www')
+    } finally {
+      expect((await page.request.delete(`/api/schedules/${id}`)).ok()).toBe(true)
+    }
+  })
+
+  // db-server-01 has domains set up (seed-demo.sh); web-server-01 has none.
+  test("a schedule taking VMs names the host that has none, on the schedule's page", async ({
+    page,
+  }) => {
+    await loginAsAdmin(page)
+    const id = await pausedSchedule(
+      page,
+      `e2e vms missing ${Date.now()}`,
+      { vm_snapshot_enabled: true },
+      ['db-server-01', 'web-server-01'],
+    )
+    try {
+      await page.goto(`/schedules/${id}`)
+      const warning = page.getByTestId('source-not-set-up-vms')
+      await expect(warning).toBeVisible({ timeout: 15_000 })
+      await expect(warning).toContainText('No virtual machines will be backed up on 1 host')
+      const hosts = warning.getByRole('link')
+      await expect(hosts).toHaveCount(1)
+      await expect(hosts).toHaveAttribute(
+        'href',
+        /^\/agents\/web-server-01\?tab=sources&section=vms/,
+      )
+      await expect(page.getByTestId('source-not-set-up-databases')).toHaveCount(0)
     } finally {
       expect((await page.request.delete(`/api/schedules/${id}`)).ok()).toBe(true)
     }

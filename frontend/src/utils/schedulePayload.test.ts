@@ -4,9 +4,11 @@
 import { describe, expect, it } from 'vitest'
 import {
   agentOverridePayload,
+  ownPathsPayload,
   primaryRepoId,
   repoTargetsProblem,
   scheduleFormPayload,
+  sourcesProblem,
 } from './schedulePayload'
 import { DEFAULT_SCHEDULE_FORM_STATE } from '../types/scheduleForm'
 import type { ScheduleAgentOverrides, ScheduleFormState } from '../types/scheduleForm'
@@ -259,5 +261,54 @@ describe('scheduleFormPayload filesystem snapshots', () => {
       fs_snapshot: 'off',
       lvm_snapshot_percent: 10,
     })
+  })
+})
+
+describe('ownPathsPayload', () => {
+  const shared = { usePerHostPaths: false, perHostSources: {} }
+
+  it('sends one shared list while paths are not split per host', () => {
+    expect(ownPathsPayload(form({ backup_sources: '/home\n\n/etc' }), shared, [1, 2])).toEqual({
+      backup_sources: ['/home', '/etc'],
+    })
+  })
+
+  it('sends one list per host instead, leaving out a host with none', () => {
+    const perHost = { usePerHostPaths: true, perHostSources: { 1: '/home', 2: '  ', 3: '/srv' } }
+    expect(ownPathsPayload(form({ backup_sources: '/ignored' }), perHost, [1, 2])).toEqual({
+      backup_sources: [],
+      backup_sources_per_agent: [{ agent_id: 1, paths: ['/home'] }],
+    })
+  })
+})
+
+describe('sourcesProblem', () => {
+  const shared = { usePerHostPaths: false, perHostSources: {} }
+
+  it("takes each host's files as they are", () => {
+    expect(sourcesProblem(form({ files_mode: 'host' }), shared, [1])).toBeNull()
+  })
+
+  it('needs a path for its own files, shared or per host', () => {
+    expect(sourcesProblem(form({ files_mode: 'own' }), shared, [1])).toBe(
+      'at least one backup path for its own files',
+    )
+    expect(
+      sourcesProblem(form({ files_mode: 'own', backup_sources: '/srv' }), shared, [1]),
+    ).toBeNull()
+    const perHost = { usePerHostPaths: true, perHostSources: { 1: '/srv' } }
+    expect(sourcesProblem(form({ files_mode: 'own' }), perHost, [1])).toBeNull()
+  })
+
+  it('needs virtual machines or databases when it reads no files', () => {
+    expect(sourcesProblem(form({ files_mode: 'off' }), shared, [1])).toBe(
+      'virtual machines or databases, since it reads no files',
+    )
+    expect(
+      sourcesProblem(form({ files_mode: 'off', vm_snapshot_enabled: true }), shared, [1]),
+    ).toBeNull()
+    expect(
+      sourcesProblem(form({ files_mode: 'off', database_backup_enabled: true }), shared, [1]),
+    ).toBeNull()
   })
 })

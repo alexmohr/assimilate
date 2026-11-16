@@ -670,10 +670,13 @@ describe('ScheduleDetailView - edit mode', () => {
      * source, db-server-01 includes one of each, and agent 99 is not in the
      * agent list at all (deleted, or not visible to this user).
      */
-    async function renderWithSourceTargets(sources: {
-      vm_snapshot_enabled: boolean
-      database_backup_enabled: boolean
-    }): Promise<ReturnType<typeof renderWithPlugins>> {
+    async function renderWithSourceTargets(
+      sources: {
+        vm_snapshot_enabled: boolean
+        database_backup_enabled: boolean
+      },
+      role: 'admin' | 'operator' = 'admin',
+    ): Promise<ReturnType<typeof renderWithPlugins>> {
       const schedule = { ...mockSchedule, ...sources }
       setupEditMode(schedule)
       const fallback = mockApiClient.get.getMockImplementation()!
@@ -697,7 +700,10 @@ describe('ScheduleDetailView - edit mode', () => {
           })
         return fallback(url)
       })
-      const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })
+      const wrapper = renderWithPlugins(ScheduleDetailView, {
+        props: { id: '1' },
+        storeState: { auth: { user: { role } } },
+      })
       await flushPromises()
       return wrapper
     }
@@ -724,6 +730,21 @@ describe('ScheduleDetailView - edit mode', () => {
       expect(notice.text()).toContain('No virtual machines will be backed up on 1 host')
       expect(notice.findAll('.dump-mismatch-host').map((a) => a.text())).toEqual(['Web Server'])
       expect(wrapper.find('[data-testid="source-not-set-up-databases"]').exists()).toBe(false)
+    })
+
+    // Reading a host's database list is admin-only; for anyone else the VM
+    // warning still works and the database one is left out, never guessed.
+    it('still names hosts with no VMs for a viewer who may not read database lists', async () => {
+      const wrapper = await renderWithSourceTargets(
+        { vm_snapshot_enabled: true, database_backup_enabled: true },
+        'operator',
+      )
+
+      const notice = wrapper.get('[data-testid="source-not-set-up-vms"]')
+      expect(notice.findAll('.dump-mismatch-host').map((a) => a.text())).toEqual(['Web Server'])
+      expect(wrapper.find('[data-testid="source-not-set-up-databases"]').exists()).toBe(false)
+      const urls = mockApiClient.get.mock.calls.map((call) => String(call[0]))
+      expect(urls.filter((url) => url.endsWith('/databases'))).toEqual([])
     })
 
     it('says nothing when the schedule itself takes neither', async () => {

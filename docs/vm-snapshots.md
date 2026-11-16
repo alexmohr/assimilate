@@ -24,6 +24,8 @@ Open the agent, then its **Sources** tab and the **Virtual machines** section.
 
 1. Choose **which domains** to stage. The domains included here are what every schedule that takes virtual machines stages; to back up none of them, choose **Only selected** and select none.
     **All except excluded** backs up every domain on the host and lets you drop individual ones; **Only selected** backs up nothing until you pick the domains you want. See [Choosing which domains to stage](#choosing-which-domains-to-stage).
+
+    Earlier versions had a host-wide **VM snapshots** on/off switch. It is gone: upgrading turns a host that had it off into **Only selected** with every domain deselected, so it still backs up no virtual machines. Select the domains you want there to start backing them up.
 2. Set the **staging directory**. It must be an absolute path; the agent creates one subdirectory per domain below it. Nothing about this path is assumed anywhere else in Assimilate.
 3. Set **new full image after** (increments per chain), the **snapshot timeout** per domain, and the **default limit per domain**.
 

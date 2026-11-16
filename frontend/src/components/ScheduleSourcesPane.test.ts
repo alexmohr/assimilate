@@ -79,8 +79,12 @@ function hostSources(byId: Record<number, { vms: number; databases: number }>): 
   })
 }
 
-function mount(props: Record<string, unknown> = {}) {
+const ADMIN = { auth: { user: { role: 'admin' } } }
+const OPERATOR = { auth: { user: { role: 'operator' } } }
+
+function mount(props: Record<string, unknown> = {}, storeState: typeof ADMIN = ADMIN) {
   return renderWithPlugins(ScheduleSourcesPane, {
+    storeState,
     props: {
       agentIds: [1, 2],
       agentLabel: (id: number) => `host-0${id}`,
@@ -516,6 +520,26 @@ describe('ScheduleSourcesPane', () => {
       const cell = wrapper.findAll('tbody tr')[0].findAll('td')[4]
       expect(cell.text()).toBe('None set up')
       expect(cell.classes()).toContain('source-missing')
+    })
+
+    // A schedule editor who is not an admin may read each host's VMs but not
+    // its database list: the table says the schedule takes databases, without
+    // a count it cannot know, and never calls that "None set up".
+    it('shows databases as taken, uncounted, for a viewer who may not read them', async () => {
+      hostSources({ 1: { vms: 0, databases: 0 }, 2: { vms: 1, databases: 1 } })
+      const wrapper = mount(
+        { form: form({ vm_snapshot_enabled: true, database_backup_enabled: true }) },
+        OPERATOR,
+      )
+      await flushPromises()
+
+      expect(getAgentDatabases).not.toHaveBeenCalled()
+      expect(previewRows(wrapper).map((row) => row.slice(3))).toEqual([
+        ['None set up', 'Yes'],
+        ['1 VM', 'Yes'],
+      ])
+      expect(wrapper.find('[data-testid="source-not-set-up-vms"]').exists()).toBe(true)
+      expect(wrapper.find('[data-testid="source-not-set-up-databases"]').exists()).toBe(false)
     })
 
     it('flags a host with no paths of its own', () => {

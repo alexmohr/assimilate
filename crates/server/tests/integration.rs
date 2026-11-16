@@ -6257,6 +6257,90 @@ async fn test_schedule_fs_snapshot_settings_are_saved_and_validated(pool: sqlx::
     assert_eq!(persisted, ("best_effort".to_owned(), 100));
 }
 
+/// An edit is held to the same rule as a create: a backup schedule has to
+/// be left with something to back up. Before this, only creating one was
+/// checked, so a schedule could be edited into reading nothing at all.
+#[sqlx::test(migrations = "./migrations")]
+async fn an_edit_cannot_leave_a_backup_schedule_with_nothing_to_back_up(pool: sqlx::PgPool) {
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+
+    let agent_id: i64 = sqlx::query_scalar(
+        "INSERT INTO agents (hostname, agent_token_hash) VALUES ('edit-sources-host', 'hash') \
+         RETURNING id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let repo_id = insert_test_repo(&pool, "edit-sources-repo").await;
+    let schedule_id = insert_test_schedule(&pool, agent_id, repo_id).await;
+
+    let update = |changes: serde_json::Value| {
+        let mut payload = json!({
+            "cron_expression": "0 3 * * *",
+            "enabled": false,
+            "agent_ids": [agent_id],
+        });
+        payload
+            .as_object_mut()
+            .unwrap()
+            .extend(changes.as_object().unwrap().clone());
+        json_request(
+            "PUT",
+            &format!("/api/schedules/{schedule_id}"),
+            Some(payload),
+        )
+    };
+
+    // Own files with no path, and no files with neither VMs nor databases.
+    let resp = oneshot(
+        &mut app,
+        update(json!({ "files_mode": "own", "backup_sources": [] })),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    let resp = oneshot(&mut app, update(json!({ "files_mode": "off" }))).await;
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+
+    // The host lists no paths, so switching to its files is refused too.
+    sqlx::query(
+        "UPDATE schedules SET files_mode = 'off', database_backup_enabled = true WHERE id = $1",
+    )
+    .bind(schedule_id)
+    .execute(&pool)
+    .await
+    .unwrap();
+    let resp = oneshot(&mut app, update(json!({ "files_mode": "host" }))).await;
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+
+    // Each of these leaves it something to back up.
+    let resp = oneshot(
+        &mut app,
+        update(json!({ "files_mode": "own", "backup_sources": ["/srv"] })),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    // Paths left out of the request keep the stored ones.
+    let resp = oneshot(&mut app, update(json!({ "name": "renamed" }))).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let resp = oneshot(
+        &mut app,
+        update(json!({
+            "files_mode": "own",
+            "backup_sources": [],
+            "backup_sources_per_agent": [{ "agent_id": agent_id, "paths": ["/opt"] }],
+        })),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let resp = oneshot(
+        &mut app,
+        update(json!({ "files_mode": "off", "database_backup_enabled": true })),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+}
+
 /// Regression test for: saving an already-enabled schedule re-probed SSH
 /// reachability on every field, so a transient outage on one target blocked
 /// even a plain rename or retention edit. Only a change to the target list,

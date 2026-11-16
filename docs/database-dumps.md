@@ -45,6 +45,8 @@ Open the agent, then its **Sources** tab and the **Databases** section. Only adm
 ![The Databases section, listing a host's database sources and their databases](assets/screenshots/agent-databases.png)
 
 1. Choose **which sources** to dump. The sources included here are what every schedule that takes databases dumps; to dump none of them, choose **Only selected** and select none. **All except excluded** dumps every source the agent finds, including one deployed after the last scan; **Only selected** dumps nothing until you pick the sources you want.
+
+    Earlier versions had a host-wide **Database dumps** on/off switch. It is gone: upgrading turns a host that had it off into **Only selected** with every source deselected, so it still dumps nothing. Select the sources you want there to start dumping them.
 2. Turn on each place the agent should look, and fill in how it reaches it:
     - **Search the Kubernetes cluster**, with the **kubeconfig**, a path to a file on the agent's host. Leave it empty to use the in-cluster service account, or `$KUBECONFIG` and `~/.kube/config`. The file never leaves the host.
 

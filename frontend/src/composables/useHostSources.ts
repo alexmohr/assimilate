@@ -13,8 +13,15 @@ export type HostSourceKind = 'vms' | 'databases'
 
 /** How many of each a host backs up: the domains and database sources it includes. */
 export interface HostSourceCounts {
-  vms: number
-  databases: number
+  /** `null` when the list could not be read. */
+  vms: number | null
+  /** `null` when the list could not be read, or the viewer may not read it. */
+  databases: number | null
+}
+
+/** What the viewer may read. A host's database list names its servers' sockets and users, so only an admin reads it. */
+export interface HostSourcesAccess {
+  canReadDatabases: () => boolean
 }
 
 /**
@@ -27,27 +34,42 @@ export interface HostSourceCounts {
  * VM and database lists say. A host whose lists could not be read is left
  * out of `counts` rather than reported as having nothing.
  */
-export function useHostSources(hosts: () => readonly AgentRow[]): {
+export function useHostSources(
+  hosts: () => readonly AgentRow[],
+  access: HostSourcesAccess,
+): {
   counts: Ref<Map<number, HostSourceCounts>>
   hostsWithout: (kind: HostSourceKind) => AgentRow[]
 } {
   const counts = ref(new Map<number, HostSourceCounts>())
 
-  async function countFor(host: AgentRow): Promise<HostSourceCounts | null> {
-    if (host.is_imported) return { vms: 0, databases: 0 }
+  /** Each list is read on its own, so one that fails or is not the viewer's to read never hides the other. */
+  async function countOf(read: () => Promise<number>): Promise<number | null> {
     try {
-      const [vms, databases] = await Promise.all([
-        getAgentVms(host.hostname, host.domain),
-        getAgentDatabases(host.hostname, host.domain),
-      ])
-      return {
-        vms: vms.vms.filter((vm) => vm.included).length,
-        databases: databases.sources.filter((source) => source.included).length,
-      }
+      return await read()
     } catch (e: unknown) {
       logger.error('loading host sources failed', e)
       return null
     }
+  }
+
+  async function countFor(host: AgentRow): Promise<HostSourceCounts | null> {
+    if (host.is_imported) return { vms: 0, databases: 0 }
+    const [vms, databases] = await Promise.all([
+      countOf(
+        async () =>
+          (await getAgentVms(host.hostname, host.domain)).vms.filter((vm) => vm.included).length,
+      ),
+      access.canReadDatabases()
+        ? countOf(
+            async () =>
+              (await getAgentDatabases(host.hostname, host.domain)).sources.filter(
+                (source) => source.included,
+              ).length,
+          )
+        : Promise.resolve(null),
+    ])
+    return vms === null && databases === null ? null : { vms, databases }
   }
 
   watch(

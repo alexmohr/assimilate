@@ -476,6 +476,7 @@ mod requests {
             enabled: true,
             accept_relocation: false,
             append_only: false,
+            remote_borg: None,
             schedules: Vec::new(),
         };
         *executor.current_config.lock().await = Some(AgentConfig {

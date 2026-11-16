@@ -95,6 +95,23 @@ pub fn borg_base_env(passphrase: &str) -> HashMap<String, String> {
     env
 }
 
+/// [`borg_base_env`] for a host of `provider`: adds `BORG_REMOTE_PATH` when
+/// the provider runs borg under another name than `borg`.
+#[must_use]
+pub fn borg_base_env_for_provider(
+    passphrase: &str,
+    provider: shared::provider::HostProvider,
+) -> HashMap<String, String> {
+    let mut env = borg_base_env(passphrase);
+    if let Some(remote_borg) = provider.defaults().remote_borg {
+        env.insert(
+            shared::types::BORG_REMOTE_PATH_ENV_KEY.to_owned(),
+            remote_borg.executable().to_owned(),
+        );
+    }
+    env
+}
+
 /// Builds the borg environment for an operation against an existing
 /// repository, pinning SSH host key verification to `ssh_host_key` when one
 /// is on record (via a stable, repo-scoped `known_hosts` file - see
@@ -253,7 +270,11 @@ pub async fn push_config_to_all_agents(state: &crate::AppState) {
 
 #[cfg(test)]
 mod tests {
-    use super::{borg_env_for_repo, validate_compression, validate_pagination};
+    use shared::provider::HostProvider;
+
+    use super::{
+        borg_base_env_for_provider, borg_env_for_repo, validate_compression, validate_pagination,
+    };
     use crate::error::ApiError;
 
     // borg_env_for_repo_pins_known_hosts_when_host_key_present lives in
@@ -261,6 +282,29 @@ mod tests {
     // pinned known_hosts file under SSH_KEY_DIR, and that env var is already
     // exclusively owned by ssh.rs's combined test to avoid races between
     // parallel tests mutating the same process-global var.
+
+    #[test]
+    fn a_provider_borg_is_selected_with_the_remote_path_variable() {
+        let env = borg_base_env_for_provider("pw", HostProvider::RsyncNet);
+        assert_eq!(
+            env.get("BORG_REMOTE_PATH").map(String::as_str),
+            Some("borg14")
+        );
+        let env = borg_base_env_for_provider("pw", HostProvider::Hetzner);
+        assert_eq!(
+            env.get("BORG_REMOTE_PATH").map(String::as_str),
+            Some("borg-1.4")
+        );
+        assert_eq!(env.get("BORG_PASSPHRASE").map(String::as_str), Some("pw"));
+    }
+
+    #[test]
+    fn generic_and_borgbase_hosts_run_plain_borg() {
+        for provider in [HostProvider::Generic, HostProvider::Borgbase] {
+            let env = borg_base_env_for_provider("pw", provider);
+            assert!(!env.contains_key("BORG_REMOTE_PATH"), "{provider}");
+        }
+    }
 
     #[tokio::test]
     async fn borg_env_for_repo_falls_back_to_accept_new_without_host_key() {

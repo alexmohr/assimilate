@@ -10,6 +10,7 @@ import {
   acceptRepoHostKey,
   deleteRepoHost,
   getRepoHost,
+  listHostProviders,
   listRepoHosts,
   scanRepoHostKey,
   updateRepoHost,
@@ -104,5 +105,12 @@ describe('repo hosts api', () => {
     expect(apiClient.post).toHaveBeenCalledWith('/repo-hosts/5/ssh-host-key', {
       ssh_host_key: 'ssh-ed25519 AAAA',
     })
+  })
+
+  it('lists the provider presets', async () => {
+    const presets = [{ provider: 'hetzner', defaults: { ssh_port: 23 } }]
+    vi.mocked(apiClient.get).mockResolvedValue({ data: presets })
+    await expect(listHostProviders()).resolves.toEqual(presets)
+    expect(apiClient.get).toHaveBeenCalledWith('/repo-hosts/providers')
   })
 })

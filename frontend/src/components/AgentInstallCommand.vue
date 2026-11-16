@@ -6,6 +6,7 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { useClipboard } from '../composables/useClipboard'
+import EnrollmentTokenList from './EnrollmentTokenList.vue'
 import BaseSegmented, { type SegmentedOption } from './BaseSegmented.vue'
 import type { InstallTarget } from '../types/enrollment'
 
@@ -92,6 +93,7 @@ const steps = [
         placeholder="Optional, e.g. servers, eu"
       />
     </div>
+    <EnrollmentTokenList />
   </div>
 
   <div

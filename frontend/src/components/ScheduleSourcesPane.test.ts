@@ -461,6 +461,20 @@ describe('ScheduleSourcesPane', () => {
   })
 
   describe('what each host will back up', () => {
+    // Both lists failing is a failure, not a load that never ends.
+    it("says when neither of a host's lists could be read", async () => {
+      vi.mocked(getAgentVms).mockRejectedValue(new Error('offline'))
+      vi.mocked(getAgentDatabases).mockRejectedValue(new Error('offline'))
+      const wrapper = mount({
+        form: form({ vm_snapshot_enabled: true, database_backup_enabled: true }),
+      })
+      await flushPromises()
+      expect(previewRows(wrapper).map((row) => row.slice(3))).toEqual([
+        ['Could not read', 'Could not read'],
+        ['Could not read', 'Could not read'],
+      ])
+    })
+
     it("lists each host's own paths and commands while taking each host's files", async () => {
       const wrapper = mount({
         form: form({ vm_snapshot_enabled: true, database_backup_enabled: false }),

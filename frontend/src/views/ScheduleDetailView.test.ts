@@ -629,6 +629,40 @@ describe('ScheduleDetailView - edit mode', () => {
     }
   })
 
+  /** The wizard's rule, on edit: own files with no path, or no files and
+      neither VMs nor databases, would back up nothing. */
+  it('refuses to save a schedule left with nothing to back up', async () => {
+    const wrapper = await createEditWrapper()
+    const vm = wrapper.vm as unknown as {
+      save: () => Promise<void>
+      saveError: string | null
+      form: {
+        files_mode: string
+        backup_sources: string
+        vm_snapshot_enabled: boolean
+        database_backup_enabled: boolean
+      }
+    }
+
+    vm.form.files_mode = 'own'
+    vm.form.backup_sources = ''
+    await vm.save()
+    await flushPromises()
+    expect(vm.saveError).toBe(
+      'Under Sources, give this schedule at least one backup path for its own files.',
+    )
+
+    vm.form.files_mode = 'off'
+    vm.form.vm_snapshot_enabled = false
+    vm.form.database_backup_enabled = false
+    await vm.save()
+    await flushPromises()
+    expect(vm.saveError).toBe(
+      'Under Sources, give this schedule virtual machines or databases, since it reads no files.',
+    )
+    expect(mockApiClient.put).not.toHaveBeenCalled()
+  })
+
   it('shows save error when schedule is null (edit mode)', async () => {
     mockApiClient.get.mockRejectedValue(new Error('Load failed'))
     const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '999' } })
@@ -2765,7 +2799,13 @@ describe('ScheduleDetailView - per-agent overrides', () => {
     mockApiClient.get.mockImplementation((url: string) =>
       url === '/schedules/1'
         ? Promise.resolve({
-            data: { ...mockSchedule, files_mode: 'off', run_host_commands: false },
+            // Reading no files, it has to take something else.
+            data: {
+              ...mockSchedule,
+              files_mode: 'off',
+              run_host_commands: false,
+              database_backup_enabled: true,
+            },
           })
         : fallback(url),
     )

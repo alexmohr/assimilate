@@ -46,6 +46,7 @@ import {
   primaryRepoId as primaryTargetRepoId,
   repoTargetsProblem,
   scheduleFormPayload,
+  sourcesProblem,
   type ScheduleFormPayload,
 } from '../utils/schedulePayload'
 import { normalizeBackupStatus } from '../utils/backupStatus'
@@ -723,6 +724,17 @@ async function save(): Promise<void> {
       }
       if (repoTargetsProblem(repoTargets.value)) {
         saveError.value = 'Select at least one repository, and mark at least one of them required.'
+        return
+      }
+      const ownPaths = {
+        usePerHostPaths: usePerHostPaths.value,
+        perHostSources: perHostSources.value,
+      }
+      const sources = isBackup.value
+        ? sourcesProblem(form.value, ownPaths, selectedAgentIds.value)
+        : null
+      if (sources) {
+        saveError.value = `Under Sources, give this schedule ${sources}.`
         return
       }
       const percentProblem = lvmSnapshotPercentProblem(form.value)

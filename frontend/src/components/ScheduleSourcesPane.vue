@@ -11,7 +11,11 @@ import SourceNotSetUp from './SourceNotSetUp.vue'
 import PaneRow from './PaneRow.vue'
 import PerAgentFields from './PerAgentFields.vue'
 import ToggleSwitch from './ToggleSwitch.vue'
-import { useHostSources } from '../composables/useHostSources'
+import {
+  useHostSources,
+  type HostSourceCounts,
+  type HostSourceKind,
+} from '../composables/useHostSources'
 import { useAuthStore } from '../stores/auth'
 import { parseLines } from '../utils/validation'
 import type { AgentRow } from '../types/agent'
@@ -128,7 +132,7 @@ const targetAgents = computed(() =>
 )
 
 const auth = useAuthStore()
-const { counts, hostsWithout } = useHostSources(() => targetAgents.value, {
+const { counts, unreadable, hostsWithout } = useHostSources(() => targetAgents.value, {
   canReadDatabases: () => auth.isAdmin,
 })
 const hostsWithoutVms = computed(() => (form.value.vm_snapshot_enabled ? hostsWithout('vms') : []))
@@ -144,14 +148,23 @@ interface SourceCell {
   missing: boolean
 }
 
+/** One kind's count for a host, or that neither of its lists could be read. */
+function countOf(
+  hostCounts: HostSourceCounts | 'failed' | undefined,
+  kind: HostSourceKind,
+): number | null | undefined | 'failed' {
+  return hostCounts === 'failed' ? 'failed' : hostCounts?.[kind]
+}
+
 function sourceCell(
   on: boolean,
-  count: number | null | undefined,
+  count: number | null | undefined | 'failed',
   units: { one: string; many: string },
 ): SourceCell {
   if (!on) return { text: 'Off', muted: true, missing: false }
+  if (count === 'failed') return { text: 'Could not read', muted: true, missing: false }
   if (count === undefined) return { text: '...', muted: true, missing: false }
-  // Taken, but the list is not one this viewer can read (or it failed to load).
+  // Taken, but the list is not one this viewer can read (or it alone failed to load).
   if (count === null) return { text: 'Yes', muted: false, missing: false }
   if (count === 0) return { text: 'None set up', muted: false, missing: true }
   return { text: `${count} ${count === 1 ? units.one : units.many}`, muted: false, missing: false }
@@ -200,7 +213,8 @@ const preview = computed<HostPreview[]>(() =>
   targetAgents.value.map((agent) => {
     const files = filesFor(agent)
     const commands = commandsFor(agent)
-    const hostCounts = counts.value.get(agent.id)
+    // A host neither list could be read for is not still loading: it failed.
+    const hostCounts = unreadable.value.has(agent.id) ? 'failed' : counts.value.get(agent.id)
     let filesNote: string | null = null
     if (form.value.files_mode === 'off') filesNote = 'Off'
     else if (files.length === 0)
@@ -216,8 +230,11 @@ const preview = computed<HostPreview[]>(() =>
       filesNote,
       commands: commands.text,
       commandsMuted: commands.muted,
-      vms: sourceCell(form.value.vm_snapshot_enabled, hostCounts?.vms, { one: 'VM', many: 'VMs' }),
-      databases: sourceCell(form.value.database_backup_enabled, hostCounts?.databases, {
+      vms: sourceCell(form.value.vm_snapshot_enabled, countOf(hostCounts, 'vms'), {
+        one: 'VM',
+        many: 'VMs',
+      }),
+      databases: sourceCell(form.value.database_backup_enabled, countOf(hostCounts, 'databases'), {
         one: 'database source',
         many: 'database sources',
       }),

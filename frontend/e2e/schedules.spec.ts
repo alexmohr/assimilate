@@ -65,23 +65,37 @@ async function openScheduleAdvanced(page: Page): Promise<void> {
   await openSettingsSection(page, 'Advanced')
 }
 
+/**
+ * Opens schedule 1's own files for editing: the seed gives it paths of its
+ * own, so its excludes, include patterns and commands are edited in Settings
+ * > Sources, in the same Files section a host has.
+ */
+async function openOwnFilesEditor(page: Page): Promise<Locator> {
+  await loginAsAdmin(page)
+  await page.goto('/schedules/1?tab=settings&section=sources')
+  await page.waitForLoadState('networkidle')
+
+  const sources = await openSettingsSection(page, 'Sources')
+  const own = sources.locator('.own-files')
+  await own.getByRole('button', { name: 'Edit' }).click()
+  return own
+}
+
 /** Adds an empty pre-backup command row, returning its field and its script box. */
-async function addPreBackupCommand(page: Page): Promise<{ field: Locator; script: Locator }> {
-  // The Advanced pane renders its settings as `.pane-row`s; the General
-  // section still uses `.field` blocks.
-  const field = page.locator('.pane-row', { hasText: 'Pre-backup commands' })
+async function addPreBackupCommand(own: Locator): Promise<{ field: Locator; script: Locator }> {
+  const field = own.locator('fieldset', { hasText: 'Pre-backup commands' })
   await field.getByRole('button', { name: '+ Add command' }).click()
   return { field, script: field.locator('textarea').last() }
 }
 
-/** Saves the schedule and returns the pre-backup commands the UI sent. */
-async function savePreBackupCommands(page: Page): Promise<HookCommandPayload[]> {
+/** Saves the Files section, which saves the schedule, and returns the pre-backup commands sent. */
+async function savePreBackupCommands(page: Page, own: Locator): Promise<HookCommandPayload[]> {
   const waitForSave = await interceptScheduleSave(page, 1, (requestBody, responseBody) => ({
     ...responseBody,
     pre_backup_commands: requestBody.pre_backup_commands,
   }))
 
-  await page.getByRole('button', { name: 'Save changes' }).click()
+  await own.getByRole('button', { name: 'Save', exact: true }).click()
 
   return (await waitForSave()).pre_backup_commands as HookCommandPayload[]
 }
@@ -709,31 +723,33 @@ test.describe('Schedules management', () => {
     await expect(timeoutInput).toHaveValue('180')
   })
 
-  test('schedule detail Advanced section adds a multi-line pre-backup command and saves it', async ({
+  test("a schedule's own files add a multi-line pre-backup command and save it", async ({
     page,
   }) => {
-    await openScheduleAdvanced(page)
-    const { script: newRow } = await addPreBackupCommand(page)
+    const own = await openOwnFilesEditor(page)
+    const { script: newRow } = await addPreBackupCommand(own)
 
     const script =
       'umount -l /mnt/pve/truenas-backup\npvesm status --storage truenas-backup || exit 1'
     await newRow.fill(script)
 
-    expect(await savePreBackupCommands(page)).toContainEqual(
+    expect(await savePreBackupCommands(page, own)).toContainEqual(
       expect.objectContaining({ command: script }),
     )
 
-    // The multi-line script round-trips through the save intact, still in
-    // its own field rather than getting flattened or split across rows.
-    await expect(newRow).toHaveValue(script)
+    // The multi-line script round-trips through the save intact: the saved
+    // section shows it as one script with both of its lines.
+    const shown = own.locator('.detail-pre', { hasText: 'umount -l /mnt/pve/truenas-backup' })
+    await expect(shown).toContainText('pvesm status --storage truenas-backup')
+    expect(await shown.textContent()).toContain('\n')
   })
 
   // The per-command timeout is what lets one slow hook (a hypervisor dump)
   // have a longer budget than the `systemctl stop` sitting beside it, instead
   // of every command on the schedule sharing the slowest one's.
-  test('schedule detail Advanced section saves a per-command hook timeout', async ({ page }) => {
-    await openScheduleAdvanced(page)
-    const { field: preField, script: newRow } = await addPreBackupCommand(page)
+  test("a schedule's own files save a per-command hook timeout", async ({ page }) => {
+    const own = await openOwnFilesEditor(page)
+    const { field: preField, script: newRow } = await addPreBackupCommand(own)
 
     const script = 'vzdump --all 1 --storage backup-store'
     await newRow.fill(script)
@@ -744,22 +760,22 @@ test.describe('Schedules management', () => {
     await expect(timeoutInput).toHaveAttribute('placeholder', /\d+/)
     await timeoutInput.fill('7200')
 
-    expect(await savePreBackupCommands(page)).toContainEqual({
+    expect(await savePreBackupCommands(page, own)).toContainEqual({
       command: script,
       timeout_seconds: 7200,
     })
 
-    await expect(timeoutInput).toHaveValue('7200')
+    await expect(own.getByText('Timeout: 7200s')).toBeVisible()
   })
 
   // Include patterns rescue a path from a broader exclude - the happy path
   // for the feature covers typing one in and confirming it round-trips
   // through the save as `include_patterns_raw`, the same way exclude
   // patterns already do.
-  test('schedule detail Advanced section edits and saves include patterns', async ({ page }) => {
-    await openScheduleAdvanced(page)
+  test("a schedule's own files edit and save include patterns", async ({ page }) => {
+    const own = await openOwnFilesEditor(page)
 
-    const includeField = page.getByLabel('Include patterns')
+    const includeField = own.getByLabel('Include patterns')
     await expect(includeField).toBeVisible()
 
     const waitForSave = await interceptScheduleSave(page, 1, (requestBody, responseBody) => ({
@@ -768,11 +784,11 @@ test.describe('Schedules management', () => {
     }))
 
     await includeField.fill('/home/keep')
-    await page.getByRole('button', { name: 'Save changes' }).click()
+    await own.getByRole('button', { name: 'Save', exact: true }).click()
 
     const savedBody = await waitForSave()
     expect(savedBody.include_patterns_raw).toBe('/home/keep')
-    await expect(includeField).toHaveValue('/home/keep')
+    await expect(own.locator('.path-item', { hasText: '/home/keep' })).toBeVisible()
   })
 
   test('schedule detail General section edits and saves the missed backup threshold', async ({
@@ -967,12 +983,11 @@ test.describe('Schedules management', () => {
 
     await expect(page).toHaveURL(`/schedules/${multiHost!.id}`)
 
-    // Per-host backup sources live under Settings > Targets.
+    // Per-host backup paths live under Settings > Sources, in the schedule's
+    // own files, one row per host.
     await page.getByRole('tab', { name: 'Settings' }).click()
-    await openSettingsSection(page, 'Targets')
-    await expect(
-      page.locator('.per-host-paths').or(page.locator('.per-host-entry')).first(),
-    ).toBeVisible()
+    const sources = await openSettingsSection(page, 'Sources')
+    await expect(sources.locator('.own-files dd', { hasText: '/var/www' })).toBeVisible()
   })
 
   test('schedule detail shows a Retry button for an overdue target and re-runs just that host', async ({

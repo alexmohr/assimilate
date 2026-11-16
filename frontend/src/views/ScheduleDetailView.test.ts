@@ -2924,6 +2924,31 @@ describe('ScheduleDetailView - per-agent overrides', () => {
   // empty-string command through to the agent.
   // The command lists moved from Advanced to the schedule's own files under
   // Sources, saved by that section's own Save.
+  // The schedule row a save returns has no paths of its own; the page must not
+  // blank the ones just saved and show the section as having none.
+  it('keeps showing its own paths after the section saves', async () => {
+    const wrapper = await renderOwnFiles({
+      backup_sources: ['/data'],
+      backup_sources_per_agent: [],
+    })
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text() === 'Edit')!
+      .trigger('click')
+    await wrapper.find('#file-sources-paths').setValue('/home')
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text() === 'Save')!
+      .trigger('click')
+    await flushPromises()
+
+    expect(mockApiClient.put).toHaveBeenCalledWith(
+      '/schedules/1',
+      expect.objectContaining({ backup_sources: ['/home'] }),
+    )
+    expect(wrapper.find('.own-files .path-item').text()).toBe('/home')
+  })
+
   it('drops blank command entries but keeps real ones when saving', async () => {
     const wrapper = await renderOwnFiles({
       backup_sources: ['/data'],

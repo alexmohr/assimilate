@@ -345,7 +345,8 @@ test.describe('Agent detail', () => {
     // One card with every field of the host's file set and one save; a
     // schedule's own files use the same form.
     const files = await openSettingsSection(page, 'Files')
-    await expect(page).toHaveURL(/section=files/)
+    // Files is the section the tab opens on, so the URL names none.
+    await expect(page).not.toHaveURL(/section=/)
     await expect(files).toContainText('The files this host backs up')
     await expect(files.locator('.group-label')).toHaveText([
       'Backup paths',

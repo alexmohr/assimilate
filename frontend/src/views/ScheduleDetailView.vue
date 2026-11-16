@@ -744,7 +744,12 @@ async function save(): Promise<void> {
         on_failure: onFailure.value,
       })
       schedule.value = updated
+      // The schedule row carries no paths (they are their own endpoint, read
+      // on load), so the ones just saved are kept rather than blanked.
+      const savedPaths = form.value.backup_sources
       populateForm(updated)
+      form.value.backup_sources = savedPaths
+      agentOverrides.value = { ...agentOverrides.value, clearPerHost: false }
       saveSuccess.value = true
       saveSuccessTimeout.start(() => {
         saveSuccess.value = false

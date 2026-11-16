@@ -1708,7 +1708,9 @@ mod tests {
             .unwrap();
 
         assert_eq!(
-            build_absolute_activity_url(&service, &event).await.as_deref(),
+            build_absolute_activity_url(&service, &event)
+                .await
+                .as_deref(),
             Some("https://backups.example.com/activity?category=backup&run_id=run-123"),
             "the public_url trailing slash must be trimmed before appending the path"
         );

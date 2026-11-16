@@ -75,6 +75,10 @@ Passwords, passphrases and other secrets are not covered by these limits.
 
 The previews apply the same limits as the endpoints they preview, so they never accept a value the save would refuse. `GET /api/schedules/cron-preview` reports an over-long `cron_expression` as an invalid expression, with the message saving the schedule returns. `POST /api/notifications/template-preview` rejects an over-long `title_template` or `body_template` with `400`, as saving the channel would.
 
+### Schedule Sources
+
+A backup schedule's `files_mode` decides whose files it reads: `host` (each host's own **Sources › Files**), `own` (the schedule's `backup_sources`, excludes, patterns and commands) or `off`. `POST /api/schedules` without `files_mode` takes `own` when the request sends backup paths and `host` otherwise. Excludes, include patterns, file change patterns and commands are only used with `own`, so a request that leaves out `files_mode` and sends no paths but sends any of them returns `400` rather than storing values no backup reads. A `host` schedule is refused when any of its hosts lists no backup paths, an `own` one without a path, and an `off` one that takes neither virtual machines nor databases. See [Scheduling](scheduling.md#sources).
+
 ## API Endpoints Summary
 
 For full request/response schemas, use the [interactive explorer](#interactive-api-explorer). Path parameters below use `{name}` placeholders matching the OpenAPI document.

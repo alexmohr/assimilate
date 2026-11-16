@@ -12,6 +12,17 @@ import type { ScheduleRow } from '../types/schedule'
 /** The two kinds of source a host sets up beyond files. */
 export type HostSourceKind = 'vms' | 'databases'
 
+/** Every kind of source a host sets up, files included. */
+export type SourceKind = HostSourceKind | 'files'
+
+/**
+ * Which of `hosts` list no backup paths of their own: a schedule taking each
+ * host's files backs up none on them. Read from the host rows, so no request.
+ */
+export function hostsWithoutPaths(hosts: readonly AgentRow[]): AgentRow[] {
+  return hosts.filter((host) => host.default_backup_paths.length === 0)
+}
+
 /** How many of each a host backs up: the domains and database sources it includes. */
 export interface HostSourceCounts {
   /** `null` when the list could not be read. */

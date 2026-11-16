@@ -1211,6 +1211,28 @@ api POST "/api/schedules" "{
     \"keep_monthly\": 6
 }" > /dev/null
 
+# A schedule taking each host's files that was moved onto web-server-01, which
+# lists no backup paths yet. Creating it there is refused, but moving it there
+# is allowed so the host's paths can be set up afterwards; until then the
+# schedule's page warns that no files will be backed up on web-server-01.
+WEB_FILES_ID=$(api POST "/api/schedules" "{
+    \"name\": \"Web files (paths pending)\",
+    \"agent_ids\": [$DB01_ID],
+    \"repo_id\": $REPO_DAILY_ID,
+    \"cron_expression\": \"45 3 * * *\",
+    \"enabled\": false,
+    \"files_mode\": \"host\",
+    \"keep_hourly\": 0,
+    \"keep_daily\": 7,
+    \"keep_weekly\": 4,
+    \"keep_monthly\": 6
+}" | jq -r '.id')
+api PUT "/api/schedules/$WEB_FILES_ID" "{
+    \"cron_expression\": \"45 3 * * *\",
+    \"enabled\": false,
+    \"agent_ids\": [$DB01_ID, $WEB01_ID]
+}" > /dev/null
+
 api POST "/api/schedules" "{
     \"name\": \"Stale nightly report\",
     \"agent_ids\": [$STALE_REPORT_ID],

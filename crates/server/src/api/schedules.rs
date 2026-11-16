@@ -505,6 +505,14 @@ async fn ensure_backup_sources_available(
         ));
     }
     let files_mode = req.files_mode.unwrap_or_else(|| default_files_mode(req));
+    if req.files_mode.is_none() && files_mode == ScheduleFilesMode::Host && sets_own_file_rules(req)
+    {
+        return Err(ApiError::BadRequest(
+            "excludes, include patterns, file change patterns and commands are only used with the \
+             schedule's own files: set files_mode to \"own\" and give it backup paths"
+                .into(),
+        ));
+    }
     // Every host has to list paths: one that lists none would back up nothing.
     let hosts_have_paths = if files_mode == ScheduleFilesMode::Host {
         hosts_have_paths(state, &req.agent_ids).await?
@@ -517,6 +525,40 @@ async fn ensure_backup_sources_available(
         hosts_have_paths
     })
     .map_or(Ok(()), |problem| Err(ApiError::BadRequest(problem.into())))
+}
+
+/// Whether a create request sets any of the rules that only a schedule's own
+/// files use (excludes, include and file change patterns, commands), shared
+/// or per host. A pattern text of only blank and `#` comment lines sets none.
+fn sets_own_file_rules(req: &CreateScheduleRequest) -> bool {
+    fn has_patterns(raw: &str) -> bool {
+        raw.lines()
+            .map(str::trim)
+            .any(|line| !line.is_empty() && !line.starts_with('#'))
+    }
+    let text = |raw: &Option<String>| raw.as_deref().is_some_and(has_patterns);
+    let commands = |list: &Option<Vec<HookCommand>>| list.as_ref().is_some_and(|l| !l.is_empty());
+    text(&req.exclude_patterns_raw)
+        || text(&req.include_patterns_raw)
+        || text(&req.file_change_patterns_raw)
+        || commands(&req.pre_backup_commands)
+        || commands(&req.post_backup_commands)
+        || req
+            .exclude_patterns_per_agent
+            .as_ref()
+            .is_some_and(|all| all.iter().any(|e| has_patterns(&e.raw_text)))
+        || req
+            .include_patterns_per_agent
+            .as_ref()
+            .is_some_and(|all| all.iter().any(|e| has_patterns(&e.raw_text)))
+        || req
+            .file_change_patterns_per_agent
+            .as_ref()
+            .is_some_and(|all| all.iter().any(|e| has_patterns(&e.raw_text)))
+        || req.commands_per_agent.as_ref().is_some_and(|all| {
+            all.iter()
+                .any(|e| !e.pre_backup_commands.is_empty() || !e.post_backup_commands.is_empty())
+        })
 }
 
 /// Whether every one of `agent_ids` lists backup paths of its own.

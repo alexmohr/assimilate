@@ -6,7 +6,7 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 <script setup lang="ts">
 import { runLogLink } from '../utils/activityLink'
 import { legacyDetailLink } from '../utils/legacyDetailLink'
-import { useHostSources } from '../composables/useHostSources'
+import { hostsWithoutPaths, useHostSources } from '../composables/useHostSources'
 import SourceNotSetUp from '../components/SourceNotSetUp.vue'
 import { ref, computed, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
@@ -300,6 +300,23 @@ const agentMap = computed(() => {
   return m
 })
 
+/** The saved schedule's known targets, in order. */
+const targetHosts = computed(() =>
+  selectedAgentIds.value.flatMap((id) => {
+    const agent = agentMap.value.get(id)
+    return agent ? [agent] : []
+  }),
+)
+
+/**
+ * The saved schedule's hosts with no backup paths while it takes each host's
+ * files: it backs up no files on them. Kept in view since a schedule can be
+ * moved to such a host and its paths set up afterwards.
+ */
+const fileHostsMissing = computed(() =>
+  schedule.value?.files_mode === 'host' ? hostsWithoutPaths(targetHosts.value) : [],
+)
+
 /**
  * The saved schedule's hosts with no VMs or no database sources set up, read
  * only while the schedule takes them: on those hosts its archives hold none,
@@ -308,10 +325,7 @@ const agentMap = computed(() => {
 const { hostsWithout: hostsWithoutSource } = useHostSources(
   () =>
     schedule.value?.vm_snapshot_enabled || schedule.value?.database_backup_enabled
-      ? selectedAgentIds.value.flatMap((id) => {
-          const agent = agentMap.value.get(id)
-          return agent ? [agent] : []
-        })
+      ? targetHosts.value
       : [],
   { canReadDatabases: () => isAdmin.value },
 )
@@ -1086,6 +1100,12 @@ watch(activeTab, (tab) => {
         <h1 class="page-title">New Schedule</h1>
       </div>
 
+      <SourceNotSetUp
+        v-if="fileHostsMissing.length > 0"
+        class="schedule-dump-mismatch"
+        kind="files"
+        :hosts="fileHostsMissing"
+      />
       <SourceNotSetUp
         v-if="vmHostsMissing.length > 0"
         class="schedule-dump-mismatch"

@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest'
 import { renderWithPlugins } from '../test-utils'
 import SourceNotSetUp from './SourceNotSetUp.vue'
 import type { AgentRow } from '../types/agent'
-import type { HostSourceKind } from '../composables/useHostSources'
+import type { SourceKind } from '../composables/useHostSources'
 
 function host(
   id: number,
@@ -23,7 +23,7 @@ function host(
 
 function render(
   hosts: AgentRow[],
-  kind: HostSourceKind = 'databases',
+  kind: SourceKind = 'databases',
 ): ReturnType<typeof renderWithPlugins> {
   return renderWithPlugins(SourceNotSetUp, { props: { hosts, kind } })
 }
@@ -58,6 +58,20 @@ describe('SourceNotSetUp', () => {
       'This schedule takes virtual machines, but none are set up on virt-01.',
     )
     expect(text(wrapper)).toContain('or turn virtual machines off for this schedule.')
+  })
+
+  // A schedule taking each host's files reads nothing on a host with no paths.
+  it("says a host lists no paths for a schedule taking each host's files", () => {
+    const wrapper = render([host(1, 'web-01')], 'files')
+    expect(wrapper.find('[data-testid="source-not-set-up-files"]').exists()).toBe(true)
+    expect(wrapper.get('.notice-bar-title').text()).toBe('No files will be backed up on 1 host')
+    expect(text(wrapper)).toContain(
+      "This schedule takes each host's files, but no backup paths are set on web-01.",
+    )
+    expect(text(wrapper)).toContain(
+      "Add paths in each host's Sources tab, or give this schedule its own files.",
+    )
+    expect(wrapper.get('a').attributes('href')).toBe('/agents/web-01?tab=sources&section=files')
   })
 
   it('counts several hosts in the plural', () => {

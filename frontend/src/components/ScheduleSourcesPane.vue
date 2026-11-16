@@ -12,6 +12,7 @@ import PaneRow from './PaneRow.vue'
 import PerAgentFields from './PerAgentFields.vue'
 import ToggleSwitch from './ToggleSwitch.vue'
 import { useHostSources } from '../composables/useHostSources'
+import { useAuthStore } from '../stores/auth'
 import { parseLines } from '../utils/validation'
 import type { AgentRow } from '../types/agent'
 import type { FileSet } from '../types/fileSet'
@@ -126,7 +127,10 @@ const targetAgents = computed(() =>
     .filter((agent): agent is AgentRow => agent !== undefined),
 )
 
-const { counts, hostsWithout } = useHostSources(() => targetAgents.value)
+const auth = useAuthStore()
+const { counts, hostsWithout } = useHostSources(() => targetAgents.value, {
+  canReadDatabases: () => auth.isAdmin,
+})
 const hostsWithoutVms = computed(() => (form.value.vm_snapshot_enabled ? hostsWithout('vms') : []))
 const hostsWithoutDatabases = computed(() =>
   form.value.database_backup_enabled ? hostsWithout('databases') : [],
@@ -142,11 +146,13 @@ interface SourceCell {
 
 function sourceCell(
   on: boolean,
-  count: number | undefined,
+  count: number | null | undefined,
   units: { one: string; many: string },
 ): SourceCell {
   if (!on) return { text: 'Off', muted: true, missing: false }
   if (count === undefined) return { text: '...', muted: true, missing: false }
+  // Taken, but the list is not one this viewer can read (or it failed to load).
+  if (count === null) return { text: 'Yes', muted: false, missing: false }
   if (count === 0) return { text: 'None set up', muted: false, missing: true }
   return { text: `${count} ${count === 1 ? units.one : units.many}`, muted: false, missing: false }
 }

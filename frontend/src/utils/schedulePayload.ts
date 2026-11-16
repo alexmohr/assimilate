@@ -145,3 +145,49 @@ export function repoTargetsProblem(targets: readonly ScheduleRepoTarget[]): stri
 export function primaryRepoId(targets: readonly ScheduleRepoTarget[]): number {
   return (targets.find((target) => target.required) ?? targets[0]).repo_id
 }
+
+/** A schedule's own paths as the Sources pane edits them: one shared list, or one list per host. */
+export interface OwnPaths {
+  usePerHostPaths: boolean
+  perHostSources: Record<number, string>
+}
+
+/**
+ * The paths half of a create/update request. Paths split per host replace
+ * the shared list rather than adding to it, and a host given none is left
+ * out rather than sent an empty list.
+ */
+export function ownPathsPayload(
+  form: ScheduleFormState,
+  own: OwnPaths,
+  agentIds: readonly number[],
+): Pick<ScheduleFormPayload, 'backup_sources' | 'backup_sources_per_agent'> {
+  if (!own.usePerHostPaths) return { backup_sources: parseLines(form.backup_sources) }
+  return {
+    backup_sources: [],
+    backup_sources_per_agent: agentIds
+      .map((agent_id) => ({ agent_id, paths: parseLines(own.perHostSources[agent_id] ?? '') }))
+      .filter((entry) => entry.paths.length > 0),
+  }
+}
+
+/**
+ * Why a backup schedule's sources could never back anything up, if they
+ * could not: the same rule the server applies on create and on edit.
+ */
+export function sourcesProblem(
+  form: ScheduleFormState,
+  own: OwnPaths,
+  agentIds: readonly number[],
+): string | null {
+  if (form.files_mode === 'own') {
+    const paths = ownPathsPayload(form, own, agentIds)
+    const any =
+      (paths.backup_sources?.length ?? 0) > 0 || (paths.backup_sources_per_agent?.length ?? 0) > 0
+    return any ? null : 'at least one backup path for its own files'
+  }
+  if (form.files_mode === 'off' && !form.vm_snapshot_enabled && !form.database_backup_enabled) {
+    return 'virtual machines or databases, since it reads no files'
+  }
+  return null
+}

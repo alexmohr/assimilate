@@ -15,9 +15,12 @@ import { lvmSnapshotPercentProblem } from '../utils/fsSnapshot'
 import { extractError } from '../utils/error'
 import {
   agentOverridePayload,
+  ownPathsPayload,
   primaryRepoId,
   repoTargetsProblem,
   scheduleFormPayload,
+  sourcesProblem,
+  type OwnPaths,
 } from '../utils/schedulePayload'
 import { parseLines } from '../utils/validation'
 import { useAsyncAction } from '../composables/useAsyncAction'
@@ -124,6 +127,10 @@ function agentLabel(id: number): string {
 
 const cronFieldCount = computed(() => form.value.cron_expression.trim().split(/\s+/).length)
 
+function ownPaths(): OwnPaths {
+  return { usePerHostPaths: usePerHostPaths.value, perHostSources: perHostSources.value }
+}
+
 /** What a step still needs before it counts as answered. */
 function blockers(step: StepId): string[] {
   const missing: string[] = []
@@ -132,6 +139,10 @@ function blockers(step: StepId): string[] {
   }
   if (step === 'sources' && selectedAgentIds.value.length === 0) {
     missing.push('at least one host')
+  }
+  if (step === 'sources' && isBackup.value) {
+    const problem = sourcesProblem(form.value, ownPaths(), selectedAgentIds.value)
+    if (problem) missing.push(problem)
   }
   if (step === 'targets') {
     const problem = repoTargetsProblem(repoTargets.value)
@@ -212,15 +223,9 @@ async function submit(): Promise<void> {
     const created = await createSchedule({
       ...scheduleFormPayload(form.value),
       ...agentOverridePayload(agentOverrides.value, selectedAgentIds.value),
+      // A schedule taking each host's files, or none, sends no paths of its own.
       ...(form.value.files_mode === 'own'
-        ? usePerHostPaths.value
-          ? {
-              backup_sources: [],
-              backup_sources_per_agent: selectedAgentIds.value
-                .map((id) => ({ agent_id: id, paths: parseLines(perHostSources.value[id] ?? '') }))
-                .filter((e) => e.paths.length > 0),
-            }
-          : {}
+        ? ownPathsPayload(form.value, ownPaths(), selectedAgentIds.value)
         : { backup_sources: [] }),
       agent_ids: selectedAgentIds.value,
       repo_id: primaryRepoId(repoTargets.value),

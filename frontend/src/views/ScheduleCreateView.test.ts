@@ -393,6 +393,22 @@ describe('ScheduleCreateView', () => {
     expect(wrapper.text()).not.toContain('an LVM snapshot size')
   })
 
+  // The server refuses a schedule that could never back anything up; the
+  // wizard says so on the Sources step instead of failing at the end.
+  it('holds the Sources step until the schedule has something to back up', async () => {
+    const wrapper = await open()
+    await fillBasicsAndContinue(wrapper)
+    await selectFirstAgent(wrapper)
+
+    await chooseFilesMode(wrapper, 'Own files')
+    expect(wrapper.text()).toContain('at least one backup path for its own files')
+
+    await chooseFilesMode(wrapper, 'Off')
+    expect(wrapper.text()).toContain('virtual machines or databases, since it reads no files')
+    await toggleNamed(wrapper, 'Databases', true)
+    expect(wrapper.text()).not.toContain('since it reads no files')
+  })
+
   it('keeps the create action out of reach while any step is unanswered', async () => {
     const wrapper = await open()
     await wrapper.findAll('.wizard-step').at(-1)!.trigger('click')

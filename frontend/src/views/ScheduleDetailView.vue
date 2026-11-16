@@ -42,12 +42,12 @@ import { useElapsedClock } from '../composables/useElapsedTimer'
 import { useTimeout } from '../composables/useTimeout'
 import {
   agentOverridePayload,
+  ownPathsPayload,
   primaryRepoId as primaryTargetRepoId,
   repoTargetsProblem,
   scheduleFormPayload,
   type ScheduleFormPayload,
 } from '../utils/schedulePayload'
-import { parseLines } from '../utils/validation'
 import { normalizeBackupStatus } from '../utils/backupStatus'
 import { isAgentOffline, lastSeenText } from '../utils/agent'
 import {
@@ -304,13 +304,15 @@ const agentMap = computed(() => {
  * only while the schedule takes them: on those hosts its archives hold none,
  * which the agent only says in its own log.
  */
-const { hostsWithout: hostsWithoutSource } = useHostSources(() =>
-  schedule.value?.vm_snapshot_enabled || schedule.value?.database_backup_enabled
-    ? selectedAgentIds.value.flatMap((id) => {
-        const agent = agentMap.value.get(id)
-        return agent ? [agent] : []
-      })
-    : [],
+const { hostsWithout: hostsWithoutSource } = useHostSources(
+  () =>
+    schedule.value?.vm_snapshot_enabled || schedule.value?.database_backup_enabled
+      ? selectedAgentIds.value.flatMap((id) => {
+          const agent = agentMap.value.get(id)
+          return agent ? [agent] : []
+        })
+      : [],
+  { canReadDatabases: () => isAdmin.value },
 )
 const vmHostsMissing = computed(() =>
   schedule.value?.vm_snapshot_enabled ? hostsWithoutSource('vms') : [],
@@ -703,20 +705,12 @@ async function save(): Promise<void> {
   try {
     const payload: ScheduleFormPayload = {
       ...scheduleFormPayload(form.value),
-      // Per-agent paths replace the shared list rather than adding to it.
-      ...(usePerHostPaths.value ? { backup_sources: [] } : {}),
-    }
-
-    if (usePerHostPaths.value) {
-      const perHost: { agent_id: number; paths: string[] }[] = []
-      for (const id of selectedAgentIds.value) {
-        const text = perHostSources.value[id] ?? ''
-        const paths = parseLines(text)
-        if (paths.length > 0) {
-          perHost.push({ agent_id: id, paths })
-        }
-      }
-      payload.backup_sources_per_agent = perHost
+      // Kept whatever the mode, so switching back to its own files finds them.
+      ...ownPathsPayload(
+        form.value,
+        { usePerHostPaths: usePerHostPaths.value, perHostSources: perHostSources.value },
+        selectedAgentIds.value,
+      ),
     }
 
     Object.assign(payload, agentOverridePayload(agentOverrides.value, selectedAgentIds.value))

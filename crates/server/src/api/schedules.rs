@@ -520,6 +520,68 @@ async fn ensure_backup_sources_available(
     .map_or(Ok(()), |problem| Err(ApiError::BadRequest(problem.into())))
 }
 
+/// The update-side twin of [`ensure_backup_sources_available`]: an edit must
+/// not leave a backup schedule with nothing to back up either. Fields the
+/// request leaves out keep their stored values. Each host's files are only
+/// checked when the edit switches the schedule to them, so an unrelated edit
+/// is never refused over a host's own settings.
+async fn ensure_updated_backup_sources_available(
+    state: &AppState,
+    req: &UpdateScheduleRequest,
+    existing: &db::ScheduleRow,
+) -> Result<(), ApiError> {
+    if existing.schedule_type != ScheduleType::Backup {
+        return Ok(());
+    }
+    let files_mode = req.files_mode.unwrap_or(existing.files_mode);
+    let shared_paths = match &req.backup_sources {
+        Some(paths) => !paths.is_empty(),
+        None => !db::list_backup_sources_for_schedule(&state.pool, existing.id)
+            .await?
+            .is_empty(),
+    };
+    let per_agent_paths = match &req.backup_sources_per_agent {
+        Some(entries) => entries.iter().any(|entry| !entry.paths.is_empty()),
+        None => db::list_all_per_agent_backup_sources_for_schedule(&state.pool, existing.id)
+            .await?
+            .iter()
+            .any(|entry| !entry.paths.is_empty()),
+    };
+    let takes_vms_or_databases = req
+        .vm_snapshot_enabled
+        .unwrap_or(existing.vm_snapshot_enabled)
+        || req
+            .database_backup_enabled
+            .unwrap_or(existing.database_backup_enabled);
+    let host_has_paths = if files_mode == ScheduleFilesMode::Host
+        && existing.files_mode != ScheduleFilesMode::Host
+    {
+        let first_agent_id = match req.agent_ids.as_deref() {
+            Some([first, ..]) => Some(*first),
+            Some([]) | None => db::list_schedule_targets(&state.pool, existing.id)
+                .await?
+                .first()
+                .map(|target| target.agent_id),
+        };
+        match first_agent_id {
+            Some(agent_id) => !db::get_agent_by_id(&state.pool, agent_id)
+                .await?
+                .default_backup_paths
+                .is_empty(),
+            None => false,
+        }
+    } else {
+        true
+    };
+    backup_sources_problem(
+        files_mode,
+        shared_paths || per_agent_paths,
+        takes_vms_or_databases,
+        || host_has_paths,
+    )
+    .map_or(Ok(()), |problem| Err(ApiError::BadRequest(problem.into())))
+}
+
 /// Normalises the repositories a create/update request asks for into
 /// `(repo_id, required)` pairs in write order.
 ///
@@ -921,6 +983,7 @@ pub async fn update_schedule(
     let target_plan = authorize_repo_targets(&state, &auth, &req, &existing).await?;
     check_cron_expression(&req.cron_expression)?;
     let values = resolve_effective_schedule_values(&req, &existing)?;
+    ensure_updated_backup_sources_available(&state, &req, &existing).await?;
     let enabled = req.enabled.unwrap_or(true);
     // Re-checking reachability on every save - a rename, a retention tweak, a
     // cron change - would make an otherwise unrelated edit fail whenever a

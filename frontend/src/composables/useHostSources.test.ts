@@ -14,6 +14,9 @@ import type { AgentDatabasesResponse, AgentVmSnapshotResponse } from '../types/g
 vi.mock('../api/vms', () => ({ getAgentVms: vi.fn() }))
 vi.mock('../api/databases', () => ({ getAgentDatabases: vi.fn() }))
 
+const admin = { canReadDatabases: () => true }
+const notAdmin = { canReadDatabases: () => false }
+
 function host(id: number, extra: Partial<AgentRow> = {}): AgentRow {
   return {
     id,
@@ -61,7 +64,7 @@ describe('useHostSources', () => {
         [false, true],
       ],
     }
-    const { counts } = useHostSources(() => [host(1)])
+    const { counts } = useHostSources(() => [host(1)], admin)
     await flushPromises()
 
     expect(counts.value.get(1)).toEqual({ vms: 2, databases: 1 })
@@ -75,7 +78,7 @@ describe('useHostSources', () => {
       'host-2': [[false], [true]],
       'host-3': [[], [false]],
     }
-    const { hostsWithout } = useHostSources(() => [host(1), host(2), host(3)])
+    const { hostsWithout } = useHostSources(() => [host(1), host(2), host(3)], admin)
     await flushPromises()
 
     expect(hostsWithout('databases').map((h) => h.id)).toEqual([1, 3])
@@ -84,8 +87,8 @@ describe('useHostSources', () => {
 
   it('finds none when every host includes some, or there are no hosts', async () => {
     included = { 'host-1': [[true], [true]] }
-    const some = useHostSources(() => [host(1)])
-    const none = useHostSources(() => [])
+    const some = useHostSources(() => [host(1)], admin)
+    const none = useHostSources(() => [], admin)
     await flushPromises()
 
     expect(some.hostsWithout('databases')).toEqual([])
@@ -95,7 +98,7 @@ describe('useHostSources', () => {
 
   it('passes each host its own domain', async () => {
     included = { 'host-1': [[], []] }
-    useHostSources(() => [host(1, { domain: 'corp.example' })])
+    useHostSources(() => [host(1, { domain: 'corp.example' })], admin)
     await flushPromises()
 
     expect(getAgentVms).toHaveBeenCalledWith('host-1', 'corp.example')
@@ -106,16 +109,38 @@ describe('useHostSources', () => {
   // not ask is not reported as missing sources.
   it('leaves out a host whose lists could not be read', async () => {
     included = { 'host-1': [[], []] }
-    const { counts, hostsWithout } = useHostSources(() => [host(1), host(2)])
+    const { counts, hostsWithout } = useHostSources(() => [host(1), host(2)], admin)
     await flushPromises()
 
     expect(counts.value.has(2)).toBe(false)
     expect(hostsWithout('databases').map((h) => h.id)).toEqual([1])
   })
 
+  it('reads only the VMs for a viewer who may not read database lists', async () => {
+    included = { 'host-1': [[false], [false]] }
+    const { counts, hostsWithout } = useHostSources(() => [host(1)], notAdmin)
+    await flushPromises()
+
+    expect(getAgentDatabases).not.toHaveBeenCalled()
+    expect(counts.value.get(1)).toEqual({ vms: 0, databases: null })
+    expect(hostsWithout('vms').map((h) => h.id)).toEqual([1])
+    expect(hostsWithout('databases')).toEqual([])
+  })
+
+  // One list failing (say, the database list refused) never hides the other.
+  it('keeps the count it could read when the other list fails', async () => {
+    included = { 'host-1': [[true], []] }
+    vi.mocked(getAgentDatabases).mockRejectedValue(new Error('forbidden'))
+    const { counts, hostsWithout } = useHostSources(() => [host(1)], admin)
+    await flushPromises()
+
+    expect(counts.value.get(1)).toEqual({ vms: 1, databases: null })
+    expect(hostsWithout('databases')).toEqual([])
+  })
+
   // An imported host has no agent to ask, and backs up none of either.
   it('counts an imported host as having none, without asking an agent', async () => {
-    const { hostsWithout } = useHostSources(() => [host(1, { is_imported: true })])
+    const { hostsWithout } = useHostSources(() => [host(1, { is_imported: true })], admin)
     await flushPromises()
 
     expect(getAgentVms).not.toHaveBeenCalled()
@@ -130,7 +155,7 @@ describe('useHostSources', () => {
       'host-2': [[], [false]],
     }
     const hosts = ref<AgentRow[]>([host(1)])
-    const { hostsWithout } = useHostSources(() => hosts.value)
+    const { hostsWithout } = useHostSources(() => hosts.value, admin)
     await flushPromises()
     expect(hostsWithout('databases')).toEqual([])
 

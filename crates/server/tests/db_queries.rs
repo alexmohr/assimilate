@@ -2695,6 +2695,61 @@ async fn config_assembly_includes_a_secondary_target_repository(pool: PgPool) {
     }
 }
 
+/// The canary file is written into one of the backup's source directories,
+/// so a schedule that reads no files never asks for one, even with the
+/// canary switched on. With files it keeps the canary it was given.
+#[sqlx::test(migrations = "./migrations")]
+async fn config_assembly_drops_the_canary_of_a_schedule_reading_no_files(pool: PgPool) {
+    let encryption_key = shared::crypto::derive_key(b"test-assembly-key-for-canary").unwrap();
+    let (agent, repo, schedule) = create_test_schedule(&pool).await;
+    let passphrase_encrypted =
+        shared::crypto::encrypt_passphrase("test-pass", &encryption_key).unwrap();
+    sqlx::query(
+        "WITH r AS (UPDATE repos SET passphrase_encrypted = $1, enabled = true WHERE id = $3 \
+         RETURNING repo_host_id) UPDATE repo_hosts SET ssh_host_key = $2 WHERE id IN (SELECT \
+         repo_host_id FROM r)",
+    )
+    .bind(passphrase_encrypted.as_slice())
+    .bind("ssh-ed25519 AAAATEST")
+    .bind(repo.id)
+    .execute(&pool)
+    .await
+    .unwrap();
+    db::insert_backup_source_for_schedule(&pool, schedule.id, "/home", 0)
+        .await
+        .unwrap();
+
+    let canary_for = |files_mode: &'static str| {
+        let pool = pool.clone();
+        async move {
+            sqlx::query(
+                "UPDATE schedules SET canary_enabled = true, files_mode = $2, vm_snapshot_enabled \
+                 = true WHERE id = $1",
+            )
+            .bind(schedule.id)
+            .bind(files_mode)
+            .execute(&pool)
+            .await
+            .unwrap();
+            let config =
+                server::config_assembler::assemble_config(&pool, &encryption_key, agent.id)
+                    .await
+                    .unwrap();
+            config
+                .repos
+                .first()
+                .unwrap()
+                .schedules
+                .first()
+                .unwrap()
+                .canary_enabled
+        }
+    };
+
+    assert!(canary_for("own").await, "own files keep the canary");
+    assert!(!canary_for("off").await, "no files, no canary");
+}
+
 #[sqlx::test(migrations = "./migrations")]
 async fn config_assembly_parses_raw_excludes_into_effective_patterns(pool: PgPool) {
     let encryption_key = shared::crypto::derive_key(b"test-assembly-key-for-excludes").unwrap();

@@ -1,5 +1,5 @@
 {
   "test": "dependency skip",
   "pages": ["frontend/src/views/ScheduleDetailView.vue"],
-  "fingerprint": "4ae17d52e26deb3cd82eccd1e87a224998590714e39e87ebce6342223766718b"
+  "fingerprint": "658318646f8d3002a518e425bb5a08bc833638ef793c80abaf97e97f8b20836c"
 }

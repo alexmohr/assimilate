@@ -4,6 +4,7 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 -->
 
 <script setup lang="ts">
+import BaseDisclosure from './BaseDisclosure.vue'
 import type { EnrollmentTokenRow, EnrollmentTokenStatus } from '../types/enrollment'
 
 // MOCK: dummy rows until the enrollment API exists.
@@ -50,50 +51,56 @@ const LABEL: Record<EnrollmentTokenStatus, string> = {
 </script>
 
 <template>
-  <section class="panel panel--sectioned">
-    <div class="panel-header">
-      <h2 class="panel-title">Enrollment tokens</h2>
-    </div>
-    <div class="table-wrap">
-      <table class="data-table">
-        <thead>
-          <tr>
-            <th>Token</th>
-            <th>Created by</th>
-            <th>Restricted to</th>
-            <th>Status</th>
-            <th>Details</th>
-            <th />
-          </tr>
-        </thead>
-        <tbody>
-          <tr
-            v-for="row in rows"
-            :key="row.id"
-          >
-            <td class="cell-mono">{{ row.prefix }}…</td>
-            <td>{{ row.created_by }}</td>
-            <td :class="{ 'cell-muted': !row.hostname }">{{ row.hostname ?? 'Any host' }}</td>
-            <td>
-              <span
-                class="badge"
-                :class="TONE[row.status]"
-                >{{ LABEL[row.status] }}</span
-              >
-            </td>
-            <td class="cell-muted">{{ row.detail }}</td>
-            <td>
-              <button
-                v-if="row.status === 'pending'"
-                type="button"
-                class="btn btn-sm"
-              >
-                Revoke
-              </button>
-            </td>
-          </tr>
-        </tbody>
-      </table>
-    </div>
-  </section>
+  <BaseDisclosure
+    title="Pending tokens"
+    :badge="String(rows.filter((r) => r.status === 'pending').length)"
+    badge-tone="warning"
+  >
+    <ul class="token-rows">
+      <li
+        v-for="row in rows"
+        :key="row.id"
+        class="token-row"
+      >
+        <span class="mono">{{ row.prefix }}…</span>
+        <span class="token-row-detail cell-muted">
+          {{ row.hostname ?? 'Any host' }} · {{ row.detail }}
+        </span>
+        <span
+          class="badge"
+          :class="TONE[row.status]"
+          >{{ LABEL[row.status] }}</span
+        >
+        <button
+          v-if="row.status === 'pending'"
+          type="button"
+          class="btn btn-sm"
+        >
+          Revoke
+        </button>
+      </li>
+    </ul>
+  </BaseDisclosure>
 </template>
+
+<style scoped>
+.token-rows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.token-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-5);
+  padding: var(--space-4) var(--space-5);
+  border-top: 1px solid var(--border-subtle);
+}
+
+.token-row-detail {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--fs-sm);
+}
+</style>

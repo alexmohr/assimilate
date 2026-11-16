@@ -31,7 +31,6 @@ import { ChevronRight, Plus, SlidersHorizontal, Server } from '@lucide/vue'
 import AgentChannelKey from '../components/AgentChannelKey.vue'
 import AgentInstallCommand from '../components/AgentInstallCommand.vue'
 import BaseTabs, { type TabOption } from '../components/BaseTabs.vue'
-import EnrollmentTokenList from '../components/EnrollmentTokenList.vue'
 import BaseSegmented, { type SegmentedOption } from '../components/BaseSegmented.vue'
 import BaseSpinner from '../components/BaseSpinner.vue'
 import EmptyState from '../components/EmptyState.vue'
@@ -1156,11 +1155,6 @@ useQueryOverride(() => route.query.coverage, isCoverageFilter, filterCoverage)
         </div>
       </div>
 
-      <EnrollmentTokenList
-        v-if="!loading && agents.length > 0"
-        class="enroll-list"
-      />
-
       <div
         v-if="!loading && agents.length > 0"
         class="fleet-strip"
@@ -1481,10 +1475,6 @@ useQueryOverride(() => route.query.coverage, isCoverageFilter, filterCoverage)
 </template>
 
 <style scoped>
-.enroll-list {
-  margin-bottom: var(--space-7);
-}
-
 .agents-filter-bar {
   display: flex;
   flex-direction: column;

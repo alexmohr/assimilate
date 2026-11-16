@@ -12,6 +12,7 @@ import PaneRow from './PaneRow.vue'
 import PerAgentFields from './PerAgentFields.vue'
 import ToggleSwitch from './ToggleSwitch.vue'
 import {
+  hostsWithoutPaths,
   useHostSources,
   type HostSourceCounts,
   type HostSourceKind,
@@ -135,6 +136,9 @@ const auth = useAuthStore()
 const { counts, unreadable, hostsWithout } = useHostSources(() => targetAgents.value, {
   canReadDatabases: () => auth.isAdmin,
 })
+const hostsWithoutFiles = computed(() =>
+  form.value.files_mode === 'host' ? hostsWithoutPaths(targetAgents.value) : [],
+)
 const hostsWithoutVms = computed(() => (form.value.vm_snapshot_enabled ? hostsWithout('vms') : []))
 const hostsWithoutDatabases = computed(() =>
   form.value.database_backup_enabled ? hostsWithout('databases') : [],
@@ -302,6 +306,12 @@ const preview = computed<HostPreview[]>(() =>
           />
         </PaneRow>
       </div>
+
+      <SourceNotSetUp
+        v-if="hostsWithoutFiles.length > 0"
+        kind="files"
+        :hosts="hostsWithoutFiles"
+      />
 
       <div
         v-if="form.files_mode === 'own'"

@@ -742,6 +742,33 @@ describe('ScheduleDetailView - edit mode', () => {
       return wrapper
     }
 
+    // A schedule taking each host's files can be moved to a host whose paths
+    // are set up afterwards; until then its page says that host reads none.
+    it("names the targets with no paths while it takes each host's files", async () => {
+      const renderWith = async (files_mode: 'host' | 'own') => {
+        setupEditMode({ ...mockSchedule, files_mode })
+        const fallback = mockApiClient.get.getMockImplementation()!
+        mockApiClient.get.mockImplementation((url: string) =>
+          url === '/agents'
+            ? Promise.resolve({
+                data: [{ ...mockAgents[0], default_backup_paths: [] }, mockAgents[1]],
+              })
+            : fallback(url),
+        )
+        const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })
+        await flushPromises()
+        return wrapper
+      }
+
+      const host = await renderWith('host')
+      const notice = host.get('[data-testid="source-not-set-up-files"]')
+      expect(notice.text()).toContain('No files will be backed up on 1 host')
+      expect(notice.findAll('.dump-mismatch-host').map((a) => a.text())).toEqual(['Web Server'])
+
+      const own = await renderWith('own')
+      expect(own.find('[data-testid="source-not-set-up-files"]').exists()).toBe(false)
+    })
+
     it('names only the known targets that have no database sources set up', async () => {
       const wrapper = await renderWithSourceTargets({
         vm_snapshot_enabled: false,
@@ -905,6 +932,7 @@ describe('ScheduleDetailView - edit mode', () => {
               display_name: 'Web Server',
               is_connected: false,
               last_seen_at: '2026-05-23T02:00:00Z',
+              ...HOST_FILES,
             },
             {
               id: 11,
@@ -912,6 +940,7 @@ describe('ScheduleDetailView - edit mode', () => {
               display_name: null,
               is_connected: true,
               last_seen_at: '2026-05-30T02:00:00Z',
+              ...HOST_FILES,
             },
           ],
         })

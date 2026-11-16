@@ -10,18 +10,35 @@ import type { RouteLocationRaw } from 'vue-router'
 import { domainParams } from '../utils/agent'
 import { listSeparator } from '../utils/format'
 import type { AgentRow } from '../types/agent'
-import type { HostSourceKind } from '../composables/useHostSources'
+import type { SourceKind } from '../composables/useHostSources'
 
 /**
- * A schedule takes virtual machines or databases, but these of its hosts have
- * none set up: none found by a scan, or none selected. Their archives will
- * hold none. Each host links to the list where it sets them up.
+ * A schedule takes each host's files, virtual machines or databases, but these
+ * of its hosts have none set up: no backup paths, or no VMs or database sources
+ * found by a scan or selected. Their archives will hold none. Each host links
+ * to the list where it sets them up.
  */
-const props = defineProps<{ hosts: readonly AgentRow[]; kind: HostSourceKind }>()
+const props = defineProps<{ hosts: readonly AgentRow[]; kind: SourceKind }>()
 
-const COPY: Record<HostSourceKind, { noun: string; title: string }> = {
-  vms: { noun: 'virtual machines', title: 'No virtual machines will be backed up' },
-  databases: { noun: 'databases', title: 'No databases will be dumped' },
+const COPY: Record<SourceKind, { title: string; takes: string; missing: string; fix: string }> = {
+  files: {
+    title: 'No files will be backed up',
+    takes: "each host's files",
+    missing: 'no backup paths are set on',
+    fix: "Add paths in each host's Sources tab, or give this schedule its own files.",
+  },
+  vms: {
+    title: 'No virtual machines will be backed up',
+    takes: 'virtual machines',
+    missing: 'none are set up on',
+    fix: "Scan or select them in each host's Sources tab, or turn virtual machines off for this schedule.",
+  },
+  databases: {
+    title: 'No databases will be dumped',
+    takes: 'databases',
+    missing: 'none are set up on',
+    fix: "Scan or select them in each host's Sources tab, or turn databases off for this schedule.",
+  },
 }
 
 const copy = computed(() => COPY[props.kind])
@@ -50,7 +67,7 @@ function hostName(host: AgentRow): string {
         {{ copy.title }} on {{ hosts.length === 1 ? '1 host' : `${hosts.length} hosts` }}
       </span>
       <span>
-        This schedule takes {{ copy.noun }}, but none are set up on
+        This schedule takes {{ copy.takes }}, but {{ copy.missing }}
         <template
           v-for="(host, i) in hosts"
           :key="host.id"
@@ -61,8 +78,7 @@ function hostName(host: AgentRow): string {
             >{{ hostName(host) }}</RouterLink
           >{{ listSeparator(i, hosts.length, '.') }}
         </template>
-        Scan or select them in each host's Sources tab, or turn {{ copy.noun }} off for this
-        schedule.
+        {{ copy.fix }}
       </span>
     </div>
   </div>

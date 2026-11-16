@@ -441,6 +441,24 @@ describe('ScheduleSourcesPane', () => {
       expect(databases.findAll('a').map((a) => a.text())).toEqual(['host-02'])
     })
 
+    // Files come from each host's own row, so no list has to be read.
+    it("names the target hosts with no paths while it takes each host's files", async () => {
+      const wrapper = mount({
+        agents: [agent(1, { default_backup_paths: [] }), agent(2)],
+      })
+      await flushPromises()
+
+      const files = wrapper.get('[data-testid="source-not-set-up-files"]')
+      expect(files.text()).toContain('No files will be backed up on 1 host')
+      expect(files.findAll('a').map((a) => a.text())).toEqual(['host-01'])
+
+      // Own files do not read the hosts' paths, and no files read none.
+      await wrapper.setProps({ form: form({ files_mode: 'own' }) })
+      expect(wrapper.find('[data-testid="source-not-set-up-files"]').exists()).toBe(false)
+      await wrapper.setProps({ form: form({ files_mode: 'off', database_backup_enabled: true }) })
+      expect(wrapper.find('[data-testid="source-not-set-up-files"]').exists()).toBe(false)
+    })
+
     it('only asks about the hosts this schedule targets', async () => {
       const wrapper = mount({ agentIds: [2] })
       await flushPromises()

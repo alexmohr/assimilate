@@ -207,4 +207,45 @@ test.describe('Schedule sources', () => {
       expect((await page.request.delete(`/api/schedules/${id}`)).ok()).toBe(true)
     }
   })
+
+  // web-server-01 lists no paths (seed-demo.sh). A schedule taking each
+  // host's files cannot be created there, but can be moved there so the
+  // host's paths are set up afterwards; until then its page says so.
+  test("a schedule taking each host's files names a host with no paths", async ({ page }) => {
+    await loginAsAdmin(page)
+    const web = await hostId(page, 'web-server-01')
+    const db = await hostId(page, 'db-server-01')
+    const refused = await page.request.post('/api/schedules', {
+      data: {
+        name: `e2e host files refused ${Date.now()}`,
+        agent_ids: [db, web],
+        repo_id: await seededIdByName(page, '/api/repos', 'server-daily'),
+        cron_expression: '0 3 * * *',
+        enabled: false,
+        files_mode: 'host',
+      },
+    })
+    expect(refused.status()).toBe(400)
+
+    const id = await pausedSchedule(page, `e2e host files moved ${Date.now()}`)
+    try {
+      const moved = await page.request.put(`/api/schedules/${id}`, {
+        data: { cron_expression: '0 3 * * *', enabled: false, agent_ids: [db, web] },
+      })
+      expect(moved.ok()).toBe(true)
+
+      await page.goto(`/schedules/${id}`)
+      const warning = page.getByTestId('source-not-set-up-files')
+      await expect(warning).toBeVisible({ timeout: 15_000 })
+      await expect(warning).toContainText('No files will be backed up on 1 host')
+      const hosts = warning.getByRole('link')
+      await expect(hosts).toHaveCount(1)
+      await expect(hosts).toHaveAttribute(
+        'href',
+        /^\/agents\/web-server-01\?tab=sources&section=files/,
+      )
+    } finally {
+      expect((await page.request.delete(`/api/schedules/${id}`)).ok()).toBe(true)
+    }
+  })
 })

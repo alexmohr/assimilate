@@ -6,7 +6,7 @@ import { nextTick, ref } from 'vue'
 import { flushPromises } from '@vue/test-utils'
 import { getAgentDatabases } from '../api/databases'
 import { getAgentVms } from '../api/vms'
-import { useHostSources, useSchedulesAsking } from './useHostSources'
+import { hostsWithoutPaths, useHostSources, useSchedulesAsking } from './useHostSources'
 import type { AgentRow } from '../types/agent'
 import type { ScheduleRow } from '../types/schedule'
 import type { AgentDatabasesResponse, AgentVmSnapshotResponse } from '../types/generated'
@@ -214,6 +214,19 @@ function schedule(id: number, asks: { vms?: boolean; databases?: boolean } = {})
     database_backup_enabled: asks.databases ?? false,
   } as unknown as ScheduleRow
 }
+
+describe('hostsWithoutPaths', () => {
+  it('picks out the hosts that list no backup paths, in order, without asking an agent', () => {
+    const withPaths = (id: number, paths: string[]) =>
+      ({ ...host(id), default_backup_paths: paths }) as AgentRow
+    expect(
+      hostsWithoutPaths([withPaths(1, []), withPaths(2, ['/etc']), withPaths(3, [])]).map(
+        (h) => h.id,
+      ),
+    ).toEqual([1, 3])
+    expect(getAgentVms).not.toHaveBeenCalled()
+  })
+})
 
 describe('useSchedulesAsking', () => {
   it('picks out the schedules that take databases, in order', () => {

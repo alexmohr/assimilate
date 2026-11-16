@@ -6309,6 +6309,51 @@ async fn creating_a_schedule_of_each_hosts_files_needs_every_host_to_list_paths(
         .unwrap();
     let resp = oneshot(&mut app, create(&[with_paths, without_paths])).await;
     assert_eq!(resp.status(), StatusCode::CREATED);
+
+    // Without a files mode and without paths it takes each host's files,
+    // which never read the schedule's own excludes, patterns or commands:
+    // sending them is refused rather than stored and silently unused.
+    let without_mode = |extra: serde_json::Value| {
+        let mut payload = json!({
+            "agent_ids": [with_paths],
+            "repo_id": repo_id,
+            "cron_expression": "0 3 * * *",
+            "enabled": false,
+        });
+        payload
+            .as_object_mut()
+            .unwrap()
+            .extend(extra.as_object().unwrap().clone());
+        json_request("POST", "/api/schedules", Some(payload))
+    };
+    for unused in [
+        json!({ "exclude_patterns_raw": "*.tmp" }),
+        json!({ "include_patterns_raw": "/etc/keep" }),
+        json!({ "file_change_patterns_raw": "/var/** ignore" }),
+        json!({ "pre_backup_commands": [{ "command": "sync" }] }),
+        json!({ "exclude_patterns_per_agent": [{ "agent_id": with_paths, "raw_text": "*.log" }] }),
+        json!({ "commands_per_agent": [{
+            "agent_id": with_paths,
+            "pre_backup_commands": [],
+            "post_backup_commands": [{ "command": "sync" }],
+        }] }),
+    ] {
+        let resp = oneshot(&mut app, without_mode(unused.clone())).await;
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST, "{unused}");
+    }
+    // Comments alone set no rule; an explicit mode is taken as meant.
+    let resp = oneshot(
+        &mut app,
+        without_mode(json!({ "exclude_patterns_raw": "# none yet\n" })),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let resp = oneshot(
+        &mut app,
+        without_mode(json!({ "files_mode": "host", "exclude_patterns_raw": "*.tmp" })),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::CREATED);
 }
 
 /// An edit is held to the same rule as a create: a backup schedule has to

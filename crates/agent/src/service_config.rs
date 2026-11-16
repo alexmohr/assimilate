@@ -47,6 +47,8 @@ pub enum Action {
 /// Why a stored configuration couldn't be made or used.
 #[derive(Debug, thiserror::Error)]
 pub enum ConfigError {
+    #[error("serializing the service configuration: {0}")]
+    Serialize(#[from] serde_json::Error),
     #[error("invalid service configuration {}: {source}", path.display())]
     Invalid {
         path: PathBuf,
@@ -88,12 +90,9 @@ impl StoredConfig {
         })
     }
 
-    /// The JSON to write to `path`.
-    pub fn to_json(&self, path: &Path) -> Result<Vec<u8>, ConfigError> {
-        serde_json::to_vec_pretty(self).map_err(|source| ConfigError::Invalid {
-            path: path.to_path_buf(),
-            source,
-        })
+    /// The JSON to store.
+    pub fn to_json(&self) -> Result<Vec<u8>, ConfigError> {
+        Ok(serde_json::to_vec_pretty(self)?)
     }
 
     /// The configuration `json`, read from `path`, holds.
@@ -137,7 +136,7 @@ mod tests {
         )
         .unwrap();
 
-        let json = stored.to_json(path).unwrap();
+        let json = stored.to_json().unwrap();
         let endpoint = StoredConfig::from_json(&json, path)
             .unwrap()
             .endpoint(path)

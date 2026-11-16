@@ -142,7 +142,7 @@ async fn write_config(config: &StoredConfig) -> Result<(), ServiceError> {
     let paths = ServicePaths::from_env()?;
     create_service_dir(&paths.dir).await?;
     let path = paths.config();
-    let json = config.to_json(&path)?;
+    let json = config.to_json()?;
     let context = format!("writing {}", path.display());
     let file = create_private_file(&path, Access::SystemAndAdministrators)
         .await

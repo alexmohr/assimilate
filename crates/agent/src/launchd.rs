@@ -130,7 +130,7 @@ async fn install(paths: &DaemonPaths, config: &StoredConfig) -> Result<(), Servi
 
     create_private_dir(paths.support_dir()).await?;
     let config_path = paths.config();
-    write_private(&config_path, &config.to_json(&config_path)?, 0o600).await?;
+    write_private(&config_path, &config.to_json()?, 0o600).await?;
     write_private(paths.log(), &[], 0o600).await?;
     let plist = launchd_plist::render(&exe, paths.log());
     write_private(&paths.plist(), plist.as_bytes(), 0o644).await?;

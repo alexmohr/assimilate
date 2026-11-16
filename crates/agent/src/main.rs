@@ -9,10 +9,12 @@ mod borg;
 mod database;
 mod endpoint;
 mod executor;
-#[cfg(target_os = "macos")]
-mod launchd;
+// The macOS counterpart of the Windows service below, under the same name.
 mod live_file;
 mod pipe;
+#[cfg(target_os = "macos")]
+#[path = "launchd.rs"]
+mod service;
 // Pure, so it is tested on every platform.
 #[cfg(any(target_os = "macos", test))]
 mod launchd_plist;

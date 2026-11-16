@@ -113,7 +113,7 @@ pub fn run(command: Command) -> Result<ExitCode, ServiceError> {
             .with_env_filter(EnvFilter::new("info"))
             .init();
     }
-    match action {
+    let result = match action {
         Action::Install {
             server_url,
             server_key,
@@ -127,8 +127,8 @@ pub fn run(command: Command) -> Result<ExitCode, ServiceError> {
             runtime()?.block_on(remove_config())
         }
         Action::Run => Ok(service_dispatcher::start(SERVICE_NAME, ffi_service_main)?),
-    }
-    .map(|()| ExitCode::SUCCESS)
+    };
+    result.map(|()| ExitCode::SUCCESS)
 }
 
 fn runtime() -> Result<tokio::runtime::Runtime, ServiceError> {

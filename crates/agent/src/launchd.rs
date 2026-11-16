@@ -138,7 +138,9 @@ async fn install(paths: &DaemonPaths, config: &StoredConfig) -> Result<(), Servi
     // Load the new configuration: unload the daemon first if it is already
     // there, which fails harmlessly when it isn't.
     launchctl_bootout().await;
-    launchctl(&["bootstrap", "system", &paths.plist().to_string_lossy()]).await?;
+    let plist_path = paths.plist();
+    let plist_path = plist_path.to_string_lossy();
+    launchctl(&["bootstrap", "system", plist_path.as_ref()]).await?;
     tracing::info!("installed and started the {LABEL} daemon");
     Ok(())
 }

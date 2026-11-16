@@ -393,6 +393,16 @@ describe('ScheduleSourcesPane', () => {
       expect(state[key]).toBe(true)
     })
 
+    it("explains the hosts' backup commands on request", async () => {
+      const wrapper = mount()
+      await wrapper
+        .find('[aria-label="Help: the hosts\' pre- and post-backup commands"]')
+        .trigger('click')
+      expect(wrapper.find('.help-hint-pop').text()).toContain(
+        'such as stopping a service so its files are consistent',
+      )
+    })
+
     it('discloses the VM snapshot hint with its explainer text', async () => {
       const wrapper = mount()
       await wrapper.find('[aria-label="Help: VM snapshots"]').trigger('click')

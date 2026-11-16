@@ -684,6 +684,43 @@ describe('ScheduleCreateView', () => {
     )
   })
 
+  // The pane may hand the wizard a whole new form or per-host path map rather
+  // than editing the one it was given; the schedule is built from what it
+  // handed back.
+  it('takes the form and per-host paths the Sources pane hands back', async () => {
+    const wrapper = await open()
+    mockApiClient.post.mockResolvedValue({ data: { id: 9 } })
+
+    await fillBasicsAndContinue(wrapper)
+    await wrapper.find('.multi-select-trigger').trigger('click')
+    const boxes = wrapper.findAll('.multi-select-item input[type="checkbox"]')
+    await boxes[0].trigger('change')
+    await boxes[1].trigger('change')
+
+    const sources = wrapper.findComponent({ name: 'ScheduleSourcesPane' })
+    await sources.vm.$emit('update:form', {
+      ...(sources.props('form') as ScheduleFormState),
+      files_mode: 'own',
+      database_backup_enabled: true,
+    })
+    await sources.vm.$emit('update:usePerHostPaths', true)
+    await sources.vm.$emit('update:perHostSources', { 11: '/srv/data' })
+
+    await wrapper.findAll('.wizard-step').at(-1)!.trigger('click')
+    await button(wrapper, 'Create schedule')!.trigger('click')
+    await flushPromises()
+
+    expect(mockApiClient.post).toHaveBeenCalledWith(
+      '/schedules',
+      expect.objectContaining({
+        files_mode: 'own',
+        database_backup_enabled: true,
+        backup_sources: [],
+        backup_sources_per_agent: [{ agent_id: 11, paths: ['/srv/data'] }],
+      }),
+    )
+  })
+
   it('reads no files for a schedule with files off', async () => {
     const wrapper = await open()
     mockApiClient.post.mockResolvedValue({ data: { id: 9 } })

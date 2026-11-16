@@ -2085,6 +2085,43 @@ pub async fn preview_cron(
 
 #[cfg(test)]
 mod tests {
+    /// A client that predates files modes and sends paths of its own means
+    /// them; one that sends none takes each host's files.
+    #[test]
+    fn a_create_without_a_files_mode_takes_its_own_files_only_when_it_sends_paths() {
+        use shared::types::ScheduleFilesMode::{Host, Own};
+
+        let mode = |body: serde_json::Value| {
+            let mut request = serde_json::json!({
+                "cron_expression": "0 2 * * *",
+                "agent_ids": [1],
+                "repo_id": 1,
+            });
+            if let (Some(request), serde_json::Value::Object(extra)) =
+                (request.as_object_mut(), body)
+            {
+                request.extend(extra);
+            }
+            let req: super::CreateScheduleRequest = serde_json::from_value(request).unwrap();
+            super::default_files_mode(&req)
+        };
+        assert_eq!(mode(serde_json::json!({})), Host);
+        assert_eq!(mode(serde_json::json!({ "backup_sources": [] })), Host);
+        assert_eq!(mode(serde_json::json!({ "backup_sources": ["/srv"] })), Own);
+        assert_eq!(
+            mode(serde_json::json!({
+                "backup_sources_per_agent": [{ "agent_id": 1, "paths": [] }]
+            })),
+            Host
+        );
+        assert_eq!(
+            mode(serde_json::json!({
+                "backup_sources_per_agent": [{ "agent_id": 1, "paths": ["/srv"] }]
+            })),
+            Own
+        );
+    }
+
     #[test]
     fn a_schedule_must_have_something_to_back_up_in_every_files_mode() {
         use shared::types::ScheduleFilesMode::{Host, Off, Own};

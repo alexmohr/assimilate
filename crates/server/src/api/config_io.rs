@@ -928,6 +928,62 @@ mod tests {
 
     use super::*;
 
+    /// An export from before files modes: one that set any file field of its
+    /// own took its own files, anything else each host's.
+    #[test]
+    fn an_older_export_takes_its_own_files_when_it_set_any_file_field() {
+        let plain = export_with_targets(vec![]);
+        assert_eq!(files_mode_of_older_export(&plain), ScheduleFilesMode::Host);
+
+        let whitespace_only = ScheduleExport {
+            exclude_patterns_raw: "  \n ".to_owned(),
+            ..export_with_targets(vec![])
+        };
+        assert_eq!(
+            files_mode_of_older_export(&whitespace_only),
+            ScheduleFilesMode::Host
+        );
+
+        let own_fields: [fn(&mut ScheduleExport); 6] = [
+            |s| s.backup_sources = vec!["/srv".to_owned()],
+            |s| s.exclude_patterns_raw = "*.tmp".to_owned(),
+            |s| s.include_patterns_raw = "/srv/keep".to_owned(),
+            |s| s.file_change_patterns_raw = "/srv/** ignore".to_owned(),
+            |s| s.pre_backup_commands = vec![HookCommand::new("sync")],
+            |s| s.post_backup_commands = vec![HookCommand::new("sync")],
+        ];
+        for set in own_fields {
+            let mut sched = export_with_targets(vec![]);
+            set(&mut sched);
+            assert_eq!(files_mode_of_older_export(&sched), ScheduleFilesMode::Own);
+        }
+    }
+
+    #[test]
+    fn an_older_export_takes_its_own_files_when_a_target_set_any() {
+        let target_fields: [fn(&mut ScheduleTargetExport); 4] = [
+            |t| t.backup_sources = vec!["/srv".to_owned()],
+            |t| t.exclude_patterns = "*.tmp".to_owned(),
+            |t| t.include_patterns = "/srv/keep".to_owned(),
+            |t| t.file_change_patterns = "/srv/** ignore".to_owned(),
+        ];
+        for set in target_fields {
+            let mut sched = export_with_targets(vec![]);
+            let mut target = ScheduleTargetExport {
+                hostname: "web".to_owned(),
+                domain: None,
+                execution_order: 0,
+                backup_sources: Vec::new(),
+                exclude_patterns: String::new(),
+                include_patterns: String::new(),
+                file_change_patterns: String::new(),
+            };
+            set(&mut target);
+            sched.targets = vec![target];
+            assert_eq!(files_mode_of_older_export(&sched), ScheduleFilesMode::Own);
+        }
+    }
+
     fn export_with_targets(targets: Vec<(&str, bool)>) -> ScheduleExport {
         ScheduleExport {
             name: "nightly".to_owned(),

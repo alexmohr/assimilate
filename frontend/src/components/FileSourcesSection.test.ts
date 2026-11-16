@@ -181,6 +181,15 @@ describe('FileSourcesEditor', () => {
     expect(wrapper.emitted('update:fileChangePatterns')?.at(-1)?.[0]).toBe('**/*.log')
   })
 
+  // `*` stops at `/` here, unlike borg's own patterns, so the hint says so.
+  it('explains the file change pattern syntax on request', async () => {
+    const wrapper = mountEditor()
+    await wrapper.find('[aria-label="Help: file change patterns"]').trigger('click')
+    const hint = wrapper.find('.help-hint-pop').text()
+    expect(hint).toContain('matched against the full warning message')
+    expect(hint).toContain('/data/wal/**')
+  })
+
   it('offers one pre and one post command list, each with its own name and example', () => {
     const editors = mountEditor({ defaultTimeoutSeconds: 90 }).findAllComponents({
       name: 'CommandListEditor',

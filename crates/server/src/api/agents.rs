@@ -1096,6 +1096,7 @@ mod tests {
             "domain": at(MaxLen::Hostname),
             "default_backup_paths": [at(MaxLen::Path)],
             "default_exclude_patterns": [at(MaxLen::Path)],
+            "default_include_patterns": [at(MaxLen::Path)],
             "default_file_change_patterns_raw": at(MaxLen::Text),
         }));
         assert!(validate_update_agent_lengths(&req).is_ok());
@@ -1118,6 +1119,10 @@ mod tests {
             (
                 json!({ "default_exclude_patterns": [over(MaxLen::Path)] }),
                 "default_exclude_patterns[0] ",
+            ),
+            (
+                json!({ "default_include_patterns": ["/keep", over(MaxLen::Path)] }),
+                "default_include_patterns[1] ",
             ),
             (
                 json!({ "default_file_change_patterns_raw": over(MaxLen::Text) }),

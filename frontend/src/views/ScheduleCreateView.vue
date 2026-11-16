@@ -141,7 +141,12 @@ function blockers(step: StepId): string[] {
     missing.push('at least one host')
   }
   if (step === 'sources' && isBackup.value) {
-    const problem = sourcesProblem(form.value, ownPaths(), selectedAgentIds.value)
+    const problem = sourcesProblem(
+      form.value,
+      ownPaths(),
+      selectedAgentIds.value,
+      (id) => agentMap.value.get(id)?.default_backup_paths,
+    )
     if (problem) missing.push(problem)
   }
   if (step === 'targets') {

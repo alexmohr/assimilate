@@ -174,12 +174,24 @@ export function ownPathsPayload(
 /**
  * Why a backup schedule's sources could never back anything up, if they
  * could not: the same rule the server applies on create and on edit.
+ *
+ * `hostPaths` gives a host's own paths, where they are known. With it, a
+ * schedule taking each host's files needs its first host to list some, as
+ * the server checks on create; without it, that is left to the server.
  */
 export function sourcesProblem(
   form: ScheduleFormState,
   own: OwnPaths,
   agentIds: readonly number[],
+  hostPaths?: (agentId: number) => readonly string[] | undefined,
 ): string | null {
+  if (form.files_mode === 'host') {
+    const first = agentIds[0]
+    const paths = first === undefined ? undefined : hostPaths?.(first)
+    return paths !== undefined && paths.length === 0
+      ? "paths on its first host, or its own files: that host's Sources list none"
+      : null
+  }
   if (form.files_mode === 'own') {
     const paths = ownPathsPayload(form, own, agentIds)
     const any =

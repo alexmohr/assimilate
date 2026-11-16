@@ -178,6 +178,21 @@ async function selectFirstAgent(wrapper: ReturnType<typeof renderWithPlugins>): 
   await wrapper.findAll('.multi-select-item input[type="checkbox"]')[0].trigger('change')
 }
 
+/**
+ * Opens the wizard with a create request ready to succeed, names the
+ * schedule, and picks the first two hosts on the Sources step.
+ */
+async function openOnSourcesWithTwoHosts(): Promise<ReturnType<typeof renderWithPlugins>> {
+  const wrapper = await open()
+  mockApiClient.post.mockResolvedValue({ data: { id: 9 } })
+  await fillBasicsAndContinue(wrapper)
+  await wrapper.find('.multi-select-trigger').trigger('click')
+  const boxes = wrapper.findAll('.multi-select-item input[type="checkbox"]')
+  await boxes[0].trigger('change')
+  await boxes[1].trigger('change')
+  return wrapper
+}
+
 describe('ScheduleCreateView', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -649,14 +664,7 @@ describe('ScheduleCreateView', () => {
   })
 
   it('sends paths split per host as one list per host', async () => {
-    const wrapper = await open()
-    mockApiClient.post.mockResolvedValue({ data: { id: 9 } })
-
-    await fillBasicsAndContinue(wrapper)
-    await wrapper.find('.multi-select-trigger').trigger('click')
-    const boxes = wrapper.findAll('.multi-select-item input[type="checkbox"]')
-    await boxes[0].trigger('change')
-    await boxes[1].trigger('change')
+    const wrapper = await openOnSourcesWithTwoHosts()
     await chooseFilesMode(wrapper, 'Own files')
     await toggleNamed(wrapper, 'Different paths per host', true)
     await button(wrapper, 'Edit')!.trigger('click')
@@ -688,14 +696,7 @@ describe('ScheduleCreateView', () => {
   // than editing the one it was given; the schedule is built from what it
   // handed back.
   it('takes the form and per-host paths the Sources pane hands back', async () => {
-    const wrapper = await open()
-    mockApiClient.post.mockResolvedValue({ data: { id: 9 } })
-
-    await fillBasicsAndContinue(wrapper)
-    await wrapper.find('.multi-select-trigger').trigger('click')
-    const boxes = wrapper.findAll('.multi-select-item input[type="checkbox"]')
-    await boxes[0].trigger('change')
-    await boxes[1].trigger('change')
+    const wrapper = await openOnSourcesWithTwoHosts()
 
     const sources = wrapper.findComponent({ name: 'ScheduleSourcesPane' })
     await sources.vm.$emit('update:form', {

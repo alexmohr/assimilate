@@ -150,19 +150,29 @@ export function primaryRepoId(targets: readonly ScheduleRepoTarget[]): number {
 export interface OwnPaths {
   usePerHostPaths: boolean
   perHostSources: Record<number, string>
+  /** The schedule has per-host paths saved that shared paths must delete. */
+  clearSavedPerHost?: boolean
 }
 
 /**
  * The paths half of a create/update request. Paths split per host replace
  * the shared list rather than adding to it, and a host given none is left
- * out rather than sent an empty list.
+ * out rather than sent an empty list. Turning the split off on a schedule
+ * that saved per-host paths (`clearSavedPerHost`) sends an empty per-host
+ * list to delete them: left in place, they would still win over the shared
+ * paths. Otherwise the per-host field is left out and keeps what is stored.
  */
 export function ownPathsPayload(
   form: ScheduleFormState,
   own: OwnPaths,
   agentIds: readonly number[],
 ): Pick<ScheduleFormPayload, 'backup_sources' | 'backup_sources_per_agent'> {
-  if (!own.usePerHostPaths) return { backup_sources: parseLines(form.backup_sources) }
+  if (!own.usePerHostPaths) {
+    const shared = parseLines(form.backup_sources)
+    return own.clearSavedPerHost
+      ? { backup_sources: shared, backup_sources_per_agent: [] }
+      : { backup_sources: shared }
+  }
   return {
     backup_sources: [],
     backup_sources_per_agent: agentIds

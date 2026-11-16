@@ -77,7 +77,7 @@ The previews apply the same limits as the endpoints they preview, so they never 
 
 ### Schedule Sources
 
-A backup schedule's `files_mode` decides whose files it reads: `host` (each host's own **Sources › Files**), `own` (the schedule's `backup_sources`, excludes, patterns and commands) or `off`. `POST /api/schedules` without `files_mode` takes `own` when the request sends backup paths and `host` otherwise. Excludes, include patterns, file change patterns and commands are only used with `own`, so a request that leaves out `files_mode` and sends no paths but sends any of them returns `400` rather than storing values no backup reads. A `host` schedule is refused when any of its hosts lists no backup paths, an `own` one without a path, and an `off` one that takes neither virtual machines nor databases. See [Scheduling](scheduling.md#sources).
+A backup schedule's `files_mode` decides whose files it reads: `host` (each host's own **Sources › Files**), `own` (the schedule's `backup_sources`, excludes, patterns and commands) or `off`. `POST /api/schedules` without `files_mode` takes `own` when the request sends backup paths and `host` otherwise. Excludes, include patterns, file change patterns and commands are only used with `own`, so a request that leaves out `files_mode` and sends no paths but sends any of them returns `400` rather than storing values no backup reads. Turning per-host paths off means sending `backup_sources_per_agent: []`: per-host paths left in place are used instead of `backup_sources`. A `host` schedule is refused when any of its hosts lists no backup paths, an `own` one without a path, and an `off` one that takes neither virtual machines nor databases. See [Scheduling](scheduling.md#sources).
 
 ## API Endpoints Summary
 

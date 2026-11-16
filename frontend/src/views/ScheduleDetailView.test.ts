@@ -2854,6 +2854,40 @@ describe('ScheduleDetailView - per-agent overrides', () => {
     )
   })
 
+  // Saved per-host paths win over the shared ones, so turning the split off
+  // has to delete them; a schedule that never split its paths sends none.
+  it('deletes the saved per-host paths when the split is turned off', async () => {
+    setupWithSources({
+      backup_sources: [],
+      backup_sources_per_agent: [{ agent_id: 10, paths: ['/per/host'] }],
+    })
+    mockApiClient.put.mockResolvedValue({ data: mockSchedule })
+    const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })
+    await flushPromises()
+    const vm = wrapper.vm as unknown as {
+      save: () => Promise<void>
+      usePerHostPaths: boolean
+      form: { files_mode: string; backup_sources: string }
+    }
+    expect(vm.usePerHostPaths).toBe(true)
+
+    vm.form.files_mode = 'own'
+    vm.usePerHostPaths = false
+    vm.form.backup_sources = '/shared'
+    await vm.save()
+    await flushPromises()
+
+    const payload = mockApiClient.put.mock.calls[0][1] as Record<string, unknown>
+    expect(payload.backup_sources).toEqual(['/shared'])
+    expect(payload.backup_sources_per_agent).toEqual([])
+
+    // Once deleted, a later save has nothing left to delete.
+    await vm.save()
+    await flushPromises()
+    const next = mockApiClient.put.mock.calls[1][1] as Record<string, unknown>
+    expect(next.backup_sources_per_agent).toBeUndefined()
+  })
+
   // Per-host excludes, includes, patterns and commands can no longer be set
   // one host at a time; a schedule that still has them shows which hosts,
   // and "Use the shared values" deletes them on the next save.

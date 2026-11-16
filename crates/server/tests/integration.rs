@@ -6362,7 +6362,8 @@ async fn an_edit_cannot_leave_a_backup_schedule_with_nothing_to_back_up(pool: sq
     let resp = oneshot(&mut app, to_host_files()).await;
     assert_eq!(resp.status(), StatusCode::OK);
 
-    // Staying on the hosts' files, a host the edit adds needs paths too.
+    // Staying on the hosts' files, retargeting is not checked: a schedule
+    // can be moved to a host whose paths are set up afterwards.
     let bare_host: i64 = sqlx::query_scalar(
         "INSERT INTO agents (hostname, agent_token_hash) VALUES ('edit-sources-bare', 'hash') \
          RETURNING id",
@@ -6370,7 +6371,8 @@ async fn an_edit_cannot_leave_a_backup_schedule_with_nothing_to_back_up(pool: sq
     .fetch_one(&pool)
     .await
     .unwrap();
-    let add_bare_host = || {
+    let resp = oneshot(
+        &mut app,
         json_request(
             "PUT",
             &format!("/api/schedules/{schedule_id}"),
@@ -6379,16 +6381,9 @@ async fn an_edit_cannot_leave_a_backup_schedule_with_nothing_to_back_up(pool: sq
                 "enabled": false,
                 "agent_ids": [agent_id, bare_host],
             })),
-        )
-    };
-    let resp = oneshot(&mut app, add_bare_host()).await;
-    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
-    sqlx::query("UPDATE agents SET default_backup_paths = ARRAY['/var'] WHERE id = $1")
-        .bind(bare_host)
-        .execute(&pool)
-        .await
-        .unwrap();
-    let resp = oneshot(&mut app, add_bare_host()).await;
+        ),
+    )
+    .await;
     assert_eq!(resp.status(), StatusCode::OK);
 
     // With no target left there is no host whose files it could take.

@@ -522,10 +522,9 @@ async fn ensure_backup_sources_available(
 
 /// The update-side twin of [`ensure_backup_sources_available`]: an edit must
 /// not leave a backup schedule with nothing to back up either. Fields the
-/// request leaves out keep their stored values. A host's files are only
-/// checked for the hosts the edit newly points at them (every target when it
-/// switches to the hosts' files, the added ones when it changes the targets),
-/// so an unrelated edit is never refused over a host's own settings.
+/// request leaves out keep their stored values. Each host's files are only
+/// checked when the edit switches the schedule to them, so an unrelated edit
+/// (retargeting included) is never refused over a host's own settings.
 async fn ensure_updated_backup_sources_available(
     state: &AppState,
     req: &UpdateScheduleRequest,
@@ -555,7 +554,7 @@ async fn ensure_updated_backup_sources_available(
             .database_backup_enabled
             .unwrap_or(existing.database_backup_enabled);
     let host_has_paths = if files_mode == ScheduleFilesMode::Host {
-        newly_targeted_hosts_have_paths(state, req, existing).await?
+        switched_hosts_have_paths(state, req, existing).await?
     } else {
         true
     };
@@ -568,32 +567,31 @@ async fn ensure_updated_backup_sources_available(
     .map_or(Ok(()), |problem| Err(ApiError::BadRequest(problem.into())))
 }
 
-/// Whether every host a `Host`-mode edit newly points at the hosts' files
-/// lists paths of its own: all of the schedule's targets when the edit
-/// switches to the hosts' files, else only the hosts it adds. A switch that
-/// leaves the schedule with no target at all has no host to read.
-async fn newly_targeted_hosts_have_paths(
+/// Whether the hosts an edit switches to their own files list paths there.
+/// Only a switch is checked: an edit that only changes the targets of a
+/// schedule already on the hosts' files is not, so a schedule can be moved
+/// to a host whose paths are set up afterwards. A switch that leaves the
+/// schedule with no target at all has no host to read.
+async fn switched_hosts_have_paths(
     state: &AppState,
     req: &UpdateScheduleRequest,
     existing: &db::ScheduleRow,
 ) -> Result<bool, ApiError> {
-    let stored: Vec<i64> = db::list_schedule_targets(&state.pool, existing.id)
-        .await?
-        .iter()
-        .map(|target| target.agent_id)
-        .collect();
-    let targets = match req.agent_ids.as_deref() {
+    if existing.files_mode == ScheduleFilesMode::Host {
+        return Ok(true);
+    }
+    let targets: Vec<i64> = match req.agent_ids.as_deref() {
         Some(ids) if !ids.is_empty() => ids.to_vec(),
-        Some(_) | None => stored.clone(),
+        Some(_) | None => db::list_schedule_targets(&state.pool, existing.id)
+            .await?
+            .iter()
+            .map(|target| target.agent_id)
+            .collect(),
     };
-    let switching = existing.files_mode != ScheduleFilesMode::Host;
-    if switching && targets.is_empty() {
+    if targets.is_empty() {
         return Ok(false);
     }
     for agent_id in targets {
-        if !switching && stored.contains(&agent_id) {
-            continue;
-        }
         if db::get_agent_by_id(&state.pool, agent_id)
             .await?
             .default_backup_paths

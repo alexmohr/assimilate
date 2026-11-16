@@ -75,24 +75,10 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - name: Compute agent version
-        id: crate-version
-        if: inputs.version == ''
-        uses: ./.github/actions/crate-version
+      - name: Set up the package build
+        uses: ./.github/actions/setup-agent-package-build
         with:
-          crate: agent
-      - name: Resolve version
-        env:
-          VERSION: ${{ inputs.version || steps.crate-version.outputs.version }}
-        run: echo "VERSION=$VERSION" >> "$GITHUB_ENV"
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - name: Install Rust stable
-        uses: actions-rust-lang/setup-rust-toolchain@v1
-        with:
-          toolchain: ${{ env.RUST_STABLE_TOOLCHAIN }}
+          version: ${{ inputs.version }}
       - name: Build agent
         env:
           APP_VERSION_OVERRIDE: ${{ env.VERSION }}
@@ -192,24 +178,10 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - name: Compute agent version
-        id: crate-version
-        if: inputs.version == ''
-        uses: ./.github/actions/crate-version
+      - name: Set up the package build
+        uses: ./.github/actions/setup-agent-package-build
         with:
-          crate: agent
-      - name: Resolve version
-        env:
-          VERSION: ${{ inputs.version || steps.crate-version.outputs.version }}
-        run: echo "VERSION=$VERSION" >> "$GITHUB_ENV"
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - name: Install Rust stable
-        uses: actions-rust-lang/setup-rust-toolchain@v1
-        with:
-          toolchain: ${{ env.RUST_STABLE_TOOLCHAIN }}
+          version: ${{ inputs.version }}
           target: ${{ matrix.target }}
       - name: Build agent
         env:

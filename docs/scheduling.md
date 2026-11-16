@@ -220,7 +220,7 @@ A host lists everything it backs up on its [Sources tab](agents.md#sources): its
 | **Own files** | The schedule's own file set instead, edited with exactly the same form as a host's. It replaces each host's set as a whole: the paths can be narrower (only `/home`) or wider (paths the host does not list), and none of the host's excludes, patterns or commands apply |
 | **Off** | No files at all, for a schedule that only dumps databases or snapshots virtual machines, so it has to take at least one of them. Canary verification is skipped, since there is no source directory to write the canary file into |
 
-Global excludes apply in every mode unless **Advanced → Ignore global excludes** is on. A new schedule is refused when it could never back anything up: own files with no path, each host's files on a host that lists none, or no files and neither virtual machines nor databases.
+Global excludes apply in every mode unless **Advanced → Ignore global excludes** is on. A new schedule is refused when it could never back anything up: own files with no path, each host's files when any of its hosts lists none, or no files and neither virtual machines nor databases. An edit is held to the same rule; switching a schedule to each host's files checks every host it targets, while moving a schedule that already takes each host's files to another host does not, so you can set up that host's paths afterwards.
 
 With **Own files** on a multi-host schedule, turn on **Different paths per host** to give each host its own paths; the excludes, patterns and commands stay shared.
 

@@ -409,16 +409,19 @@ describe('ScheduleCreateView', () => {
     expect(wrapper.text()).not.toContain('since it reads no files')
   })
 
-  it('holds the Sources step while its first host lists no paths of its own', async () => {
-    setup(REPOS, [{ ...AGENTS[0], default_backup_paths: [] }, AGENTS[1]])
+  // Every host, not only the first: here the second lists none.
+  it('holds the Sources step while any of its hosts lists no paths of its own', async () => {
+    setup(REPOS, [AGENTS[0], { ...AGENTS[1], default_backup_paths: [] }])
     const wrapper = renderWithPlugins(ScheduleCreateView)
     await flushPromises()
     await fillBasicsAndContinue(wrapper)
     await selectFirstAgent(wrapper)
+    expect(wrapper.text()).not.toContain("a host's Sources list none")
 
-    expect(wrapper.text()).toContain("that host's Sources list none")
+    await wrapper.findAll('.multi-select-item input[type="checkbox"]')[1].trigger('change')
+    expect(wrapper.text()).toContain("a host's Sources list none")
     await chooseFilesMode(wrapper, 'Own files')
-    expect(wrapper.text()).not.toContain("that host's Sources list none")
+    expect(wrapper.text()).not.toContain("a host's Sources list none")
   })
 
   it('keeps the create action out of reach while any step is unanswered', async () => {

@@ -474,7 +474,7 @@ fn backup_sources_problem(
             Some("a schedule with its own files needs at least one backup path")
         }
         ScheduleFilesMode::Host if !host_has_paths() => {
-            Some("no backup sources provided and agent has no default backup paths configured")
+            Some("a schedule taking each host's files needs every host to list backup paths")
         }
         ScheduleFilesMode::Off if !takes_vms_or_databases => {
             Some("a schedule that reads no files has to back up virtual machines or databases")
@@ -499,25 +499,38 @@ async fn ensure_backup_sources_available(
             .backup_sources_per_agent
             .as_ref()
             .is_some_and(|entries| entries.iter().any(|entry| !entry.paths.is_empty()));
-    let Some(&first_agent_id) = req.agent_ids.first() else {
+    if req.agent_ids.is_empty() {
         return Err(ApiError::BadRequest(
             "agent_ids must contain at least one entry".into(),
         ));
-    };
+    }
     let files_mode = req.files_mode.unwrap_or_else(|| default_files_mode(req));
-    let host_paths = if files_mode == ScheduleFilesMode::Host {
-        db::get_agent_by_id(&state.pool, first_agent_id)
-            .await?
-            .default_backup_paths
+    // Every host has to list paths: one that lists none would back up nothing.
+    let hosts_have_paths = if files_mode == ScheduleFilesMode::Host {
+        hosts_have_paths(state, &req.agent_ids).await?
     } else {
-        Vec::new()
+        true
     };
     let takes_vms_or_databases =
         req.vm_snapshot_enabled.unwrap_or(false) || req.database_backup_enabled.unwrap_or(false);
     backup_sources_problem(files_mode, has_own_paths, takes_vms_or_databases, || {
-        !host_paths.is_empty()
+        hosts_have_paths
     })
     .map_or(Ok(()), |problem| Err(ApiError::BadRequest(problem.into())))
+}
+
+/// Whether every one of `agent_ids` lists backup paths of its own.
+async fn hosts_have_paths(state: &AppState, agent_ids: &[i64]) -> Result<bool, ApiError> {
+    for &agent_id in agent_ids {
+        if db::get_agent_by_id(&state.pool, agent_id)
+            .await?
+            .default_backup_paths
+            .is_empty()
+        {
+            return Ok(false);
+        }
+    }
+    Ok(true)
 }
 
 /// The update-side twin of [`ensure_backup_sources_available`]: an edit must
@@ -591,16 +604,7 @@ async fn switched_hosts_have_paths(
     if targets.is_empty() {
         return Ok(false);
     }
-    for agent_id in targets {
-        if db::get_agent_by_id(&state.pool, agent_id)
-            .await?
-            .default_backup_paths
-            .is_empty()
-        {
-            return Ok(false);
-        }
-    }
-    Ok(true)
+    hosts_have_paths(state, &targets).await
 }
 
 /// Normalises the repositories a create/update request asks for into

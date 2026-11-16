@@ -159,6 +159,8 @@ const primaryRepoId = computed(() => schedule.value?.repo_id ?? null)
 const onFailure = ref<'stop' | 'continue'>('stop')
 const usePerHostPaths = ref(false)
 const perHostSources = ref<Record<number, string>>({})
+/** Whether the schedule on screen has per-host paths saved on the server. */
+const savedPerHostPaths = ref(false)
 
 // The Advanced section's per-agent overrides, grouped so the tab component
 // takes one v-model instead of seven.
@@ -457,6 +459,7 @@ function clearScheduleState(): void {
   // save would write them onto the schedule now on screen.
   usePerHostPaths.value = false
   perHostSources.value = {}
+  savedPerHostPaths.value = false
   agentOverrides.value = emptyAgentOverrides()
   health.value = []
   reports.value = []
@@ -557,6 +560,7 @@ async function loadData(): Promise<void> {
     const perHost = sources.backup_sources_per_agent ?? []
     if (perHost.length > 0) {
       usePerHostPaths.value = true
+      savedPerHostPaths.value = true
       const map: Record<number, string> = {}
       for (const entry of perHost) {
         map[Number(entry.agent_id)] = entry.paths.join('\n')
@@ -718,14 +722,15 @@ async function save(): Promise<void> {
   saveError.value = null
   saveSuccess.value = false
   try {
+    const ownPaths = {
+      usePerHostPaths: usePerHostPaths.value,
+      perHostSources: perHostSources.value,
+      clearSavedPerHost: savedPerHostPaths.value && !usePerHostPaths.value,
+    }
     const payload: ScheduleFormPayload = {
       ...scheduleFormPayload(form.value),
       // Kept whatever the mode, so switching back to its own files finds them.
-      ...ownPathsPayload(
-        form.value,
-        { usePerHostPaths: usePerHostPaths.value, perHostSources: perHostSources.value },
-        selectedAgentIds.value,
-      ),
+      ...ownPathsPayload(form.value, ownPaths, selectedAgentIds.value),
     }
 
     Object.assign(payload, agentOverridePayload(agentOverrides.value, selectedAgentIds.value))
@@ -739,10 +744,6 @@ async function save(): Promise<void> {
       if (repoTargetsProblem(repoTargets.value)) {
         saveError.value = 'Select at least one repository, and mark at least one of them required.'
         return
-      }
-      const ownPaths = {
-        usePerHostPaths: usePerHostPaths.value,
-        perHostSources: perHostSources.value,
       }
       const sources = isBackup.value
         ? sourcesProblem(form.value, ownPaths, selectedAgentIds.value)
@@ -770,6 +771,7 @@ async function save(): Promise<void> {
       populateForm(updated)
       form.value.backup_sources = savedPaths
       agentOverrides.value = { ...agentOverrides.value, clearPerHost: false }
+      savedPerHostPaths.value = usePerHostPaths.value
       saveSuccess.value = true
       saveSuccessTimeout.start(() => {
         saveSuccess.value = false

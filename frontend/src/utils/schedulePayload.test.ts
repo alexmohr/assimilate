@@ -273,6 +273,15 @@ describe('ownPathsPayload', () => {
     })
   })
 
+  // Left in place, saved per-host paths would still win over the shared ones.
+  it('deletes the per-host paths a schedule saved once the split is turned off', () => {
+    const turnedOff = { ...shared, clearSavedPerHost: true }
+    expect(ownPathsPayload(form({ backup_sources: '/srv' }), turnedOff, [1, 2])).toEqual({
+      backup_sources: ['/srv'],
+      backup_sources_per_agent: [],
+    })
+  })
+
   it('sends one list per host instead, leaving out a host with none', () => {
     const perHost = { usePerHostPaths: true, perHostSources: { 1: '/home', 2: '  ', 3: '/srv' } }
     expect(ownPathsPayload(form({ backup_sources: '/ignored' }), perHost, [1, 2])).toEqual({

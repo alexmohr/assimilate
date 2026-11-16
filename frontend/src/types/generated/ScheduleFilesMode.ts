@@ -3,7 +3,7 @@
 /**
  * Where a backup schedule's files come from.
  *
- * A host defines its own file set under Sources › Files: paths, excludes,
+ * A host defines its own file set under Sources > Files: paths, excludes,
  * include patterns, file change patterns and pre/post-backup commands. A
  * schedule takes that set as it is, defines its own set of the same fields
  * that replaces each host's as a whole, or reads no files at all.

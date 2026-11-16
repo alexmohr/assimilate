@@ -256,8 +256,9 @@ async fn stop(child: &mut tokio::process::Child, grace: Duration) {
     }
 }
 
+// Only the Linux-only snapshot modules' tests use it.
 #[cfg(test)]
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 pub mod fake {
     //! Stand-in tools: shell scripts that log their arguments and answer
     //! with what a test tells them.

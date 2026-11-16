@@ -854,6 +854,10 @@ fn repo_routes() -> Router<AppState> {
         )
         .route("/api/repo-hosts", get(api::repo_hosts::list_repo_hosts))
         .route(
+            "/api/repo-hosts/providers",
+            get(api::repo_hosts::list_host_providers),
+        )
+        .route(
             "/api/repo-hosts/{repo_host_id}",
             get(api::repo_hosts::get_repo_host)
                 .put(api::repo_hosts::update_repo_host)

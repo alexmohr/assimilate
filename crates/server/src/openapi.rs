@@ -155,6 +155,7 @@ use crate::{
         crate::api::append_only::resume_maintenance,
         crate::api::append_only::cancel_archive_deletion,
         crate::api::repo_hosts::list_repo_hosts,
+        crate::api::repo_hosts::list_host_providers,
         crate::api::repo_hosts::get_repo_host,
         crate::api::repo_hosts::update_repo_host,
         crate::api::repo_hosts::delete_repo_host,

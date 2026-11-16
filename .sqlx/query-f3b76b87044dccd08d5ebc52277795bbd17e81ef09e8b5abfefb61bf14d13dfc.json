@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT provider AS \"provider: HostProvider\" FROM repo_hosts WHERE ssh_host = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "provider: HostProvider",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "f3b76b87044dccd08d5ebc52277795bbd17e81ef09e8b5abfefb61bf14d13dfc"
+}

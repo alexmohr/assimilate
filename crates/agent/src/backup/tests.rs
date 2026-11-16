@@ -57,6 +57,7 @@ pub(crate) fn test_target() -> BackupTarget {
         ssh_auth_sock: None,
         canary_enabled: false,
         accept_relocation: false,
+        remote_borg: None,
         file_change_patterns: Vec::new(),
         setup_warnings: Vec::new(),
     }

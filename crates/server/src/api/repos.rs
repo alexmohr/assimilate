@@ -12,6 +12,7 @@ use serde::Deserialize;
 use shared::{
     audit::AuditEvent,
     crypto::encrypt_passphrase,
+    provider::HostProvider,
     responses::{
         BreakLockResponse, ConfirmRelocationResponse, ExecBorgResponse, InitRepoResponse,
         MigrateEncryptionResponse, PassphraseResponse, RepoQuotaSummaryResponse, RepoResponse,
@@ -39,7 +40,7 @@ pub use self::sync::{
 };
 use self::{
     borg_ops::{
-        get_borg_timeout, run_borg_break_lock, run_borg_info_if_available,
+        get_borg_timeout, run_borg_break_lock, run_borg_info_with_env_if_available,
         run_borg_info_with_retry, run_borg_init,
     },
     indexing::index_archives_with_progress,
@@ -312,6 +313,10 @@ pub struct CreateRepoRequest {
     pub passphrase: String,
     /// Compression algorithm (defaults to "lz4").
     pub compression: Option<String>,
+    /// The hosting service of a new host. Omitted, an existing host keeps its
+    /// provider and a new one is generic.
+    #[serde(default)]
+    pub provider: Option<HostProvider>,
 }
 
 /// Request payload for updating a repository.
@@ -371,6 +376,7 @@ pub async fn create_repo(
     let ssh_port = req.ssh_port.unwrap_or(22);
     let ssh_port_u16 = u16::try_from(ssh_port)
         .map_err(|_| ApiError::BadRequest("ssh_port out of range".into()))?;
+    let provider = resolve_provider(&state.pool, &req.ssh_host, ssh_port, req.provider).await?;
     helpers::validate_path_exists(&req.ssh_host, &req.ssh_user, ssh_port_u16, &req.repo_path)
         .await?;
     let ssh_host_key = crate::ssh::scan_host_key(&req.ssh_host, ssh_port_u16)
@@ -385,9 +391,9 @@ pub async fn create_repo(
         &req.ssh_user,
         &req.repo_path,
         async {
-            let info_result = run_borg_info_if_available(
+            let info_result = run_borg_info_with_env_if_available(
                 &repo_url,
-                &req.passphrase,
+                &helpers::borg_base_env_for_provider(&req.passphrase, provider),
                 &state.task_registry,
                 Duration::from_secs(30),
             )
@@ -1025,6 +1031,24 @@ pub struct InitRepoRequest {
     pub encryption: BorgEncryption,
     /// Compression algorithm (defaults to "lz4").
     pub compression: Option<String>,
+    /// The hosting service of a new host. Omitted, an existing host keeps its
+    /// provider and a new one is generic.
+    #[serde(default)]
+    pub provider: Option<HostProvider>,
+}
+
+/// Registers the host's provider, refusing one that disagrees with the host
+/// or its port, and returns the provider the host now has.
+async fn resolve_provider(
+    pool: &PgPool,
+    ssh_host: &str,
+    ssh_port: i32,
+    requested: Option<HostProvider>,
+) -> Result<HostProvider, ApiError> {
+    db::repo_hosts::ensure_repo_host_provider(pool, ssh_host, ssh_port, requested).await?;
+    Ok(db::repo_hosts::find_repo_host_by_name(pool, ssh_host)
+        .await?
+        .map_or_else(|| requested.unwrap_or_default(), |host| host.provider))
 }
 
 #[utoipa::path(
@@ -1061,6 +1085,7 @@ pub async fn init_repo(
     let ssh_port = req.ssh_port.unwrap_or(22);
     let ssh_port_u16 = u16::try_from(ssh_port)
         .map_err(|_| ApiError::BadRequest("ssh_port out of range".into()))?;
+    let provider = resolve_provider(&state.pool, &req.ssh_host, ssh_port, req.provider).await?;
     let ssh_host_key = crate::ssh::scan_host_key(&req.ssh_host, ssh_port_u16)
         .await
         .map_err(|e| ApiError::BadGateway(e.to_string()))?;
@@ -1073,7 +1098,7 @@ pub async fn init_repo(
         &req.ssh_user,
         &req.repo_path,
         async {
-            let env = helpers::borg_base_env(&req.passphrase);
+            let env = helpers::borg_base_env_for_provider(&req.passphrase, provider);
             let borg_output =
                 run_borg_init(&repo_url, &env, req.encryption, &state.task_registry).await?;
 

@@ -28,6 +28,7 @@ function host(overrides: Partial<RepoHost> = {}): RepoHost {
     ssh_host: 'nas.lan',
     ssh_port: 22,
     ssh_host_key: PINNED,
+    provider: 'generic',
     intermittent: false,
     power: {
       wake_enabled: false,
@@ -75,6 +76,11 @@ describe('RepoHostConnectionCard', () => {
     expect(text).toContain('22')
     expect(text).toContain('ssh-ed25519')
     expect(text).toContain('AAAAPINNED')
+  })
+
+  it('names the provider of the host', () => {
+    const wrapper = mount({ host: host({ provider: 'hetzner', ssh_port: 23 }) })
+    expect(wrapper.get('[data-testid="host-provider"]').text()).toBe('Hetzner Storage Box')
   })
 
   it('says so when no key is pinned yet', () => {

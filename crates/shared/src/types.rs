@@ -26,6 +26,10 @@ fn default_hook_timeout_seconds() -> u32 {
 /// Name of the environment variable borg reads the repository URL from.
 pub const BORG_REPO_ENV_KEY: &str = "BORG_REPO";
 
+/// The environment variable borg reads the remote borg binary from, the
+/// environment form of `--remote-path`.
+pub const BORG_REMOTE_PATH_ENV_KEY: &str = "BORG_REMOTE_PATH";
+
 /// Builds the `borg://`-style SSH repository URL (`ssh://user@host:port/path`)
 /// passed to `borg` via [`BORG_REPO_ENV_KEY`], stripping any leading slash
 /// from `repo_path` so it is not duplicated after the port.
@@ -1701,6 +1705,10 @@ pub struct RepoConfig {
     /// during maintenance.
     #[serde(default)]
     pub append_only: bool,
+    /// The borg binary the repository host runs (`--remote-path`), when its
+    /// provider needs one other than plain `borg`.
+    #[serde(default)]
+    pub remote_borg: Option<crate::provider::RemoteBorg>,
     /// Backup schedules configured for this repository.
     pub schedules: Vec<ScheduleConfig>,
 }

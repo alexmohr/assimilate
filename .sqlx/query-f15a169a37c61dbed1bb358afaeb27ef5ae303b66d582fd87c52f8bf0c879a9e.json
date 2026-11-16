@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT ssh_host, ssh_port FROM repo_hosts WHERE id = $1 FOR UPDATE",
+  "query": "SELECT ssh_host, ssh_port, provider AS \"provider: HostProvider\" FROM repo_hosts WHERE id = $1 FOR UPDATE",
   "describe": {
     "columns": [
       {
@@ -12,6 +12,11 @@
         "ordinal": 1,
         "name": "ssh_port",
         "type_info": "Int4"
+      },
+      {
+        "ordinal": 2,
+        "name": "provider: HostProvider",
+        "type_info": "Text"
       }
     ],
     "parameters": {
@@ -21,8 +26,9 @@
     },
     "nullable": [
       false,
+      false,
       false
     ]
   },
-  "hash": "029d94a14edc0cb775e5c6baac46c7fcb6ade62c5789da77ccd591e863b14f76"
+  "hash": "f15a169a37c61dbed1bb358afaeb27ef5ae303b66d582fd87c52f8bf0c879a9e"
 }

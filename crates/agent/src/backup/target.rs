@@ -73,6 +73,8 @@ pub struct BackupTarget {
     pub ssh_auth_sock: Option<PathBuf>,
     pub canary_enabled: bool,
     pub accept_relocation: bool,
+    /// The borg binary the repository host runs, exported as `BORG_REMOTE_PATH`.
+    pub remote_borg: Option<shared::provider::RemoteBorg>,
     pub file_change_patterns: Vec<FileChangePattern>,
     /// What the schedule asked for that this host will not do (virtual
     /// machines or databases it has switched off), added to the run's report
@@ -117,6 +119,7 @@ impl Default for BackupTarget {
             ssh_auth_sock: None,
             canary_enabled: false,
             accept_relocation: false,
+            remote_borg: None,
             file_change_patterns: Vec::new(),
             setup_warnings: Vec::new(),
         }

@@ -129,6 +129,12 @@ pub async fn get_repo_env(
             "yes".to_string(),
         );
     }
+    if let Some(remote_borg) = repo.provider.defaults().remote_borg {
+        env.insert(
+            shared::types::BORG_REMOTE_PATH_ENV_KEY.to_owned(),
+            remote_borg.executable().to_owned(),
+        );
+    }
 
     Ok((borg_repo, env))
 }

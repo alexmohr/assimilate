@@ -11,6 +11,7 @@
 //! as and their path. How the host is woken and whether it is always online
 //! are its machine's settings - see [`super::machines`].
 
+use shared::provider::HostProvider;
 use sqlx::{PgPool, Postgres};
 
 use crate::error::ApiError;
@@ -29,6 +30,8 @@ pub struct RepoHostRow {
     /// The machine the host is, which holds its power and availability
     /// settings.
     pub machine_id: i64,
+    /// The hosting service, which fixes the host's port, path and remote borg.
+    pub provider: HostProvider,
 }
 
 /// A repository host with the number of repositories that use it - a row of
@@ -109,6 +112,62 @@ pub async fn resolve_repo_host(
     Ok(host.id)
 }
 
+/// Makes sure the host named `ssh_host` exists with `provider`, creating it
+/// with `ssh_port` if there is none. `None` takes whatever the host already
+/// is, and a new host is generic.
+///
+/// A host is one provider for good: naming an existing host with another is
+/// refused, as it is for another port, because the provider fixes how every
+/// repository on the host is reached.
+///
+/// # Errors
+///
+/// Returns [`ApiError::BadRequest`] if the provider does not accept the port
+/// or the host is already another provider, or [`ApiError::Database`] if a
+/// query fails.
+pub async fn ensure_repo_host_provider(
+    pool: &PgPool,
+    ssh_host: &str,
+    ssh_port: i32,
+    provider: Option<HostProvider>,
+) -> Result<(), ApiError> {
+    let Some(provider) = provider else {
+        return Ok(());
+    };
+    let port = u16::try_from(ssh_port)
+        .map_err(|_| ApiError::BadRequest("ssh_port out of range".to_owned()))?;
+    provider.check_port(port).map_err(ApiError::BadRequest)?;
+
+    let mut tx = pool.begin().await.map_err(ApiError::Database)?;
+    let provider_text = provider.as_ref();
+    sqlx::query!(
+        "INSERT INTO repo_hosts (ssh_host, ssh_port, provider) VALUES ($1, $2, $3) ON CONFLICT \
+         (ssh_host) DO NOTHING",
+        ssh_host,
+        ssh_port,
+        provider_text,
+    )
+    .execute(&mut *tx)
+    .await
+    .map_err(ApiError::Database)?;
+    let existing = sqlx::query_scalar!(
+        "SELECT provider AS \"provider: HostProvider\" FROM repo_hosts WHERE ssh_host = $1",
+        ssh_host,
+    )
+    .fetch_one(&mut *tx)
+    .await
+    .map_err(ApiError::Database)?;
+    tx.commit().await.map_err(ApiError::Database)?;
+
+    if existing == provider {
+        Ok(())
+    } else {
+        Err(ApiError::BadRequest(format!(
+            "repository host {ssh_host} is a {existing} host, not a {provider} one"
+        )))
+    }
+}
+
 /// # Errors
 ///
 /// Returns [`ApiError::NotFound`] if the host does not exist, or
@@ -116,7 +175,8 @@ pub async fn resolve_repo_host(
 pub async fn get_repo_host(pool: &PgPool, repo_host_id: i64) -> Result<RepoHostRow, ApiError> {
     sqlx::query_as!(
         RepoHostRow,
-        "SELECT id, ssh_host, ssh_port, ssh_host_key, machine_id FROM repo_hosts WHERE id = $1",
+        "SELECT id, ssh_host, ssh_port, ssh_host_key, machine_id, provider AS \"provider: \
+         HostProvider\" FROM repo_hosts WHERE id = $1",
         repo_host_id,
     )
     .fetch_one(pool)
@@ -135,8 +195,8 @@ pub async fn find_repo_host_by_name(
 ) -> Result<Option<RepoHostRow>, ApiError> {
     sqlx::query_as!(
         RepoHostRow,
-        "SELECT id, ssh_host, ssh_port, ssh_host_key, machine_id FROM repo_hosts WHERE ssh_host = \
-         $1",
+        "SELECT id, ssh_host, ssh_port, ssh_host_key, machine_id, provider AS \"provider: \
+         HostProvider\" FROM repo_hosts WHERE ssh_host = $1",
         ssh_host,
     )
     .fetch_optional(pool)
@@ -151,9 +211,9 @@ pub async fn find_repo_host_by_name(
 /// Returns [`ApiError::Database`] if the query fails.
 pub async fn list_repo_hosts(pool: &PgPool) -> Result<Vec<RepoHostSummaryRow>, ApiError> {
     let rows = sqlx::query!(
-        "SELECT h.id, h.ssh_host, h.ssh_port, h.ssh_host_key, h.machine_id, (SELECT COUNT(*) FROM \
-         repos r WHERE r.repo_host_id = h.id) AS \"repo_count!\" FROM repo_hosts h ORDER BY \
-         h.ssh_host",
+        "SELECT h.id, h.ssh_host, h.ssh_port, h.ssh_host_key, h.machine_id, h.provider AS \
+         \"provider: HostProvider\", (SELECT COUNT(*) FROM repos r WHERE r.repo_host_id = h.id) \
+         AS \"repo_count!\" FROM repo_hosts h ORDER BY h.ssh_host",
     )
     .fetch_all(pool)
     .await
@@ -168,6 +228,7 @@ pub async fn list_repo_hosts(pool: &PgPool) -> Result<Vec<RepoHostSummaryRow>, A
                 ssh_port: row.ssh_port,
                 ssh_host_key: row.ssh_host_key,
                 machine_id: row.machine_id,
+                provider: row.provider,
             },
             repo_count: row.repo_count,
         })
@@ -251,17 +312,24 @@ pub async fn update_repo_host_address(
     let mut tx = pool.begin().await.map_err(ApiError::Database)?;
 
     let previous = sqlx::query!(
-        "SELECT ssh_host, ssh_port FROM repo_hosts WHERE id = $1 FOR UPDATE",
+        "SELECT ssh_host, ssh_port, provider AS \"provider: HostProvider\" FROM repo_hosts WHERE \
+         id = $1 FOR UPDATE",
         repo_host_id,
     )
     .fetch_one(&mut *tx)
     .await
     .map_err(not_found(repo_host_id))?;
+    let port = u16::try_from(ssh_port)
+        .map_err(|_| ApiError::BadRequest("ssh_port out of range".to_owned()))?;
+    previous
+        .provider
+        .check_port(port)
+        .map_err(ApiError::BadRequest)?;
 
     let host = sqlx::query_as!(
         RepoHostRow,
         "UPDATE repo_hosts SET ssh_host = $2, ssh_port = $3 WHERE id = $1 RETURNING id, ssh_host, \
-         ssh_port, ssh_host_key, machine_id",
+         ssh_port, ssh_host_key, machine_id, provider AS \"provider: HostProvider\"",
         repo_host_id,
         ssh_host,
         ssh_port,

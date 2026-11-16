@@ -793,6 +793,9 @@ pub struct RepoHostResponse {
     pub ssh_port: i32,
     /// Pinned SSH host key, or `null` when none has been accepted yet.
     pub ssh_host_key: Option<String>,
+    /// The hosting service, which fixes the host's port, path and remote
+    /// borg binary.
+    pub provider: crate::provider::HostProvider,
     #[ts(type = "number")]
     /// The machine the host is, whose Power & dependencies pane holds its
     /// power and availability settings.
@@ -2710,6 +2713,11 @@ pub struct RepoExportResponse {
     pub sync_schedule: Option<String>,
     /// SSH host key fingerprint.
     pub ssh_host_key: Option<String>,
+    /// The hosting service of the repository's host, so an imported host
+    /// keeps its port, path and remote borg. Absent in older exports, which
+    /// import as generic.
+    #[serde(default)]
+    pub provider: crate::provider::HostProvider,
     /// Warning quota threshold in bytes.
     #[serde(default)]
     pub quota_warn_bytes: Option<i64>,

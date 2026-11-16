@@ -326,6 +326,10 @@ fn test_app_repo_host_routes() -> Router<server::AppState> {
             get(server::api::repo_hosts::list_repo_hosts),
         )
         .route(
+            "/api/repo-hosts/providers",
+            get(server::api::repo_hosts::list_host_providers),
+        )
+        .route(
             "/api/repo-hosts/{repo_host_id}",
             get(server::api::repo_hosts::get_repo_host)
                 .put(server::api::repo_hosts::update_repo_host)
@@ -7692,6 +7696,118 @@ async fn test_import_config_rejects_wrong_version(pool: sqlx::PgPool) {
     )
     .await;
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+}
+
+fn repo_import_payload(name: &str, host: &str, port: i64, provider: Option<&str>) -> Value {
+    let mut repo = json!({
+        "name": name,
+        "repo_path": "./backups/offsite",
+        "ssh_user": "u1",
+        "ssh_host": host,
+        "ssh_port": port,
+        "compression": "lz4",
+        "encryption": "repokey-blake2",
+        "enabled": true,
+        "sync_schedule": null,
+        "ssh_host_key": null,
+    });
+    if let Some(provider) = provider {
+        repo["provider"] = json!(provider);
+    }
+    json!({
+        "version": 1,
+        "exported_at": "2026-01-01T00:00:00Z",
+        "hosts": [],
+        "schedules": [],
+        "repos": [repo],
+    })
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn test_import_config_creates_a_provider_host_with_its_provider(pool: sqlx::PgPool) {
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+
+    let payload = repo_import_payload("offsite", "u1.your-storagebox.de", 23, Some("hetzner"));
+    let resp = oneshot(
+        &mut app,
+        json_request("POST", "/api/config/import", Some(payload)),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(body_json(resp).await.get("repos_created").unwrap(), 1);
+
+    let hosts = body_json(oneshot(&mut app, get_request("/api/repo-hosts")).await).await;
+    let host = hosts.as_array().unwrap().first().unwrap().clone();
+    assert_eq!(host.get("ssh_host").unwrap(), "u1.your-storagebox.de");
+    assert_eq!(host.get("ssh_port").unwrap(), 23);
+    assert_eq!(host.get("provider").unwrap(), "hetzner");
+
+    // The provider is exported again, so a restored server keeps it.
+    let export = body_json(oneshot(&mut app, get_request("/api/config/export")).await).await;
+    let repo = export
+        .get("repos")
+        .unwrap()
+        .as_array()
+        .unwrap()
+        .first()
+        .unwrap()
+        .clone();
+    assert_eq!(repo.get("provider").unwrap(), "hetzner");
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn test_import_config_without_a_provider_is_a_generic_host(pool: sqlx::PgPool) {
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+
+    let payload = repo_import_payload("plain", "nas.lan", 22, None);
+    let resp = oneshot(
+        &mut app,
+        json_request("POST", "/api/config/import", Some(payload)),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let hosts = body_json(oneshot(&mut app, get_request("/api/repo-hosts")).await).await;
+    let host = hosts.as_array().unwrap().first().unwrap().clone();
+    assert_eq!(host.get("provider").unwrap(), "generic");
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn test_import_config_refuses_a_provider_on_the_wrong_port(pool: sqlx::PgPool) {
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+
+    let payload = repo_import_payload("offsite", "u1.your-storagebox.de", 22, Some("hetzner"));
+    let resp = oneshot(
+        &mut app,
+        json_request("POST", "/api/config/import", Some(payload)),
+    )
+    .await;
+
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn test_provider_presets_endpoint_lists_every_provider(pool: sqlx::PgPool) {
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+
+    let resp = oneshot(&mut app, get_request("/api/repo-hosts/providers")).await;
+
+    assert_eq!(resp.status(), StatusCode::OK);
+    let presets = body_json(resp).await;
+    let providers: Vec<&str> = presets
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|p| p.get("provider").unwrap().as_str().unwrap())
+        .collect();
+    assert_eq!(providers, ["generic", "hetzner", "rsync_net", "borgbase"]);
+    let hetzner = &presets.as_array().unwrap()[1];
+    assert_eq!(hetzner["defaults"]["ssh_port"], 23);
+    assert_eq!(hetzner["defaults"]["remote_borg"], "borg-1.4");
 }
 
 #[sqlx::test(migrations = "./migrations")]

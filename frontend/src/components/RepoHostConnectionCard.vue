@@ -8,6 +8,7 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { RefreshCw } from '@lucide/vue'
 import { acceptRepoHostKey, scanRepoHostKey, updateRepoHost, type RepoHost } from '../api/repoHosts'
 import { extractError } from '../utils/error'
+import { PROVIDER_LABELS } from '../utils/hostProvider'
 import { useHostKeyCheck } from '../composables/useHostKeyCheck'
 import { useToast } from '../composables/useToast'
 import BaseModal from './BaseModal.vue'
@@ -149,6 +150,8 @@ async function acceptKey(): Promise<void> {
           <dd class="mono">{{ host.ssh_host }}</dd>
           <dt>SSH port</dt>
           <dd class="mono">{{ host.ssh_port }}</dd>
+          <dt>Provider</dt>
+          <dd data-testid="host-provider">{{ PROVIDER_LABELS[host.provider] }}</dd>
         </dl>
       </template>
       <template #edit>

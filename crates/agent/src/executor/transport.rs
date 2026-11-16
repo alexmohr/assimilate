@@ -196,6 +196,7 @@ pub fn backup_target_from_repo(
         ssh_auth_sock: None,
         canary_enabled: schedule.is_some_and(|s| s.canary_enabled),
         accept_relocation: repo.accept_relocation,
+        remote_borg: repo.remote_borg,
         setup_warnings,
     }
 }

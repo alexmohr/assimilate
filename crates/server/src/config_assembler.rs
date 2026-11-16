@@ -314,6 +314,7 @@ async fn build_repo_config(
         enabled: repo.enabled,
         accept_relocation: repo.relocation_pending,
         append_only,
+        remote_borg: repo.provider.defaults().remote_borg,
         schedules,
     })
 }

@@ -495,6 +495,7 @@ pub(crate) fn borg_env(target: &BackupTarget) -> Vec<(String, String)> {
         ssh_host_key: &target.ssh_host_key,
         known_hosts_path: target.known_hosts_path.as_deref(),
         accept_relocation: target.accept_relocation,
+        remote_borg: target.remote_borg,
         ssh_auth_sock: target.ssh_auth_sock.as_deref(),
     })
 }

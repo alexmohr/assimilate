@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT h.id, h.ssh_host, h.ssh_port, h.ssh_host_key, h.machine_id, (SELECT COUNT(*) FROM repos r WHERE r.repo_host_id = h.id) AS \"repo_count!\" FROM repo_hosts h ORDER BY h.ssh_host",
+  "query": "SELECT id, ssh_host, ssh_port, ssh_host_key, machine_id, provider AS \"provider: HostProvider\" FROM repo_hosts WHERE ssh_host = $1",
   "describe": {
     "columns": [
       {
@@ -30,12 +30,14 @@
       },
       {
         "ordinal": 5,
-        "name": "repo_count!",
-        "type_info": "Int8"
+        "name": "provider: HostProvider",
+        "type_info": "Text"
       }
     ],
     "parameters": {
-      "Left": []
+      "Left": [
+        "Text"
+      ]
     },
     "nullable": [
       false,
@@ -43,8 +45,8 @@
       false,
       true,
       false,
-      null
+      false
     ]
   },
-  "hash": "7c9a00c6f7acdd4a9fde2230b4523eb0660291dfb6ef862616b5a74c2732386c"
+  "hash": "6b3df893c15c83e5052b4c732861b749c9132373830b9876e388cec940bb3837"
 }

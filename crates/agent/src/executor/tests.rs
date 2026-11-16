@@ -234,6 +234,7 @@ fn make_repo(schedules: Vec<shared::types::ScheduleConfig>) -> shared::types::Re
         enabled: true,
         accept_relocation: false,
         append_only: false,
+        remote_borg: None,
         schedules,
     }
 }

@@ -88,12 +88,12 @@ DELETE FROM schedules WHERE name = 'Missed backups warning demo';
 DELETE FROM ssh_tunnels WHERE agent_id IN (SELECT id FROM agents WHERE hostname IN ('web-server-01','db-server-01','media-store-01'));
 DELETE FROM agent_hostname_patterns WHERE agent_id IN (SELECT id FROM agents WHERE hostname IN ('web-server-01','db-server-01','media-store-01'));
 DELETE FROM agents WHERE hostname IN ('web-server-01','db-server-01','media-store-01','old-webserver','legacy-db-prod','unassigned-01','offline-due-01','disabled-only-01','stale-report-01','auto-disabled-01','edge-proxy','laptop-01');
-DELETE FROM repo_quotas WHERE repo_id IN (SELECT id FROM repos WHERE name IN ('server-daily','database-hourly','media-weekly','stale-report-repo','offsite-imported'));
+DELETE FROM repo_quotas WHERE repo_id IN (SELECT id FROM repos WHERE name IN ('server-daily','database-hourly','media-weekly','stale-report-repo','offsite-imported','offsite-hetzner'));
 DELETE FROM server_quotas WHERE ssh_host = 'localhost';
-DELETE FROM archive_tags WHERE repo_id IN (SELECT id FROM repos WHERE name IN ('server-daily','database-hourly','media-weekly','stale-report-repo','offsite-imported'));
+DELETE FROM archive_tags WHERE repo_id IN (SELECT id FROM repos WHERE name IN ('server-daily','database-hourly','media-weekly','stale-report-repo','offsite-imported','offsite-hetzner'));
 DELETE FROM notification_rules;
 DELETE FROM notification_channels;
-DELETE FROM repos WHERE name IN ('server-daily','database-hourly','media-weekly','stale-report-repo','offsite-imported');
+DELETE FROM repos WHERE name IN ('server-daily','database-hourly','media-weekly','stale-report-repo','offsite-imported','offsite-hetzner');
 DELETE FROM dependency_hosts;
 DELETE FROM repo_hosts h WHERE NOT EXISTS (SELECT 1 FROM repos r WHERE r.repo_host_id = h.id);
 DELETE FROM system_events;
@@ -2035,6 +2035,28 @@ OFFSITE_IMPORT=$(echo "$EXPORT_JSON" | jq '{version, exported_at, hosts: [], sch
         | .name = "offsite-imported" | .repo_path = "/backup/repos/offsite-imported"]}')
 api POST /api/config/import "$OFFSITE_IMPORT" | jq -e '.repos_created == 1' > /dev/null || {
     echo "ERROR: config import should create offsite-imported" >&2
+    exit 1
+}
+
+echo "==> Importing offsite-hetzner, a repository on a Hetzner Storage Box preset host..."
+# A provider host (docs/provider-guides.md): the port (23), the ./backups
+# directory and the remote borg (borg-1.4) come from the provider, not from
+# the form. The export carries the provider, so the import creates the host
+# with it. Like offsite-imported it has no passphrase and waits for one, and
+# the server never connects to the box, which the demo cannot reach.
+HETZNER_IMPORT=$(echo "$EXPORT_JSON" | jq '{version, exported_at, hosts: [], schedules: [],
+    repos: [.repos[] | select(.name == "stale-report-repo")
+        | .name = "offsite-hetzner" | .repo_path = "./backups/offsite-hetzner"
+        | .ssh_user = "u123456" | .ssh_host = "u123456.your-storagebox.de"
+        | .ssh_port = 23 | .ssh_host_key = null | .provider = "hetzner"]}')
+api POST /api/config/import "$HETZNER_IMPORT" | jq -e '.repos_created == 1' > /dev/null || {
+    echo "ERROR: config import should create offsite-hetzner" >&2
+    exit 1
+}
+PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -v ON_ERROR_STOP=1 -tAc \
+    "SELECT 1 FROM repo_hosts WHERE ssh_host = 'u123456.your-storagebox.de' AND provider = 'hetzner'" \
+    | grep -q 1 || {
+    echo "ERROR: the offsite-hetzner host should be a Hetzner provider host" >&2
     exit 1
 }
 

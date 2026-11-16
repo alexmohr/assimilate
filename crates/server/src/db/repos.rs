@@ -8,6 +8,7 @@ use chrono::{DateTime, Utc};
 use serde::Serialize;
 use shared::{
     protocol::RepoOpKind,
+    provider::HostProvider,
     types::{BorgEncryption, Compression, QuotaAction, Visibility},
 };
 use sqlx::PgPool;
@@ -949,8 +950,9 @@ pub async fn get_repo_with_passphrase(
         RepoWithPassphraseRow,
         "SELECT r.id, r.name, r.repo_path, r.ssh_user, h.ssh_host, h.ssh_port, h.ssh_host_key, \
          r.passphrase_encrypted, r.compression AS \"compression: Compression\", r.encryption AS \
-         \"encryption: BorgEncryption\", r.enabled, r.relocation_pending, r.sync_schedule FROM \
-         repos r JOIN repo_hosts h ON h.id = r.repo_host_id WHERE r.id = $1",
+         \"encryption: BorgEncryption\", r.enabled, r.relocation_pending, r.sync_schedule, \
+         h.provider AS \"provider: HostProvider\" FROM repos r JOIN repo_hosts h ON h.id = \
+         r.repo_host_id WHERE r.id = $1",
         repo_id,
     )
     .fetch_one(pool)
@@ -1028,6 +1030,8 @@ pub struct RepoWithPassphraseRow {
     pub relocation_pending: bool,
     /// Sync schedule cron expression, if any.
     pub sync_schedule: Option<String>,
+    /// The hosting service of the repository's host.
+    pub provider: HostProvider,
 }
 
 /// # Errors
@@ -1111,9 +1115,10 @@ pub async fn list_repos_for_agent(
         "SELECT DISTINCT r.id, r.name, r.repo_path, r.ssh_user, h.ssh_host, h.ssh_port, \
          h.ssh_host_key, r.passphrase_encrypted, r.compression AS \"compression: Compression\", \
          r.encryption AS \"encryption: BorgEncryption\", r.enabled, r.relocation_pending, \
-         r.sync_schedule FROM repos r JOIN repo_hosts h ON h.id = r.repo_host_id JOIN \
-         schedule_repos sr ON sr.repo_id = r.id JOIN schedule_targets st ON st.schedule_id = \
-         sr.schedule_id WHERE st.agent_id = $1 ORDER BY r.id",
+         r.sync_schedule, h.provider AS \"provider: HostProvider\" FROM repos r JOIN repo_hosts h \
+         ON h.id = r.repo_host_id JOIN schedule_repos sr ON sr.repo_id = r.id JOIN \
+         schedule_targets st ON st.schedule_id = sr.schedule_id WHERE st.agent_id = $1 ORDER BY \
+         r.id",
         agent_id,
     )
     .fetch_all(pool)

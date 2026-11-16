@@ -21,6 +21,7 @@ use axum::{
 use serde::Deserialize;
 use shared::{
     dependency_hosts::RepoHostDependenciesBody,
+    provider::{HostProvider, ProviderPreset},
     responses::{RepoHostKeyResponse, RepoHostResponse, RepoOnHostResponse},
 };
 use tracing::info;
@@ -58,6 +59,7 @@ fn host_response(
         ssh_host: host.ssh_host,
         ssh_port: host.ssh_port,
         ssh_host_key: host.ssh_host_key,
+        provider: host.provider,
         machine_id: host.machine_id,
         intermittent: machine.intermittent,
         power: wake_settings_response(machine, true),
@@ -96,6 +98,23 @@ fn validate_port(ssh_port: i32) -> Result<u16, ApiError> {
         .ok()
         .filter(|port| *port > 0)
         .ok_or_else(|| ApiError::BadRequest("ssh_port must be between 1 and 65535".into()))
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/repo-hosts/providers",
+    tag = "Repository hosts",
+    operation_id = "listHostProviders",
+    responses(
+        (status = 200, description = "Provider presets", body = Vec<ProviderPreset>),
+        (status = 401, description = "Unauthorized"),
+        (status = 403, description = "Forbidden"),
+    )
+)]
+/// List the provider presets a new repository host can start from, each with
+/// the defaults it fills in and locks (admin only).
+pub async fn list_host_providers(RequireAdmin(_admin): RequireAdmin) -> Json<Vec<ProviderPreset>> {
+    Json(HostProvider::presets())
 }
 
 #[utoipa::path(
@@ -436,5 +455,136 @@ mod tests {
         assert!(validate_port(65_536).is_err());
         assert_eq!(validate_port(22).unwrap(), 22);
         assert_eq!(validate_port(65_535).unwrap(), 65_535);
+    }
+
+    fn admin() -> RequireAdmin {
+        RequireAdmin(super::super::auth::AuthUser {
+            user_id: 1,
+            username: "admin".to_owned(),
+            session_id: None,
+        })
+    }
+
+    #[tokio::test]
+    async fn the_presets_list_every_provider_with_its_locked_defaults() {
+        let Json(presets) = list_host_providers(admin()).await;
+
+        let hetzner = presets
+            .iter()
+            .find(|p| p.provider == HostProvider::Hetzner)
+            .unwrap();
+        assert_eq!(hetzner.defaults.ssh_port, Some(23));
+        assert_eq!(hetzner.defaults.base_path, Some("./backups"));
+        assert_eq!(presets, HostProvider::presets());
+    }
+
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_new_host_takes_the_requested_provider_and_refuses_another_later(pool: sqlx::PgPool) {
+        db::repo_hosts::ensure_repo_host_provider(
+            &pool,
+            "u1.your-storagebox.de",
+            23,
+            Some(HostProvider::Hetzner),
+        )
+        .await
+        .unwrap();
+
+        let host = db::repo_hosts::find_repo_host_by_name(&pool, "u1.your-storagebox.de")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(host.provider, HostProvider::Hetzner);
+        assert_eq!(host.ssh_port, 23);
+
+        // Asking again for the same provider, or for none, changes nothing.
+        db::repo_hosts::ensure_repo_host_provider(
+            &pool,
+            "u1.your-storagebox.de",
+            23,
+            Some(HostProvider::Hetzner),
+        )
+        .await
+        .unwrap();
+        db::repo_hosts::ensure_repo_host_provider(&pool, "u1.your-storagebox.de", 23, None)
+            .await
+            .unwrap();
+
+        let refused = db::repo_hosts::ensure_repo_host_provider(
+            &pool,
+            "u1.your-storagebox.de",
+            23,
+            Some(HostProvider::Generic),
+        )
+        .await;
+        assert!(
+            matches!(refused, Err(ApiError::BadRequest(ref m)) if m.contains("hetzner")),
+            "{refused:?}"
+        );
+    }
+
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_provider_refuses_a_port_it_does_not_use(pool: sqlx::PgPool) {
+        let refused = db::repo_hosts::ensure_repo_host_provider(
+            &pool,
+            "u2.your-storagebox.de",
+            22,
+            Some(HostProvider::Hetzner),
+        )
+        .await;
+
+        assert!(
+            matches!(refused, Err(ApiError::BadRequest(ref m)) if m.contains("port 23")),
+            "{refused:?}"
+        );
+        assert!(
+            db::repo_hosts::find_repo_host_by_name(&pool, "u2.your-storagebox.de")
+                .await
+                .unwrap()
+                .is_none(),
+            "a refused host is not created"
+        );
+    }
+
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_hosts_provider_keeps_its_port_when_the_address_is_edited(pool: sqlx::PgPool) {
+        db::repo_hosts::ensure_repo_host_provider(
+            &pool,
+            "u3.your-storagebox.de",
+            23,
+            Some(HostProvider::Hetzner),
+        )
+        .await
+        .unwrap();
+        let host = db::repo_hosts::find_repo_host_by_name(&pool, "u3.your-storagebox.de")
+            .await
+            .unwrap()
+            .unwrap();
+
+        let moved =
+            db::repo_hosts::update_repo_host_address(&pool, host.id, "u3.your-storagebox.de", 22)
+                .await;
+        assert!(matches!(moved, Err(ApiError::BadRequest(_))), "{moved:?}");
+
+        let renamed =
+            db::repo_hosts::update_repo_host_address(&pool, host.id, "u4.your-storagebox.de", 23)
+                .await
+                .unwrap();
+        assert_eq!(renamed.provider, HostProvider::Hetzner);
+    }
+
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn existing_hosts_are_generic(pool: sqlx::PgPool) {
+        let mut tx = pool.begin().await.unwrap();
+        let id = db::repo_hosts::resolve_repo_host(&mut tx, "old.lan", 22)
+            .await
+            .unwrap();
+        tx.commit().await.unwrap();
+
+        let host = db::repo_hosts::get_repo_host(&pool, id).await.unwrap();
+        assert_eq!(host.provider, HostProvider::Generic);
     }
 }

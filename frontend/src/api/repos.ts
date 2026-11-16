@@ -7,6 +7,7 @@ import type {
   BreakLockResponse,
   ConfirmRelocationResponse,
   ExecBorgResponse,
+  HostProvider,
   PassphraseResponse,
   QuotaAction,
   RepoQuotaResponse,
@@ -42,6 +43,7 @@ export interface CreateRepoRequest {
   ssh_port: number
   passphrase: string
   compression: string
+  provider?: HostProvider
 }
 
 export async function createRepo(data: CreateRepoRequest): Promise<Repo> {

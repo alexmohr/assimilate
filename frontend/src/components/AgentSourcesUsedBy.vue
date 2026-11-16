@@ -7,6 +7,7 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 import { ref, watch } from 'vue'
 import { getScheduleBackupSources } from '../api/schedules'
 import { logger } from '../utils/logger'
+import { useAsyncAction } from '../composables/useAsyncAction'
 import type { AgentRow } from '../types/agent'
 import type { ScheduleRow } from '../types/schedule'
 
@@ -78,9 +79,15 @@ async function rowFor(s: ScheduleRow): Promise<UsedByRow> {
     : { ...base, files: 'Own files, no paths', filesCustom: false, filesOff: false }
 }
 
+const { runLatest } = useAsyncAction('loading the schedules using this host')
+
+/** A later load (another host, or new schedules) supersedes one in flight. */
 async function load(): Promise<void> {
-  const backups = props.schedules.filter((s) => s.schedule_type === 'backup')
-  rows.value = await Promise.all(backups.map(rowFor))
+  await runLatest(async (isCurrent) => {
+    const backups = props.schedules.filter((s) => s.schedule_type === 'backup')
+    const next = await Promise.all(backups.map(rowFor))
+    if (isCurrent()) rows.value = next
+  })
 }
 
 watch(() => [props.schedules, props.agent.id], load, { immediate: true })

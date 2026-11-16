@@ -157,6 +157,33 @@ describe('useHostSources', () => {
     expect(hostsWithout('databases').map((h) => h.id)).toEqual([1])
   })
 
+  // A later host list supersedes one still loading: the late answer for the
+  // earlier list never replaces the counts of the hosts now shown.
+  it('keeps the counts of the current hosts when an earlier read settles late', async () => {
+    included = { 'host-1': [[true], [true]], 'host-2': [[], []] }
+    let releaseSlow: () => void = () => {}
+    vi.mocked(getAgentVms).mockImplementationOnce(
+      (hostname) =>
+        new Promise((resolve) => {
+          releaseSlow = () =>
+            resolve({
+              vms: flags(hostname)[0].map((inc, i) => ({ name: `vm-${i}`, included: inc })),
+            } as unknown as AgentVmSnapshotResponse)
+        }),
+    )
+    const hosts = ref<AgentRow[]>([host(1)])
+    const { counts } = useHostSources(() => hosts.value, admin)
+
+    hosts.value = [host(2)]
+    await nextTick()
+    await flushPromises()
+    expect([...counts.value.keys()]).toEqual([2])
+
+    releaseSlow()
+    await flushPromises()
+    expect([...counts.value.keys()]).toEqual([2])
+  })
+
   it('follows the hosts as they change', async () => {
     included = {
       'host-1': [[], [true]],

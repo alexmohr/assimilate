@@ -5,6 +5,7 @@ import { apiClient } from './client'
 import type {
   RepoHostDependenciesBody,
   RepoHostKeyResponse,
+  ProviderPreset,
   RepoHostResponse,
 } from '../types/generated'
 
@@ -17,6 +18,12 @@ export interface UpdateRepoHostRequest {
 
 export async function listRepoHosts(): Promise<RepoHost[]> {
   const response = await apiClient.get<RepoHost[]>('/repo-hosts')
+  return response.data
+}
+
+/** The provider presets a new host can start from, with the defaults each fills in. */
+export async function listHostProviders(): Promise<ProviderPreset[]> {
+  const response = await apiClient.get<ProviderPreset[]>('/repo-hosts/providers')
   return response.data
 }
 

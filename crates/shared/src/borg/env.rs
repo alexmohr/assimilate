@@ -14,8 +14,9 @@ use std::{io::Write as _, path::Path};
 use tempfile::NamedTempFile;
 
 use crate::{
+    provider::RemoteBorg,
     ssh::{borg_rsh, borg_rsh_with_known_hosts},
-    types::{BORG_REPO_ENV_KEY, build_repo_url},
+    types::{BORG_REMOTE_PATH_ENV_KEY, BORG_REPO_ENV_KEY, build_repo_url},
 };
 
 /// The connection details needed to build a borg environment. Callers with a
@@ -48,6 +49,9 @@ pub struct EnvParams<'a> {
     /// An `SSH_AUTH_SOCK` to forward into borg's environment, if agent
     /// forwarding is in use.
     pub ssh_auth_sock: Option<&'a Path>,
+    /// The borg binary the remote side runs, sent as `BORG_REMOTE_PATH` (the
+    /// environment form of `--remote-path`) so it applies to every command.
+    pub remote_borg: Option<RemoteBorg>,
 }
 
 /// Picks the `--rsh` command: pinned to `known_hosts_path` when one is
@@ -104,6 +108,13 @@ pub fn build_env(params: &EnvParams<'_>) -> Vec<(String, String)> {
         env.push((
             "SSH_AUTH_SOCK".to_owned(),
             sock.to_string_lossy().into_owned(),
+        ));
+    }
+
+    if let Some(remote_borg) = params.remote_borg {
+        env.push((
+            BORG_REMOTE_PATH_ENV_KEY.to_owned(),
+            remote_borg.executable().to_owned(),
         ));
     }
 
@@ -166,6 +177,7 @@ mod tests {
             known_hosts_path: None,
             accept_relocation: false,
             ssh_auth_sock: None,
+            remote_borg: None,
         }
     }
 
@@ -201,6 +213,24 @@ mod tests {
         assert!(
             env.iter()
                 .any(|(k, v)| k == "BORG_RELOCATED_REPO_ACCESS_IS_OK" && v == "yes")
+        );
+    }
+
+    #[test]
+    fn build_env_omits_remote_path_by_default() {
+        let env = build_env(&params());
+        assert!(!env.iter().any(|(k, _)| k == "BORG_REMOTE_PATH"));
+    }
+
+    #[test]
+    fn build_env_sets_remote_path_for_a_provider_borg() {
+        let env = build_env(&EnvParams {
+            remote_borg: Some(RemoteBorg::RsyncNetBorg14),
+            ..params()
+        });
+        assert!(
+            env.iter()
+                .any(|(k, v)| k == "BORG_REMOTE_PATH" && v == "borg14")
         );
     }
 

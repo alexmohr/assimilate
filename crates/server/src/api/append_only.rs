@@ -1334,6 +1334,7 @@ mod tests {
                     passphrase: "pw".to_owned(),
                     encryption: shared::types::BorgEncryption::Repokey,
                     compression: None,
+                    provider: None,
                 }),
             )))
             .await
@@ -1373,6 +1374,7 @@ mod tests {
                     ssh_port: Some(i32::from(host.port)),
                     passphrase: "pw".to_owned(),
                     compression: None,
+                    provider: None,
                 }),
             )))
             .await
@@ -1413,6 +1415,7 @@ mod tests {
                     passphrase: "pw".to_owned(),
                     encryption: shared::types::BorgEncryption::Repokey,
                     compression: None,
+                    provider: None,
                 }),
             )))
             .await;
@@ -1453,6 +1456,7 @@ mod tests {
                     passphrase: "pw".to_owned(),
                     encryption: shared::types::BorgEncryption::Repokey,
                     compression: None,
+                    provider: None,
                 }),
             )))
             .await;

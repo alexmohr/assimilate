@@ -19,6 +19,7 @@ use crate::{
         DatabaseEngine, DatabaseRuntime, DatabaseSelectionMode, DatabaseSourceKind, MysqlEngine,
     },
     protocol::RepoOpKind,
+    provider::HostProvider,
     snapshot::FsSnapshotMode,
     types::{
         ApiTokenScope, BorgEncryption, Compression, ExecutionMode, MachineWakeMode, OnFailure,
@@ -51,6 +52,7 @@ macro_rules! text_column {
 
 text_column!(
     ApiTokenScope,
+    HostProvider,
     ArchiveGrowthStatus,
     BorgEncryption,
     Compression,

@@ -1626,6 +1626,18 @@ async fn rename_and_reinit_repo(params: RenameAndReinitParams<'_>) -> Result<Str
         target_encryption,
     } = params;
 
+    // Built first: it does not depend on the rename, and a repository whose
+    // environment cannot be built should not have been renamed.
+    let env = helpers::borg_env_for_repo(
+        passphrase,
+        repo_id,
+        &repo.ssh_host,
+        u16::try_from(repo.ssh_port).unwrap_or(22),
+        repo.ssh_host_key.as_deref(),
+        repo.provider,
+    )
+    .await;
+
     let date_suffix = chrono::Utc::now().format("%Y-%m-%d").to_string();
     let migrated_path = format!("{}.migrated-{date_suffix}", repo.repo_path);
 
@@ -1644,16 +1656,6 @@ async fn rename_and_reinit_repo(params: RenameAndReinitParams<'_>) -> Result<Str
     .map_err(|e| ApiError::BadGateway(format!("failed to rename old repository: {e}")))?;
 
     info!(repo_id, %migrated_path, "renamed old repo for migration");
-
-    let env = helpers::borg_env_for_repo(
-        passphrase,
-        repo_id,
-        &repo.ssh_host,
-        u16::try_from(repo.ssh_port).unwrap_or(22),
-        repo.ssh_host_key.as_deref(),
-        repo.provider,
-    )
-    .await;
 
     if let Err(e) = run_borg_init(repo_url, &env, target_encryption, &state.task_registry).await {
         warn!(repo_id, %e, "borg init failed during migration, rolling back");
@@ -2695,5 +2697,141 @@ mod tests {
             saw_data_changed |= matches!(event, shared::protocol::ServerToUi::DataChanged);
         }
         assert!(saw_data_changed, "the UI is told the import ended");
+    }
+
+    /// A fake borg that says which remote borg it was told to run.
+    const REMOTE_PATH_BORG: &str =
+        "#!/bin/sh\nprintf 'remote=%s\\n' \"${BORG_REMOTE_PATH:-none}\"\n";
+
+    fn admin() -> RequireAdmin {
+        RequireAdmin(crate::api::auth::AuthUser {
+            user_id: 1,
+            username: "admin".to_owned(),
+            session_id: None,
+        })
+    }
+
+    /// A repository on `ssh_host`, a host of `provider`, whose passphrase the
+    /// returned state can decrypt.
+    async fn provider_repo(
+        pool: &PgPool,
+        state: &AppState,
+        ssh_host: &str,
+        ssh_port: i32,
+        provider: HostProvider,
+    ) -> i64 {
+        db::repo_hosts::ensure_repo_host_provider(pool, ssh_host, ssh_port, Some(provider))
+            .await
+            .unwrap();
+        let passphrase = encrypt_passphrase("pw", &state.encryption_key).unwrap();
+        db::insert_repo(
+            pool,
+            &InsertRepoParams {
+                name: ssh_host,
+                repo_path: "backups/r",
+                ssh_user: "u",
+                ssh_host,
+                ssh_port,
+                passphrase_encrypted: &passphrase,
+                compression: "lz4",
+                encryption: "repokey",
+                owner_id: None,
+                sync_schedule: None,
+            },
+        )
+        .await
+        .unwrap()
+        .id
+    }
+
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn an_admin_borg_command_runs_the_providers_borg(pool: PgPool) {
+        let state = crate::test_support::build_test_state(pool.clone(), b"exec-remote-borg");
+        let repo_id =
+            provider_repo(&pool, &state, "ab1.rsync.net", 22, HostProvider::RsyncNet).await;
+        let (_dir, _guard) = test_helpers::install_fake_script(REMOTE_PATH_BORG).await;
+
+        let Json(out) = exec_borg(
+            State(state),
+            admin(),
+            Path(repo_id),
+            ApiJson(ExecBorgRequest {
+                args: vec!["list".to_owned()],
+            }),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(out.stdout.trim(), "remote=borg14");
+    }
+
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn the_deferred_import_detects_encryption_with_the_providers_borg(pool: PgPool) {
+        let state = crate::test_support::build_test_state(pool.clone(), b"import-remote-borg");
+        let repo_id = provider_repo(
+            &pool,
+            &state,
+            "u1.your-storagebox.de",
+            23,
+            HostProvider::Hetzner,
+        )
+        .await;
+        let seen = tempfile::tempdir().unwrap();
+        let seen_file = seen.path().join("remote");
+        let script = format!(
+            "#!/bin/sh\nprintf '%s' \"${{BORG_REMOTE_PATH:-none}}\" > {}\nprintf \
+             '{{\"encryption\":{{\"mode\":\"repokey-blake2\"}}}}'\n",
+            seen_file.display()
+        );
+        let (_dir, _guard) = test_helpers::install_fake_script(&script).await;
+        let (task_id, _cancel) = state.import_tasks.start(repo_id).await;
+
+        run_initial_import_work(InitialImportWork {
+            pool: &pool,
+            encryption_key: state.encryption_key,
+            ui_broadcast: &state.ui_broadcast,
+            state_repo_lock: state.repo_lock.clone(),
+            task_state: &state,
+            repo_id,
+            task_id,
+            need_borg_info: true,
+            bg_repo_url: "ssh://u@u1.your-storagebox.de:23/backups/r",
+            bg_passphrase: "pw",
+            bg_ssh_host: "u1.your-storagebox.de",
+            bg_ssh_port: 23,
+            bg_ssh_host_key: "ssh-ed25519 AAAA",
+            bg_provider: HostProvider::Hetzner,
+        })
+        .await;
+
+        assert_eq!(
+            tokio::fs::read_to_string(&seen_file).await.unwrap(),
+            "borg-1.4"
+        );
+    }
+
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn an_encryption_migration_that_cannot_reach_the_host_renames_nothing(pool: PgPool) {
+        let state = crate::test_support::build_test_state(pool.clone(), b"migrate-remote-borg");
+        let repo_id = provider_repo(&pool, &state, "127.0.0.1", 1, HostProvider::Generic).await;
+        let repo = db::get_repo_with_passphrase(&pool, repo_id).await.unwrap();
+
+        let result = rename_and_reinit_repo(RenameAndReinitParams {
+            state: &state,
+            repo_id,
+            repo: &repo,
+            repo_url: "ssh://u@127.0.0.1:1/backups/r",
+            passphrase: "pw",
+            target_encryption: BorgEncryption::Repokey,
+        })
+        .await;
+
+        assert!(
+            matches!(&result, Err(ApiError::BadGateway(m)) if m.contains("failed to rename")),
+            "{result:?}"
+        );
     }
 }

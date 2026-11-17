@@ -239,6 +239,26 @@ describe('RepoCreateDialog provider presets', () => {
     expect(document.body.textContent).toContain('deployed over the shell')
   })
 
+  it('tests the connection with the provider chosen', async () => {
+    vi.mocked(apiClient.post).mockResolvedValue({
+      data: { ssh_ok: true, borg_installed: true, borg_version: 'borg 1.4.0' },
+    } as never)
+    await open()
+    await pick('rsync_net')
+    await type(byLabel('SSH host'), 'ab123.rsync.net')
+
+    const test = [...document.body.querySelectorAll<HTMLButtonElement>('button')].find(
+      (b) => b.textContent?.trim() === 'Test Connection',
+    )
+    test?.click()
+    await flushPromises()
+
+    expect(apiClient.post).toHaveBeenCalledWith(
+      '/ssh/test-connection',
+      expect.objectContaining({ provider: 'rsync_net', ssh_host: 'ab123.rsync.net' }),
+    )
+  })
+
   it('sends the chosen provider with the repository', async () => {
     await open()
     await pick('rsync_net')

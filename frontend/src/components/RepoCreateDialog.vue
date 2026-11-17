@@ -501,6 +501,7 @@ async function testConnection(): Promise<void> {
       ssh_host: form.ssh_host.trim(),
       ssh_user: form.ssh_user.trim(),
       ssh_port: form.ssh_port,
+      ...providerField(),
     })
   } catch (e: unknown) {
     testConn.result = { ssh_ok: false, borg_installed: false, error: extractError(e) }

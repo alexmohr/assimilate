@@ -363,10 +363,11 @@ pub(super) async fn run_borg_break_lock(
     repo_id: i64,
     repo_url: &str,
     passphrase: &str,
+    provider: shared::provider::HostProvider,
     task_registry: &shared::task_registry::TaskRegistry,
     repo_lock: &RepoLock,
 ) -> Result<String, ApiError> {
-    let env = helpers::borg_base_env(passphrase);
+    let env = helpers::borg_base_env_for_provider(passphrase, provider);
 
     // Unlike the repository lock (which the unconditional `break-lock` call below has
     // always broken regardless of whether anything else is using it - a pre-existing,
@@ -709,6 +710,7 @@ mod tests {
             1,
             "ssh://user@host/repo",
             "hunter2",
+            shared::provider::HostProvider::Generic,
             &shared::task_registry::TaskRegistry::default(),
             repo_lock,
         )

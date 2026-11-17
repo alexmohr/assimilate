@@ -120,6 +120,7 @@ pub async fn get_repo_env(
         &repo.ssh_host,
         u16::try_from(repo.ssh_port).unwrap_or(22),
         repo.ssh_host_key.as_deref(),
+        repo.provider,
     )
     .await;
 
@@ -127,12 +128,6 @@ pub async fn get_repo_env(
         env.insert(
             "BORG_RELOCATED_REPO_ACCESS_IS_OK".to_string(),
             "yes".to_string(),
-        );
-    }
-    if let Some(remote_borg) = repo.provider.defaults().remote_borg {
-        env.insert(
-            shared::types::BORG_REMOTE_PATH_ENV_KEY.to_owned(),
-            remote_borg.executable().to_owned(),
         );
     }
 

@@ -64,7 +64,15 @@ const { runNowLoading: runningId, runNow } = useScheduleRun(null, {
       :icon="CalendarClock"
       title="No schedules yet"
       description="This agent has no backup schedules. Create one to start backing it up."
-    />
+    >
+      <RouterLink
+        :to="{ name: 'schedule-create', query: { agent_id: agent.id } }"
+        class="btn btn-primary"
+      >
+        <Plus :size="14" />
+        Add schedule
+      </RouterLink>
+    </EmptyState>
     <ScheduleTable
       v-else
       :schedules="schedules"

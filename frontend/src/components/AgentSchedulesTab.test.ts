@@ -116,6 +116,7 @@ describe('AgentSchedulesTab', () => {
   it('offers a way to add a schedule when there are none', () => {
     const wrapper = mount({ schedules: [] })
     expect(wrapper.find('.empty-title').text()).toBe('No schedules yet')
+    expect(wrapper.text()).toContain('Add schedule')
   })
 
   describe('imported hosts', () => {

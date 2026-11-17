@@ -404,6 +404,6 @@ mod tests {
 
         // Made by the test user, so only root's own test run accepts it.
         assert_eq!(result.is_ok(), is_root(), "{result:?}");
-        assert!(log.exists());
+        assert!(tokio::fs::try_exists(&log).await.unwrap());
     }
 }

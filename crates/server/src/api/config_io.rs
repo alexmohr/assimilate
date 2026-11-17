@@ -775,7 +775,7 @@ async fn import_schedule(
             sched,
             &pre_backup_commands,
             &post_backup_commands,
-            hostname_to_id,
+            &target_ids,
         )
         .await?;
     }
@@ -800,7 +800,7 @@ async fn bake_inherited_host_files(
     sched: &ScheduleExport,
     pre_backup_commands: &[HookCommand],
     post_backup_commands: &[HookCommand],
-    hostname_to_id: &HashMap<(String, Option<String>), i64>,
+    target_ids: &[(i64, i32)],
 ) -> Result<(), ApiError> {
     fn joined(parts: [&str; 2]) -> String {
         parts
@@ -809,11 +809,8 @@ async fn bake_inherited_host_files(
             .collect::<Vec<_>>()
             .join("\n")
     }
-    for target in &sched.targets {
-        let key = (target.hostname.clone(), target.domain.clone());
-        let Some(&agent_id) = hostname_to_id.get(&key) else {
-            continue;
-        };
+    // `target_ids` holds each target's host, resolved in the same order.
+    for (target, &(agent_id, _)) in sched.targets.iter().zip(target_ids) {
         let host = db::get_agent_by_id(pool, agent_id).await?;
 
         if target.backup_sources.is_empty() && sched.backup_sources.is_empty() {

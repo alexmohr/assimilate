@@ -389,8 +389,10 @@ def stage_agent(
         root = Path(tmp) / AGENT_ARCHIVE_DIR
         borg_dir = root / "borg"
         extract(fetch(downloads.borg, cache), borg_dir)
-        if not (borg_dir / BORG_EXECUTABLE).is_file():
+        borg = borg_dir / BORG_EXECUTABLE
+        if not borg.is_file():
             raise BundleError(f"{downloads.borg.name} has no {BORG_EXECUTABLE}")
+        borg.chmod(0o755)
         licenses = root / "licenses"
         licenses.mkdir(parents=True)
         for notice in downloads.notices:

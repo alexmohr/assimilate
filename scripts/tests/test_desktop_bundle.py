@@ -587,6 +587,8 @@ class StageAgentTest(unittest.TestCase):
                 "assimilate-agent/licenses/borgbackup.txt",
             ]
             assert members["assimilate-agent/assimilate-agent"].mode & 0o111 == 0o111
+            # The archive's own borg carried no executable bit to begin with.
+            assert members["assimilate-agent/borg/borg.exe"].mode & 0o111 == 0o111
 
     def test_refuses_an_archive_that_is_neither_zip_nor_tarball(self) -> None:
         with expect_error(db.BundleError, "agent.rar is neither a .zip nor a .tar.gz"):

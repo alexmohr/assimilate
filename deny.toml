@@ -28,6 +28,11 @@ ignore = [
     # https://github.com/alexmohr/assimilate/issues/726; remove this entry
     # once `chrono-tz` is replaced.
     "RUSTSEC-2026-0555",
+    # `chrono` 0.4.44 is unmaintained and no safe upgrade exists. It is a
+    # direct dependency of several workspace crates, not only `chrono-tz`.
+    # Tracked in https://github.com/alexmohr/assimilate/issues/726; remove
+    # this entry once `chrono` is replaced.
+    "RUSTSEC-2026-0543",
 ]
 
 [licenses]

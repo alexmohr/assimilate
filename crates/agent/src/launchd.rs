@@ -211,6 +211,18 @@ async fn require_root_owned_executable(exe: &Path) -> Result<(), ServiceError> {
 /// open.
 async fn create_private_dir(dir: &Path) -> Result<(), ServiceError> {
     let context = format!("creating {}", dir.display());
+    // Changing the mode of a link would change its target's: look first.
+    match fs::symlink_metadata(dir).await {
+        Ok(metadata) if metadata.file_type().is_symlink() => {
+            return Err(ServiceError::NotRootOnly {
+                path: dir.to_path_buf(),
+            });
+        }
+        Err(e) if e.kind() != std::io::ErrorKind::NotFound => {
+            return Err(ServiceError::io(context)(e));
+        }
+        Ok(_) | Err(_) => {}
+    }
     fs::create_dir_all(dir)
         .await
         .map_err(ServiceError::io(context.clone()))?;
@@ -377,6 +389,27 @@ mod tests {
                 "{result:?}"
             );
         }
+    }
+
+    #[tokio::test]
+    async fn a_link_standing_in_for_the_folder_is_refused_before_anything_is_changed() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("elsewhere");
+        tokio::fs::create_dir(&target).await.unwrap();
+        tokio::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o755))
+            .await
+            .unwrap();
+        let link = dir.path().join("agent");
+        symlink(&target, &link).unwrap();
+
+        let result = create_private_dir(&link).await;
+
+        assert!(
+            matches!(result, Err(ServiceError::NotRootOnly { .. })),
+            "{result:?}"
+        );
+        let mode = tokio::fs::metadata(&target).await.unwrap().mode();
+        assert_eq!(mode & 0o777, 0o755, "the link's target was changed");
     }
 
     #[tokio::test]

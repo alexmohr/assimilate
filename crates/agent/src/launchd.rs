@@ -211,9 +211,10 @@ async fn require_root_owned_executable(exe: &Path) -> Result<(), ServiceError> {
 /// open.
 async fn create_private_dir(dir: &Path) -> Result<(), ServiceError> {
     let context = format!("creating {}", dir.display());
-    // Changing the mode of a link would change its target's: look first.
+    // Changing the mode of a link would change its target's, and of a folder
+    // someone else owns would change theirs: look first.
     match fs::symlink_metadata(dir).await {
-        Ok(metadata) if metadata.file_type().is_symlink() => {
+        Ok(metadata) if metadata.file_type().is_symlink() || metadata.uid() != 0 => {
             return Err(ServiceError::NotRootOnly {
                 path: dir.to_path_buf(),
             });
@@ -388,6 +389,29 @@ mod tests {
                 matches!(result, Err(ServiceError::NotRootOnly { .. })),
                 "{result:?}"
             );
+        }
+    }
+
+    #[tokio::test]
+    async fn a_folder_that_exists_and_someone_else_owns_keeps_its_mode() {
+        let dir = tempfile::tempdir().unwrap();
+        let folder = dir.path().join("agent");
+        tokio::fs::create_dir(&folder).await.unwrap();
+        tokio::fs::set_permissions(&folder, std::fs::Permissions::from_mode(0o755))
+            .await
+            .unwrap();
+
+        let result = create_private_dir(&folder).await;
+
+        let mode = tokio::fs::metadata(&folder).await.unwrap().mode() & 0o777;
+        if is_root() {
+            assert!(result.is_ok(), "{result:?}");
+        } else {
+            assert!(
+                matches!(result, Err(ServiceError::NotRootOnly { .. })),
+                "{result:?}"
+            );
+            assert_eq!(mode, 0o755, "the folder's mode was changed");
         }
     }
 

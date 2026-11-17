@@ -480,45 +480,64 @@ mod tests {
         assert_eq!(presets, HostProvider::presets());
     }
 
+    /// A repository named `name` on `ssh_host`, added on a host of `provider`.
+    async fn add_repo_for_provider(
+        pool: &sqlx::PgPool,
+        name: &str,
+        ssh_host: &str,
+        ssh_port: i32,
+        provider: Option<HostProvider>,
+    ) -> Result<db::RepoRow, ApiError> {
+        db::insert_repo_for_provider(
+            pool,
+            &db::InsertRepoParams {
+                name,
+                repo_path: "backups/r",
+                ssh_user: "u",
+                ssh_host,
+                ssh_port,
+                passphrase_encrypted: b"encrypted",
+                compression: "lz4",
+                encryption: "repokey",
+                owner_id: None,
+                sync_schedule: None,
+            },
+            provider,
+        )
+        .await
+    }
+
+    async fn host_named(
+        pool: &sqlx::PgPool,
+        ssh_host: &str,
+    ) -> Option<db::repo_hosts::RepoHostRow> {
+        db::repo_hosts::find_repo_host_by_name(pool, ssh_host)
+            .await
+            .unwrap()
+    }
+
     #[ignore = "requires DATABASE_URL"]
     #[sqlx::test(migrations = "./migrations")]
     async fn a_new_host_takes_the_requested_provider_and_refuses_another_later(pool: sqlx::PgPool) {
-        db::repo_hosts::ensure_repo_host_provider(
-            &pool,
-            "u1.your-storagebox.de",
-            23,
-            Some(HostProvider::Hetzner),
-        )
-        .await
-        .unwrap();
-
-        let host = db::repo_hosts::find_repo_host_by_name(&pool, "u1.your-storagebox.de")
-            .await
-            .unwrap()
-            .unwrap();
-        assert_eq!(host.provider, HostProvider::Hetzner);
-        assert_eq!(host.ssh_port, 23);
-
-        // Asking again for the same provider, or for none, changes nothing.
-        db::repo_hosts::ensure_repo_host_provider(
-            &pool,
-            "u1.your-storagebox.de",
-            23,
-            Some(HostProvider::Hetzner),
-        )
-        .await
-        .unwrap();
-        db::repo_hosts::ensure_repo_host_provider(&pool, "u1.your-storagebox.de", 23, None)
+        let host = "u1.your-storagebox.de";
+        add_repo_for_provider(&pool, "first", host, 23, Some(HostProvider::Hetzner))
             .await
             .unwrap();
 
-        let refused = db::repo_hosts::ensure_repo_host_provider(
-            &pool,
-            "u1.your-storagebox.de",
-            23,
-            Some(HostProvider::Generic),
-        )
-        .await;
+        let created = host_named(&pool, host).await.unwrap();
+        assert_eq!(created.provider, HostProvider::Hetzner);
+        assert_eq!(created.ssh_port, 23);
+
+        // Naming the same provider, or none, joins the host as it is.
+        add_repo_for_provider(&pool, "same", host, 23, Some(HostProvider::Hetzner))
+            .await
+            .unwrap();
+        add_repo_for_provider(&pool, "none", host, 23, None)
+            .await
+            .unwrap();
+
+        let refused =
+            add_repo_for_provider(&pool, "other", host, 23, Some(HostProvider::Generic)).await;
         assert!(
             matches!(refused, Err(ApiError::BadRequest(ref m)) if m.contains("hetzner")),
             "{refused:?}"
@@ -528,50 +547,99 @@ mod tests {
     #[ignore = "requires DATABASE_URL"]
     #[sqlx::test(migrations = "./migrations")]
     async fn a_provider_refuses_a_port_it_does_not_use(pool: sqlx::PgPool) {
-        let refused = db::repo_hosts::ensure_repo_host_provider(
-            &pool,
-            "u2.your-storagebox.de",
-            22,
-            Some(HostProvider::Hetzner),
-        )
-        .await;
+        let host = "u2.your-storagebox.de";
+        let refused =
+            add_repo_for_provider(&pool, "r", host, 22, Some(HostProvider::Hetzner)).await;
 
         assert!(
             matches!(refused, Err(ApiError::BadRequest(ref m)) if m.contains("port 23")),
             "{refused:?}"
         );
         assert!(
-            db::repo_hosts::find_repo_host_by_name(&pool, "u2.your-storagebox.de")
-                .await
-                .unwrap()
-                .is_none(),
+            host_named(&pool, host).await.is_none(),
             "a refused host is not created"
+        );
+
+        let checked =
+            db::repo_hosts::check_repo_host_provider(&pool, host, 22, Some(HostProvider::Hetzner))
+                .await;
+        assert!(
+            matches!(checked, Err(ApiError::BadRequest(_))),
+            "{checked:?}"
         );
     }
 
     #[ignore = "requires DATABASE_URL"]
     #[sqlx::test(migrations = "./migrations")]
+    async fn checking_a_provider_writes_nothing(pool: sqlx::PgPool) {
+        let host = "u3.your-storagebox.de";
+
+        let provider =
+            db::repo_hosts::check_repo_host_provider(&pool, host, 23, Some(HostProvider::Hetzner))
+                .await
+                .unwrap();
+
+        assert_eq!(provider, HostProvider::Hetzner);
+        assert!(host_named(&pool, host).await.is_none());
+
+        // An unknown host with no provider asked for is generic.
+        let plain = db::repo_hosts::check_repo_host_provider(&pool, "nas.lan", 22, None)
+            .await
+            .unwrap();
+        assert_eq!(plain, HostProvider::Generic);
+
+        // An existing host answers with its own provider.
+        add_repo_for_provider(&pool, "r", host, 23, Some(HostProvider::Hetzner))
+            .await
+            .unwrap();
+        let existing = db::repo_hosts::check_repo_host_provider(&pool, host, 23, None)
+            .await
+            .unwrap();
+        assert_eq!(existing, HostProvider::Hetzner);
+    }
+
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_failed_insert_leaves_no_host_pinned_to_its_provider(pool: sqlx::PgPool) {
+        add_repo_for_provider(&pool, "taken", "nas.lan", 22, None)
+            .await
+            .unwrap();
+        let host = "u4.your-storagebox.de";
+
+        // The repository name is already in use, so the insert fails after the
+        // host would have been created.
+        let failed =
+            add_repo_for_provider(&pool, "taken", host, 23, Some(HostProvider::Hetzner)).await;
+        assert!(failed.is_err(), "{failed:?}");
+        assert!(host_named(&pool, host).await.is_none(), "no orphan host");
+
+        // So the same hostname can be added again as another provider.
+        add_repo_for_provider(&pool, "fresh", host, 23, Some(HostProvider::Hetzner))
+            .await
+            .unwrap();
+    }
+
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
     async fn a_hosts_provider_keeps_its_port_when_the_address_is_edited(pool: sqlx::PgPool) {
-        db::repo_hosts::ensure_repo_host_provider(
+        add_repo_for_provider(
             &pool,
-            "u3.your-storagebox.de",
+            "r",
+            "u5.your-storagebox.de",
             23,
             Some(HostProvider::Hetzner),
         )
         .await
         .unwrap();
-        let host = db::repo_hosts::find_repo_host_by_name(&pool, "u3.your-storagebox.de")
-            .await
-            .unwrap()
-            .unwrap();
+        let host = host_named(&pool, "u5.your-storagebox.de").await.unwrap();
 
         let moved =
-            db::repo_hosts::update_repo_host_address(&pool, host.id, "u3.your-storagebox.de", 22)
+            db::repo_hosts::update_repo_host_address(&pool, host.id, "u5.your-storagebox.de", 22)
                 .await;
         assert!(matches!(moved, Err(ApiError::BadRequest(_))), "{moved:?}");
 
         let renamed =
-            db::repo_hosts::update_repo_host_address(&pool, host.id, "u4.your-storagebox.de", 23)
+            db::repo_hosts::update_repo_host_address(&pool, host.id, "u6.your-storagebox.de", 23)
                 .await
                 .unwrap();
         assert_eq!(renamed.provider, HostProvider::Hetzner);

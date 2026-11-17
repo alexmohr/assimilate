@@ -237,6 +237,32 @@ fn borg_env_uses_pinned_known_hosts_file() {
     assert_eq!(borg_rsh, Some(expected.as_str()));
 }
 
+fn remote_path_of(env: &[(String, String)]) -> Option<&str> {
+    env.iter()
+        .find(|(key, _value)| key == "BORG_REMOTE_PATH")
+        .map(|(_key, value)| value.as_str())
+}
+
+#[test]
+fn borg_env_names_the_hosts_remote_borg() {
+    let mut target = test_target();
+    assert_eq!(remote_path_of(&borg_env(&target)), None);
+
+    target.remote_borg = Some(shared::provider::RemoteBorg::RsyncNetBorg14);
+    assert_eq!(remote_path_of(&borg_env(&target)), Some("borg14"));
+}
+
+#[test]
+fn a_maintenance_target_keeps_the_hosts_remote_borg() {
+    let mut base = test_target();
+    base.remote_borg = Some(shared::provider::RemoteBorg::HetznerBorg14);
+
+    let maintenance = BackupTarget::for_maintenance(&base, "agent-host".to_owned());
+
+    assert_eq!(maintenance.remote_borg, base.remote_borg);
+    assert_eq!(remote_path_of(&borg_env(&maintenance)), Some("borg-1.4"));
+}
+
 #[cfg(unix)]
 #[tokio::test]
 async fn test_successful_backup() {

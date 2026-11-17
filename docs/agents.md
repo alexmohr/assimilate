@@ -204,7 +204,7 @@ Every connection between an agent and the server is encrypted end to end with th
 - **Each connection has its own keys.** Both sides generate fresh ephemeral keys per connection, so a recorded connection cannot be decrypted later, even with the server's key.
 - **Frames cannot be altered, replayed or reordered.** Each frame is authenticated in order, and the connection closes on the first one that fails.
 
-The server derives its key from `ASSIMILATE_SECRET_KEY`, so it stays the same across restarts and changes only if that secret does. The **System** page shows the key and its fingerprint (`SHA256:...`); an agent logs the same fingerprint when it connects. The add and adopt dialogs show the key next to the new token, and **Deploy agent** writes it into the service unit.
+The server derives its key from `ASSIMILATE_SECRET_KEY`, so it stays the same across restarts and changes only if that secret does. While the secret is being [rotated](configuration.md#rotating-the-secret-key), the server also accepts agents still pinned to the key of the previous secret, so they can be given the new `BORG_SERVER_KEY` one at a time. The **System** page shows the key and its fingerprint (`SHA256:...`); an agent logs the same fingerprint when it connects. The add and adopt dialogs show the key next to the new token, and **Deploy agent** writes it into the service unit.
 
 Unencrypted connections are not accepted. An agent from before the encrypted connection is closed with *this server requires an encrypted agent channel; update the agent* and stops. Update it and set `BORG_SERVER_KEY`, or redeploy it with **Deploy agent**.
 

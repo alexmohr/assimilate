@@ -17,8 +17,8 @@ use std::{
 use futures_util::{Sink, SinkExt as _, Stream, StreamExt as _};
 
 use super::{
-    ChannelError, ChannelPrivateKey, ChannelPublicKey, Initiator, MessageKind, Opener, Sealer,
-    respond,
+    ChannelError, ChannelKeyMatch, ChannelKeys, ChannelPrivateKey, ChannelPublicKey, Initiator,
+    MessageKind, Opener, Sealer, respond, respond_any,
 };
 
 /// What a WebSocket message is, as far as the channel cares.
@@ -138,6 +138,31 @@ where
         .await
         .map_err(WsChannelError::Transport)?;
     Ok(channel)
+}
+
+/// Runs the server's side of the handshake with whichever of `keys` the
+/// agent pinned, and says which one that was.
+///
+/// # Errors
+///
+/// Returns [`WsChannelError`] if the socket fails, closes, or the agent's
+/// first message is not a handshake for any of `keys`.
+pub async fn accept_any<C, Si, St, E>(
+    sink: &mut Si,
+    stream: &mut St,
+    keys: &ChannelKeys,
+) -> Result<((Sealer, Opener), ChannelKeyMatch), WsChannelError<E>>
+where
+    C: WsCodec,
+    Si: Sink<C::Message, Error = E> + Unpin,
+    St: Stream<Item = Result<C::Message, E>> + Unpin,
+{
+    let first = next_handshake_frame::<C, St, E>(stream).await?;
+    let ((channel, reply), matched) = respond_any(keys, &first)?;
+    sink.send(C::binary(reply))
+        .await
+        .map_err(WsChannelError::Transport)?;
+    Ok((channel, matched))
 }
 
 async fn next_handshake_frame<C, St, E>(stream: &mut St) -> Result<Vec<u8>, WsChannelError<E>>

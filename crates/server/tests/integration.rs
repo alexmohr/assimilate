@@ -111,9 +111,10 @@ fn build_test_state(pool: PgPool) -> server::AppState {
     server::AppState {
         pool: pool.clone(),
         encryption_key,
-        channel_key: std::sync::Arc::new(
+        channel_keys: std::sync::Arc::new(
             shared::agent_channel::ChannelPrivateKey::derive(b"test-secret-key-for-integration")
-                .unwrap(),
+                .unwrap()
+                .into(),
         ),
         registry: server::ws::registry::AgentRegistry::new(),
         ui_broadcast,

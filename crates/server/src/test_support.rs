@@ -104,7 +104,7 @@ pub(crate) fn build_test_state(pool: sqlx::PgPool, key_material: &[u8]) -> crate
     crate::AppState {
         pool: pool.clone(),
         encryption_key,
-        channel_key: std::sync::Arc::new(test_channel_key()),
+        channel_keys: std::sync::Arc::new(test_channel_key().into()),
         registry: crate::ws::registry::AgentRegistry::new(),
         ui_broadcast,
         tunnel_manager,

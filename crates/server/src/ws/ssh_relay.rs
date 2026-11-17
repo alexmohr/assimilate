@@ -42,7 +42,7 @@ async fn handle_ssh_relay(
 ) {
     let (sink, stream) = socket.split();
     let Some((mut sink, mut stream)) =
-        crate::ws::channel::establish(sink, stream, &state.channel_key, &hostname).await
+        crate::ws::channel::establish(sink, stream, &state.channel_keys, &hostname).await
     else {
         return;
     };

@@ -225,7 +225,8 @@ async fn start_deploy(
     }
 
     let server_key = state
-        .channel_key
+        .channel_keys
+        .current()
         .public_key()
         .map_err(|e| ApiError::Internal(e.to_string()))?
         .to_string();

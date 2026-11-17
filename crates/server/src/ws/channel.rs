@@ -8,8 +8,8 @@ use std::time::Duration;
 use axum::extract::ws::{CloseFrame, Message};
 use futures_util::{Sink, SinkExt as _, Stream};
 use shared::agent_channel::{
-    ChannelPrivateKey,
-    ws::{DecryptedStream, EncryptedSink, Frame, WsChannelError, WsCodec, accept},
+    ChannelKeyMatch, ChannelKeys,
+    ws::{DecryptedStream, EncryptedSink, Frame, WsChannelError, WsCodec, accept_any},
 };
 
 /// How long an agent has to send its handshake after the upgrade.
@@ -52,12 +52,12 @@ pub type Encrypted<Si, St> = (EncryptedSink<AxumCodec, Si>, DecryptedStream<Axum
 
 /// Runs the handshake on a fresh agent connection and wraps its halves.
 /// Returns `None`, after closing the connection where the agent can still
-/// hear it, if the agent does not complete a handshake for `key` in time;
-/// `peer` names the connection in the log.
+/// hear it, if the agent does not complete a handshake for one of `keys` in
+/// time; `peer` names the connection in the log.
 pub async fn establish<Si, St, E>(
     mut sink: Si,
     mut stream: St,
-    key: &ChannelPrivateKey,
+    keys: &ChannelKeys,
     peer: &str,
 ) -> Option<Encrypted<Si, St>>
 where
@@ -67,14 +67,23 @@ where
 {
     let handshake = tokio::time::timeout(
         HANDSHAKE_TIMEOUT,
-        accept::<AxumCodec, _, _, _>(&mut sink, &mut stream, key),
+        accept_any::<AxumCodec, _, _, _>(&mut sink, &mut stream, keys),
     )
     .await;
     match handshake {
-        Ok(Ok((sealer, opener))) => Some((
-            EncryptedSink::new(sink, sealer),
-            DecryptedStream::new(stream, opener),
-        )),
+        Ok(Ok(((sealer, opener), matched))) => {
+            if matched == ChannelKeyMatch::Previous {
+                tracing::warn!(
+                    peer,
+                    "agent connected with the channel key of ASSIMILATE_PREVIOUS_SECRET_KEY; give \
+                     it the current BORG_SERVER_KEY"
+                );
+            }
+            Some((
+                EncryptedSink::new(sink, sealer),
+                DecryptedStream::new(stream, opener),
+            ))
+        }
         Ok(Err(WsChannelError::Unencrypted)) => {
             tracing::warn!(
                 peer,

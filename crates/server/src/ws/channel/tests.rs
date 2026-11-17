@@ -55,7 +55,7 @@ async fn an_agent_with_the_servers_key_gets_an_encrypted_channel() {
         stream.next().await.unwrap().unwrap()
     };
     let server = async {
-        let (mut sink, mut stream) = establish(server_sink, server_stream, &key, "test")
+        let (mut sink, mut stream) = establish(server_sink, server_stream, &key.into(), "test")
             .await
             .unwrap();
         let hello = stream.next().await.unwrap().unwrap();
@@ -79,7 +79,7 @@ async fn an_agent_from_before_the_encrypted_channel_is_told_to_update() {
     let (channel, logs) = crate::test_support::formatted_logs_while(establish(
         server_sink,
         server_stream,
-        &test_channel_key(),
+        &test_channel_key().into(),
         "old-agent",
     ))
     .await;
@@ -104,7 +104,7 @@ async fn a_refusal_to_an_agent_already_gone_is_only_logged() {
     let (channel, logs) = crate::test_support::formatted_logs_while(establish(
         server_sink,
         server_stream,
-        &test_channel_key(),
+        &test_channel_key().into(),
         "gone-agent",
     ))
     .await;
@@ -126,7 +126,13 @@ async fn an_agent_pinned_to_another_key_is_refused() {
         .await
         .unwrap();
 
-    let channel = establish(server_sink, server_stream, &test_channel_key(), "test").await;
+    let channel = establish(
+        server_sink,
+        server_stream,
+        &test_channel_key().into(),
+        "test",
+    )
+    .await;
 
     assert!(channel.is_none());
     assert_eq!(
@@ -143,7 +149,13 @@ async fn an_agent_pinned_to_another_key_is_refused() {
 async fn an_agent_that_never_starts_the_handshake_is_closed() {
     let ((server_sink, server_stream), (_agent_sink, mut agent_stream)) = socket_pair();
 
-    let channel = establish(server_sink, server_stream, &test_channel_key(), "test").await;
+    let channel = establish(
+        server_sink,
+        server_stream,
+        &test_channel_key().into(),
+        "test",
+    )
+    .await;
 
     assert!(channel.is_none());
     assert_eq!(
@@ -169,4 +181,56 @@ fn control_messages_pass_through_the_codec() {
         AxumCodec::classify(Message::Close(None)),
         Frame::Close(Message::Close(None))
     ));
+}
+
+#[tokio::test]
+async fn an_agent_pinned_to_the_previous_key_connects_during_a_rotation() {
+    let ((server_sink, server_stream), (mut agent_sink, mut agent_stream)) = socket_pair();
+    let previous = shared::agent_channel::ChannelPrivateKey::derive(b"previous server").unwrap();
+    let pinned = previous.public_key().unwrap();
+    let keys = shared::agent_channel::ChannelKeys::with_previous(test_channel_key(), previous);
+
+    let agent = async {
+        let (sealer, opener) =
+            initiate::<AxumCodec, _, _, _>(&mut agent_sink, &mut agent_stream, &pinned)
+                .await
+                .unwrap();
+        let mut sink = EncryptedSink::<AxumCodec, _>::new(agent_sink, sealer);
+        sink.send(Message::Text("hello".into())).await.unwrap();
+        DecryptedStream::<AxumCodec, _>::new(agent_stream, opener)
+    };
+    let server = crate::test_support::formatted_logs_while(async {
+        let (_sink, mut stream) = establish(server_sink, server_stream, &keys, "rotating-agent")
+            .await
+            .unwrap();
+        stream.next().await.unwrap().unwrap()
+    });
+
+    let (_agent_stream, (hello, logs)) = tokio::join!(agent, server);
+    assert_eq!(hello, Message::Text("hello".into()));
+    assert!(logs.contains("ASSIMILATE_PREVIOUS_SECRET_KEY"), "{logs}");
+    assert!(logs.contains("rotating-agent"), "{logs}");
+}
+
+#[tokio::test]
+async fn an_agent_on_the_current_key_is_not_warned_about_during_a_rotation() {
+    let ((server_sink, server_stream), (mut agent_sink, mut agent_stream)) = socket_pair();
+    let keys = shared::agent_channel::ChannelKeys::with_previous(
+        test_channel_key(),
+        shared::agent_channel::ChannelPrivateKey::derive(b"previous server").unwrap(),
+    );
+    let pinned = test_channel_key().public_key().unwrap();
+
+    let agent = initiate::<AxumCodec, _, _, _>(&mut agent_sink, &mut agent_stream, &pinned);
+    let server = crate::test_support::formatted_logs_while(establish(
+        server_sink,
+        server_stream,
+        &keys,
+        "current-agent",
+    ));
+
+    let (agent, (channel, logs)) = tokio::join!(agent, server);
+    assert!(agent.is_ok());
+    assert!(channel.is_some());
+    assert!(!logs.contains("ASSIMILATE_PREVIOUS_SECRET_KEY"), "{logs}");
 }

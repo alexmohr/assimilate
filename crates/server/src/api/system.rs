@@ -88,7 +88,8 @@ pub fn agent_channel_key(
 ) -> impl std::future::Future<Output = Result<Json<AgentChannelKeyResponse>, ApiError>> {
     std::future::ready(
         state
-            .channel_key
+            .channel_keys
+            .current()
             .public_key()
             .map(|key| {
                 Json(AgentChannelKeyResponse {

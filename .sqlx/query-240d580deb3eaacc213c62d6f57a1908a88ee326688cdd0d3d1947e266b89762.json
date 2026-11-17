@@ -1,0 +1,38 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT h.channel_id, h.name, c.name AS channel, h.value_encrypted AS \"secret!\"\n        FROM notification_channel_headers h\n        JOIN notification_channels c ON c.id = h.channel_id\n        WHERE h.value_encrypted IS NOT NULL\n        FOR UPDATE OF h\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "channel_id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "name",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "channel",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "secret!",
+        "type_info": "Bytea"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      true
+    ]
+  },
+  "hash": "240d580deb3eaacc213c62d6f57a1908a88ee326688cdd0d3d1947e266b89762"
+}

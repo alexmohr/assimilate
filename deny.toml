@@ -23,6 +23,11 @@ ignore = [
     # https://github.com/alexmohr/assimilate/issues/657; remove once
     # `cargo tree -i crypto-bigint@0.5.5` is empty.
     "RUSTSEC-2026-0387",
+    # `chrono-tz` 0.10.4 is unmaintained and no safe upgrade exists. It is a
+    # direct dependency of `crates/shared` and `crates/server`. Tracked in
+    # https://github.com/alexmohr/assimilate/issues/726; remove this entry
+    # once `chrono-tz` is replaced.
+    "RUSTSEC-2026-0555",
 ]
 
 [licenses]

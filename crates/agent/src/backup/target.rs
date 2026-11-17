@@ -172,6 +172,7 @@ impl BackupTarget {
             compression: base.compression.clone(),
             rate_limit_kbps: base.rate_limit_kbps,
             accept_relocation: base.accept_relocation,
+            remote_borg: base.remote_borg,
             hostname,
             ..Self::default()
         }

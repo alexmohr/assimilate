@@ -65,6 +65,37 @@ describe('SshKeyDeployPanel', () => {
     )
   })
 
+  it('deploys over the shell when the provider calls for it', async () => {
+    mockPost.mockResolvedValueOnce({ data: { success: true, already_deployed: false } })
+    const wrapper = mountPanel({ sftp: 'shell' })
+    await wrapper.find('input[type="password"]').setValue('secret')
+    await deployBtn(wrapper).trigger('click')
+    expect(mockPost).toHaveBeenCalledWith(
+      '/ssh/deploy-key',
+      expect.objectContaining({ use_sftp: false }),
+    )
+  })
+
+  it('follows the provider when it changes while the panel is open', async () => {
+    mockPost.mockResolvedValue({ data: { success: true, already_deployed: false } })
+    const wrapper = mountPanel({ sftp: 'sftp' })
+    await wrapper.find('input[type="password"]').setValue('secret')
+
+    await wrapper.setProps({ sftp: 'shell' })
+    await deployBtn(wrapper).trigger('click')
+    expect(mockPost).toHaveBeenLastCalledWith(
+      '/ssh/deploy-key',
+      expect.objectContaining({ use_sftp: false }),
+    )
+
+    await wrapper.setProps({ sftp: 'sftp' })
+    await deployBtn(wrapper).trigger('click')
+    expect(mockPost).toHaveBeenLastCalledWith(
+      '/ssh/deploy-key',
+      expect.objectContaining({ use_sftp: true }),
+    )
+  })
+
   it('shows success message after a successful deploy', async () => {
     mockPost.mockResolvedValueOnce({ data: { success: true, already_deployed: false } })
     const wrapper = mountPanel()

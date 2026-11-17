@@ -465,6 +465,7 @@ pub async fn create_repo(
         bg_ssh_host,
         bg_ssh_port: ssh_port_u16,
         bg_ssh_host_key,
+        bg_provider: provider,
     });
     state.background_task_tracker.spawn_tracked(import);
 
@@ -486,6 +487,7 @@ struct InitialImportTask {
     bg_ssh_host: String,
     bg_ssh_port: u16,
     bg_ssh_host_key: String,
+    bg_provider: HostProvider,
 }
 
 /// Arguments for [`run_initial_import_work`], bundled (rather than passed
@@ -504,6 +506,7 @@ struct InitialImportWork<'a> {
     bg_ssh_host: &'a str,
     bg_ssh_port: u16,
     bg_ssh_host_key: &'a str,
+    bg_provider: HostProvider,
 }
 
 /// The actual sync work `run_initial_import_task` races against
@@ -526,6 +529,7 @@ async fn run_initial_import_work(work: InitialImportWork<'_>) {
         bg_ssh_host,
         bg_ssh_port,
         bg_ssh_host_key,
+        bg_provider,
     } = work;
 
     // Detect encryption before syncing rather than concurrently: both borg
@@ -543,6 +547,7 @@ async fn run_initial_import_work(work: InitialImportWork<'_>) {
             bg_ssh_host,
             bg_ssh_port,
             Some(bg_ssh_host_key),
+            bg_provider,
         )
         .await;
         match run_borg_info_with_retry(bg_repo_url, &env, timeout, &task_state.task_registry).await
@@ -640,6 +645,7 @@ async fn run_initial_import_task(task: InitialImportTask) {
         bg_ssh_host,
         bg_ssh_port,
         bg_ssh_host_key,
+        bg_provider,
     } = task;
 
     let op_clear_guard = set_server_sync_op(&task_state, repo_id).await;
@@ -661,6 +667,7 @@ async fn run_initial_import_task(task: InitialImportTask) {
             bg_ssh_host: &bg_ssh_host,
             bg_ssh_port,
             bg_ssh_host_key: &bg_ssh_host_key,
+            bg_provider,
         }) => {}
     }
 
@@ -1286,6 +1293,7 @@ pub async fn break_lock(
         repo_id,
         &repo_url,
         &passphrase,
+        repo.provider,
         &state.task_registry,
         &state.repo_lock,
     )
@@ -1446,6 +1454,7 @@ pub async fn exec_borg(
         &repo.ssh_host,
         u16::try_from(repo.ssh_port).unwrap_or(22),
         repo.ssh_host_key.as_deref(),
+        repo.provider,
     )
     .await;
     env.insert(BORG_REPO_ENV_KEY.to_owned(), repo_url);
@@ -1642,6 +1651,7 @@ async fn rename_and_reinit_repo(params: RenameAndReinitParams<'_>) -> Result<Str
         &repo.ssh_host,
         u16::try_from(repo.ssh_port).unwrap_or(22),
         repo.ssh_host_key.as_deref(),
+        repo.provider,
     )
     .await;
 

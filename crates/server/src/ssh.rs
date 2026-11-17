@@ -633,7 +633,8 @@ async fn exec_command_with_input(
 }
 
 /// Connect to a candidate host via SSH and check whether its `borg` (the
-/// provider's binary, if it has one) is installed, reporting connectivity and borg availability without mutating remote state.
+/// provider's binary, if it has one) is installed, reporting connectivity and
+/// borg availability without mutating remote state.
 pub async fn test_connection(req: &TestConnectionRequest) -> TestConnectionResponse {
     let port = req.ssh_port.unwrap_or(22);
 

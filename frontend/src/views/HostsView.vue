@@ -28,6 +28,8 @@ import { normalizeBackupStatus } from '../utils/backupStatus'
 import { domainParams } from '../utils/agent'
 import { ChevronRight, Plus, SlidersHorizontal, Server } from '@lucide/vue'
 import AgentChannelKey from '../components/AgentChannelKey.vue'
+import AgentInstallCommand from '../components/AgentInstallCommand.vue'
+import BaseTabs, { type TabOption } from '../components/BaseTabs.vue'
 import BaseSegmented, { type SegmentedOption } from '../components/BaseSegmented.vue'
 import BaseSpinner from '../components/BaseSpinner.vue'
 import EmptyState from '../components/EmptyState.vue'
@@ -274,6 +276,13 @@ const filteredAgents = computed(() => {
 })
 
 const showAddDialog = ref(false)
+type AddMode = 'install' | 'manual'
+const addMode = ref<AddMode>('install')
+const installGenerated = ref(false)
+const addModes: readonly TabOption<AddMode>[] = [
+  { id: 'install', label: 'Install command' },
+  { id: 'manual', label: 'Manual' },
+]
 const addForm = reactive({ hostname: '', display_name: '', domain: '' })
 const addLoading = ref(false)
 const addError = ref<string | null>(null)
@@ -860,6 +869,8 @@ function openAddDialog(): void {
   addError.value = null
   newToken.value = null
   tokenCopied.value = false
+  addMode.value = 'install'
+  installGenerated.value = false
   showAddDialog.value = true
 }
 
@@ -889,6 +900,7 @@ async function submitAdd(): Promise<void> {
 function closeAddDialog(): void {
   showAddDialog.value = false
   newToken.value = null
+  installGenerated.value = false
 }
 
 function agentLink(agent: AgentRow): { path: string; query: Record<string, string> } {
@@ -1328,10 +1340,21 @@ useQueryOverride(() => route.query.coverage, isCoverageFilter, filterCoverage)
          then reveal the generated token once. -->
     <BaseModal
       :open="showAddDialog"
-      :title="newToken ? 'Agent Created' : 'Add Agent'"
+      :title="newToken ? 'Agent created' : 'Add agent'"
+      :size="addMode === 'install' && installGenerated ? 'lg' : 'md'"
       @close="closeAddDialog"
     >
-      <template v-if="!newToken">
+      <BaseTabs
+        v-if="!newToken"
+        v-model="addMode"
+        :tabs="addModes"
+        label="How to add the agent"
+      />
+      <AgentInstallCommand
+        v-if="!newToken && addMode === 'install'"
+        :generated="installGenerated"
+      />
+      <template v-else-if="!newToken">
         <div class="field">
           <label class="field-label">Hostname <span class="required">*</span></label>
           <input
@@ -1388,7 +1411,23 @@ useQueryOverride(() => route.query.coverage, isCoverageFilter, filterCoverage)
       </div>
 
       <template #footer>
-        <template v-if="!newToken">
+        <template v-if="!newToken && addMode === 'install'">
+          <button
+            type="button"
+            class="btn btn-ghost"
+            @click="closeAddDialog"
+          >
+            {{ installGenerated ? 'Revoke token' : 'Cancel' }}
+          </button>
+          <button
+            type="button"
+            class="btn btn-primary"
+            @click="installGenerated ? closeAddDialog() : (installGenerated = true)"
+          >
+            {{ installGenerated ? 'Done' : 'Generate command' }}
+          </button>
+        </template>
+        <template v-else-if="!newToken">
           <button
             type="button"
             class="btn btn-ghost"

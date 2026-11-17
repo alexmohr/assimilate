@@ -248,7 +248,10 @@ mod tests {
     fn presets_list_every_provider_once_with_generic_first() {
         let presets = HostProvider::presets();
         assert_eq!(presets.len(), HostProvider::iter().count());
-        assert_eq!(presets[0].provider, HostProvider::Generic);
+        assert_eq!(
+            presets.first().map(|p| p.provider),
+            Some(HostProvider::Generic)
+        );
         assert!(presets.iter().all(|p| p.defaults == p.provider.defaults()));
     }
 

@@ -138,6 +138,7 @@ export interface TestRepoConnectionRequest {
   ssh_host: string
   ssh_user: string
   ssh_port: number
+  provider?: HostProvider
 }
 
 export interface TestRepoConnectionResponse {

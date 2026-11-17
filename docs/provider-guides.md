@@ -24,6 +24,9 @@ A Storage Box serves SSH on port 23 and offers no shell, so the key is installed
 6. Enter the passphrase and select **Create Repo** (or **Import Repo**).
 
 !!! note
+    **Test Connection** asks the box for the provider's borg (`borg-1.4` here) with `--version`. A storage box that restricts which commands may run can answer "borg not found" even though backups work; the repository path check and a real backup are the reliable test.
+
+!!! note
     A sub-account only sees its own directory. Use the path from the Hetzner console rather than `./backups` when the sub-account is restricted to a sub-directory.
 
 ## rsync.net
@@ -33,7 +36,7 @@ rsync.net runs several borg versions side by side and selects one by the name of
 1. In **Repositories**, select **Import** or **Create** and choose **rsync.net** as the **Provider**.
 2. Enter the account host, for example `ab123.rsync.net`, as **SSH host**, and the account name as **SSH user**. The port is 22.
 3. Enter the repository path relative to the account's home directory.
-4. Select **+ Deploy Key** to install the server's key, then enter the passphrase and save.
+4. Select **+ Deploy Key** to install the server's key, then enter the passphrase and save. **Test Connection** asks for `borg14`, the binary Assimilate uses on this provider.
 
 ## BorgBase
 

@@ -22,7 +22,7 @@ pub mod ws;
 
 use std::sync::Arc;
 
-pub use key::{ChannelPrivateKey, ChannelPublicKey};
+pub use key::{ChannelKeyMatch, ChannelKeys, ChannelPrivateKey, ChannelPublicKey};
 use snow::{Builder, HandshakeState};
 pub use transport::{MessageKind, Opener, Sealer};
 
@@ -111,10 +111,7 @@ impl Initiator {
 ///
 /// Returns [`ChannelError::Handshake`] if `first` is not a handshake for
 /// this key and protocol.
-pub fn respond(
-    key: &ChannelPrivateKey,
-    first: &[u8],
-) -> Result<((Sealer, Opener), Vec<u8>), ChannelError> {
+pub fn respond(key: &ChannelPrivateKey, first: &[u8]) -> Result<Response, ChannelError> {
     let mut state = builder()?
         .local_private_key(key.as_bytes())
         .and_then(Builder::build_responder)
@@ -122,6 +119,29 @@ pub fn respond(
     read_handshake(&mut state, first)?;
     let reply = write_handshake(&mut state)?;
     Ok((into_transport(state)?, reply))
+}
+
+/// An established channel and the reply frame that completes its handshake.
+pub type Response = ((Sealer, Opener), Vec<u8>);
+
+/// Answers an agent's first handshake frame with whichever of `keys` it was
+/// made for, trying the current key first, and says which one that was.
+///
+/// # Errors
+///
+/// Returns [`ChannelError::Handshake`] if `first` is not a handshake for any
+/// of `keys` and this protocol.
+pub fn respond_any(
+    keys: &ChannelKeys,
+    first: &[u8],
+) -> Result<(Response, ChannelKeyMatch), ChannelError> {
+    match (respond(keys.current(), first), keys.previous()) {
+        (Ok(answer), _) => Ok((answer, ChannelKeyMatch::Current)),
+        (Err(e), None) => Err(e),
+        (Err(_), Some(previous)) => {
+            respond(previous, first).map(|answer| (answer, ChannelKeyMatch::Previous))
+        }
+    }
 }
 
 fn builder() -> Result<Builder<'static>, ChannelError> {

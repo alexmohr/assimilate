@@ -50,6 +50,8 @@ enum StartupError {
     Crypto(#[from] shared::crypto::CryptoError),
     #[error("agent channel key error: {0}")]
     ChannelKey(#[from] shared::agent_channel::ChannelError),
+    #[error("failed to rotate ASSIMILATE_SECRET_KEY: {0}")]
+    SecretRotation(#[from] server::secret_rotation::SecretRotationError),
     #[error("failed to encrypt legacy notification channel secrets: {0}")]
     ChannelSecretMigration(#[from] server::notifications::NotificationError),
     #[error("failed to install rustls crypto provider")]
@@ -170,6 +172,78 @@ async fn encrypt_legacy_channel_secrets(
     Ok(())
 }
 
+/// The secret the server ran with before `ASSIMILATE_SECRET_KEY` was rotated, from
+/// `ASSIMILATE_PREVIOUS_SECRET_KEY`; a blank value counts as unset.
+fn previous_secret_key() -> Option<String> {
+    std::env::var("ASSIMILATE_PREVIOUS_SECRET_KEY")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+}
+
+/// The keys derived from the previous secret during a rotation of `ASSIMILATE_SECRET_KEY`.
+struct PreviousSecretKeys {
+    encryption_key: [u8; 32],
+    channel_key: shared::agent_channel::ChannelPrivateKey,
+}
+
+impl PreviousSecretKeys {
+    /// Derives them from `previous`, or `None` when it is the current secret under another
+    /// name, so there is nothing to rotate.
+    fn derive(
+        previous: Option<&str>,
+        current_encryption_key: &[u8; 32],
+    ) -> Result<Option<Self>, StartupError> {
+        let Some(previous) = previous else {
+            return Ok(None);
+        };
+        let encryption_key = shared::crypto::derive_key(previous.as_bytes())?;
+        if encryption_key == *current_encryption_key {
+            tracing::warn!(
+                "ASSIMILATE_PREVIOUS_SECRET_KEY is the same as ASSIMILATE_SECRET_KEY; ignoring it"
+            );
+            return Ok(None);
+        }
+        Ok(Some(Self {
+            encryption_key,
+            channel_key: shared::agent_channel::ChannelPrivateKey::derive(previous.as_bytes())?,
+        }))
+    }
+}
+
+/// Re-encrypts every stored secret still under the previous secret's key, and returns the
+/// channel keys that keep accepting agents pinned to the previous secret's channel key.
+async fn rotate_secret_key(
+    pool: &PgPool,
+    encryption_key: [u8; 32],
+    channel_key: shared::agent_channel::ChannelPrivateKey,
+    previous: Option<PreviousSecretKeys>,
+) -> Result<shared::agent_channel::ChannelKeys, StartupError> {
+    let Some(previous) = previous else {
+        return Ok(channel_key.into());
+    };
+    let keys = server::secret_rotation::RotationKeys::new(encryption_key, previous.encryption_key);
+    let rotated = server::secret_rotation::rotate_stored_secrets(pool, &keys).await?;
+    tracing::info!(
+        repository_passphrases = rotated.repository_passphrases,
+        totp_secrets = rotated.totp_secrets,
+        smtp_passwords = rotated.smtp_passwords,
+        webhook_header_values = rotated.webhook_header_values,
+        "re-encrypted {} stored secrets under ASSIMILATE_SECRET_KEY",
+        rotated.total()
+    );
+    let previous_fingerprint = previous.channel_key.public_key()?.fingerprint();
+    tracing::warn!(
+        previous_fingerprint = %previous_fingerprint,
+        "ASSIMILATE_PREVIOUS_SECRET_KEY is set: agents pinned to the previous channel key are \
+         still accepted. Give every agent the current BORG_SERVER_KEY, then remove \
+         ASSIMILATE_PREVIOUS_SECRET_KEY"
+    );
+    Ok(shared::agent_channel::ChannelKeys::with_previous(
+        channel_key,
+        previous.channel_key,
+    ))
+}
+
 #[tokio::main]
 async fn main() -> Result<(), StartupError> {
     // On Windows this process may be started to stop one of its own borg children.
@@ -200,6 +274,8 @@ async fn main() -> Result<(), StartupError> {
     let channel_key = shared::agent_channel::ChannelPrivateKey::derive(secret_key.as_bytes())?;
     let channel_fingerprint = channel_key.public_key()?.fingerprint();
     tracing::info!(fingerprint = %channel_fingerprint, "agent channel key ready");
+    let previous = PreviousSecretKeys::derive(previous_secret_key().as_deref(), &encryption_key)?;
+    let channel_keys = rotate_secret_key(&pool, encryption_key, channel_key, previous).await?;
     encrypt_legacy_channel_secrets(&pool, &encryption_key).await?;
     let addr = resolve_bind_addr()?;
     let server_addr = server::tunnel::tunnel_target_addr(addr);
@@ -219,7 +295,7 @@ async fn main() -> Result<(), StartupError> {
     let state = build_app_state(BuildAppStateArgs {
         pool,
         encryption_key,
-        channel_key,
+        channel_keys,
         ui_broadcast,
         tunnel_manager: tunnel_manager.clone(),
         log_buffer,
@@ -339,7 +415,7 @@ fn resolve_bind_addr() -> Result<SocketAddr, StartupError> {
 struct BuildAppStateArgs {
     pool: PgPool,
     encryption_key: [u8; 32],
-    channel_key: shared::agent_channel::ChannelPrivateKey,
+    channel_keys: shared::agent_channel::ChannelKeys,
     ui_broadcast: server::ws::ui_broadcast::UiBroadcast,
     tunnel_manager: TunnelManager,
     log_buffer: LogBuffer,
@@ -354,7 +430,7 @@ fn build_app_state(args: BuildAppStateArgs) -> AppState {
     let BuildAppStateArgs {
         pool,
         encryption_key,
-        channel_key,
+        channel_keys,
         ui_broadcast,
         tunnel_manager,
         log_buffer,
@@ -372,7 +448,7 @@ fn build_app_state(args: BuildAppStateArgs) -> AppState {
     AppState {
         pool,
         encryption_key,
-        channel_key: std::sync::Arc::new(channel_key),
+        channel_keys: std::sync::Arc::new(channel_keys),
         registry: server::ws::registry::AgentRegistry::new(),
         ui_broadcast,
         tunnel_manager,
@@ -1610,10 +1686,11 @@ mod tests {
         let encryption_key = shared::crypto::derive_key(b"test-secret-key-for-main").unwrap();
         build_app_state(BuildAppStateArgs {
             encryption_key,
-            channel_key: shared::agent_channel::ChannelPrivateKey::derive(
+            channel_keys: shared::agent_channel::ChannelPrivateKey::derive(
                 b"test-secret-key-for-main",
             )
-            .unwrap(),
+            .unwrap()
+            .into(),
             tunnel_manager: TunnelManager::new(pool.clone(), ui_broadcast.clone(), server_addr),
             ui_broadcast,
             log_buffer: LogBuffer::default(),
@@ -2052,5 +2129,108 @@ mod tests {
         let result = connect_with_retry(UNREACHABLE_DB_URL, 1, retry).await;
 
         assert!(matches!(result, Err(StartupError::Database(_))));
+    }
+
+    fn derive(secret: &[u8]) -> [u8; 32] {
+        shared::crypto::derive_key(secret).unwrap()
+    }
+
+    async fn insert_repo_with_passphrase(pool: &PgPool, name: &str, passphrase: &[u8]) -> i64 {
+        db::insert_repo(
+            pool,
+            &db::InsertRepoParams {
+                name,
+                repo_path: "/backup/rotated",
+                ssh_user: "borg",
+                ssh_host: "storage.local",
+                ssh_port: 22,
+                passphrase_encrypted: passphrase,
+                compression: "lz4",
+                encryption: "repokey",
+                owner_id: None,
+                sync_schedule: None,
+            },
+        )
+        .await
+        .unwrap()
+        .id
+    }
+
+    fn channel_key(secret: &[u8]) -> shared::agent_channel::ChannelPrivateKey {
+        shared::agent_channel::ChannelPrivateKey::derive(secret).unwrap()
+    }
+
+    #[test]
+    fn no_previous_secret_means_no_rotation() {
+        let previous = PreviousSecretKeys::derive(None, &derive(b"current")).unwrap();
+        assert!(previous.is_none());
+    }
+
+    #[test]
+    fn a_previous_secret_equal_to_the_current_one_is_ignored() {
+        let previous = PreviousSecretKeys::derive(Some("current"), &derive(b"current")).unwrap();
+        assert!(previous.is_none());
+    }
+
+    #[test]
+    fn a_previous_secret_derives_both_of_its_keys() {
+        let previous = PreviousSecretKeys::derive(Some("old"), &derive(b"current"))
+            .unwrap()
+            .unwrap();
+        assert_eq!(previous.encryption_key, derive(b"old"));
+        assert_eq!(
+            previous.channel_key.public_key().unwrap(),
+            channel_key(b"old").public_key().unwrap()
+        );
+    }
+
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn without_a_previous_secret_only_the_current_channel_key_is_held(pool: sqlx::PgPool) {
+        let keys = rotate_secret_key(&pool, derive(b"current"), channel_key(b"current"), None)
+            .await
+            .unwrap();
+        assert!(keys.previous().is_none());
+    }
+
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_rotation_re_encrypts_and_keeps_the_previous_channel_key(pool: sqlx::PgPool) {
+        let stored = shared::crypto::encrypt_passphrase("repo-pass", &derive(b"old")).unwrap();
+        let repo_id = insert_repo_with_passphrase(&pool, "rotated-at-startup", &stored).await;
+        let previous = PreviousSecretKeys::derive(Some("old"), &derive(b"current")).unwrap();
+
+        let keys = rotate_secret_key(&pool, derive(b"current"), channel_key(b"current"), previous)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            keys.previous().unwrap().public_key().unwrap(),
+            channel_key(b"old").public_key().unwrap()
+        );
+        let stored = sqlx::query_scalar!(
+            "SELECT passphrase_encrypted FROM repos WHERE id = $1",
+            repo_id
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            shared::crypto::decrypt_passphrase(&stored, &derive(b"current")).unwrap(),
+            "repo-pass"
+        );
+    }
+
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_failed_rotation_stops_startup(pool: sqlx::PgPool) {
+        let foreign = shared::crypto::encrypt_passphrase("x", &derive(b"stranger")).unwrap();
+        insert_repo_with_passphrase(&pool, "unrotatable", &foreign).await;
+        let previous = PreviousSecretKeys::derive(Some("old"), &derive(b"current")).unwrap();
+
+        let result =
+            rotate_secret_key(&pool, derive(b"current"), channel_key(b"current"), previous).await;
+
+        assert!(matches!(result, Err(StartupError::SecretRotation(_))));
     }
 }

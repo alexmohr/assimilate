@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE notification_channels SET smtp_password_encrypted = $2 WHERE id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Bytea"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "1cc8c1b979dba22a9aaa157a65b68248e9ef9127e166e351eb3de1c81dfe153f"
+}

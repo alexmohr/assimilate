@@ -66,6 +66,8 @@ pub mod restore_runs;
 pub mod run_dispatch;
 /// Scheduler that ticks schedules, syncs, retention, and session cleanup.
 pub mod scheduler;
+/// Re-encrypting stored secrets when `ASSIMILATE_SECRET_KEY` is rotated.
+pub mod secret_rotation;
 /// Typed accessors for runtime-tunable `system_settings` values.
 pub mod settings;
 /// SSH key management, host key scanning, and key deployment.
@@ -218,9 +220,10 @@ pub struct AppState {
     pub pool: PgPool,
     /// Derived AES-256-GCM encryption key for passphrases.
     pub encryption_key: [u8; 32],
-    /// The static key agents' encrypted channel is pinned to, derived from
-    /// the same secret as [`Self::encryption_key`] under its own label.
-    pub channel_key: Arc<shared::agent_channel::ChannelPrivateKey>,
+    /// The static keys agents' encrypted channel is pinned to, derived from
+    /// the same secret as [`Self::encryption_key`] under its own label: the
+    /// current one, and while the secret is being rotated, the previous one.
+    pub channel_keys: Arc<shared::agent_channel::ChannelKeys>,
     /// Registry of connected WebSocket agents.
     pub registry: AgentRegistry,
     /// Broadcast channel for UI-facing WebSocket messages.

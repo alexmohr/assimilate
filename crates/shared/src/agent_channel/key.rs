@@ -68,6 +68,58 @@ impl fmt::Debug for ChannelPrivateKey {
     }
 }
 
+/// The keys the server answers agent handshakes with: the current one,
+/// which agents are told to pin, and while `ASSIMILATE_SECRET_KEY` is being
+/// rotated, the one derived from the previous secret, so agents still
+/// pinned to it keep connecting until each is given the new key.
+#[derive(Debug)]
+pub struct ChannelKeys {
+    current: ChannelPrivateKey,
+    previous: Option<ChannelPrivateKey>,
+}
+
+impl ChannelKeys {
+    /// Keys that also accept agents pinned to `previous`.
+    #[must_use]
+    pub fn with_previous(current: ChannelPrivateKey, previous: ChannelPrivateKey) -> Self {
+        Self {
+            current,
+            previous: Some(previous),
+        }
+    }
+
+    /// The key agents should pin.
+    #[must_use]
+    pub fn current(&self) -> &ChannelPrivateKey {
+        &self.current
+    }
+
+    /// The key derived from the previous secret, while one is configured.
+    #[must_use]
+    pub fn previous(&self) -> Option<&ChannelPrivateKey> {
+        self.previous.as_ref()
+    }
+}
+
+impl From<ChannelPrivateKey> for ChannelKeys {
+    fn from(current: ChannelPrivateKey) -> Self {
+        Self {
+            current,
+            previous: None,
+        }
+    }
+}
+
+/// Which of the server's [`ChannelKeys`] an agent's handshake was for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ChannelKeyMatch {
+    /// The current key.
+    Current,
+    /// The key derived from the previous secret: the agent still needs the
+    /// new `BORG_SERVER_KEY`.
+    Previous,
+}
+
 /// The server's static X25519 public key, written as 44 characters of
 /// standard base64. Agents are configured with it and refuse a server that
 /// cannot prove it holds the matching private key.
@@ -181,5 +233,35 @@ mod tests {
     fn the_private_key_is_redacted_in_debug_output() {
         let key = ChannelPrivateKey::derive(b"secret").unwrap();
         assert_eq!(format!("{key:?}"), "ChannelPrivateKey([REDACTED])");
+    }
+
+    #[test]
+    fn channel_keys_without_a_previous_key_have_none() {
+        let keys = ChannelKeys::from(ChannelPrivateKey::derive(b"secret").unwrap());
+        assert!(keys.previous().is_none());
+        assert_eq!(
+            keys.current().public_key().unwrap(),
+            ChannelPrivateKey::derive(b"secret")
+                .unwrap()
+                .public_key()
+                .unwrap()
+        );
+    }
+
+    #[test]
+    fn channel_keys_keep_both_keys_redacted() {
+        let keys = ChannelKeys::with_previous(
+            ChannelPrivateKey::derive(b"new").unwrap(),
+            ChannelPrivateKey::derive(b"old").unwrap(),
+        );
+        assert_eq!(
+            keys.previous().unwrap().public_key().unwrap(),
+            ChannelPrivateKey::derive(b"old")
+                .unwrap()
+                .public_key()
+                .unwrap()
+        );
+        let shown = format!("{keys:?}");
+        assert_eq!(shown.matches("[REDACTED]").count(), 2, "{shown}");
     }
 }

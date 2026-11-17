@@ -228,3 +228,52 @@ fn a_truncated_message_never_completes() {
         .unwrap();
     assert!(matches!(server_rx.open(&next), Err(ChannelError::Decrypt)));
 }
+
+fn handshake_with(keys: &ChannelKeys, pinned: &ChannelPrivateKey) -> Option<ChannelKeyMatch> {
+    let (initiator, first) = Initiator::start(&pinned.public_key().unwrap()).unwrap();
+    let ((_, reply), matched) = respond_any(keys, &first).ok()?;
+    initiator.finish(&reply).unwrap();
+    Some(matched)
+}
+
+#[test]
+fn respond_any_prefers_the_current_key() {
+    let keys = ChannelKeys::with_previous(
+        server_key(),
+        ChannelPrivateKey::derive(b"old secret").unwrap(),
+    );
+    assert_eq!(
+        handshake_with(&keys, &server_key()),
+        Some(ChannelKeyMatch::Current)
+    );
+}
+
+#[test]
+fn respond_any_accepts_an_agent_pinned_to_the_previous_key() {
+    let keys = ChannelKeys::with_previous(
+        server_key(),
+        ChannelPrivateKey::derive(b"old secret").unwrap(),
+    );
+    assert_eq!(
+        handshake_with(&keys, &ChannelPrivateKey::derive(b"old secret").unwrap()),
+        Some(ChannelKeyMatch::Previous)
+    );
+}
+
+#[test]
+fn respond_any_refuses_a_key_it_does_not_hold() {
+    let with_previous = ChannelKeys::with_previous(
+        server_key(),
+        ChannelPrivateKey::derive(b"old secret").unwrap(),
+    );
+    let only_current = ChannelKeys::from(server_key());
+    let stranger = ChannelPrivateKey::derive(b"someone else").unwrap();
+    assert_eq!(handshake_with(&with_previous, &stranger), None);
+    assert_eq!(
+        handshake_with(
+            &only_current,
+            &ChannelPrivateKey::derive(b"old secret").unwrap()
+        ),
+        None
+    );
+}

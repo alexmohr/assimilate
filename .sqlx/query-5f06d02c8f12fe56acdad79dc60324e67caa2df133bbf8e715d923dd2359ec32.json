@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE notification_channel_headers SET value_encrypted = $3 WHERE channel_id = $1 AND name = $2",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Text",
+        "Bytea"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "5f06d02c8f12fe56acdad79dc60324e67caa2df133bbf8e715d923dd2359ec32"
+}

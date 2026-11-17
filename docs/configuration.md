@@ -11,6 +11,7 @@ Assimilate is configured in two places:
 |----------|---------|----------|-------------|
 | `DATABASE_URL` | — | Yes | PostgreSQL connection string (e.g. `postgres://user:pass@host/db`). |
 | `ASSIMILATE_SECRET_KEY` | — | Yes | Secret used to derive the AES-256-GCM encryption key for repository passphrases. |
+| `ASSIMILATE_PREVIOUS_SECRET_KEY` | — | No | The `ASSIMILATE_SECRET_KEY` the server ran with before. Set only while [rotating the secret key](#rotating-the-secret-key): at startup the server re-encrypts every stored secret under the current key, and it keeps accepting agents pinned to the previous [agent channel key](agents.md#encrypted-connection). A blank value counts as unset. |
 | `ASSIMILATE_BIND_ADDR` | `0.0.0.0:8080` | No | TCP address and port the server listens on. |
 | `ASSIMILATE_STATIC_DIR` | `./static` | No | Directory containing the compiled Vue SPA. If absent, the static file route is disabled. |
 | `ASSIMILATE_DOCS_DIR` | `./docs_html` | No | Directory containing the built MkDocs site served at `/docs`. If absent, the `/docs` route is disabled. |
@@ -30,7 +31,32 @@ Assimilate is configured in two places:
 | `ASSIMILATE_TRUSTED_PROXIES` | — | No | Comma-separated list of trusted proxy CIDR networks (e.g., `10.0.0.0/8,172.16.0.0/12`). When set, the server respects the `X-Forwarded-For` header from these proxies to determine the real client IP for rate limiting. Leave empty to never trust `X-Forwarded-For`. |
 
 !!! warning "Security"
-    `ASSIMILATE_SECRET_KEY` is used to derive the encryption key that protects all repository passphrases stored in the database. If you lose or rotate this value, every encrypted passphrase becomes **permanently unrecoverable**. Store it in a secrets manager and never change it after initial setup. The server also derives its [agent channel key](agents.md#encrypted-connection) from it. Changing it changes that key, and every agent then needs the new `BORG_SERVER_KEY`.
+    `ASSIMILATE_SECRET_KEY` is used to derive the encryption key that protects all repository passphrases stored in the database. If you lose it, or replace it without [rotating it](#rotating-the-secret-key), every encrypted passphrase becomes **permanently unrecoverable**. Store it in a secrets manager. The server also derives its [agent channel key](agents.md#encrypted-connection) from it. Changing it changes that key, and every agent then needs the new `BORG_SERVER_KEY`.
+
+### Rotating the secret key
+
+To replace `ASSIMILATE_SECRET_KEY`, for example after it may have leaked, start the server with the new secret in `ASSIMILATE_SECRET_KEY` and the old one in `ASSIMILATE_PREVIOUS_SECRET_KEY`. The server then moves everything over to the new secret:
+
+* **Stored secrets.** At startup, before it serves anything, the server re-encrypts every repository passphrase, TOTP secret, SMTP password and webhook header value still encrypted under the old secret, in one transaction. It logs how many of each it re-encrypted. A value already under the new secret is left alone, so restarting with both variables still set does nothing more.
+* **Agents.** The [agent channel key](agents.md#encrypted-connection) changes with the secret. While `ASSIMILATE_PREVIOUS_SECRET_KEY` is set, the server still accepts agents whose `BORG_SERVER_KEY` is the old key, and logs a warning each time one connects with it. The **System** page and **Deploy agent** show and use only the new key.
+
+1. Back up the database.
+2. Generate a new secret:
+
+    ```bash
+    openssl rand -hex 32
+    ```
+
+3. Set `ASSIMILATE_PREVIOUS_SECRET_KEY` to the current secret and `ASSIMILATE_SECRET_KEY` to the new one, then restart the server.
+4. Give every agent the new `BORG_SERVER_KEY` from the **System** page, or redeploy it with **Deploy agent**. An agent still on the old key shows up in the server log as *agent connected with the channel key of ASSIMILATE_PREVIOUS_SECRET_KEY*.
+5. Remove `ASSIMILATE_PREVIOUS_SECRET_KEY` and restart the server. From now on an agent still on the old key fails its handshake until it gets the new one.
+
+If a stored value decrypts with neither secret, the server stops at startup with an error naming the repository, user or notification channel it belongs to, and changes nothing. That almost always means `ASSIMILATE_PREVIOUS_SECRET_KEY` is not the secret the server ran with before. If `ASSIMILATE_PREVIOUS_SECRET_KEY` is the same as `ASSIMILATE_SECRET_KEY`, the server logs a warning and ignores it.
+
+!!! warning "Old database backups"
+    A database backup taken before the rotation still holds secrets encrypted under the old secret. Keep the old secret for as long as you keep those backups: restoring one needs it as `ASSIMILATE_PREVIOUS_SECRET_KEY`.
+
+The [desktop app](desktop.md) keeps its secret in the OS keychain and does not offer rotation.
 
 ## Agent Environment Variables
 

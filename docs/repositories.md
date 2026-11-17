@@ -240,7 +240,7 @@ The passphrase is never logged or transmitted in plaintext. See [Security](secur
 
 !!! warning "Passphrase is irrecoverable"
     If you lose the passphrase, the repository contents are permanently inaccessible. Assimilate cannot recover it. Store the passphrase in a secure location (e.g., a password manager) independent of Assimilate.
-    If `ASSIMILATE_SECRET_KEY` is changed or lost, all stored passphrases become unreadable. Keep this value stable and back it up separately. See [Configuration](configuration.md) for details.
+    If `ASSIMILATE_SECRET_KEY` is lost, or replaced without [rotating it](configuration.md#rotating-the-secret-key), all stored passphrases become unreadable. Back it up separately.
 
 ## Editing and Deleting
 

@@ -114,7 +114,7 @@ docker compose up -d
 | `BORG_SERVER_KEY` | Agent only | — | The server key shown with the token, and on the **System** page |
 
 !!! warning "Protect `ASSIMILATE_SECRET_KEY`"
-    This key derives the AES-256-GCM encryption key that protects all repository passphrases stored in the database. If you lose or rotate this value, every encrypted passphrase becomes **permanently unrecoverable**. Store it in a secrets manager or a secure `.env` file that is never committed to version control.
+    This key derives the AES-256-GCM encryption key that protects all repository passphrases stored in the database. If you lose it, or replace it without [rotating it](configuration.md#rotating-the-secret-key), every encrypted passphrase becomes **permanently unrecoverable**. Store it in a secrets manager or a secure `.env` file that is never committed to version control.
 
 ### Server: `docker-compose.yml`
 

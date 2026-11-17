@@ -25,6 +25,8 @@ services:
     environment:
       DATABASE_URL: postgres://borg:${POSTGRES_PASSWORD:-borg_secret}@postgres:5432/borg
       ASSIMILATE_SECRET_KEY: ${ASSIMILATE_SECRET_KEY:?ASSIMILATE_SECRET_KEY must be set}
+      # Set only while rotating ASSIMILATE_SECRET_KEY; see docs/configuration.md.
+      ASSIMILATE_PREVIOUS_SECRET_KEY: ${ASSIMILATE_PREVIOUS_SECRET_KEY:-}
       ASSIMILATE_BIND_ADDR: "0.0.0.0:8080"
       ASSIMILATE_STATIC_DIR: /app/static
     volumes:

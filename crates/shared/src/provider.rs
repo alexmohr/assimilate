@@ -195,18 +195,6 @@ impl HostProvider {
         }
     }
 
-    /// Completes `account` into the provider's hostname: a Hetzner sub-account
-    /// `u123456` becomes `u123456.your-storagebox.de`. A name that already
-    /// ends in the suffix, or a provider with none, is returned unchanged.
-    #[must_use]
-    pub fn hostname_for(self, account: &str) -> String {
-        let account = account.trim();
-        match self.defaults().hostname_suffix {
-            Some(suffix) if !account.ends_with(suffix) => format!("{account}{suffix}"),
-            _ => account.to_owned(),
-        }
-    }
-
     /// Checks that `ssh_port` agrees with a port the provider fixes.
     ///
     /// # Errors
@@ -283,26 +271,6 @@ mod tests {
     fn remote_borg_executables() {
         assert_eq!(RemoteBorg::RsyncNetBorg14.executable(), "borg14");
         assert_eq!(RemoteBorg::HetznerBorg14.executable(), "borg-1.4");
-    }
-
-    #[test]
-    fn hetzner_hostname_is_completed_once() {
-        assert_eq!(
-            HostProvider::Hetzner.hostname_for("u123456"),
-            "u123456.your-storagebox.de"
-        );
-        assert_eq!(
-            HostProvider::Hetzner.hostname_for("u123456.your-storagebox.de"),
-            "u123456.your-storagebox.de"
-        );
-    }
-
-    #[test]
-    fn hostname_unchanged_without_suffix() {
-        assert_eq!(
-            HostProvider::RsyncNet.hostname_for(" ab123.rsync.net "),
-            "ab123.rsync.net"
-        );
     }
 
     #[test]

@@ -200,6 +200,36 @@ describe('RepoCreateDialog provider presets', () => {
     expect(byLabel('SSH port').value).toBe('22')
   })
 
+  it('starts a reopened dialog clean even after a known host locked it', async () => {
+    const wrapper = renderWithPlugins(RepoCreateDialog, {
+      props: { open: true, mode: 'import', repos: [] },
+    })
+    const reset = (wrapper.vm as unknown as { reset: () => void }).reset
+    reset()
+    await flushPromises()
+
+    // A provider picked first, then a hostname that belongs to another one.
+    await pick('rsync_net')
+    await type(byLabel('SSH host'), 'u9.your-storagebox.de')
+    expect((control('#repo-provider') as HTMLSelectElement).value).toBe('hetzner')
+
+    // Closed with the host still typed, then opened again.
+    reset()
+    await flushPromises()
+    expect((control('#repo-provider') as HTMLSelectElement).value).toBe('generic')
+    expect(byLabel('SSH port').value).toBe('22')
+    expect(byLabel('SSH port').disabled).toBe(false)
+  })
+
+  it('only promises SFTP when the provider deploys over SFTP', async () => {
+    await open()
+    await pick('hetzner')
+    expect(document.body.textContent).toContain('deployed over SFTP')
+
+    await pick('borgbase')
+    expect(document.body.textContent).not.toContain('deployed over SFTP')
+  })
+
   it('sends the chosen provider with the repository', async () => {
     await open()
     await pick('rsync_net')

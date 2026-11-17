@@ -211,6 +211,7 @@ watch(knownHostProvider, (provider, previous) => {
 })
 
 const remoteBorg = computed(() => preset.value?.remote_borg ?? null)
+const deploysOverSftp = computed(() => preset.value?.key_deploy === 'sftp')
 
 /** Completes a bare account name into the provider's hostname. */
 function completeHostname(): void {
@@ -516,6 +517,10 @@ function reset(): void {
   browser.error = null
   browser.showBrowser = false
   Object.assign(form, defaultRepoForm())
+  // The unlock watchers fire after this and give back what a known host last
+  // locked, which belongs to the previous opening, not to this one.
+  providerBeforeLock = form.provider
+  portBeforeLock = form.ssh_port
   void loadProviders()
 }
 
@@ -584,7 +589,7 @@ defineExpose({ reset })
         >
           Runs <code class="mono">{{ remoteBorg }}</code> on the remote side (<code class="mono"
             >--remote-path</code
-          >), and the key is deployed over SFTP.
+          >)<template v-if="deploysOverSftp">, and the key is deployed over SFTP</template>.
         </span>
       </div>
 

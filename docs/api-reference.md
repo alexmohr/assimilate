@@ -75,6 +75,10 @@ Passwords, passphrases and other secrets are not covered by these limits.
 
 The previews apply the same limits as the endpoints they preview, so they never accept a value the save would refuse. `GET /api/schedules/cron-preview` reports an over-long `cron_expression` as an invalid expression, with the message saving the schedule returns. `POST /api/notifications/template-preview` rejects an over-long `title_template` or `body_template` with `400`, as saving the channel would.
 
+### Schedule Sources
+
+A backup schedule's `files_mode` decides whose files it reads: `host` (each host's own **Sources › Files**), `own` (the schedule's `backup_sources`, excludes, patterns and commands) or `off`. `POST /api/schedules` without `files_mode` takes `own` when the request sends backup paths and `host` otherwise. Excludes, include patterns, file change patterns and commands are only used with `own`, so a request that leaves out `files_mode` and sends no paths but sends any of them returns `400` rather than storing values no backup reads. Turning per-host paths off means sending `backup_sources_per_agent: []`: per-host paths left in place are used instead of `backup_sources`. A `host` schedule is refused when any of its hosts lists no backup paths, an `own` one without a path, and an `off` one that takes neither virtual machines nor databases. See [Scheduling](scheduling.md#sources).
+
 ## API Endpoints Summary
 
 For full request/response schemas, use the [interactive explorer](#interactive-api-explorer). Path parameters below use `{name}` placeholders matching the OpenAPI document.
@@ -248,7 +252,7 @@ Restore `paths` are archive paths, checked like download paths: no `..`, no lead
 | `GET` | `/api/schedules/{id}/sources` | List the schedule's backup sources |
 | `GET` | `/api/schedules/{id}/catch-up` | List the schedule's agents and repository hosts that are marked as not always online |
 | `GET` / `PUT` | `/api/schedules/{id}/dependencies` | Get or set the [dependency hosts](dependency-hosts.md) each target agent needs, and list the runs waiting on one |
-| `GET` / `PUT` | `/api/agents/{hostname}/dependencies` | Get or set the dependency hosts an agent's backup defaults require (changes: admin only) |
+| `GET` / `PUT` | `/api/agents/{hostname}/dependencies` | Get or set the dependency hosts an agent's files require (changes: admin only) |
 | `GET` / `PUT` | `/api/schedules/{id}/machines` | Get every [machine](power-management.md#per-schedule-overrides) a schedule needs, or set its own choice for each: `wake`, `no_wake` or `wait` (`wait` not for an agent's machine) |
 | `GET` | `/api/schedules/{id}/targets` | List the schedule's target repositories |
 

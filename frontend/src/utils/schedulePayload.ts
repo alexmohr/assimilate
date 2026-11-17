@@ -32,6 +32,8 @@ export function scheduleFormPayload(form: ScheduleFormState): ScheduleFormPayloa
     ...(isFsSnapshotOn(form.fs_snapshot) || isValidLvmSnapshotPercent(form.lvm_snapshot_percent)
       ? { lvm_snapshot_percent: form.lvm_snapshot_percent }
       : {}),
+    files_mode: form.files_mode,
+    run_host_commands: form.run_host_commands,
     exclude_patterns_raw: form.exclude_patterns,
     include_patterns_raw: form.include_patterns,
     file_change_patterns_raw: form.file_change_patterns,
@@ -69,7 +71,14 @@ export function agentOverridePayload(
   overrides: ScheduleAgentOverrides,
   agentIds: readonly number[],
 ): Partial<ScheduleFormPayload> {
-  const payload: Partial<ScheduleFormPayload> = {}
+  const payload: Partial<ScheduleFormPayload> = overrides.clearPerHost
+    ? {
+        exclude_patterns_per_agent: [],
+        include_patterns_per_agent: [],
+        file_change_patterns_per_agent: [],
+        commands_per_agent: [],
+      }
+    : {}
 
   if (overrides.usePerHostExcludes) {
     payload.exclude_patterns_raw = ''
@@ -135,4 +144,69 @@ export function repoTargetsProblem(targets: readonly ScheduleRepoTarget[]): stri
  */
 export function primaryRepoId(targets: readonly ScheduleRepoTarget[]): number {
   return (targets.find((target) => target.required) ?? targets[0]).repo_id
+}
+
+/** A schedule's own paths as the Sources pane edits them: one shared list, or one list per host. */
+export interface OwnPaths {
+  usePerHostPaths: boolean
+  perHostSources: Record<number, string>
+  /** The schedule has per-host paths saved that shared paths must delete. */
+  clearSavedPerHost?: boolean
+}
+
+/**
+ * The paths half of a create/update request. Paths split per host replace
+ * the shared list rather than adding to it, and a host given none is left
+ * out rather than sent an empty list. Turning the split off on a schedule
+ * that saved per-host paths (`clearSavedPerHost`) sends an empty per-host
+ * list to delete them: left in place, they would still win over the shared
+ * paths. Otherwise the per-host field is left out and keeps what is stored.
+ */
+export function ownPathsPayload(
+  form: ScheduleFormState,
+  own: OwnPaths,
+  agentIds: readonly number[],
+): Pick<ScheduleFormPayload, 'backup_sources' | 'backup_sources_per_agent'> {
+  if (!own.usePerHostPaths) {
+    const shared = parseLines(form.backup_sources)
+    return own.clearSavedPerHost
+      ? { backup_sources: shared, backup_sources_per_agent: [] }
+      : { backup_sources: shared }
+  }
+  return {
+    backup_sources: [],
+    backup_sources_per_agent: agentIds
+      .map((agent_id) => ({ agent_id, paths: parseLines(own.perHostSources[agent_id] ?? '') }))
+      .filter((entry) => entry.paths.length > 0),
+  }
+}
+
+/**
+ * Why a backup schedule's sources could never back anything up, if they
+ * could not: the same rule the server applies on create and on edit.
+ *
+ * `hostPaths` gives a host's own paths, where they are known. With it, a
+ * schedule taking each host's files needs every host to list some, as the
+ * server checks on create; without it, that is left to the server.
+ */
+export function sourcesProblem(
+  form: ScheduleFormState,
+  own: OwnPaths,
+  agentIds: readonly number[],
+  hostPaths?: (agentId: number) => readonly string[] | undefined,
+): string | null {
+  if (form.files_mode === 'host') {
+    const bare = agentIds.some((id) => hostPaths?.(id)?.length === 0)
+    return bare ? "paths on every host, or its own files: a host's Sources list none" : null
+  }
+  if (form.files_mode === 'own') {
+    const paths = ownPathsPayload(form, own, agentIds)
+    const any =
+      (paths.backup_sources?.length ?? 0) > 0 || (paths.backup_sources_per_agent?.length ?? 0) > 0
+    return any ? null : 'at least one backup path for its own files'
+  }
+  if (form.files_mode === 'off' && !form.vm_snapshot_enabled && !form.database_backup_enabled) {
+    return 'virtual machines or databases, since it reads no files'
+  }
+  return null
 }

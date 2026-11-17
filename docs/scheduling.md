@@ -16,12 +16,12 @@ When set, the bandwidth cap is passed to Borg as `--upload-ratelimit` in kB/s.
 ![New schedule wizard](assets/screenshots/schedule-wizard.png)
 
 1. **Basics** — name the schedule and pick its type (Backup, Integrity check, or Verify). The type decides which later steps apply: a check or verify schedule creates no archives, so Retention and Advanced are skipped.
-2. **Sources** — the hosts this schedule runs on and the paths to back up. Leave the paths empty to use each agent's own defaults.
+2. **Sources** — the hosts this schedule runs on and what it backs up from them (see [Sources](#sources)): each host's files or its own, and whether it includes virtual machines and databases.
 3. **Targets** — the repositories it writes into (see [Backup targets](#backup-targets)), and, once there is more than one host or more than one target, what a failure does to the rest of the run.
 4. **Power** — whether this schedule wakes the hosts it needs, overriding each machine's own default (see [Per-Schedule Overrides](power-management.md#per-schedule-overrides)).
 5. **Timing** — the cron expression (see [Cron Expression Builder](#cron-expression-builder)) and how many missed runs are tolerated before the schedule is marked failed.
 6. **Retention** — the retention policy (see [Retention Policy](#retention-policy)).
-7. **Advanced** — exclude and include patterns, file change patterns, pre/post commands, bandwidth limit, [filesystem snapshots](filesystem-snapshots.md), and the other options most schedules leave alone.
+7. **Advanced** — bandwidth limit, [filesystem snapshots](filesystem-snapshots.md), the hook command timeout, and the other options most schedules leave alone.
 8. **Review** — a summary of everything, with an **Edit** link back to each step. Creating the schedule validates the cron expression and, if the schedule is enabled, verifies SSH connectivity to **every** target repository.
 
 ## Backup targets
@@ -206,42 +206,40 @@ Each schedule prunes only its own archives. New archives are named `<hostname>-s
 
 Pruning runs immediately after the backup completes. Only archives created by this schedule are considered — archives from other schedules or manual runs are not affected.
 
-## Exclude Patterns
+## Sources
 
-Each schedule can carry its own list of exclude patterns. These are passed directly to `borg create --exclude` and follow [borg's pattern syntax](https://borgbackup.readthedocs.io/en/stable/usage/help.html#borg-patterns).
+A host lists everything it backs up on its [Sources tab](agents.md#sources): its files, its virtual machines and its databases. A backup schedule takes those, picks something narrower or wider, or leaves part out. Set this under the schedule's **Settings → Sources**, or on the wizard's **Sources** step.
 
-Patterns are configured per schedule in the **Exclude patterns** field. If **Ignore global excludes** is unchecked, any repository-level exclude patterns (see [Repositories](repositories.md)) are merged with the schedule's own patterns. Check **Ignore global excludes** to use only the schedule's patterns.
+![A databases-only schedule's Sources section, warning about a host with no database sources](assets/screenshots/schedule-sources.png)
 
-## Include Patterns
+### Files
 
-Include patterns rescue paths from a broader exclude instead of adding to it — useful when you want to skip a directory in general but keep one thing inside it, e.g. excluding `/home` but still backing up `/home/keep`.
+| Choice | What each run reads |
+|--------|---------------------|
+| **Each host's files** | Every host's own file set as its **Sources → Files** defines it: paths, excludes, include patterns, file change patterns, and pre/post-backup commands. Turn off **Run each host's backup commands** to skip the hosts' commands for this schedule |
+| **Own files** | The schedule's own file set instead, edited with exactly the same form as a host's. It replaces each host's set as a whole: the paths can be narrower (only `/home`) or wider (paths the host does not list), and none of the host's excludes, patterns or commands apply |
+| **Off** | No files at all, for a schedule that only dumps databases or snapshots virtual machines, so it has to take at least one of them. Canary verification is skipped, since there is no source directory to write the canary file into |
 
-Configure them per schedule under **Exceptions to the excludes above**, nested inside the **Exclude patterns** section — they are an exception carved out of that list rather than a separate one. They are checked before every exclude source (global, repository-level, and the schedule's own), so a path matching one is backed up even if a broader exclude would otherwise skip it. Leave the field empty to exclude everything the exclude patterns cover, same as before this option existed.
+Global excludes apply in every mode unless **Advanced → Ignore global excludes** is on. A new schedule is refused when it could never back anything up: own files with no path, each host's files when any of its hosts lists none, or no files and neither virtual machines nor databases. An edit is held to the same rule; switching a schedule to each host's files checks every host it targets, while moving a schedule that already takes each host's files to another host does not, so you can set up that host's paths afterwards. Until you do, the schedule's page and its **Sources** settings warn **No files will be backed up on N hosts**, naming each host with no paths and linking to its **Sources** tab, the same way they warn about hosts with no virtual machines or database sources.
 
-Like exclude patterns, include patterns can be overridden per agent on a multi-host schedule by enabling **Configure per agent** inside that nested block — a per-agent override replaces the schedule-level list outright for that agent, rather than adding to it.
+With **Own files** on a multi-host schedule, turn on **Different paths per host** to give each host its own paths; the excludes, patterns and commands stay shared.
 
-## Backup Paths
+!!! note "Schedules from before files modes"
+    A schedule that set any paths, excludes, include patterns, file change patterns or commands of its own became **Own files**, with the host values it used to inherit written into its own set, so it reads exactly what it read before. Where its hosts had different values, they are kept per host and listed under the form; **Use the shared values** drops them. Importing a configuration exported before files modes does the same: each schedule gets the mode and the inherited host values it would have had on an upgrade.
 
-Backup paths determine which directories borg includes when creating an archive. There are three levels of configuration, resolved in priority order:
+### Virtual machines and databases
 
-| Priority | Source | Description |
-|----------|--------|-------------|
-| 1 (highest) | Per-agent paths | Paths configured for a specific agent within this schedule |
-| 2 | Schedule-level paths | Paths configured on the schedule (shared across all target agents) |
-| 3 (lowest) | Agent default paths | Default backup paths configured on the agent itself |
+**Virtual machines** and **Databases** each take what every host includes under its own Sources tab — see [VM Snapshots](vm-snapshots.md) and [Database Dumps](database-dumps.md). Turn either off to leave it out of this schedule. A host that includes none shows a warning on the schedule page and in this section, naming the host.
 
-### Schedule-Level Paths
+### What each host will back up
 
-When all agents in a schedule back up the same directories, enter the paths in the **Backup paths** textarea. These apply to every target agent unless overridden by per-agent paths.
+The table under the section lists every target host with the paths, commands, virtual machines and database sources a run reads there, worked out from the choices above.
 
-### Per-Agent Paths
+### Exclude and include patterns
 
-When a schedule targets multiple agents and each agent needs different directories, open the saved schedule's **Settings → Targets** and turn on **Configure paths per agent** under the backup paths. This reveals a textarea for each selected agent where you can specify agent-specific paths. The wizard's **Sources** step sets the schedule-level paths only.
+Exclude patterns are passed to `borg create --exclude` and follow [borg's pattern syntax](https://borgbackup.readthedocs.io/en/stable/usage/help.html#borg-patterns). Include patterns rescue paths from a broader exclude instead of adding to it — useful when you want to skip a directory in general but keep one thing inside it, e.g. excluding `/home` but still backing up `/home/keep`. They are checked before every exclude, so a path matching one is backed up even if a broader exclude covers it.
 
-Per-agent paths completely override schedule-level paths for that agent. If an agent's per-agent paths field is left empty, the system falls back to schedule-level paths, then to the agent's default paths.
-
-!!! tip
-    Use per-agent paths when a single schedule targets agents with different roles (e.g., a web server backing up `/var/www` and a database server backing up `/var/lib/postgresql`). This avoids creating separate schedules for each agent while still customizing what gets backed up.
+Both are part of a file set: set them on a host's **Sources → Files**, or in a schedule's own files.
 
 ## Schedule Status
 
@@ -391,7 +389,7 @@ Set the **Remote rate limit** field (in kB/s) when creating or editing a schedul
 
 Hook commands run on the agent around each backup: pre-backup commands before `borg create`, post-backup commands after it. Use them to quiesce a service, produce a dump to back up, or clean that dump up again.
 
-Configure them under **Advanced → Commands** on the schedule, or under **Settings → Backup defaults** on an agent for commands every schedule targeting that host should run.
+Commands are part of a file set: set them on a host's **Sources → Files** for every schedule that takes the host's files, or in a schedule's own files. The schedule-wide default timeout is under **Advanced**.
 
 ### How a command runs
 

@@ -22,13 +22,15 @@ Open the agent, then its **Sources** tab and the **Virtual machines** section.
 
 ![The Virtual machines section, listing a host's domains with their staged size against each limit](assets/screenshots/agent-vms.png)
 
-1. Turn on **Allow schedules to back up virtual machines**. This is a permission, not an action: it lets schedules that target this host include its domains, and blocks every schedule while it is off. Nothing is staged until a schedule asks for it.
-2. Choose **which domains** to stage. **All except excluded** backs up every domain on the host and lets you drop individual ones; **Only selected** backs up nothing until you pick the domains you want. See [Choosing which domains to stage](#choosing-which-domains-to-stage).
-3. Set the **staging directory**. It must be an absolute path; the agent creates one subdirectory per domain below it. Nothing about this path is assumed anywhere else in Assimilate.
-4. Set **new full image after** (increments per chain), the **snapshot timeout** per domain, and the **default limit per domain**.
+1. Choose **which domains** to stage. The domains included here are what every schedule that takes virtual machines stages; to back up none of them, choose **Only selected** and select none.
+    **All except excluded** backs up every domain on the host and lets you drop individual ones; **Only selected** backs up nothing until you pick the domains you want. See [Choosing which domains to stage](#choosing-which-domains-to-stage).
+
+    Earlier versions had a host-wide **VM snapshots** on/off switch. It is gone: upgrading turns a host that had it off into **Only selected** with every domain deselected, so it still backs up no virtual machines. Select the domains you want there to start backing them up.
+2. Set the **staging directory**. It must be an absolute path; the agent creates one subdirectory per domain below it. Nothing about this path is assumed anywhere else in Assimilate.
+3. Set **new full image after** (increments per chain), the **snapshot timeout** per domain, and the **default limit per domain**.
 
     Set to `N`, a chain carries `N` increments before the next run writes a fresh full image. With the default of 7, a domain is captured as one full image and seven increments, then starts again.
-5. Click **Rescan host**. The agent enumerates the domains and reports what it found: their state, how each would be captured, and how much their disks occupy.
+4. Click **Rescan host**. The agent enumerates the domains and reports what it found: their state, how each would be captured, and how much their disks occupy.
 
 Give the QEMU process access to the staging directory first. On distributions where QEMU drops to its own user, the directory must be owned by that user:
 
@@ -113,9 +115,9 @@ A directory after four runs of a qcow2 domain and one run of a shut off domain:
 
 ## Let a schedule stage them
 
-On the [schedule](scheduling.md), open **Settings → Advanced** and turn on **Back up virtual machines**. The staging directory joins that schedule's sources automatically, so it never has to be listed by hand.
+On the [schedule](scheduling.md#sources), open **Settings → Sources** and leave **Virtual machines** on, or turn it off to leave them out of that schedule. The staging directory joins that schedule's sources automatically, so it never has to be listed by hand.
 
-Both switches are required, and they answer different questions. The host's switch says whether its domains may be backed up at all; the schedule's says whether this particular run includes them. A schedule that asks for virtual machines on a host that does not allow them backs up no domains at all - which is what lets one host serve schedules that want the virtual machines and schedules that do not.
+The host decides which domains are backed up; each schedule decides whether it takes them. That is what lets one host serve schedules that want the virtual machines and schedules that do not. A schedule that takes virtual machines on a host that includes none shows a warning on the schedule page, and the host's **Virtual machines** section lists the schedules asking.
 
 Staging runs before `borg create`. A domain that cannot be staged fails the run and the reason is reported against the schedule, because an archive that quietly holds last night's image is worse than a run you are told about.
 

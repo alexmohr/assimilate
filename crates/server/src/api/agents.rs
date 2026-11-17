@@ -63,6 +63,9 @@ pub struct UpdateAgentRequest {
     /// Default exclude patterns.
     #[serde(default)]
     pub default_exclude_patterns: Vec<String>,
+    /// Include patterns: exceptions to the excludes.
+    #[serde(default)]
+    pub default_include_patterns: Vec<String>,
     /// Default pre-backup commands.
     #[serde(default)]
     pub default_pre_backup_commands: Vec<HookCommand>,
@@ -87,6 +90,11 @@ fn validate_update_agent_lengths(req: &UpdateAgentRequest) -> Result<(), ApiErro
     helpers::validate_each_max_len(
         &req.default_exclude_patterns,
         "default_exclude_patterns",
+        MaxLen::Path,
+    )?;
+    helpers::validate_each_max_len(
+        &req.default_include_patterns,
+        "default_include_patterns",
         MaxLen::Path,
     )?;
     helpers::validate_max_len(
@@ -203,6 +211,7 @@ async fn build_agent_response(state: &AppState, agent: AgentRow) -> AgentRespons
         last_seen_at: agent.last_seen_at,
         default_backup_paths: agent.default_backup_paths,
         default_exclude_patterns: agent.default_exclude_patterns,
+        default_include_patterns: agent.default_include_patterns,
         default_pre_backup_commands: agent.default_pre_backup_commands.0,
         default_post_backup_commands: agent.default_post_backup_commands.0,
         default_file_change_patterns_raw: agent.default_file_change_patterns_raw,
@@ -216,7 +225,6 @@ async fn build_agent_response(state: &AppState, agent: AgentRow) -> AgentRespons
         restart_unavailable_reason,
         last_ssh_user: agent.last_ssh_user,
         machine_id: agent.machine_id,
-        database_backup_enabled: agent.database_backup_enabled,
         power: shared::responses::AgentPowerSettingsResponse {
             wake: shared::responses::HostWakeSettingsResponse {
                 wake_enabled: agent.wake_enabled,
@@ -428,6 +436,7 @@ pub async fn update_agent(
             domain: req.domain.as_deref(),
             default_backup_paths: &req.default_backup_paths,
             default_exclude_patterns: &req.default_exclude_patterns,
+            default_include_patterns: &req.default_include_patterns,
             default_pre_backup_commands: &req.default_pre_backup_commands,
             default_post_backup_commands: &req.default_post_backup_commands,
             default_file_change_patterns_raw: &req.default_file_change_patterns_raw,
@@ -1087,6 +1096,7 @@ mod tests {
             "domain": at(MaxLen::Hostname),
             "default_backup_paths": [at(MaxLen::Path)],
             "default_exclude_patterns": [at(MaxLen::Path)],
+            "default_include_patterns": [at(MaxLen::Path)],
             "default_file_change_patterns_raw": at(MaxLen::Text),
         }));
         assert!(validate_update_agent_lengths(&req).is_ok());
@@ -1109,6 +1119,10 @@ mod tests {
             (
                 json!({ "default_exclude_patterns": [over(MaxLen::Path)] }),
                 "default_exclude_patterns[0] ",
+            ),
+            (
+                json!({ "default_include_patterns": ["/keep", over(MaxLen::Path)] }),
+                "default_include_patterns[1] ",
             ),
             (
                 json!({ "default_file_change_patterns_raw": over(MaxLen::Text) }),

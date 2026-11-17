@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 import { describe, expect, it } from 'vitest'
-import { dropBlankCommands } from './validation'
+import { dropBlankCommands, parsePatternLines } from './validation'
 import { hookCommand } from './hookCommands'
 
 describe('dropBlankCommands', () => {
@@ -30,5 +30,18 @@ describe('dropBlankCommands', () => {
 
   it('returns an empty array unchanged', () => {
     expect(dropBlankCommands([])).toEqual([])
+  })
+})
+
+describe('parsePatternLines', () => {
+  it('drops blank lines and # comments, keeping the patterns in order', () => {
+    expect(parsePatternLines('# caches\n*.cache\n\n  /srv/tmp  \n#/proc')).toEqual([
+      '*.cache',
+      '/srv/tmp',
+    ])
+  })
+
+  it('keeps a # that is not at the start of the line', () => {
+    expect(parsePatternLines('/srv/#weird')).toEqual(['/srv/#weird'])
   })
 })

@@ -19,7 +19,7 @@ use shared::{
     },
     schedule::{calculate_next_run, validate_cron},
     snapshot::{DEFAULT_LVM_SNAPSHOT_PERCENT, FsSnapshotMode, is_valid_lvm_snapshot_percent},
-    types::{OnFailure, RepoId, ScheduleType, ScheduleWakeOverride},
+    types::{OnFailure, RepoId, ScheduleFilesMode, ScheduleType, ScheduleWakeOverride},
 };
 use sqlx::PgPool;
 
@@ -190,10 +190,9 @@ pub struct CreateScheduleRequest {
     /// Whether canary backups are enabled (defaults to true).
     pub canary_enabled: Option<bool>,
     /// Whether this schedule stages the host's virtual machines before
-    /// backing up. Requires the host itself to have staging enabled.
+    /// backing up: the ones each host includes.
     pub vm_snapshot_enabled: Option<bool>,
     /// Whether this schedule dumps the host's databases into its archive.
-    /// Requires the host itself to have database dumps enabled.
     pub database_backup_enabled: Option<bool>,
     /// Whether this schedule's backups read from filesystem snapshots of
     /// their sources.
@@ -201,6 +200,14 @@ pub struct CreateScheduleRequest {
     /// Size of an LVM snapshot, in percent of the volume it snapshots: 1 to
     /// 100.
     pub lvm_snapshot_percent: Option<u8>,
+    /// Where the schedule's files come from: each host's own file set, the
+    /// schedule's own set instead, or none. Left out on create, a schedule
+    /// that sends paths of its own takes its own files and any other takes
+    /// each host's.
+    pub files_mode: Option<ScheduleFilesMode>,
+    /// Whether a schedule taking each host's files runs the hosts' pre- and
+    /// post-backup commands (defaults to true).
+    pub run_host_commands: Option<bool>,
     /// Raw exclude pattern text.
     pub exclude_patterns_raw: Option<String>,
     /// Raw include pattern text, rescuing paths from a broader exclude.
@@ -274,10 +281,9 @@ pub struct UpdateScheduleRequest {
     /// Whether canary backups are enabled.
     pub canary_enabled: Option<bool>,
     /// Whether this schedule stages the host's virtual machines before
-    /// backing up. Requires the host itself to have staging enabled.
+    /// backing up: the ones each host includes.
     pub vm_snapshot_enabled: Option<bool>,
     /// Whether this schedule dumps the host's databases into its archive.
-    /// Requires the host itself to have database dumps enabled.
     pub database_backup_enabled: Option<bool>,
     /// Whether this schedule's backups read from filesystem snapshots of
     /// their sources.
@@ -285,6 +291,14 @@ pub struct UpdateScheduleRequest {
     /// Size of an LVM snapshot, in percent of the volume it snapshots: 1 to
     /// 100.
     pub lvm_snapshot_percent: Option<u8>,
+    /// Where the schedule's files come from: each host's own file set, the
+    /// schedule's own set instead, or none. Left out on create, a schedule
+    /// that sends paths of its own takes its own files and any other takes
+    /// each host's.
+    pub files_mode: Option<ScheduleFilesMode>,
+    /// Whether a schedule taking each host's files runs the hosts' pre- and
+    /// post-backup commands (defaults to true).
+    pub run_host_commands: Option<bool>,
     /// Raw exclude pattern text.
     pub exclude_patterns_raw: Option<String>,
     /// Raw include pattern text, rescuing paths from a broader exclude.
@@ -444,10 +458,34 @@ pub async fn list_schedules(
     Ok(Json(visible))
 }
 
-/// A backup schedule needs sources from somewhere: the request, its per-agent
-/// overrides, or the first agent's own defaults. Checked before the schedule is
-/// written, so one that could never back anything up is refused rather than
-/// created and left to fail at run time.
+/// Why a new backup schedule could never back anything up, if it could not.
+///
+/// What it needs depends on where its files come from: its own files need a
+/// path, each host's files need the host to list some, and a schedule that
+/// reads no files has to take virtual machines or databases instead.
+fn backup_sources_problem(
+    files_mode: ScheduleFilesMode,
+    has_own_paths: bool,
+    takes_vms_or_databases: bool,
+    host_has_paths: impl FnOnce() -> bool,
+) -> Option<&'static str> {
+    match files_mode {
+        ScheduleFilesMode::Own if !has_own_paths => {
+            Some("a schedule with its own files needs at least one backup path")
+        }
+        ScheduleFilesMode::Host if !host_has_paths() => {
+            Some("a schedule taking each host's files needs every host to list backup paths")
+        }
+        ScheduleFilesMode::Off if !takes_vms_or_databases => {
+            Some("a schedule that reads no files has to back up virtual machines or databases")
+        }
+        ScheduleFilesMode::Own | ScheduleFilesMode::Host | ScheduleFilesMode::Off => None,
+    }
+}
+
+/// A backup schedule needs something to back up. Checked before the schedule
+/// is written, so one that could never back anything up is refused rather
+/// than created and left to fail at run time.
 async fn ensure_backup_sources_available(
     state: &AppState,
     req: &CreateScheduleRequest,
@@ -456,27 +494,159 @@ async fn ensure_backup_sources_available(
     if schedule_type != ScheduleType::Backup {
         return Ok(());
     }
-    let has_backup_sources = req.backup_sources.as_ref().is_some_and(|v| !v.is_empty());
-    let has_per_agent_sources = req
-        .backup_sources_per_agent
-        .as_ref()
-        .is_some_and(|v| !v.is_empty());
-    if has_backup_sources || has_per_agent_sources {
-        return Ok(());
-    }
-
-    let Some(&first_agent_id) = req.agent_ids.first() else {
+    let has_own_paths = req.backup_sources.as_ref().is_some_and(|v| !v.is_empty())
+        || req
+            .backup_sources_per_agent
+            .as_ref()
+            .is_some_and(|entries| entries.iter().any(|entry| !entry.paths.is_empty()));
+    if req.agent_ids.is_empty() {
         return Err(ApiError::BadRequest(
             "agent_ids must contain at least one entry".into(),
         ));
-    };
-    let agent = db::get_agent_by_id(&state.pool, first_agent_id).await?;
-    if agent.default_backup_paths.is_empty() {
+    }
+    let files_mode = req.files_mode.unwrap_or_else(|| default_files_mode(req));
+    if req.files_mode.is_none() && files_mode == ScheduleFilesMode::Host && sets_own_file_rules(req)
+    {
         return Err(ApiError::BadRequest(
-            "no backup sources provided and agent has no default backup paths configured".into(),
+            "excludes, include patterns, file change patterns and commands are only used with the \
+             schedule's own files: set files_mode to \"own\" and give it backup paths"
+                .into(),
         ));
     }
-    Ok(())
+    // Every host has to list paths: one that lists none would back up nothing.
+    let hosts_have_paths = if files_mode == ScheduleFilesMode::Host {
+        hosts_have_paths(state, &req.agent_ids).await?
+    } else {
+        true
+    };
+    let takes_vms_or_databases =
+        req.vm_snapshot_enabled.unwrap_or(false) || req.database_backup_enabled.unwrap_or(false);
+    backup_sources_problem(files_mode, has_own_paths, takes_vms_or_databases, || {
+        hosts_have_paths
+    })
+    .map_or(Ok(()), |problem| Err(ApiError::BadRequest(problem.into())))
+}
+
+/// Whether a create request sets any of the rules that only a schedule's own
+/// files use (excludes, include and file change patterns, commands), shared
+/// or per host. A pattern text of only blank and `#` comment lines sets none.
+fn sets_own_file_rules(req: &CreateScheduleRequest) -> bool {
+    fn has_patterns(raw: &str) -> bool {
+        raw.lines()
+            .map(str::trim)
+            .any(|line| !line.is_empty() && !line.starts_with('#'))
+    }
+    let text = |raw: &Option<String>| raw.as_deref().is_some_and(has_patterns);
+    let commands = |list: &Option<Vec<HookCommand>>| list.as_ref().is_some_and(|l| !l.is_empty());
+    text(&req.exclude_patterns_raw)
+        || text(&req.include_patterns_raw)
+        || text(&req.file_change_patterns_raw)
+        || commands(&req.pre_backup_commands)
+        || commands(&req.post_backup_commands)
+        || req
+            .exclude_patterns_per_agent
+            .as_ref()
+            .is_some_and(|all| all.iter().any(|e| has_patterns(&e.raw_text)))
+        || req
+            .include_patterns_per_agent
+            .as_ref()
+            .is_some_and(|all| all.iter().any(|e| has_patterns(&e.raw_text)))
+        || req
+            .file_change_patterns_per_agent
+            .as_ref()
+            .is_some_and(|all| all.iter().any(|e| has_patterns(&e.raw_text)))
+        || req.commands_per_agent.as_ref().is_some_and(|all| {
+            all.iter()
+                .any(|e| !e.pre_backup_commands.is_empty() || !e.post_backup_commands.is_empty())
+        })
+}
+
+/// Whether every one of `agent_ids` lists backup paths of its own.
+async fn hosts_have_paths(state: &AppState, agent_ids: &[i64]) -> Result<bool, ApiError> {
+    for &agent_id in agent_ids {
+        if db::get_agent_by_id(&state.pool, agent_id)
+            .await?
+            .default_backup_paths
+            .is_empty()
+        {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+/// The update-side twin of [`ensure_backup_sources_available`]: an edit must
+/// not leave a backup schedule with nothing to back up either. Fields the
+/// request leaves out keep their stored values. Each host's files are only
+/// checked when the edit switches the schedule to them, so an unrelated edit
+/// (retargeting included) is never refused over a host's own settings.
+async fn ensure_updated_backup_sources_available(
+    state: &AppState,
+    req: &UpdateScheduleRequest,
+    existing: &db::ScheduleRow,
+) -> Result<(), ApiError> {
+    if existing.schedule_type != ScheduleType::Backup {
+        return Ok(());
+    }
+    let files_mode = req.files_mode.unwrap_or(existing.files_mode);
+    let shared_paths = match &req.backup_sources {
+        Some(paths) => !paths.is_empty(),
+        None => !db::list_backup_sources_for_schedule(&state.pool, existing.id)
+            .await?
+            .is_empty(),
+    };
+    let per_agent_paths = match &req.backup_sources_per_agent {
+        Some(entries) => entries.iter().any(|entry| !entry.paths.is_empty()),
+        None => db::list_all_per_agent_backup_sources_for_schedule(&state.pool, existing.id)
+            .await?
+            .iter()
+            .any(|entry| !entry.paths.is_empty()),
+    };
+    let takes_vms_or_databases = req
+        .vm_snapshot_enabled
+        .unwrap_or(existing.vm_snapshot_enabled)
+        || req
+            .database_backup_enabled
+            .unwrap_or(existing.database_backup_enabled);
+    let host_has_paths = if files_mode == ScheduleFilesMode::Host {
+        switched_hosts_have_paths(state, req, existing).await?
+    } else {
+        true
+    };
+    backup_sources_problem(
+        files_mode,
+        shared_paths || per_agent_paths,
+        takes_vms_or_databases,
+        || host_has_paths,
+    )
+    .map_or(Ok(()), |problem| Err(ApiError::BadRequest(problem.into())))
+}
+
+/// Whether the hosts an edit switches to their own files list paths there.
+/// Only a switch is checked: an edit that only changes the targets of a
+/// schedule already on the hosts' files is not, so a schedule can be moved
+/// to a host whose paths are set up afterwards. A switch that leaves the
+/// schedule with no target at all has no host to read.
+async fn switched_hosts_have_paths(
+    state: &AppState,
+    req: &UpdateScheduleRequest,
+    existing: &db::ScheduleRow,
+) -> Result<bool, ApiError> {
+    if existing.files_mode == ScheduleFilesMode::Host {
+        return Ok(true);
+    }
+    let targets: Vec<i64> = match req.agent_ids.as_deref() {
+        Some(ids) if !ids.is_empty() => ids.to_vec(),
+        Some(_) | None => db::list_schedule_targets(&state.pool, existing.id)
+            .await?
+            .iter()
+            .map(|target| target.agent_id)
+            .collect(),
+    };
+    if targets.is_empty() {
+        return Ok(false);
+    }
+    hosts_have_paths(state, &targets).await
 }
 
 /// Normalises the repositories a create/update request asks for into
@@ -611,6 +781,8 @@ pub async fn create_schedule(
         database_backup_enabled: req.database_backup_enabled.unwrap_or(false),
         fs_snapshot: req.fs_snapshot.unwrap_or_default(),
         lvm_snapshot_percent,
+        files_mode: req.files_mode.unwrap_or_else(|| default_files_mode(&req)),
+        run_host_commands: req.run_host_commands.unwrap_or(true),
         exclude_patterns_raw: &exclude_patterns_raw,
         include_patterns_raw: &include_patterns_raw,
         ignore_global_excludes: req.ignore_global_excludes.unwrap_or(false),
@@ -878,6 +1050,7 @@ pub async fn update_schedule(
     let target_plan = authorize_repo_targets(&state, &auth, &req, &existing).await?;
     check_cron_expression(&req.cron_expression)?;
     let values = resolve_effective_schedule_values(&req, &existing)?;
+    ensure_updated_backup_sources_available(&state, &req, &existing).await?;
     let enabled = req.enabled.unwrap_or(true);
     // Re-checking reachability on every save - a rename, a retention tweak, a
     // cron change - would make an otherwise unrelated edit fail whenever a
@@ -910,6 +1083,8 @@ pub async fn update_schedule(
             .unwrap_or(existing.database_backup_enabled),
         fs_snapshot: req.fs_snapshot.unwrap_or(existing.fs_snapshot),
         lvm_snapshot_percent,
+        files_mode: req.files_mode.unwrap_or(existing.files_mode),
+        run_host_commands: req.run_host_commands.unwrap_or(existing.run_host_commands),
         exclude_patterns_raw: &values.exclude_patterns_raw,
         include_patterns_raw: &values.include_patterns_raw,
         ignore_global_excludes: req.ignore_global_excludes.unwrap_or(false),
@@ -1223,6 +1398,25 @@ fn validate_catch_up_min_lead_minutes(minutes: i32) -> Result<i32, ApiError> {
 ///
 /// An import clamps the size into that range instead, like the hook
 /// timeouts, rather than refusing the whole file.
+/// The files mode of a schedule created without one: a client that predates
+/// the choice and sends paths of its own means them, so it gets its own files;
+/// any other schedule takes each host's.
+fn default_files_mode(req: &CreateScheduleRequest) -> ScheduleFilesMode {
+    let has_shared = req
+        .backup_sources
+        .as_ref()
+        .is_some_and(|paths| !paths.is_empty());
+    let has_per_agent = req
+        .backup_sources_per_agent
+        .as_ref()
+        .is_some_and(|entries| entries.iter().any(|entry| !entry.paths.is_empty()));
+    if has_shared || has_per_agent {
+        ScheduleFilesMode::Own
+    } else {
+        ScheduleFilesMode::Host
+    }
+}
+
 fn validate_lvm_snapshot_percent(percent: u8) -> Result<i16, ApiError> {
     if !is_valid_lvm_snapshot_percent(percent) {
         return Err(ApiError::BadRequest(
@@ -2021,6 +2215,57 @@ pub async fn preview_cron(
 
 #[cfg(test)]
 mod tests {
+    /// A client that predates files modes and sends paths of its own means
+    /// them; one that sends none takes each host's files.
+    #[test]
+    fn a_create_without_a_files_mode_takes_its_own_files_only_when_it_sends_paths() {
+        use shared::types::ScheduleFilesMode::{Host, Own};
+
+        let mode = |body: serde_json::Value| {
+            let mut request = serde_json::json!({
+                "cron_expression": "0 2 * * *",
+                "agent_ids": [1],
+                "repo_id": 1,
+            });
+            if let (Some(request), serde_json::Value::Object(extra)) =
+                (request.as_object_mut(), body)
+            {
+                request.extend(extra);
+            }
+            let req: super::CreateScheduleRequest = serde_json::from_value(request).unwrap();
+            super::default_files_mode(&req)
+        };
+        assert_eq!(mode(serde_json::json!({})), Host);
+        assert_eq!(mode(serde_json::json!({ "backup_sources": [] })), Host);
+        assert_eq!(mode(serde_json::json!({ "backup_sources": ["/srv"] })), Own);
+        assert_eq!(
+            mode(serde_json::json!({
+                "backup_sources_per_agent": [{ "agent_id": 1, "paths": [] }]
+            })),
+            Host
+        );
+        assert_eq!(
+            mode(serde_json::json!({
+                "backup_sources_per_agent": [{ "agent_id": 1, "paths": ["/srv"] }]
+            })),
+            Own
+        );
+    }
+
+    #[test]
+    fn a_schedule_must_have_something_to_back_up_in_every_files_mode() {
+        use shared::types::ScheduleFilesMode::{Host, Off, Own};
+
+        let problem =
+            |mode, own, extras, host| super::backup_sources_problem(mode, own, extras, || host);
+        assert_eq!(problem(Own, true, false, false), None);
+        assert!(problem(Own, false, true, true).is_some());
+        assert_eq!(problem(Host, false, false, true), None);
+        assert!(problem(Host, true, true, false).is_some());
+        assert_eq!(problem(Off, false, true, false), None);
+        assert!(problem(Off, true, false, true).is_some());
+    }
+
     use super::*;
 
     fn utc(y: i32, mo: u32, d: u32, h: u32, m: u32) -> chrono::DateTime<chrono::Utc> {

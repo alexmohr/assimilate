@@ -77,7 +77,7 @@ Individual schedules can override global excludes in two ways:
 
 1. **Add schedule-specific patterns** — these are merged with global excludes.
 2. **Ignore global excludes** — check this option in the schedule configuration to use only the schedule's own patterns.
-3. **Add include patterns** — rescue specific paths from any of the excludes above instead of adding to them. See [Include Patterns](scheduling.md#include-patterns).
+3. **Add include patterns** — rescue specific paths from any of the excludes above instead of adding to them. See [Include Patterns](scheduling.md#exclude-and-include-patterns).
 
 See [Scheduling](scheduling.md) for per-schedule exclude configuration.
 
@@ -270,7 +270,7 @@ Review the list before saving. These entries are choices, not requirements:
 
 `/usr`, `/lib`, `/bin` and `/opt` are not excluded. Add them only when the backup targets data rather than a full system restore. Avoid overly broad patterns that exclude important data.
 
-To keep a path that a broad pattern would drop, add an [include pattern](scheduling.md#include-patterns).
+To keep a path that a broad pattern would drop, add an [include pattern](scheduling.md#exclude-and-include-patterns).
 
 ## API Endpoints
 

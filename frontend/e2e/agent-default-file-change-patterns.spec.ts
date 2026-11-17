@@ -19,6 +19,7 @@ function baseAgent(defaultFileChangePatternsRaw: string): Record<string, unknown
     last_seen_at: '2026-01-01T00:00:00Z',
     default_backup_paths: [],
     default_exclude_patterns: [],
+    default_include_patterns: [],
     default_pre_backup_commands: [],
     default_post_backup_commands: [],
     default_file_change_patterns_raw: defaultFileChangePatternsRaw,
@@ -66,9 +67,8 @@ test('admin can view and edit default file change patterns on a host', async ({ 
   const agent = baseAgent('*/tmp/session-*.lock* ignore')
   await interceptHostApis(page, agent)
 
-  // The four `Default ...` cards became one Backup defaults pane with five
-  // sections, under the Settings tab.
-  await page.goto(`/agents/${HOSTNAME}?tab=settings&section=defaults`)
+  // A host's file set lives under its Sources tab, in the Files section.
+  await page.goto(`/agents/${HOSTNAME}?tab=sources&section=files`)
 
   const card = page.locator('.settings-pane')
   await expect(card).toBeVisible({ timeout: 10_000 })

@@ -4,28 +4,21 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 -->
 
 <script setup lang="ts">
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import { updateAgent } from '../api/agents'
 import { extractError } from '../utils/error'
-import { dropBlankCommands, parseLines } from '../utils/validation'
-import { parseFileChangePatterns } from '../utils/fileChangePatterns'
-import EditableSection from './EditableSection.vue'
-import FileChangePatternsEditor from './FileChangePatternsEditor.vue'
-import CommandListEditor from './CommandListEditor.vue'
-import ShellScript from './ShellScript.vue'
+import { dropBlankCommands, parseLines, parsePatternLines } from '../utils/validation'
+import FileSourcesSection from './FileSourcesSection.vue'
 import type { AgentRow } from '../types/agent'
-import type { HookCommand } from '../types/generated'
+import type { FileSet } from '../types/fileSet'
 
 /**
- * An agent's backup defaults: paths, excludes, file change patterns and hook
- * commands, as one card with four sections and one Edit button.
+ * A host's Sources › Files: the shared Files section, saved to the agent.
  *
- * These were four separate cards, each with its own edit state and its own
- * save. That was never four requests' worth of independence: the agent PUT is
- * a whole-object replace, so every card already had to send the other three
- * cards' values back untouched alongside its own patch. One form means one
- * request and no way for a stale copy of a sibling field to be written back.
- * See docs/contributing/ui-design-audit.md (F-24).
+ * One form and one request for all of it: the agent PUT is a whole-object
+ * replace, so separate cards each had to send the others' values back
+ * untouched. See docs/contributing/ui-design-audit.md (F-24). A schedule's own
+ * files render the same section, so the two look and behave the same.
  */
 const props = defineProps<{
   agent: AgentRow
@@ -35,35 +28,21 @@ const props = defineProps<{
 
 const emit = defineEmits<{ saved: [agent: AgentRow] }>()
 
-const editing = ref(false)
+const section = ref<InstanceType<typeof FileSourcesSection> | null>(null)
 const saving = ref(false)
 const error = ref<string | null>(null)
 
-const pathsText = ref('')
-const excludesText = ref('')
-const fcpText = ref('')
-const preCmds = ref<HookCommand[]>([])
-const postCmds = ref<HookCommand[]>([])
-
-function startEdit(): void {
-  pathsText.value = (props.agent.default_backup_paths ?? []).join('\n')
-  excludesText.value = (props.agent.default_exclude_patterns ?? []).join('\n')
-  fcpText.value = props.agent.default_file_change_patterns_raw ?? ''
-  preCmds.value = [...(props.agent.default_pre_backup_commands ?? [])]
-  postCmds.value = [...(props.agent.default_post_backup_commands ?? [])]
-  error.value = null
-  editing.value = true
-}
-
-/** Says which timeout a command runs under, since a blank one is inherited. */
-function timeoutLabel(cmd: HookCommand): string {
-  return cmd.timeout_seconds === null
-    ? "Timeout: the schedule's hook command timeout"
-    : `Timeout: ${cmd.timeout_seconds}s`
-}
+const value = computed<FileSet>(() => ({
+  paths: (props.agent.default_backup_paths ?? []).join('\n'),
+  excludes: (props.agent.default_exclude_patterns ?? []).join('\n'),
+  includes: (props.agent.default_include_patterns ?? []).join('\n'),
+  fileChangePatterns: props.agent.default_file_change_patterns_raw ?? '',
+  preCommands: props.agent.default_pre_backup_commands ?? [],
+  postCommands: props.agent.default_post_backup_commands ?? [],
+}))
 
 /** Holds the form open if the request fails, so nothing typed is lost. */
-async function save(): Promise<void> {
+async function save(next: FileSet): Promise<void> {
   saving.value = true
   error.value = null
   try {
@@ -72,16 +51,17 @@ async function save(): Promise<void> {
       {
         display_name: props.agent.display_name,
         domain: props.agent.domain,
-        default_backup_paths: parseLines(pathsText.value),
-        default_exclude_patterns: parseLines(excludesText.value),
-        default_pre_backup_commands: dropBlankCommands(preCmds.value),
-        default_post_backup_commands: dropBlankCommands(postCmds.value),
-        default_file_change_patterns_raw: fcpText.value,
+        default_backup_paths: parseLines(next.paths),
+        default_exclude_patterns: parsePatternLines(next.excludes),
+        default_include_patterns: parsePatternLines(next.includes),
+        default_pre_backup_commands: dropBlankCommands(next.preCommands),
+        default_post_backup_commands: dropBlankCommands(next.postCommands),
+        default_file_change_patterns_raw: next.fileChangePatterns,
       },
       props.agent.domain,
     )
     emit('saved', res)
-    editing.value = false
+    section.value?.close()
   } catch (e: unknown) {
     error.value = extractError(e)
   } finally {
@@ -91,250 +71,14 @@ async function save(): Promise<void> {
 </script>
 
 <template>
-  <EditableSection
-    lede="What a schedule uses for this host when it does not set its own paths, patterns or
-      commands."
-    :editing="editing"
+  <FileSourcesSection
+    ref="section"
+    :value="value"
     :can-edit="canEdit"
     :saving="saving"
     :error="error"
-    @edit="startEdit"
-    @cancel="editing = false"
+    lede="The files this host backs up. Every schedule uses them unless it sets its own files under
+      its Settings › Sources."
     @save="save"
-  >
-    <template #view>
-      <div class="defaults-groups">
-        <div class="defaults-group">
-          <span class="group-label group-label--lg">Backup paths</span>
-          <div
-            v-if="(agent.default_backup_paths ?? []).length > 0"
-            class="paths-list"
-          >
-            <code
-              v-for="(p, idx) in agent.default_backup_paths ?? []"
-              :key="idx"
-              class="path-item mono"
-            >
-              {{ p }}
-            </code>
-          </div>
-          <span
-            v-else
-            class="muted"
-            >No default paths configured.</span
-          >
-        </div>
-
-        <div class="defaults-group">
-          <span class="group-label group-label--lg">Exclude patterns</span>
-          <div
-            v-if="(agent.default_exclude_patterns ?? []).length > 0"
-            class="paths-list"
-          >
-            <code
-              v-for="(p, idx) in agent.default_exclude_patterns ?? []"
-              :key="idx"
-              class="path-item mono"
-            >
-              {{ p }}
-            </code>
-          </div>
-          <span
-            v-else
-            class="muted"
-            >No default excludes configured.</span
-          >
-        </div>
-
-        <div class="defaults-group">
-          <span class="group-label group-label--lg">File change patterns</span>
-          <div
-            v-if="parseFileChangePatterns(agent.default_file_change_patterns_raw ?? '').length > 0"
-            class="paths-list"
-          >
-            <code
-              v-for="(p, idx) in parseFileChangePatterns(
-                agent.default_file_change_patterns_raw ?? '',
-              )"
-              :key="idx"
-              class="path-item mono"
-            >
-              {{ p.path }} <span class="fcp-action-badge">{{ p.action }}</span>
-            </code>
-          </div>
-          <span
-            v-else
-            class="muted"
-            >No default file change patterns configured.</span
-          >
-        </div>
-
-        <div class="defaults-group">
-          <span class="group-label group-label--lg">Pre-backup commands</span>
-          <div
-            v-if="(agent.default_pre_backup_commands ?? []).length > 0"
-            class="cmd-view-list"
-          >
-            <div
-              v-for="(cmd, idx) in agent.default_pre_backup_commands ?? []"
-              :key="idx"
-              class="cmd-view-entry"
-            >
-              <ShellScript :source="cmd.command" />
-              <span class="field-hint">{{ timeoutLabel(cmd) }}</span>
-            </div>
-          </div>
-          <span
-            v-else
-            class="muted"
-            >None configured.</span
-          >
-        </div>
-
-        <div class="defaults-group">
-          <span class="group-label group-label--lg">Post-backup commands</span>
-          <div
-            v-if="(agent.default_post_backup_commands ?? []).length > 0"
-            class="cmd-view-list"
-          >
-            <div
-              v-for="(cmd, idx) in agent.default_post_backup_commands ?? []"
-              :key="idx"
-              class="cmd-view-entry"
-            >
-              <ShellScript :source="cmd.command" />
-              <span class="field-hint">{{ timeoutLabel(cmd) }}</span>
-            </div>
-          </div>
-          <span
-            v-else
-            class="muted"
-            >None configured.</span
-          >
-        </div>
-      </div>
-    </template>
-
-    <template #hint>
-      Inherited by every schedule targeting this host unless the schedule overrides them.
-      Schedule-specific hook commands are appended after the agent-level ones (pre) or prepended
-      before them (post).
-    </template>
-
-    <template #edit>
-      <label
-        class="group-label group-label--lg"
-        for="defaults-paths"
-        >Backup paths</label
-      >
-      <textarea
-        id="defaults-paths"
-        v-model="pathsText"
-        class="input defaults-area"
-        placeholder="Directories to back up, one per line"
-        spellcheck="false"
-      />
-
-      <label
-        class="group-label group-label--lg"
-        for="defaults-excludes"
-        >Exclude patterns</label
-      >
-      <textarea
-        id="defaults-excludes"
-        v-model="excludesText"
-        class="input defaults-area"
-        placeholder="Exclude patterns, one per line&#10;# Lines starting with # are comments&#10;e.g. *.cache&#10;*/__pycache__"
-        spellcheck="false"
-      />
-
-      <label class="group-label group-label--lg">File change patterns</label>
-      <FileChangePatternsEditor v-model="fcpText">
-        <template #hint>
-          Glob patterns matched against the full warning message, with actions:
-          <code>ignore</code> (no warning), <code>warn</code> (default), <code>fatal</code> (fail
-          backup). Checked after schedule-level patterns, as a fallback for this host.
-          <code>*</code> does not match <code>/</code> - to cover every file under a directory, end
-          the pattern with <code>**</code>, e.g. <code>/data/wal/**</code>.
-        </template>
-      </FileChangePatternsEditor>
-
-      <fieldset class="cmd-fieldset">
-        <legend class="group-label group-label--lg">Pre-backup commands</legend>
-        <CommandListEditor
-          v-model="preCmds"
-          placeholder="e.g. systemctl stop myapp"
-          aria-label="Pre-backup commands"
-        />
-      </fieldset>
-
-      <fieldset class="cmd-fieldset">
-        <legend class="group-label group-label--lg">Post-backup commands</legend>
-        <CommandListEditor
-          v-model="postCmds"
-          placeholder="e.g. systemctl start myapp"
-          aria-label="Post-backup commands"
-        />
-      </fieldset>
-    </template>
-  </EditableSection>
+  />
 </template>
-
-<style scoped>
-.cmd-view-list {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-5);
-}
-
-.cmd-view-entry {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-}
-
-.defaults-area {
-  min-height: 80px;
-  resize: vertical;
-  font-family: var(--mono);
-  font-size: var(--fs-sm);
-  line-height: 1.5;
-}
-
-.defaults-groups {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-5);
-  margin-bottom: var(--space-4);
-}
-
-.defaults-group {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-}
-
-/* A native fieldset/legend groups Pre/Post-backup commands' variable-length
-   list of fields under one accessible name, since a single `<label for>`
-   can't target more than one field. Reset to blend into `.settings-pane`'s
-   flex layout: without `min-width: 0`, a fieldset's UA-default intrinsic
-   sizing can force it wider than its container. */
-.cmd-fieldset {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-6);
-  border: 0;
-  margin: 0;
-  padding: 0;
-  min-width: 0;
-}
-
-.fcp-action-badge {
-  font-family: var(--font-sans);
-  font-size: var(--fs-2xs);
-  font-weight: 600;
-  color: var(--text-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-}
-</style>

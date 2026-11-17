@@ -352,7 +352,6 @@ async fn fixture(pool: &PgPool) -> Fixture {
         pool,
         agent.id,
         db::databases::DatabaseBackupPatch {
-            enabled: true,
             dump_dir: "/var/lib/assimilate/database-dumps",
             runtimes: &DatabaseRuntimes {
                 kubernetes: true,

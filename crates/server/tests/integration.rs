@@ -6261,6 +6261,273 @@ async fn test_schedule_fs_snapshot_settings_are_saved_and_validated(pool: sqlx::
     assert_eq!(persisted, ("best_effort".to_owned(), 100));
 }
 
+/// A schedule taking each host's files reads every host's own paths, so each
+/// host has to list some. Before this, only the first host was checked, and
+/// a later one with none backed up nothing.
+#[sqlx::test(migrations = "./migrations")]
+async fn creating_a_schedule_of_each_hosts_files_needs_every_host_to_list_paths(
+    pool: sqlx::PgPool,
+) {
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+
+    let with_paths: i64 = sqlx::query_scalar(
+        "INSERT INTO agents (hostname, agent_token_hash, default_backup_paths) VALUES \
+         ('create-paths-host', 'hash', ARRAY['/etc']) RETURNING id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let without_paths: i64 = sqlx::query_scalar(
+        "INSERT INTO agents (hostname, agent_token_hash) VALUES ('create-bare-host', 'hash') \
+         RETURNING id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let repo_id = insert_test_repo(&pool, "create-paths-repo").await;
+    let create = |agent_ids: &[i64]| {
+        json_request(
+            "POST",
+            "/api/schedules",
+            Some(json!({
+                "agent_ids": agent_ids,
+                "repo_id": repo_id,
+                "cron_expression": "0 3 * * *",
+                "enabled": false,
+                "files_mode": "host",
+            })),
+        )
+    };
+
+    // Not only the first host: a later one that lists none is refused too.
+    let resp = oneshot(&mut app, create(&[with_paths, without_paths])).await;
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    let resp = oneshot(&mut app, create(&[without_paths, with_paths])).await;
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+
+    sqlx::query("UPDATE agents SET default_backup_paths = ARRAY['/srv'] WHERE id = $1")
+        .bind(without_paths)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let resp = oneshot(&mut app, create(&[with_paths, without_paths])).await;
+    assert_eq!(resp.status(), StatusCode::CREATED);
+
+    // Without a files mode and without paths it takes each host's files,
+    // which never read the schedule's own excludes, patterns or commands:
+    // sending them is refused rather than stored and silently unused.
+    let without_mode = |extra: serde_json::Value| {
+        let mut payload = json!({
+            "agent_ids": [with_paths],
+            "repo_id": repo_id,
+            "cron_expression": "0 3 * * *",
+            "enabled": false,
+        });
+        payload
+            .as_object_mut()
+            .unwrap()
+            .extend(extra.as_object().unwrap().clone());
+        json_request("POST", "/api/schedules", Some(payload))
+    };
+    for unused in [
+        json!({ "exclude_patterns_raw": "*.tmp" }),
+        json!({ "include_patterns_raw": "/etc/keep" }),
+        json!({ "file_change_patterns_raw": "/var/** ignore" }),
+        json!({ "pre_backup_commands": [{ "command": "sync" }] }),
+        json!({ "exclude_patterns_per_agent": [{ "agent_id": with_paths, "raw_text": "*.log" }] }),
+        json!({ "commands_per_agent": [{
+            "agent_id": with_paths,
+            "pre_backup_commands": [],
+            "post_backup_commands": [{ "command": "sync" }],
+        }] }),
+    ] {
+        let resp = oneshot(&mut app, without_mode(unused.clone())).await;
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST, "{unused}");
+    }
+    // Comments alone set no rule; an explicit mode is taken as meant.
+    let resp = oneshot(
+        &mut app,
+        without_mode(json!({ "exclude_patterns_raw": "# none yet\n" })),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let resp = oneshot(
+        &mut app,
+        without_mode(json!({ "files_mode": "host", "exclude_patterns_raw": "*.tmp" })),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::CREATED);
+}
+
+/// An edit is held to the same rule as a create: a backup schedule has to
+/// be left with something to back up. Before this, only creating one was
+/// checked, so a schedule could be edited into reading nothing at all.
+#[sqlx::test(migrations = "./migrations")]
+async fn an_edit_cannot_leave_a_backup_schedule_with_nothing_to_back_up(pool: sqlx::PgPool) {
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+
+    let agent_id: i64 = sqlx::query_scalar(
+        "INSERT INTO agents (hostname, agent_token_hash) VALUES ('edit-sources-host', 'hash') \
+         RETURNING id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let repo_id = insert_test_repo(&pool, "edit-sources-repo").await;
+    let schedule_id = insert_test_schedule(&pool, agent_id, repo_id).await;
+
+    let update = |changes: serde_json::Value| {
+        let mut payload = json!({
+            "cron_expression": "0 3 * * *",
+            "enabled": false,
+            "agent_ids": [agent_id],
+        });
+        payload
+            .as_object_mut()
+            .unwrap()
+            .extend(changes.as_object().unwrap().clone());
+        json_request(
+            "PUT",
+            &format!("/api/schedules/{schedule_id}"),
+            Some(payload),
+        )
+    };
+
+    // Own files with no path, and no files with neither VMs nor databases.
+    let resp = oneshot(
+        &mut app,
+        update(json!({ "files_mode": "own", "backup_sources": [] })),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    let resp = oneshot(&mut app, update(json!({ "files_mode": "off" }))).await;
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+
+    // The host lists no paths, so switching to its files is refused too.
+    sqlx::query(
+        "UPDATE schedules SET files_mode = 'off', database_backup_enabled = true WHERE id = $1",
+    )
+    .bind(schedule_id)
+    .execute(&pool)
+    .await
+    .unwrap();
+    let resp = oneshot(&mut app, update(json!({ "files_mode": "host" }))).await;
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+
+    // Each of these leaves it something to back up.
+    let resp = oneshot(
+        &mut app,
+        update(json!({ "files_mode": "own", "backup_sources": ["/srv"] })),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    // Paths left out of the request keep the stored ones.
+    let resp = oneshot(&mut app, update(json!({ "name": "renamed" }))).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let resp = oneshot(
+        &mut app,
+        update(json!({
+            "files_mode": "own",
+            "backup_sources": [],
+            "backup_sources_per_agent": [{ "agent_id": agent_id, "paths": ["/opt"] }],
+        })),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let resp = oneshot(
+        &mut app,
+        update(json!({ "files_mode": "off", "database_backup_enabled": true })),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    // An edit that leaves the hosts out checks the schedule's own targets.
+    let to_host_files = || {
+        json_request(
+            "PUT",
+            &format!("/api/schedules/{schedule_id}"),
+            Some(json!({
+                "cron_expression": "0 3 * * *",
+                "enabled": false,
+                "files_mode": "host",
+            })),
+        )
+    };
+    let resp = oneshot(&mut app, to_host_files()).await;
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    sqlx::query("UPDATE agents SET default_backup_paths = ARRAY['/etc'] WHERE id = $1")
+        .bind(agent_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let resp = oneshot(&mut app, to_host_files()).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    // Staying on the hosts' files, retargeting is not checked: a schedule
+    // can be moved to a host whose paths are set up afterwards.
+    let bare_host: i64 = sqlx::query_scalar(
+        "INSERT INTO agents (hostname, agent_token_hash) VALUES ('edit-sources-bare', 'hash') \
+         RETURNING id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let resp = oneshot(
+        &mut app,
+        json_request(
+            "PUT",
+            &format!("/api/schedules/{schedule_id}"),
+            Some(json!({
+                "cron_expression": "0 3 * * *",
+                "enabled": false,
+                "agent_ids": [agent_id, bare_host],
+            })),
+        ),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    // With no target left there is no host whose files it could take.
+    sqlx::query("UPDATE schedules SET files_mode = 'off' WHERE id = $1")
+        .bind(schedule_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM schedule_targets WHERE schedule_id = $1")
+        .bind(schedule_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let resp = oneshot(&mut app, to_host_files()).await;
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+
+    // A schedule that backs nothing up (a check) has no sources to lose.
+    sqlx::query(
+        "UPDATE schedules SET schedule_type = 'check', database_backup_enabled = false WHERE id = \
+         $1",
+    )
+    .bind(schedule_id)
+    .execute(&pool)
+    .await
+    .unwrap();
+    let resp = oneshot(
+        &mut app,
+        json_request(
+            "PUT",
+            &format!("/api/schedules/{schedule_id}"),
+            Some(json!({
+                "cron_expression": "0 3 * * *",
+                "enabled": false,
+                "files_mode": "off",
+            })),
+        ),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+}
+
 /// Regression test for: saving an already-enabled schedule re-probed SSH
 /// reachability on every field, so a transient outage on one target blocked
 /// even a plain rename or retention edit. Only a change to the target list,
@@ -7876,6 +8143,293 @@ async fn test_import_config_warns_on_missing_repo(pool: sqlx::PgPool) {
     assert_eq!(body.get("schedules_created").unwrap(), 0);
     let warnings = body.get("warnings").unwrap().as_array().unwrap();
     assert_ne!(warnings.len(), 0);
+}
+
+/// An export from before files modes that sets only some of a schedule's
+/// own file fields is imported as "own", and the host values that schedule
+/// used to inherit are written into it, as the migration does: its paths
+/// when the export gives none, and its excludes, file change patterns and
+/// commands combined with the schedule's. Without that it would back up
+/// nothing at all.
+#[sqlx::test(migrations = "./migrations")]
+async fn importing_an_older_export_keeps_what_its_backups_read(pool: sqlx::PgPool) {
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+    insert_test_repo(&pool, "older-repo").await;
+
+    let full: i64 = sqlx::query_scalar(
+        "INSERT INTO agents (hostname, agent_token_hash, default_backup_paths, \
+         default_exclude_patterns, default_file_change_patterns_raw, default_pre_backup_commands, \
+         default_post_backup_commands) VALUES ('older-full', 'real-token', ARRAY['/etc', '/srv'], \
+         ARRAY['*.cache'], '/var/** ignore', '[{\"command\": \"stop app\"}]', '[{\"command\": \
+         \"start app\"}]') RETURNING id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let bare: i64 = sqlx::query_scalar(
+        "INSERT INTO agents (hostname, agent_token_hash) VALUES ('older-bare', 'real-token') \
+         RETURNING id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let split: i64 = sqlx::query_scalar(
+        "INSERT INTO agents (hostname, agent_token_hash, default_exclude_patterns, \
+         default_file_change_patterns_raw) VALUES ('older-split', 'real-token', ARRAY['*.bak'], \
+         '/opt/** fatal') RETURNING id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    // No files_mode: written before there was one.
+    let payload = json!({
+        "version": 1,
+        "exported_at": "2026-01-01T00:00:00Z",
+        "hosts": [],
+        "schedules": [{
+            "name": "older-schedule",
+            "schedule_type": "backup",
+            "cron_expression": "0 3 * * *",
+            "enabled": false,
+            "canary_enabled": false,
+            "execution_mode": "parallel",
+            "on_failure": "stop",
+            "exclude_patterns_raw": "*.tmp",
+            "ignore_global_excludes": false,
+            "keep_hourly": 0,
+            "keep_daily": 7,
+            "keep_weekly": 4,
+            "keep_monthly": 6,
+            "keep_yearly": 0,
+            "compact_enabled": true,
+            "rate_limit_kbps": null,
+            "pre_backup_commands": ["sync"],
+            "post_backup_commands": [],
+            "repo_name": "older-repo",
+            "backup_sources": [],
+            "targets": [
+                { "hostname": "older-full", "execution_order": 0, "backup_sources": [],
+                  "exclude_patterns": "" },
+                { "hostname": "older-bare", "execution_order": 1, "backup_sources": [],
+                  "exclude_patterns": "" },
+                { "hostname": "older-split", "execution_order": 2, "backup_sources": ["/opt"],
+                  "exclude_patterns": "*.log", "file_change_patterns": "/opt/db/** ignore" }
+            ]
+        }]
+    });
+    let resp = oneshot(
+        &mut app,
+        json_request("POST", "/api/config/import", Some(payload)),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let (schedule_id, files_mode): (i64, String) =
+        sqlx::query_as("SELECT id, files_mode FROM schedules WHERE name = 'older-schedule'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(files_mode, "own");
+
+    let resp = oneshot(
+        &mut app,
+        get_request(&format!("/api/schedules/{schedule_id}/sources")),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let sources = body_json(resp).await;
+    let for_host = |field: &str, agent_id: i64| {
+        sources
+            .get(field)
+            .unwrap()
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|entry| entry.get("agent_id").unwrap().as_i64() == Some(agent_id))
+            .cloned()
+    };
+
+    // The full host's own values, as the old merge read them.
+    assert_eq!(
+        for_host("backup_sources_per_agent", full)
+            .unwrap()
+            .get("paths")
+            .unwrap(),
+        &json!(["/etc", "/srv"])
+    );
+    assert_eq!(
+        for_host("exclude_patterns_per_agent", full)
+            .unwrap()
+            .get("raw_text")
+            .unwrap(),
+        &json!("*.cache\n*.tmp")
+    );
+    assert_eq!(
+        for_host("file_change_patterns_per_agent", full)
+            .unwrap()
+            .get("raw_text")
+            .unwrap(),
+        &json!("/var/** ignore")
+    );
+    let commands = for_host("commands_per_agent", full).unwrap();
+    let names = |list: &serde_json::Value| -> Vec<String> {
+        list.as_array()
+            .unwrap()
+            .iter()
+            .map(|c| c.get("command").unwrap().as_str().unwrap().to_owned())
+            .collect()
+    };
+    assert_eq!(
+        names(commands.get("pre_backup_commands").unwrap()),
+        ["stop app", "sync"]
+    );
+    assert_eq!(
+        names(commands.get("post_backup_commands").unwrap()),
+        ["start app"]
+    );
+
+    // A target's own values replaced the schedule's, so the host's are
+    // combined with those; its own paths are kept as they are.
+    assert_eq!(
+        for_host("backup_sources_per_agent", split)
+            .unwrap()
+            .get("paths")
+            .unwrap(),
+        &json!(["/opt"])
+    );
+    assert_eq!(
+        for_host("exclude_patterns_per_agent", split)
+            .unwrap()
+            .get("raw_text")
+            .unwrap(),
+        &json!("*.bak\n*.log")
+    );
+    assert_eq!(
+        for_host("file_change_patterns_per_agent", split)
+            .unwrap()
+            .get("raw_text")
+            .unwrap(),
+        &json!("/opt/db/** ignore\n/opt/** fatal")
+    );
+    assert!(for_host("commands_per_agent", split).is_none());
+
+    // A host with nothing of its own adds nothing, and read no paths before.
+    for field in [
+        "backup_sources_per_agent",
+        "exclude_patterns_per_agent",
+        "file_change_patterns_per_agent",
+        "commands_per_agent",
+    ] {
+        assert!(for_host(field, bare).is_none(), "{field}");
+    }
+}
+
+/// A schedule naming a host this server does not know gets a placeholder
+/// host, and keeps that target's own include and file change patterns; two
+/// repositories sharing a tag share one tag row.
+#[sqlx::test(migrations = "./migrations")]
+async fn importing_creates_placeholder_hosts_and_reuses_tags(pool: sqlx::PgPool) {
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+    let repo = |name: &str, path: &str| {
+        json!({
+            "name": name,
+            "repo_path": path,
+            "ssh_user": "borg",
+            "ssh_host": "remote",
+            "ssh_port": 22,
+            "compression": "lz4",
+            "encryption": "repokey",
+            "enabled": true,
+            "sync_schedule": "0 0 * * *",
+            "quota_warn_bytes": null,
+            "quota_critical_bytes": null,
+            "quota_warn_action": "",
+            "quota_critical_action": "",
+            "tags": ["shared"]
+        })
+    };
+    let payload = json!({
+        "version": 1,
+        "exported_at": "2026-06-01T00:00:00Z",
+        "hosts": [],
+        "repos": [repo("ghost-repo", "/backups/ghost"), repo("ghost-repo-2", "/backups/ghost2")],
+        "schedules": [{
+            "name": "ghost-schedule",
+            "schedule_type": "backup",
+            "cron_expression": "0 3 * * *",
+            "enabled": false,
+            "canary_enabled": false,
+            "execution_mode": "parallel",
+            "on_failure": "stop",
+            "files_mode": "own",
+            "exclude_patterns_raw": "",
+            "ignore_global_excludes": false,
+            "keep_hourly": 0,
+            "keep_daily": 7,
+            "keep_weekly": 4,
+            "keep_monthly": 6,
+            "keep_yearly": 0,
+            "compact_enabled": true,
+            "rate_limit_kbps": null,
+            "pre_backup_commands": [],
+            "post_backup_commands": [],
+            "repo_name": "ghost-repo",
+            "backup_sources": ["/srv"],
+            "targets": [{
+                "hostname": "ghost-host",
+                "execution_order": 0,
+                "backup_sources": [],
+                "exclude_patterns": "",
+                "include_patterns": "/srv/keep",
+                "file_change_patterns": "/srv/db/** ignore"
+            }]
+        }]
+    });
+    let resp = oneshot(
+        &mut app,
+        json_request("POST", "/api/config/import", Some(payload)),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    assert_eq!(body.get("schedules_created").unwrap(), 1);
+    let warnings = body.get("warnings").unwrap().to_string();
+    assert!(
+        warnings.contains("created placeholder agent \\\"ghost-host\\\""),
+        "{warnings}"
+    );
+
+    let (agent_id, token): (i64, String) =
+        sqlx::query_as("SELECT id, agent_token_hash FROM agents WHERE hostname = 'ghost-host'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(token, server::db::IMPORTED_TOKEN_HASH);
+    let patterns: (String, String) = sqlx::query_as(
+        "SELECT i.raw_text, f.raw_text FROM per_agent_includes i JOIN \
+         per_agent_file_change_patterns f ON f.schedule_id = i.schedule_id AND f.agent_id = \
+         i.agent_id WHERE i.agent_id = $1",
+    )
+    .bind(agent_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        patterns,
+        ("/srv/keep".to_owned(), "/srv/db/** ignore".to_owned())
+    );
+
+    let tags: Vec<i64> = sqlx::query_scalar(
+        "SELECT rt.tag_id FROM repo_tags rt JOIN repos r ON r.id = rt.repo_id WHERE r.name LIKE \
+         'ghost-repo%'",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(tags.len(), 2);
+    assert_eq!(tags.first(), tags.get(1), "both repositories share one tag");
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -12380,7 +12934,7 @@ async fn test_agent_vms_defaults_and_settings_round_trip() {
     let response = oneshot(&mut app, get_request("/api/agents/vm-host/vms")).await;
     assert_eq!(response.status(), StatusCode::OK);
     let body = body_json(response).await;
-    assert_eq!(body.get("settings").unwrap().get("enabled").unwrap(), false);
+    assert!(body.get("settings").unwrap().get("enabled").is_none());
     assert_eq!(body.get("vms").unwrap().as_array().unwrap().len(), 0);
 
     let response = oneshot(
@@ -12389,7 +12943,6 @@ async fn test_agent_vms_defaults_and_settings_round_trip() {
             "PUT",
             "/api/agents/vm-host/vm-snapshot",
             Some(serde_json::json!({
-                "enabled": true,
                 "selection": "all",
                 "staging_dir": "/var/lib/assimilate/vms",
                 "full_interval": 7,
@@ -12402,7 +12955,7 @@ async fn test_agent_vms_defaults_and_settings_round_trip() {
     assert_eq!(response.status(), StatusCode::OK);
     let settings = body_json(response).await;
     let settings = settings.get("settings").unwrap();
-    assert_eq!(settings.get("enabled").unwrap(), true);
+    assert!(settings.get("enabled").is_none());
     assert_eq!(settings.get("full_interval").unwrap(), 7);
     assert_eq!(
         settings.get("staging_dir").unwrap(),
@@ -14470,7 +15023,7 @@ async fn test_agent_databases_settings_and_sources_round_trip() {
     assert_eq!(response.status(), StatusCode::OK);
     let body = body_json(response).await;
     let settings = body.get("settings").unwrap();
-    assert_eq!(settings.get("enabled").unwrap(), false);
+    assert!(settings.get("enabled").is_none());
     assert_eq!(
         settings.get("dump_dir").unwrap(),
         "/var/lib/assimilate/database-dumps"
@@ -14483,7 +15036,6 @@ async fn test_agent_databases_settings_and_sources_round_trip() {
             "PUT",
             "/api/agents/db-host/database-backup",
             Some(serde_json::json!({
-                "enabled": true,
                 "dump_dir": "/srv/dumps",
                 "runtimes": {
                     "kubernetes": true,
@@ -14501,7 +15053,7 @@ async fn test_agent_databases_settings_and_sources_round_trip() {
     assert_eq!(response.status(), StatusCode::OK);
     let body = body_json(response).await;
     let settings = body.get("settings").unwrap();
-    assert_eq!(settings.get("enabled").unwrap(), true);
+    assert!(settings.get("enabled").is_none());
     assert_eq!(settings.get("dump_dir").unwrap(), "/srv/dumps");
     let runtimes = settings.get("runtimes").unwrap();
     assert_eq!(

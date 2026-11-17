@@ -412,12 +412,18 @@ A failed run usually produced no borg archive, so there is nothing on disk to lo
 
 ### Sources
 
-Admins only. What the agent backs up besides plain files, as two collapsible sections:
+Everything the agent backs up, as collapsible sections. A [schedule](scheduling.md#sources) takes all of it, or picks its own files, and turns virtual machines and databases on or off for itself.
 
 | Section | Contents |
 |---------|----------|
-| **Virtual machines** | Staging this host's libvirt/QEMU domains before a backup, and what each may occupy — see [VM Snapshots](vm-snapshots.md) |
-| **Databases** | The database servers on this host and their dumps — see [Database Dumps](database-dumps.md) |
+| **Files** | Backup paths, exclude patterns, include patterns (exceptions to the excludes), file change patterns, and pre/post-backup commands, as one form saved in a single request. A schedule's own files use exactly the same form. Commands carry their own optional per-command timeout — see [Pre- and Post-Backup Commands](scheduling.md#pre-and-post-backup-commands) |
+| **Virtual machines** | Admins only. Staging this host's libvirt/QEMU domains before a backup, which domains are included, and what each may occupy — see [VM Snapshots](vm-snapshots.md) |
+| **Databases** | Admins only. The database servers on this host, which sources are dumped — see [Database Dumps](database-dumps.md) |
+| **Used by** | Every backup schedule that targets this host, and what it takes: all of the host's files, its own paths, or none, and whether it backs up virtual machines and databases |
+
+![A host's Used by section, listing the schedules that take its files, virtual machines and databases](assets/screenshots/agent-sources-used-by.png)
+
+A host no longer switches virtual machine backups or database dumps on or off as a whole. It backs up the domains and database sources it includes; a schedule that asks for them on a host that includes none shows a warning on both pages.
 
 The open section is recorded in the URL (`?tab=sources&section=databases`).
 
@@ -428,10 +434,9 @@ Everything that configures the agent lives here, as collapsible sections stacked
 | Section | Contents |
 |---------|----------|
 | **Identity** | Hostname, domain, display name, agent build details, registration and last-seen times, token regeneration, and hostname aliases — glob patterns for archive matching (see below) |
-| **Backup defaults** | Backup paths, exclude patterns, file change patterns and pre/post hook commands, as one form saved in a single request. Hook commands set here run on every schedule targeting this host and carry their own optional per-command timeout — see [Pre- and Post-Backup Commands](scheduling.md#pre-and-post-backup-commands) |
-| **Power & dependencies** | Admins only. The host's [machine](power-management.md#machines) — waking it, shutting it down, whether it is always online — then starting the agent process before a backup, and the [dependency hosts](dependency-hosts.md#requiring-a-dependency) every schedule on this agent needs, for a share its default commands mount — see [Power Management](power-management.md) |
+| **Power & dependencies** | Admins only. The host's [machine](power-management.md#machines) — waking it, shutting it down, whether it is always online — then starting the agent process before a backup, and the [dependency hosts](dependency-hosts.md#requiring-a-dependency) every schedule on this agent needs, for a share its commands mount — see [Power Management](power-management.md) |
 
-The chosen tab and the last section opened are both recorded in the URL (`?tab=settings&section=defaults`), so a specific section can be linked to directly; it starts open.
+The chosen tab and the last section opened are both recorded in the URL (`?tab=settings&section=power`), so a specific section can be linked to directly; it starts open.
 
 ### Imported hosts
 

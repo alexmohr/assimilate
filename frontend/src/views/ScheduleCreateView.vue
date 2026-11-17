@@ -15,9 +15,12 @@ import { lvmSnapshotPercentProblem } from '../utils/fsSnapshot'
 import { extractError } from '../utils/error'
 import {
   agentOverridePayload,
+  ownPathsPayload,
   primaryRepoId,
   repoTargetsProblem,
   scheduleFormPayload,
+  sourcesProblem,
+  type OwnPaths,
 } from '../utils/schedulePayload'
 import { parseLines } from '../utils/validation'
 import { useAsyncAction } from '../composables/useAsyncAction'
@@ -29,6 +32,7 @@ import BaseWizard, { type WizardStep } from '../components/BaseWizard.vue'
 import CronBuilder from '../components/CronBuilder.vue'
 import EmptyState from '../components/EmptyState.vue'
 import ScheduleAdvancedTab from '../components/ScheduleAdvancedTab.vue'
+import ScheduleSourcesPane from '../components/ScheduleSourcesPane.vue'
 import SchedulePowerTab from '../components/SchedulePowerTab.vue'
 import ScheduleRepoTargets from '../components/ScheduleRepoTargets.vue'
 import ToggleSwitch from '../components/ToggleSwitch.vue'
@@ -74,6 +78,8 @@ const { loading, error, run } = useAsyncAction('Failed to load agents and reposi
 
 const form = ref<ScheduleFormState>({ ...DEFAULT_SCHEDULE_FORM_STATE })
 const selectedAgentIds = ref<number[]>([])
+const usePerHostPaths = ref(false)
+const perHostSources = ref<Record<number, string>>({})
 const repoTargets = ref<ScheduleRepoTarget[]>([])
 const selectedType = ref<ScheduleType>('backup')
 const onFailure = ref<'stop' | 'continue'>('stop')
@@ -97,7 +103,7 @@ const isBackup = computed(() => selectedType.value === 'backup')
 /** Retention and the borg options only mean anything for a backup schedule. */
 const steps = computed<WizardStep<StepId>[]>(() => [
   { id: 'basics', label: 'Basics', sub: 'Name and type' },
-  { id: 'sources', label: 'Sources', sub: 'Hosts and paths' },
+  { id: 'sources', label: 'Sources', sub: 'Hosts and what they back up' },
   { id: 'targets', label: 'Targets', sub: 'Where it is written' },
   // Power applies to every schedule type, not just backups: a check or verify
   // run needs its hosts reachable the same way.
@@ -106,7 +112,7 @@ const steps = computed<WizardStep<StepId>[]>(() => [
   ...(isBackup.value
     ? ([
         { id: 'retention', label: 'Retention', sub: 'What is kept' },
-        { id: 'advanced', label: 'Advanced', sub: 'Patterns and hooks' },
+        { id: 'advanced', label: 'Advanced', sub: 'Options and timeouts' },
       ] as const)
     : []),
   { id: 'review', label: 'Review', sub: 'Create schedule' },
@@ -121,6 +127,10 @@ function agentLabel(id: number): string {
 
 const cronFieldCount = computed(() => form.value.cron_expression.trim().split(/\s+/).length)
 
+function ownPaths(): OwnPaths {
+  return { usePerHostPaths: usePerHostPaths.value, perHostSources: perHostSources.value }
+}
+
 /** What a step still needs before it counts as answered. */
 function blockers(step: StepId): string[] {
   const missing: string[] = []
@@ -129,6 +139,15 @@ function blockers(step: StepId): string[] {
   }
   if (step === 'sources' && selectedAgentIds.value.length === 0) {
     missing.push('at least one host')
+  }
+  if (step === 'sources' && isBackup.value) {
+    const problem = sourcesProblem(
+      form.value,
+      ownPaths(),
+      selectedAgentIds.value,
+      (id) => agentMap.value.get(id)?.default_backup_paths,
+    )
+    if (problem) missing.push(problem)
   }
   if (step === 'targets') {
     const problem = repoTargetsProblem(repoTargets.value)
@@ -184,6 +203,23 @@ async function load(): Promise<void> {
 
 onMounted(load)
 
+/** The review step's line for where the files come from. */
+const filesSummary = computed<{ text: string; mono: boolean }>(() => {
+  if (form.value.files_mode === 'off') return { text: 'Off', mono: false }
+  if (form.value.files_mode === 'host') return { text: "Each host's files", mono: false }
+  if (usePerHostPaths.value) return { text: 'Own files, paths per host', mono: false }
+  const paths = parseLines(form.value.backup_sources).join(', ')
+  return paths ? { text: paths, mono: true } : { text: 'Own files, no paths yet', mono: false }
+})
+
+const vmsDbsSummary = computed(() => {
+  const parts = [
+    form.value.vm_snapshot_enabled ? 'VMs' : null,
+    form.value.database_backup_enabled ? 'databases' : null,
+  ].filter((p): p is string => p !== null)
+  return parts.length > 0 ? parts.join(' and ') : 'Neither'
+})
+
 // BaseWizard emits submit only once no step is blocked.
 async function submit(): Promise<void> {
   submitting.value = true
@@ -192,6 +228,10 @@ async function submit(): Promise<void> {
     const created = await createSchedule({
       ...scheduleFormPayload(form.value),
       ...agentOverridePayload(agentOverrides.value, selectedAgentIds.value),
+      // A schedule taking each host's files, or none, sends no paths of its own.
+      ...(form.value.files_mode === 'own'
+        ? ownPathsPayload(form.value, ownPaths(), selectedAgentIds.value)
+        : { backup_sources: [] }),
       agent_ids: selectedAgentIds.value,
       repo_id: primaryRepoId(repoTargets.value),
       repo_targets: repoTargets.value,
@@ -330,27 +370,16 @@ async function submit(): Promise<void> {
             }}
           </span>
         </div>
-        <div
+        <ScheduleSourcesPane
           v-if="isBackup"
-          class="field"
-        >
-          <label
-            class="field-label"
-            for="backup-paths"
-            >Backup paths</label
-          >
-          <textarea
-            id="backup-paths"
-            v-model="form.backup_sources"
-            class="input area-input"
-            placeholder="Directories to back up, one per line"
-            spellcheck="false"
-          />
-          <span class="field-hint">
-            One per line. Leave empty to use each agent's own default paths. The same paths are
-            written to every target.
-          </span>
-        </div>
+          v-model:form="form"
+          v-model:overrides="agentOverrides"
+          v-model:use-per-host-paths="usePerHostPaths"
+          v-model:per-host-sources="perHostSources"
+          :agent-ids="selectedAgentIds"
+          :agent-label="agentLabel"
+          :agents="agents"
+        />
       </template>
 
       <template v-else-if="step === 'targets'">
@@ -524,7 +553,6 @@ async function submit(): Promise<void> {
       <template v-else-if="step === 'advanced'">
         <ScheduleAdvancedTab
           v-model:form="form"
-          v-model:overrides="agentOverrides"
           :agent-ids="selectedAgentIds"
           :agent-label="agentLabel"
           :agents="agents"
@@ -607,13 +635,15 @@ async function submit(): Promise<void> {
             <dl class="info-grid">
               <dt>Hosts</dt>
               <dd>{{ selectedAgentIds.map(agentLabel).join(', ') || '-' }}</dd>
-              <dt v-if="isBackup">Paths</dt>
+              <dt v-if="isBackup">Files</dt>
               <dd
                 v-if="isBackup"
-                class="mono"
+                :class="{ mono: filesSummary.mono }"
               >
-                {{ parseLines(form.backup_sources).join(', ') || 'agent defaults' }}
+                {{ filesSummary.text }}
               </dd>
+              <dt v-if="isBackup">VMs and databases</dt>
+              <dd v-if="isBackup">{{ vmsDbsSummary }}</dd>
             </dl>
           </div>
 

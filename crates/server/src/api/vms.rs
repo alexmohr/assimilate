@@ -50,8 +50,6 @@ const STAGE_TIMEOUT: Duration = Duration::from_hours(4);
 /// New staging settings for a host.
 #[derive(Debug, Clone, Deserialize, ToSchema)]
 pub struct UpdateAgentVmSnapshotRequest {
-    /// Whether this host stages its domains at all.
-    pub enabled: bool,
     /// Absolute directory receiving one subdirectory per domain.
     pub staging_dir: String,
     /// Increments written before a new full image is taken.
@@ -139,7 +137,6 @@ async fn build_response(
 
     Ok(AgentVmSnapshotResponse {
         settings: AgentVmSnapshotSettingsResponse {
-            enabled: settings.vm_snapshot_enabled,
             staging_dir: settings.vm_snapshot_dir,
             full_interval: u32::try_from(settings.vm_snapshot_full_interval).unwrap_or(1),
             timeout_seconds: u32::try_from(settings.vm_snapshot_timeout_seconds).unwrap_or(1),
@@ -241,7 +238,6 @@ pub async fn update_agent_vm_snapshot(
         &state.pool,
         agent.id,
         db::vms::VmSnapshotPatch {
-            enabled: req.enabled,
             dir: req.staging_dir.trim(),
             full_interval: i32::try_from(req.full_interval)
                 .map_err(|_| ApiError::BadRequest("full_interval out of range".to_owned()))?,

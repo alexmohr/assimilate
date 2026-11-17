@@ -129,6 +129,8 @@ const mockSchedule = {
   post_backup_commands: [],
   hook_timeout_seconds: 60,
   missed_backup_threshold: 3,
+  files_mode: 'host',
+  run_host_commands: true,
 }
 
 const mockCheckSchedule = {
@@ -150,9 +152,16 @@ const mockVerifySchedule = {
   schedule_type: 'verify',
 }
 
+/** What the Settings › Sources preview reads from each host's own files. */
+const HOST_FILES = {
+  default_backup_paths: ['/etc'],
+  default_pre_backup_commands: [],
+  default_post_backup_commands: [],
+}
+
 const mockAgents = [
-  { id: 10, hostname: 'web-server-01', display_name: 'Web Server' },
-  { id: 11, hostname: 'db-server-01', display_name: null },
+  { id: 10, hostname: 'web-server-01', display_name: 'Web Server', ...HOST_FILES },
+  { id: 11, hostname: 'db-server-01', display_name: null, ...HOST_FILES },
 ]
 
 const mockRepos = [
@@ -620,6 +629,40 @@ describe('ScheduleDetailView - edit mode', () => {
     }
   })
 
+  /** The wizard's rule, on edit: own files with no path, or no files and
+      neither VMs nor databases, would back up nothing. */
+  it('refuses to save a schedule left with nothing to back up', async () => {
+    const wrapper = await createEditWrapper()
+    const vm = wrapper.vm as unknown as {
+      save: () => Promise<void>
+      saveError: string | null
+      form: {
+        files_mode: string
+        backup_sources: string
+        vm_snapshot_enabled: boolean
+        database_backup_enabled: boolean
+      }
+    }
+
+    vm.form.files_mode = 'own'
+    vm.form.backup_sources = ''
+    await vm.save()
+    await flushPromises()
+    expect(vm.saveError).toBe(
+      'Under Sources, give this schedule at least one backup path for its own files.',
+    )
+
+    vm.form.files_mode = 'off'
+    vm.form.vm_snapshot_enabled = false
+    vm.form.database_backup_enabled = false
+    await vm.save()
+    await flushPromises()
+    expect(vm.saveError).toBe(
+      'Under Sources, give this schedule virtual machines or databases, since it reads no files.',
+    )
+    expect(mockApiClient.put).not.toHaveBeenCalled()
+  })
+
   it('shows save error when schedule is null (edit mode)', async () => {
     mockApiClient.get.mockRejectedValue(new Error('Load failed'))
     const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '999' } })
@@ -652,16 +695,23 @@ describe('ScheduleDetailView - edit mode', () => {
     expect(wrapper.find('.error-inline').exists()).toBe(true)
   })
 
-  describe('hosts with database dumps turned off', () => {
+  // A host no longer turns dumps or VM snapshots off: it backs up whatever
+  // it includes. The header warns about the hosts of a schedule that takes
+  // databases or VMs but include none, counted from each host's own lists.
+  describe('hosts with no VMs or database sources set up', () => {
     /**
-     * A dump-enabled schedule on three targets: Web Server has dumps off on
-     * the host, db-server-01 allows them, and agent 99 is not in the agent
-     * list at all (deleted, or not visible to this user).
+     * A schedule on three targets: Web Server includes no VM and no database
+     * source, db-server-01 includes one of each, and agent 99 is not in the
+     * agent list at all (deleted, or not visible to this user).
      */
-    async function renderWithDumpTargets(
-      databaseBackupEnabled: boolean,
+    async function renderWithSourceTargets(
+      sources: {
+        vm_snapshot_enabled: boolean
+        database_backup_enabled: boolean
+      },
+      role: 'admin' | 'operator' = 'admin',
     ): Promise<ReturnType<typeof renderWithPlugins>> {
-      const schedule = { ...mockSchedule, database_backup_enabled: databaseBackupEnabled }
+      const schedule = { ...mockSchedule, ...sources }
       setupEditMode(schedule)
       const fallback = mockApiClient.get.getMockImplementation()!
       mockApiClient.get.mockImplementation((url: string) => {
@@ -673,32 +723,102 @@ describe('ScheduleDetailView - edit mode', () => {
               { agent_id: 99, execution_order: 2 },
             ],
           })
-        if (url === '/agents')
+        const none = url.startsWith('/agents/web-server-01/')
+        if (url.endsWith('/vms'))
           return Promise.resolve({
-            data: [
-              { ...mockAgents[0], database_backup_enabled: false },
-              { ...mockAgents[1], database_backup_enabled: true },
-            ],
+            data: { vms: none ? [{ included: false }] : [{ included: true }] },
+          })
+        if (url.endsWith('/databases'))
+          return Promise.resolve({
+            data: { sources: none ? [] : [{ included: true }, { included: false }] },
           })
         return fallback(url)
       })
-      const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })
+      const wrapper = renderWithPlugins(ScheduleDetailView, {
+        props: { id: '1' },
+        storeState: { auth: { user: { role } } },
+      })
       await flushPromises()
       return wrapper
     }
 
-    it('names only the known targets whose host turned dumps off', async () => {
-      const wrapper = await renderWithDumpTargets(true)
+    // A schedule taking each host's files can be moved to a host whose paths
+    // are set up afterwards; until then its page says that host reads none.
+    it("names the targets with no paths while it takes each host's files", async () => {
+      const renderWith = async (files_mode: 'host' | 'own') => {
+        setupEditMode({ ...mockSchedule, files_mode })
+        const fallback = mockApiClient.get.getMockImplementation()!
+        mockApiClient.get.mockImplementation((url: string) =>
+          url === '/agents'
+            ? Promise.resolve({
+                data: [{ ...mockAgents[0], default_backup_paths: [] }, mockAgents[1]],
+              })
+            : fallback(url),
+        )
+        const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })
+        await flushPromises()
+        return wrapper
+      }
 
-      const notice = wrapper.get('[data-testid="database-dump-mismatch"]')
-      expect(notice.text()).toContain('No databases will be dumped on 1 host')
+      const host = await renderWith('host')
+      const notice = host.get('[data-testid="source-not-set-up-files"]')
+      expect(notice.text()).toContain('No files will be backed up on 1 host')
       expect(notice.findAll('.dump-mismatch-host').map((a) => a.text())).toEqual(['Web Server'])
+
+      const own = await renderWith('own')
+      expect(own.find('[data-testid="source-not-set-up-files"]').exists()).toBe(false)
     })
 
-    it('says nothing when the schedule itself does not ask for dumps', async () => {
-      const wrapper = await renderWithDumpTargets(false)
+    it('names only the known targets that have no database sources set up', async () => {
+      const wrapper = await renderWithSourceTargets({
+        vm_snapshot_enabled: false,
+        database_backup_enabled: true,
+      })
 
-      expect(wrapper.find('[data-testid="database-dump-mismatch"]').exists()).toBe(false)
+      const notice = wrapper.get('[data-testid="source-not-set-up-databases"]')
+      expect(notice.text()).toContain('No databases will be dumped on 1 host')
+      expect(notice.findAll('.dump-mismatch-host').map((a) => a.text())).toEqual(['Web Server'])
+      expect(wrapper.find('[data-testid="source-not-set-up-vms"]').exists()).toBe(false)
+    })
+
+    it('names only the known targets that have no VMs set up', async () => {
+      const wrapper = await renderWithSourceTargets({
+        vm_snapshot_enabled: true,
+        database_backup_enabled: false,
+      })
+
+      const notice = wrapper.get('[data-testid="source-not-set-up-vms"]')
+      expect(notice.text()).toContain('No virtual machines will be backed up on 1 host')
+      expect(notice.findAll('.dump-mismatch-host').map((a) => a.text())).toEqual(['Web Server'])
+      expect(wrapper.find('[data-testid="source-not-set-up-databases"]').exists()).toBe(false)
+    })
+
+    // Reading a host's database list is admin-only; for anyone else the VM
+    // warning still works and the database one is left out, never guessed.
+    it('still names hosts with no VMs for a viewer who may not read database lists', async () => {
+      const wrapper = await renderWithSourceTargets(
+        { vm_snapshot_enabled: true, database_backup_enabled: true },
+        'operator',
+      )
+
+      const notice = wrapper.get('[data-testid="source-not-set-up-vms"]')
+      expect(notice.findAll('.dump-mismatch-host').map((a) => a.text())).toEqual(['Web Server'])
+      expect(wrapper.find('[data-testid="source-not-set-up-databases"]').exists()).toBe(false)
+      const urls = mockApiClient.get.mock.calls.map((call) => String(call[0]))
+      expect(urls.filter((url) => url.endsWith('/databases'))).toEqual([])
+    })
+
+    it('says nothing when the schedule itself takes neither', async () => {
+      const wrapper = await renderWithSourceTargets({
+        vm_snapshot_enabled: false,
+        database_backup_enabled: false,
+      })
+
+      expect(wrapper.find('[data-testid="source-not-set-up-databases"]').exists()).toBe(false)
+      expect(wrapper.find('[data-testid="source-not-set-up-vms"]').exists()).toBe(false)
+      // Nothing to warn about, so the hosts' lists are not even read.
+      const urls = mockApiClient.get.mock.calls.map((call) => String(call[0]))
+      expect(urls.filter((url) => url.endsWith('/vms') || url.endsWith('/databases'))).toEqual([])
     })
   })
 
@@ -812,6 +932,7 @@ describe('ScheduleDetailView - edit mode', () => {
               display_name: 'Web Server',
               is_connected: false,
               last_seen_at: '2026-05-23T02:00:00Z',
+              ...HOST_FILES,
             },
             {
               id: 11,
@@ -819,6 +940,7 @@ describe('ScheduleDetailView - edit mode', () => {
               display_name: null,
               is_connected: true,
               last_seen_at: '2026-05-30T02:00:00Z',
+              ...HOST_FILES,
             },
           ],
         })
@@ -1361,21 +1483,34 @@ describe('ScheduleDetailView - edit mode', () => {
     const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })
     await flushPromises()
     await goToSettings(wrapper)
-    await goToSection(wrapper, 'Targets')
+    // The paths and their per-host switch moved from Targets to Sources, and
+    // only a schedule with its own files has paths of its own to split.
+    await goToSection(wrapper, 'Sources')
+    await wrapper
+      .findAll('[role="radiogroup"][aria-label="Files"] button')
+      .find((b) => b.text() === 'Own files')!
+      .trigger('click')
 
-    await wrapper.find('.toggle-switch-stub[data-label="Configure paths per agent"]').setValue(true)
+    await wrapper.find('.toggle-switch-stub[data-label="Different paths per host"]').setValue(true)
     await nextTick()
-    await wrapper.find('.area-input-sm').setValue('/custom/backup/path')
-
     await wrapper
       .findAll('button')
-      .find((b) => b.text() === 'Save changes')!
+      .find((b) => b.text() === 'Edit')!
+      .trigger('click')
+    await wrapper.find('.area-input-sm').setValue('/custom/backup/path')
+
+    // The section's own Save writes the values and saves the schedule.
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text() === 'Save')!
       .trigger('click')
     await flushPromises()
 
     expect(mockApiClient.put).toHaveBeenCalledWith(
       '/schedules/1',
       expect.objectContaining({
+        files_mode: 'own',
+        backup_sources: [],
         backup_sources_per_agent: [{ agent_id: 10, paths: ['/custom/backup/path'] }],
       }),
     )
@@ -2668,6 +2803,124 @@ describe('ScheduleDetailView - per-agent overrides', () => {
     await flushPromises()
   }
 
+  /** Settings › Sources of a schedule that sets its own files. */
+  async function renderOwnFiles(
+    sources: Record<string, unknown>,
+  ): Promise<ReturnType<typeof renderWithPlugins>> {
+    setupWithSources(sources)
+    const fallback = mockApiClient.get.getMockImplementation()!
+    mockApiClient.get.mockImplementation((url: string) =>
+      url === '/schedules/1'
+        ? Promise.resolve({ data: { ...mockSchedule, files_mode: 'own' } })
+        : fallback(url),
+    )
+    mockApiClient.put.mockResolvedValue({ data: { ...mockSchedule, files_mode: 'own' } })
+    const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })
+    await flushPromises()
+    await goToSettings(wrapper)
+    await goToSection(wrapper, 'Sources')
+    return wrapper
+  }
+
+  it("reopens on the schedule's files mode and host-commands choice and sends them back", async () => {
+    setupWithSources({ backup_sources: [], backup_sources_per_agent: [] })
+    const fallback = mockApiClient.get.getMockImplementation()!
+    mockApiClient.get.mockImplementation((url: string) =>
+      url === '/schedules/1'
+        ? Promise.resolve({
+            // Reading no files, it has to take something else.
+            data: {
+              ...mockSchedule,
+              files_mode: 'off',
+              run_host_commands: false,
+              database_backup_enabled: true,
+            },
+          })
+        : fallback(url),
+    )
+    mockApiClient.put.mockResolvedValue({ data: mockSchedule })
+    const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })
+    await flushPromises()
+    await goToSettings(wrapper)
+    await goToSection(wrapper, 'Sources')
+
+    const files = wrapper.findAll('[role="radiogroup"][aria-label="Files"] button')
+    expect(files.find((b) => b.attributes('aria-checked') === 'true')!.text()).toBe('Off')
+
+    await save(wrapper)
+    expect(mockApiClient.put).toHaveBeenCalledWith(
+      '/schedules/1',
+      expect.objectContaining({ files_mode: 'off', run_host_commands: false }),
+    )
+  })
+
+  // Saved per-host paths win over the shared ones, so turning the split off
+  // has to delete them; a schedule that never split its paths sends none.
+  it('deletes the saved per-host paths when the split is turned off', async () => {
+    setupWithSources({
+      backup_sources: [],
+      backup_sources_per_agent: [{ agent_id: 10, paths: ['/per/host'] }],
+    })
+    mockApiClient.put.mockResolvedValue({ data: mockSchedule })
+    const wrapper = renderWithPlugins(ScheduleDetailView, { props: { id: '1' } })
+    await flushPromises()
+    const vm = wrapper.vm as unknown as {
+      save: () => Promise<void>
+      usePerHostPaths: boolean
+      form: { files_mode: string; backup_sources: string }
+    }
+    expect(vm.usePerHostPaths).toBe(true)
+
+    vm.form.files_mode = 'own'
+    vm.usePerHostPaths = false
+    vm.form.backup_sources = '/shared'
+    await vm.save()
+    await flushPromises()
+
+    const payload = mockApiClient.put.mock.calls[0][1] as Record<string, unknown>
+    expect(payload.backup_sources).toEqual(['/shared'])
+    expect(payload.backup_sources_per_agent).toEqual([])
+
+    // Once deleted, a later save has nothing left to delete.
+    await vm.save()
+    await flushPromises()
+    const next = mockApiClient.put.mock.calls[1][1] as Record<string, unknown>
+    expect(next.backup_sources_per_agent).toBeUndefined()
+  })
+
+  // Per-host excludes, includes, patterns and commands can no longer be set
+  // one host at a time; a schedule that still has them shows which hosts,
+  // and "Use the shared values" deletes them on the next save.
+  it('deletes the per-host values once the shared ones are chosen', async () => {
+    const wrapper = await renderOwnFiles({
+      backup_sources: ['/data'],
+      backup_sources_per_agent: [],
+      exclude_patterns_per_agent: [
+        { agent_id: 10, raw_text: '*.cache' },
+        { agent_id: 11, raw_text: '*.tmp' },
+      ],
+    })
+    const notice = wrapper.get('[data-testid="per-host-file-values"]')
+    expect(notice.text()).toContain('Web Server (excludes)')
+
+    await notice
+      .findAll('button')
+      .find((b) => b.text() === 'Use the shared values')!
+      .trigger('click')
+    expect(wrapper.find('[data-testid="per-host-file-values"]').exists()).toBe(false)
+    await save(wrapper)
+
+    expect(mockApiClient.put).toHaveBeenCalledWith(
+      '/schedules/1',
+      expect.objectContaining({
+        exclude_patterns_per_agent: [],
+        include_patterns_per_agent: [],
+        file_change_patterns_per_agent: [],
+        commands_per_agent: [],
+      }),
+    )
+  })
+
   // A schedule saved with per-agent excludes has to come back in per-agent
   // mode: reopening it in shared mode would silently flatten every host's
   // list into one on the next save.
@@ -2793,11 +3046,42 @@ describe('ScheduleDetailView - per-agent overrides', () => {
   // A CommandListEditor entry can be left blank (e.g. after "+ Add command"
   // with nothing typed yet); saving must drop those rather than sending an
   // empty-string command through to the agent.
-  it('drops blank command entries but keeps real ones when saving', async () => {
-    const wrapper = await renderAdvanced({
+  // The command lists moved from Advanced to the schedule's own files under
+  // Sources, saved by that section's own Save.
+  // The schedule row a save returns has no paths of its own; the page must not
+  // blank the ones just saved and show the section as having none.
+  it('keeps showing its own paths after the section saves', async () => {
+    const wrapper = await renderOwnFiles({
       backup_sources: ['/data'],
       backup_sources_per_agent: [],
     })
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text() === 'Edit')!
+      .trigger('click')
+    await wrapper.find('#file-sources-paths').setValue('/home')
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text() === 'Save')!
+      .trigger('click')
+    await flushPromises()
+
+    expect(mockApiClient.put).toHaveBeenCalledWith(
+      '/schedules/1',
+      expect.objectContaining({ backup_sources: ['/home'] }),
+    )
+    expect(wrapper.find('.own-files .path-item').text()).toBe('/home')
+  })
+
+  it('drops blank command entries but keeps real ones when saving', async () => {
+    const wrapper = await renderOwnFiles({
+      backup_sources: ['/data'],
+      backup_sources_per_agent: [],
+    })
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text() === 'Edit')!
+      .trigger('click')
 
     const editors = wrapper.findAllComponents({ name: 'CommandListEditor' })
     await editors[0].vm.$emit('update:modelValue', [
@@ -2810,7 +3094,11 @@ describe('ScheduleDetailView - per-agent overrides', () => {
       hookCommand('systemctl start app'),
     ])
 
-    await save(wrapper)
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text() === 'Save')!
+      .trigger('click')
+    await flushPromises()
 
     expect(mockApiClient.put).toHaveBeenCalledWith(
       '/schedules/1',

@@ -2,13 +2,14 @@
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 use shared::{
-    hooks::HookCommand,
     protocol::ServerToAgent,
-    types::{AgentConfig, RepoConfig, RepoId, ScheduleConfig},
+    types::{AgentConfig, RepoConfig, RepoId, ScheduleConfig, ScheduleFilesMode},
 };
 use sqlx::PgPool;
 
 use crate::{AppState, db, error::ApiError};
+
+mod file_set;
 
 /// # Errors
 ///
@@ -139,37 +140,6 @@ fn convert_retention_counts(schedule: &db::ScheduleRow) -> Result<RetentionCount
     })
 }
 
-fn effective_pre_backup_commands(
-    agent: &db::AgentRow,
-    schedule: &db::ScheduleRow,
-    per_agent_cmds: Option<&db::PerAgentCommands>,
-) -> Vec<HookCommand> {
-    let schedule_cmds =
-        per_agent_cmds.map_or(&schedule.pre_backup_commands.0, |c| &c.pre_backup_commands);
-    agent
-        .default_pre_backup_commands
-        .0
-        .iter()
-        .chain(schedule_cmds)
-        .cloned()
-        .collect()
-}
-
-fn effective_post_backup_commands(
-    agent: &db::AgentRow,
-    schedule: &db::ScheduleRow,
-    per_agent_cmds: Option<&db::PerAgentCommands>,
-) -> Vec<HookCommand> {
-    let schedule_cmds = per_agent_cmds.map_or(&schedule.post_backup_commands.0, |c| {
-        &c.post_backup_commands
-    });
-    schedule_cmds
-        .iter()
-        .chain(&agent.default_post_backup_commands.0)
-        .cloned()
-        .collect()
-}
-
 async fn build_schedule_config(
     pool: &PgPool,
     agent: &db::AgentRow,
@@ -178,61 +148,8 @@ async fn build_schedule_config(
 ) -> Result<ScheduleConfig, ApiError> {
     let retention = convert_retention_counts(&schedule)?;
 
-    let mut backup_sources =
-        db::list_backup_sources_for_schedule_agent(pool, schedule.id, agent.id).await?;
-
-    if backup_sources.is_empty() {
-        backup_sources = db::list_backup_sources_for_schedule(pool, schedule.id).await?;
-    }
-
-    if backup_sources.is_empty() {
-        backup_sources.extend(agent.default_backup_paths.iter().cloned());
-    }
-
-    let per_agent_excludes_raw =
-        db::get_per_agent_excludes_raw(pool, schedule.id, agent.id).await?;
-    let effective_excludes_raw = per_agent_excludes_raw
-        .as_deref()
-        .unwrap_or(&schedule.exclude_patterns_raw);
-
-    let mut exclude_patterns: Vec<String> = Vec::new();
-    if !schedule.ignore_global_excludes {
-        exclude_patterns.extend(global_excludes.iter().cloned());
-    }
-    exclude_patterns.extend(agent.default_exclude_patterns.iter().cloned());
-    exclude_patterns.extend(parse_raw_pattern_lines(effective_excludes_raw));
-
-    let mut seen = std::collections::HashSet::new();
-    exclude_patterns.retain(|p| seen.insert(p.clone()));
-
-    let per_agent_includes_raw =
-        db::get_per_agent_includes_raw(pool, schedule.id, agent.id).await?;
-    let effective_includes_raw = per_agent_includes_raw
-        .as_deref()
-        .unwrap_or(&schedule.include_patterns_raw);
-    let include_patterns = parse_raw_pattern_lines(effective_includes_raw);
-
-    let per_agent_cmds = db::get_per_agent_commands(pool, schedule.id, agent.id).await?;
-
-    let per_agent_file_change_patterns_raw =
-        db::get_per_agent_file_change_patterns_raw(pool, schedule.id, agent.id).await?;
-    let effective_file_change_patterns_raw = per_agent_file_change_patterns_raw
-        .as_deref()
-        .unwrap_or(&schedule.file_change_patterns_raw);
-    // Schedule-level (or per-agent-schedule override) patterns are checked
-    // first, since `filter_file_change_warnings` on the agent uses
-    // first-match-wins; the agent's own defaults are appended as a
-    // fallback so they only apply to warnings the schedule didn't cover.
-    let mut file_change_patterns =
-        parse_raw_file_change_patterns(effective_file_change_patterns_raw);
-    file_change_patterns.extend(parse_raw_file_change_patterns(
-        &agent.default_file_change_patterns_raw,
-    ));
-
-    let pre_backup_commands =
-        effective_pre_backup_commands(agent, &schedule, per_agent_cmds.as_ref());
-    let post_backup_commands =
-        effective_post_backup_commands(agent, &schedule, per_agent_cmds.as_ref());
+    let files = file_set::resolve(pool, &schedule, agent).await?;
+    let exclude_patterns = files.exclude_patterns(global_excludes, schedule.ignore_global_excludes);
     let hook_timeout_seconds = u32::try_from(schedule.hook_timeout_seconds).map_err(|_| {
         ApiError::Internal(format!(
             "hook_timeout_seconds {} out of u32 range",
@@ -245,9 +162,11 @@ async fn build_schedule_config(
         schedule_type: schedule.schedule_type,
         cron_expression: schedule.cron_expression,
         enabled: schedule.enabled,
-        backup_sources,
+        backup_sources: files.paths,
         rate_limit_kbps: retention.rate_limit_kbps,
-        canary_enabled: schedule.canary_enabled,
+        // The canary file is written into a source directory, and a schedule
+        // that reads no files has none.
+        canary_enabled: schedule.canary_enabled && schedule.files_mode != ScheduleFilesMode::Off,
         vm_snapshot_enabled: schedule.vm_snapshot_enabled,
         database_backup_enabled: schedule.database_backup_enabled,
         fs_snapshot: schedule.fs_snapshot,
@@ -256,16 +175,16 @@ async fn build_schedule_config(
             .unwrap_or(shared::snapshot::DEFAULT_LVM_SNAPSHOT_PERCENT),
         exclude_patterns,
         ignore_global_excludes: schedule.ignore_global_excludes,
-        include_patterns,
+        include_patterns: files.includes,
         keep_hourly: retention.keep_hourly,
         keep_daily: retention.keep_daily,
         keep_weekly: retention.keep_weekly,
         keep_monthly: retention.keep_monthly,
         keep_yearly: retention.keep_yearly,
         compact_enabled: schedule.compact_enabled,
-        file_change_patterns,
-        pre_backup_commands,
-        post_backup_commands,
+        file_change_patterns: files.file_change_patterns,
+        pre_backup_commands: files.pre_backup_commands,
+        post_backup_commands: files.post_backup_commands,
         hook_timeout_seconds,
     })
 }

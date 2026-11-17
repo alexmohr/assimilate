@@ -26,7 +26,10 @@ use shared::{
     },
     hooks::HookCommand,
     responses::{Theme, UserPreferences},
-    types::{AcknowledgedFilter, IndexStatus, QuotaAction, ScheduleWakeOverride, SystemEventType},
+    types::{
+        AcknowledgedFilter, IndexStatus, QuotaAction, ScheduleFilesMode, ScheduleWakeOverride,
+        SystemEventType,
+    },
     vm::{DiscoveredVm, VmSelectionMode, VmSnapshotConfig, VmSnapshotMode, VmState},
 };
 use sqlx::PgPool;
@@ -198,6 +201,7 @@ async fn agent_update(pool: PgPool) {
             domain: None,
             default_backup_paths: &[],
             default_exclude_patterns: &[],
+            default_include_patterns: &[],
             default_pre_backup_commands: &[],
             default_post_backup_commands: &[],
             default_file_change_patterns_raw: "*/tmp/* ignore",
@@ -240,6 +244,7 @@ async fn changing_an_unknown_agent_is_not_found(pool: PgPool) {
             domain: None,
             default_backup_paths: &[],
             default_exclude_patterns: &[],
+            default_include_patterns: &[],
             default_pre_backup_commands: &[],
             default_post_backup_commands: &[],
             default_file_change_patterns_raw: "",
@@ -988,6 +993,8 @@ fn test_schedule_params(name: &str) -> ScheduleParams<'_> {
         on_failure: shared::types::OnFailure::Stop,
         fs_snapshot: shared::snapshot::FsSnapshotMode::Off,
         lvm_snapshot_percent: 10,
+        files_mode: shared::types::ScheduleFilesMode::Host,
+        run_host_commands: true,
     }
 }
 
@@ -1926,6 +1933,8 @@ async fn schedule_update(pool: PgPool) {
             on_failure: shared::types::OnFailure::Continue,
             fs_snapshot: shared::snapshot::FsSnapshotMode::BestEffort,
             lvm_snapshot_percent: 25,
+            files_mode: shared::types::ScheduleFilesMode::Host,
+            run_host_commands: true,
         },
     )
     .await
@@ -2074,6 +2083,8 @@ async fn schedule_list_for_repo_multi_schedule_and_isolation(pool: PgPool) {
             on_failure: shared::types::OnFailure::Stop,
             fs_snapshot: shared::snapshot::FsSnapshotMode::Off,
             lvm_snapshot_percent: 10,
+            files_mode: shared::types::ScheduleFilesMode::Host,
+            run_host_commands: true,
         },
         None,
     )
@@ -2115,6 +2126,8 @@ async fn schedule_list_for_repo_multi_schedule_and_isolation(pool: PgPool) {
             on_failure: shared::types::OnFailure::Stop,
             fs_snapshot: shared::snapshot::FsSnapshotMode::Off,
             lvm_snapshot_percent: 10,
+            files_mode: shared::types::ScheduleFilesMode::Host,
+            run_host_commands: true,
         },
         None,
     )
@@ -2577,6 +2590,8 @@ async fn schedule_excludes_raw_text_round_trip(pool: PgPool) {
             on_failure: shared::types::OnFailure::Stop,
             fs_snapshot: shared::snapshot::FsSnapshotMode::Off,
             lvm_snapshot_percent: 10,
+            files_mode: shared::types::ScheduleFilesMode::Host,
+            run_host_commands: true,
         },
     )
     .await
@@ -2680,6 +2695,61 @@ async fn config_assembly_includes_a_secondary_target_repository(pool: PgPool) {
     }
 }
 
+/// The canary file is written into one of the backup's source directories,
+/// so a schedule that reads no files never asks for one, even with the
+/// canary switched on. With files it keeps the canary it was given.
+#[sqlx::test(migrations = "./migrations")]
+async fn config_assembly_drops_the_canary_of_a_schedule_reading_no_files(pool: PgPool) {
+    let encryption_key = shared::crypto::derive_key(b"test-assembly-key-for-canary").unwrap();
+    let (agent, repo, schedule) = create_test_schedule(&pool).await;
+    let passphrase_encrypted =
+        shared::crypto::encrypt_passphrase("test-pass", &encryption_key).unwrap();
+    sqlx::query(
+        "WITH r AS (UPDATE repos SET passphrase_encrypted = $1, enabled = true WHERE id = $3 \
+         RETURNING repo_host_id) UPDATE repo_hosts SET ssh_host_key = $2 WHERE id IN (SELECT \
+         repo_host_id FROM r)",
+    )
+    .bind(passphrase_encrypted.as_slice())
+    .bind("ssh-ed25519 AAAATEST")
+    .bind(repo.id)
+    .execute(&pool)
+    .await
+    .unwrap();
+    db::insert_backup_source_for_schedule(&pool, schedule.id, "/home", 0)
+        .await
+        .unwrap();
+
+    let canary_for = |files_mode: &'static str| {
+        let pool = pool.clone();
+        async move {
+            sqlx::query(
+                "UPDATE schedules SET canary_enabled = true, files_mode = $2, vm_snapshot_enabled \
+                 = true WHERE id = $1",
+            )
+            .bind(schedule.id)
+            .bind(files_mode)
+            .execute(&pool)
+            .await
+            .unwrap();
+            let config =
+                server::config_assembler::assemble_config(&pool, &encryption_key, agent.id)
+                    .await
+                    .unwrap();
+            config
+                .repos
+                .first()
+                .unwrap()
+                .schedules
+                .first()
+                .unwrap()
+                .canary_enabled
+        }
+    };
+
+    assert!(canary_for("own").await, "own files keep the canary");
+    assert!(!canary_for("off").await, "no files, no canary");
+}
+
 #[sqlx::test(migrations = "./migrations")]
 async fn config_assembly_parses_raw_excludes_into_effective_patterns(pool: PgPool) {
     let encryption_key = shared::crypto::derive_key(b"test-assembly-key-for-excludes").unwrap();
@@ -2722,6 +2792,8 @@ async fn config_assembly_parses_raw_excludes_into_effective_patterns(pool: PgPoo
             on_failure: shared::types::OnFailure::Stop,
             fs_snapshot: shared::snapshot::FsSnapshotMode::Off,
             lvm_snapshot_percent: 10,
+            files_mode: shared::types::ScheduleFilesMode::Own,
+            run_host_commands: true,
         },
     )
     .await
@@ -2825,6 +2897,8 @@ async fn config_assembly_parses_raw_includes_into_effective_patterns(pool: PgPoo
             on_failure: shared::types::OnFailure::Stop,
             fs_snapshot: shared::snapshot::FsSnapshotMode::Off,
             lvm_snapshot_percent: 10,
+            files_mode: shared::types::ScheduleFilesMode::Own,
+            run_host_commands: true,
         },
     )
     .await
@@ -2910,6 +2984,8 @@ async fn config_assembly_uses_per_agent_include_override(pool: PgPool) {
             on_failure: shared::types::OnFailure::Stop,
             fs_snapshot: shared::snapshot::FsSnapshotMode::Off,
             lvm_snapshot_percent: 10,
+            files_mode: shared::types::ScheduleFilesMode::Own,
+            run_host_commands: true,
         },
     )
     .await
@@ -2956,7 +3032,7 @@ async fn config_assembly_uses_per_agent_include_override(pool: PgPool) {
 }
 
 #[sqlx::test(migrations = "./migrations")]
-async fn config_assembly_merges_agent_default_file_change_patterns(pool: PgPool) {
+async fn config_assembly_takes_file_change_patterns_from_the_schedules_own_files(pool: PgPool) {
     let encryption_key = shared::crypto::derive_key(b"test-assembly-key-for-file-change").unwrap();
     let (agent, repo, schedule) = create_test_schedule(&pool).await;
 
@@ -2991,6 +3067,8 @@ async fn config_assembly_merges_agent_default_file_change_patterns(pool: PgPool)
             on_failure: shared::types::OnFailure::Stop,
             fs_snapshot: shared::snapshot::FsSnapshotMode::Off,
             lvm_snapshot_percent: 10,
+            files_mode: shared::types::ScheduleFilesMode::Own,
+            run_host_commands: true,
         },
     )
     .await
@@ -3005,6 +3083,7 @@ async fn config_assembly_merges_agent_default_file_change_patterns(pool: PgPool)
             domain: agent.domain.as_deref(),
             default_backup_paths: &agent.default_backup_paths,
             default_exclude_patterns: &agent.default_exclude_patterns,
+            default_include_patterns: &[],
             default_pre_backup_commands: &agent.default_pre_backup_commands.0,
             default_post_backup_commands: &agent.default_post_backup_commands.0,
             default_file_change_patterns_raw: "*/agent-fallback* fatal",
@@ -3043,19 +3122,14 @@ async fn config_assembly_merges_agent_default_file_change_patterns(pool: PgPool)
         .first()
         .unwrap()
         .file_change_patterns;
-    assert_eq!(patterns.len(), 2);
-    // Schedule-level pattern must come first: `filter_file_change_warnings`
-    // uses first-match-wins, so the schedule's own configuration must win
-    // over the agent-wide fallback.
-    assert_eq!(patterns.first().unwrap().path, "*/schedule-specific*");
+    // A schedule with its own files reads only its own patterns: the host's
+    // set, file change patterns included, is replaced as a whole.
     assert_eq!(
-        patterns.first().unwrap().action,
-        shared::types::FileChangeAction::Ignore
-    );
-    assert_eq!(patterns.get(1).unwrap().path, "*/agent-fallback*");
-    assert_eq!(
-        patterns.get(1).unwrap().action,
-        shared::types::FileChangeAction::Fatal
+        patterns,
+        &vec![shared::types::FileChangePattern {
+            path: "*/schedule-specific*".to_owned(),
+            action: shared::types::FileChangeAction::Ignore,
+        }]
     );
 }
 
@@ -4357,6 +4431,8 @@ async fn health_summary_is_per_schedule(pool: PgPool) {
             on_failure: shared::types::OnFailure::Stop,
             fs_snapshot: shared::snapshot::FsSnapshotMode::Off,
             lvm_snapshot_percent: 10,
+            files_mode: shared::types::ScheduleFilesMode::Host,
+            run_host_commands: true,
         },
         None,
     )
@@ -4432,6 +4508,8 @@ async fn health_summary_filters_to_one_schedule(pool: PgPool) {
             on_failure: shared::types::OnFailure::Stop,
             fs_snapshot: shared::snapshot::FsSnapshotMode::Off,
             lvm_snapshot_percent: 10,
+            files_mode: shared::types::ScheduleFilesMode::Host,
+            run_host_commands: true,
         },
         None,
     )
@@ -4807,6 +4885,8 @@ async fn dashboard_queries_use_authoritative_assignments_and_exclude_placeholder
             on_failure: shared::types::OnFailure::Stop,
             fs_snapshot: shared::snapshot::FsSnapshotMode::Off,
             lvm_snapshot_percent: 10,
+            files_mode: shared::types::ScheduleFilesMode::Host,
+            run_host_commands: true,
         },
         None,
     )
@@ -4850,6 +4930,8 @@ async fn dashboard_queries_use_authoritative_assignments_and_exclude_placeholder
             on_failure: shared::types::OnFailure::Stop,
             fs_snapshot: shared::snapshot::FsSnapshotMode::Off,
             lvm_snapshot_percent: 10,
+            files_mode: shared::types::ScheduleFilesMode::Host,
+            run_host_commands: true,
         },
         None,
     )
@@ -6337,29 +6419,6 @@ async fn api_token_crud(pool: PgPool) {
     assert_eq!(tokens.len(), 0);
 }
 
-/// The agent record says whether the host allows database dumps, so a list
-/// of agents can flag a schedule asking for dumps a host will not make.
-#[sqlx::test(migrations = "./migrations")]
-async fn an_agent_row_carries_its_database_dump_setting(pool: PgPool) {
-    let agent = db::insert_agent(&pool, "dumps-host", None, "hash-dumps", None, None)
-        .await
-        .unwrap();
-    assert!(!agent.database_backup_enabled);
-    sqlx::query!(
-        "UPDATE agents SET database_backup_enabled = true WHERE id = $1",
-        agent.id
-    )
-    .execute(&pool)
-    .await
-    .unwrap();
-    assert!(
-        db::get_agent_by_id(&pool, agent.id)
-            .await
-            .unwrap()
-            .database_backup_enabled
-    );
-}
-
 /// Both token lookups (the API's and `/metrics`') refuse a token past its
 /// expiry and accept one still in date; both stay listed with their date.
 /// `test_an_expired_token_is_refused_over_http` covers the HTTP side.
@@ -7820,6 +7879,8 @@ async fn test_merge_agent_clears_auto_disable_bookkeeping_for_its_schedules(pool
             on_failure: shared::types::OnFailure::Stop,
             fs_snapshot: shared::snapshot::FsSnapshotMode::Off,
             lvm_snapshot_percent: 10,
+            files_mode: shared::types::ScheduleFilesMode::Host,
+            run_host_commands: true,
         },
         None,
     )
@@ -9158,6 +9219,8 @@ async fn repo_relocation_per_host_multi_agent(pool: PgPool) {
             on_failure: shared::types::OnFailure::Stop,
             fs_snapshot: shared::snapshot::FsSnapshotMode::Off,
             lvm_snapshot_percent: 10,
+            files_mode: shared::types::ScheduleFilesMode::Host,
+            run_host_commands: true,
         },
         None,
     )
@@ -9709,6 +9772,8 @@ async fn reports_carry_repo_name_and_fall_back_to_it_when_schedule_unnamed(pool:
             on_failure: shared::types::OnFailure::Stop,
             fs_snapshot: shared::snapshot::FsSnapshotMode::Off,
             lvm_snapshot_percent: 10,
+            files_mode: shared::types::ScheduleFilesMode::Host,
+            run_host_commands: true,
         },
         None,
     )
@@ -9972,6 +10037,8 @@ async fn activity_feed_days_limit_is_per_schedule(pool: PgPool) {
             on_failure: shared::types::OnFailure::Stop,
             fs_snapshot: shared::snapshot::FsSnapshotMode::Off,
             lvm_snapshot_percent: 10,
+            files_mode: shared::types::ScheduleFilesMode::Host,
+            run_host_commands: true,
         },
         None,
     )
@@ -11292,6 +11359,8 @@ async fn delete_failed_backup_reports_for_schedule_test(pool: PgPool) {
             on_failure: shared::types::OnFailure::Stop,
             fs_snapshot: shared::snapshot::FsSnapshotMode::Off,
             lvm_snapshot_percent: 10,
+            files_mode: shared::types::ScheduleFilesMode::Host,
+            run_host_commands: true,
         },
         None,
     )
@@ -11926,6 +11995,7 @@ async fn agent_insert_with_paths(pool: PgPool) {
             domain: None,
             default_backup_paths: &paths,
             default_exclude_patterns: &excludes,
+            default_include_patterns: &[],
             default_pre_backup_commands: &[],
             default_post_backup_commands: &[],
             default_file_change_patterns_raw: "*/etc/config* fatal",
@@ -13621,6 +13691,8 @@ async fn schedule_hook_commands_decode_legacy_bare_strings(pool: PgPool) {
             on_failure: shared::types::OnFailure::Stop,
             fs_snapshot: shared::snapshot::FsSnapshotMode::Off,
             lvm_snapshot_percent: 10,
+            files_mode: shared::types::ScheduleFilesMode::Host,
+            run_host_commands: true,
         },
         None,
     )
@@ -13667,6 +13739,7 @@ async fn agent_default_hook_commands_round_trip_their_timeouts(pool: PgPool) {
             domain: None,
             default_backup_paths: &[],
             default_exclude_patterns: &[],
+            default_include_patterns: &[],
             default_pre_backup_commands: &commands,
             default_post_backup_commands: &[],
             default_file_change_patterns_raw: "",
@@ -13704,7 +13777,6 @@ async fn vm_selection_survives_a_round_trip(pool: PgPool) {
         &pool,
         agent.id,
         db::vms::VmSnapshotPatch {
-            enabled: true,
             dir: "/srv/vm",
             full_interval: 7,
             timeout_seconds: 1800,
@@ -13817,7 +13889,6 @@ async fn a_rescan_keeps_a_selection_that_the_old_prune_would_have_dropped(pool: 
         &pool,
         agent.id,
         db::vms::VmSnapshotPatch {
-            enabled: true,
             dir: "/srv/vm",
             full_interval: 7,
             timeout_seconds: 1800,
@@ -13859,7 +13930,6 @@ async fn a_settings_save_without_a_selection_keeps_the_stored_mode(pool: PgPool)
         .unwrap();
 
     let patch = |selection| db::vms::VmSnapshotPatch {
-        enabled: true,
         dir: "/srv/vm",
         full_interval: 7,
         timeout_seconds: 1800,
@@ -13915,7 +13985,6 @@ async fn setting_a_limit_leaves_an_undecided_domain_undecided(pool: PgPool) {
         &pool,
         agent.id,
         db::vms::VmSnapshotPatch {
-            enabled: true,
             dir: "/srv/vm",
             full_interval: 7,
             timeout_seconds: 1800,
@@ -14092,6 +14161,8 @@ async fn schedule_insert_persists_the_wake_override(pool: PgPool) {
             on_failure: shared::types::OnFailure::Stop,
             fs_snapshot: shared::snapshot::FsSnapshotMode::Off,
             lvm_snapshot_percent: 10,
+            files_mode: shared::types::ScheduleFilesMode::Host,
+            run_host_commands: true,
         },
         None,
     )
@@ -14138,6 +14209,8 @@ async fn schedule_wake_override_defaults_to_the_host_and_round_trips_an_update(p
             on_failure: shared::types::OnFailure::Stop,
             fs_snapshot: shared::snapshot::FsSnapshotMode::Off,
             lvm_snapshot_percent: 10,
+            files_mode: shared::types::ScheduleFilesMode::Host,
+            run_host_commands: true,
         },
     )
     .await
@@ -17309,7 +17382,9 @@ async fn database_dumps_start_off_with_the_default_directory(pool: PgPool) {
 
     let config = db::databases::load_config(&pool, agent.id).await.unwrap();
 
-    assert!(!config.enabled);
+    // A host has no switch of its own any more: what keeps a new host from
+    // dumping anything is that it searches no runtime yet.
+    assert!(config.enabled);
     assert_eq!(config.dump_dir, shared::database::DEFAULT_DUMP_DIR);
     assert_eq!(config.runtimes, DatabaseRuntimes::default());
     assert_eq!(config.selection, DatabaseSelectionMode::All);
@@ -17358,7 +17433,6 @@ async fn database_settings_survive_a_round_trip(pool: PgPool) {
         },
     };
     let patch = |selection| db::databases::DatabaseBackupPatch {
-        enabled: true,
         dump_dir: "/srv/dumps",
         runtimes: &runtimes,
         selection,
@@ -17628,6 +17702,7 @@ fn unchanged_agent_defaults() -> db::AgentDefaults<'static> {
         domain: None,
         default_backup_paths: &[],
         default_exclude_patterns: &[],
+        default_include_patterns: &[],
         default_pre_backup_commands: &[],
         default_post_backup_commands: &[],
         default_file_change_patterns_raw: "",
@@ -18963,4 +19038,234 @@ mod append_only_queries {
             vec!["gone".to_owned()]
         );
     }
+}
+
+/// The files-mode migration, run over schedules from before it: a schedule
+/// that set no file field of its own takes each host's files; one that did
+/// becomes "own", and the host values it used to inherit are written into
+/// its own set, shared where every host agrees and per host where they
+/// differ, so every backup reads what it read before.
+#[sqlx::test(migrations = false)]
+async fn the_files_mode_migration_keeps_every_backup_reading_the_same_files(pool: PgPool) {
+    use sqlx::migrate::Migrate;
+
+    const FILES_MODE_MIGRATION: i64 = 20_261_115_120_000;
+    let migrator = sqlx::migrate!("./migrations");
+    let mut conn = pool.acquire().await.unwrap();
+    conn.ensure_migrations_table().await.unwrap();
+    for migration in migrator
+        .iter()
+        .filter(|m| m.version < FILES_MODE_MIGRATION && m.migration_type.is_up_migration())
+    {
+        conn.apply(migration).await.unwrap();
+    }
+
+    sqlx::query(
+        "INSERT INTO agents (hostname, agent_token_hash, default_backup_paths, \
+         default_exclude_patterns, default_pre_backup_commands, default_post_backup_commands, \
+         default_file_change_patterns_raw) VALUES ('fm-a', 'hash', ARRAY['/etc'], \
+         ARRAY['*.cache'], '[{\"command\": \"stop\", \"timeout_seconds\": null}]', \
+         '[{\"command\": \"start\", \"timeout_seconds\": null}]', '/wal/** ignore'), ('fm-b', \
+         'hash', ARRAY['/etc'], ARRAY['*.cache'], '[{\"command\": \"stop\", \"timeout_seconds\": \
+         null}]', '[{\"command\": \"start\", \"timeout_seconds\": null}]', '/wal/** ignore'), \
+         ('fm-c', 'hash', ARRAY['/opt'], ARRAY['*.log'], '[]', '[]', '')",
+    )
+    .execute(&mut *conn)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO schedules (name, cron_expression, exclude_patterns_raw, pre_backup_commands) \
+         VALUES ('fm-plain', '0 2 * * *', '', '[]'), ('fm-paths', '0 2 * * *', '*.tmp', \
+         '[{\"command\": \"dump\", \"timeout_seconds\": null}]'), ('fm-extras', '0 2 * * *', \
+         '*.tmp', '[]'), ('fm-mixed', '0 2 * * *', '*.tmp', '[]')",
+    )
+    .execute(&mut *conn)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO schedule_targets (schedule_id, agent_id, execution_order) SELECT s.id, a.id, \
+         0 FROM schedules s, agents a WHERE (s.name IN ('fm-plain', 'fm-paths') AND a.hostname IN \
+         ('fm-a', 'fm-b')) OR (s.name = 'fm-extras' AND a.hostname = 'fm-a') OR (s.name = \
+         'fm-mixed' AND a.hostname IN ('fm-a', 'fm-c'))",
+    )
+    .execute(&mut *conn)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO backup_sources (schedule_id, path, sort_order) SELECT id, '/srv', 0 FROM \
+         schedules WHERE name = 'fm-paths'",
+    )
+    .execute(&mut *conn)
+    .await
+    .unwrap();
+
+    for migration in migrator
+        .iter()
+        .filter(|m| m.version >= FILES_MODE_MIGRATION && m.migration_type.is_up_migration())
+    {
+        conn.apply(migration).await.unwrap();
+    }
+    drop(conn);
+
+    let schedules = db::list_schedules(&pool).await.unwrap();
+    let by_name = |name: &str| {
+        schedules
+            .iter()
+            .find(|s| s.name == name)
+            .unwrap_or_else(|| panic!("schedule {name} exists"))
+    };
+
+    let plain = by_name("fm-plain");
+    assert_eq!(plain.files_mode, ScheduleFilesMode::Host);
+    assert!(plain.run_host_commands);
+
+    // Own paths on two hosts with the same defaults: one shared set that
+    // carries the host excludes, patterns and commands it used to inherit.
+    let paths = by_name("fm-paths");
+    assert_eq!(paths.files_mode, ScheduleFilesMode::Own);
+    assert_eq!(
+        db::list_backup_sources_for_schedule(&pool, paths.id)
+            .await
+            .unwrap(),
+        vec!["/srv".to_owned()]
+    );
+    assert_eq!(paths.exclude_patterns_raw, "*.cache\n*.tmp");
+    assert_eq!(paths.file_change_patterns_raw, "/wal/** ignore");
+    let commands = |list: &[shared::hooks::HookCommand]| {
+        list.iter().map(|c| c.command.clone()).collect::<Vec<_>>()
+    };
+    assert_eq!(commands(&paths.pre_backup_commands.0), ["stop", "dump"]);
+    assert_eq!(commands(&paths.post_backup_commands.0), ["start"]);
+
+    // Only extras of its own: it took the host's paths, which are now its own.
+    let extras = by_name("fm-extras");
+    assert_eq!(extras.files_mode, ScheduleFilesMode::Own);
+    assert_eq!(
+        db::list_backup_sources_for_schedule(&pool, extras.id)
+            .await
+            .unwrap(),
+        vec!["/etc".to_owned()]
+    );
+    assert_eq!(extras.exclude_patterns_raw, "*.cache\n*.tmp");
+
+    // Hosts whose sets differ keep their own values per host.
+    let mixed = by_name("fm-mixed");
+    assert_eq!(mixed.files_mode, ScheduleFilesMode::Own);
+    let a = db::get_agent_by_hostname(&pool, "fm-a", None)
+        .await
+        .unwrap()
+        .id;
+    let c = db::get_agent_by_hostname(&pool, "fm-c", None)
+        .await
+        .unwrap()
+        .id;
+    assert_eq!(
+        db::list_backup_sources_for_schedule_agent(&pool, mixed.id, c)
+            .await
+            .unwrap(),
+        vec!["/opt".to_owned()]
+    );
+    assert_eq!(
+        db::get_per_agent_excludes_raw(&pool, mixed.id, a)
+            .await
+            .unwrap()
+            .as_deref(),
+        Some("*.cache\n*.tmp")
+    );
+    assert_eq!(
+        db::get_per_agent_excludes_raw(&pool, mixed.id, c)
+            .await
+            .unwrap()
+            .as_deref(),
+        Some("*.log\n*.tmp")
+    );
+    let c_commands = db::get_per_agent_commands(&pool, mixed.id, c)
+        .await
+        .unwrap()
+        .expect("hosts with different commands keep them per host");
+    assert_eq!(
+        c_commands.pre_backup_commands,
+        Vec::<shared::hooks::HookCommand>::new()
+    );
+}
+
+/// The migration that dropped a host's VM and database switches, run over a
+/// host that had both off: it backed up none of its domains or sources, and
+/// still does, because its selections become "only selected" with nothing
+/// selected. A host that had them on is left exactly as it was.
+#[sqlx::test(migrations = false)]
+async fn dropping_the_host_switches_keeps_a_switched_off_host_backing_up_nothing(pool: PgPool) {
+    use sqlx::migrate::Migrate;
+
+    const SWITCHES_MIGRATION: i64 = 20_261_115_130_000;
+    let migrator = sqlx::migrate!("./migrations");
+    let mut conn = pool.acquire().await.unwrap();
+    conn.ensure_migrations_table().await.unwrap();
+    for migration in migrator
+        .iter()
+        .filter(|m| m.version < SWITCHES_MIGRATION && m.migration_type.is_up_migration())
+    {
+        conn.apply(migration).await.unwrap();
+    }
+
+    sqlx::query(
+        "INSERT INTO agents (hostname, agent_token_hash, vm_snapshot_enabled, \
+         database_backup_enabled) VALUES ('sw-off', 'hash', false, false), ('sw-on', 'hash', \
+         true, true)",
+    )
+    .execute(&mut *conn)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO agent_vms (agent_id, name, included) SELECT id, 'vm1', NULL FROM agents \
+         UNION ALL SELECT id, 'vm2', TRUE FROM agents",
+    )
+    .execute(&mut *conn)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO agent_database_sources (agent_id, runtime, namespace, name, included) SELECT \
+         id, 'docker', '', 'db', NULL FROM agents",
+    )
+    .execute(&mut *conn)
+    .await
+    .unwrap();
+
+    for migration in migrator
+        .iter()
+        .filter(|m| m.version >= SWITCHES_MIGRATION && m.migration_type.is_up_migration())
+    {
+        conn.apply(migration).await.unwrap();
+    }
+    drop(conn);
+
+    let off = db::get_agent_by_hostname(&pool, "sw-off", None)
+        .await
+        .unwrap();
+    let vms = db::vms::load_config(&pool, off.id).await.unwrap();
+    assert!(vms.enabled, "the server always sends the switch on");
+    assert_eq!(vms.selection, shared::vm::VmSelectionMode::Selected);
+    assert_eq!(vms.domains.len(), 2);
+    assert!(
+        vms.domains
+            .iter()
+            .all(|domain| domain.included == Some(false))
+    );
+    let dumps = db::databases::load_config(&pool, off.id).await.unwrap();
+    assert_eq!(dumps.selection, DatabaseSelectionMode::Selected);
+    assert_ne!(dumps.sources.len(), 0);
+    assert!(
+        dumps
+            .sources
+            .iter()
+            .all(|source| source.included == Some(false))
+    );
+
+    let on = db::get_agent_by_hostname(&pool, "sw-on", None)
+        .await
+        .unwrap();
+    let vms = db::vms::load_config(&pool, on.id).await.unwrap();
+    assert_eq!(vms.selection, shared::vm::VmSelectionMode::All);
+    let dumps = db::databases::load_config(&pool, on.id).await.unwrap();
+    assert_eq!(dumps.selection, DatabaseSelectionMode::All);
 }

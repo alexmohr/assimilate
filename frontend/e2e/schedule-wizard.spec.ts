@@ -36,13 +36,29 @@ test.describe('New schedule wizard', () => {
     await expect(enabled).toHaveAttribute('aria-checked', 'false')
     await next.click()
 
-    // Sources: a host and what to read from it.
+    // Sources: a host and what to read from it - here only /etc, as this
+    // schedule's own files, plus the host's databases.
     await expect(current).toContainText('Sources')
     await expect(foot).toContainText('Needs at least one host to continue.')
     await page.locator('.multi-select-trigger').click()
     await page.getByRole('checkbox', { name: 'Production Web Server' }).check()
     await page.locator('.multi-select-trigger').click()
-    await page.locator('#backup-paths').fill('/etc')
+    await page
+      .getByRole('radiogroup', { name: 'Files' })
+      .getByRole('radio', { name: 'Own files' })
+      .click()
+    const ownFiles = page.locator('.own-files')
+    await ownFiles.getByRole('button', { name: 'Edit' }).click()
+    await ownFiles.locator('#file-sources-paths').fill('/etc')
+    await ownFiles.getByRole('button', { name: 'Save' }).click()
+    await expect(ownFiles.locator('.path-item')).toHaveText(['/etc'])
+
+    // Taking databases says up front that this host has none set up.
+    await expect(page.getByTestId('source-not-set-up-databases')).toHaveCount(0)
+    await page.getByRole('switch', { name: 'Databases' }).click()
+    const mismatch = page.getByTestId('source-not-set-up-databases')
+    await expect(mismatch).toContainText('No databases will be dumped on 1 host')
+    await expect(mismatch.getByRole('link')).toHaveAttribute('href', /\/agents\/web-server-01\?/)
     await next.click()
 
     // Targets: the first repository is preselected.
@@ -62,14 +78,8 @@ test.describe('New schedule wizard', () => {
     await expect(page.locator('#keep-daily')).not.toHaveValue('')
     await next.click()
 
-    // Advanced: asking for database dumps says up front that this host has
-    // them turned off.
+    // Advanced: the options most schedules leave alone.
     await expect(current).toContainText('Advanced')
-    await expect(page.getByTestId('database-dump-mismatch')).toHaveCount(0)
-    await page.getByRole('switch', { name: 'Dump databases' }).click()
-    const mismatch = page.getByTestId('database-dump-mismatch')
-    await expect(mismatch).toContainText('No databases will be dumped on 1 host')
-    await expect(mismatch.getByRole('link')).toHaveAttribute('href', /\/agents\/web-server-01\?/)
     await next.click()
 
     // Review: nothing missing, and every block says what will be made.
@@ -104,6 +114,8 @@ test.describe('New schedule wizard', () => {
     expect(created.request().postDataJSON()).toMatchObject({
       name,
       enabled: false,
+      files_mode: 'own',
+      backup_sources: ['/etc'],
       database_backup_enabled: true,
     })
     const { id } = (await created.json()) as { id: number }
@@ -111,7 +123,7 @@ test.describe('New schedule wizard', () => {
       // The new schedule's own page carries the same warning.
       await expect(page).toHaveURL(new RegExp(`/schedules/${id}$`))
       await expect(page.getByRole('heading', { name })).toBeVisible()
-      await expect(page.getByTestId('database-dump-mismatch')).toBeVisible()
+      await expect(page.getByTestId('source-not-set-up-databases')).toBeVisible()
     } finally {
       const removed = await page.request.delete(`/api/schedules/${id}`)
       expect(removed.ok()).toBe(true)

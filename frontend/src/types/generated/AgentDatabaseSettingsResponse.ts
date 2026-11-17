@@ -7,10 +7,6 @@ import type { DatabaseSelectionMode } from "./DatabaseSelectionMode";
  */
 export type AgentDatabaseSettingsResponse = {
   /**
-   * Whether this host dumps databases at all.
-   */
-  enabled: boolean;
-  /**
    * Directory on the host that holds the dump pipes while a backup runs.
    */
   dump_dir: string;

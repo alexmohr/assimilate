@@ -22,13 +22,13 @@ macro_rules! query_agent_rows {
             "SELECT a.id, hostname, display_name, agent_version, agent_git_sha, \
              agent_build_time, agent_commit_count, a.created_at, last_seen_at, owner_id, \
              visibility AS \"visibility: Visibility\", default_backup_paths, \
-             default_exclude_patterns, default_pre_backup_commands AS \
+             default_exclude_patterns, default_include_patterns, default_pre_backup_commands AS \
              \"default_pre_backup_commands: HookCommands\", default_post_backup_commands AS \
              \"default_post_backup_commands: HookCommands\", default_file_change_patterns_raw, \
              agent_token_hash, is_hidden, last_ssh_user, domain, wake_enabled, wake_mac_address, \
              wake_broadcast_address, wake_timeout_seconds, shutdown_after_backup, \
              start_agent_enabled, stop_agent_after_backup, ssh_host, ssh_port, \
-             agent_service_name, a.machine_id, a.database_backup_enabled FROM agents a JOIN \
+             agent_service_name, a.machine_id FROM agents a JOIN \
              machines m ON m.id = \
              a.machine_id "
                 + $tail
@@ -225,6 +225,9 @@ pub struct AgentRow {
     /// Default exclude patterns for schedules targeting this agent.
     #[serde(default)]
     pub default_exclude_patterns: Vec<String>,
+    /// The host's include patterns: exceptions to its excludes.
+    #[serde(default)]
+    pub default_include_patterns: Vec<String>,
     /// Default pre-backup commands.
     #[schema(value_type = Vec<HookCommand>)]
     pub default_pre_backup_commands: HookCommands,
@@ -274,9 +277,6 @@ pub struct AgentRow {
     /// The machine this agent runs on, which holds the wake and availability
     /// settings above.
     pub machine_id: i64,
-    /// Whether the host allows database dumps at all; a schedule asking for
-    /// them gets none while this is off.
-    pub database_backup_enabled: bool,
 }
 
 /// Looks up an agent by hostname, optionally narrowed to a specific
@@ -573,6 +573,8 @@ pub struct AgentDefaults<'a> {
     pub default_backup_paths: &'a [String],
     /// Default exclude patterns.
     pub default_exclude_patterns: &'a [String],
+    /// Include patterns: exceptions to the excludes.
+    pub default_include_patterns: &'a [String],
     /// Default pre-backup commands.
     pub default_pre_backup_commands: &'a [HookCommand],
     /// Default post-backup commands.
@@ -593,8 +595,8 @@ pub async fn insert_agent_with_paths(
     let agent_id = sqlx::query_scalar!(
         "INSERT INTO agents (hostname, display_name, agent_token_hash, default_backup_paths, \
          default_exclude_patterns, default_pre_backup_commands, default_post_backup_commands, \
-         default_file_change_patterns_raw, domain) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) \
-         RETURNING id",
+         default_file_change_patterns_raw, domain, default_include_patterns) VALUES ($1, $2, $3, \
+         $4, $5, $6, $7, $8, $9, $10) RETURNING id",
         hostname,
         defaults.display_name,
         token_hash,
@@ -604,6 +606,7 @@ pub async fn insert_agent_with_paths(
         sqlx::types::Json(defaults.default_post_backup_commands) as _,
         defaults.default_file_change_patterns_raw,
         defaults.domain,
+        defaults.default_include_patterns,
     )
     .fetch_one(pool)
     .await
@@ -625,8 +628,8 @@ pub async fn update_agent(
     let agent_id = sqlx::query_scalar!(
         "UPDATE agents SET hostname = $2, display_name = $3, default_backup_paths = $4, \
          default_exclude_patterns = $5, default_pre_backup_commands = $6, \
-         default_post_backup_commands = $7, default_file_change_patterns_raw = $8, domain = $9 \
-         WHERE id = $1 RETURNING id",
+         default_post_backup_commands = $7, default_file_change_patterns_raw = $8, domain = $9, \
+         default_include_patterns = $10 WHERE id = $1 RETURNING id",
         agent_id,
         new_hostname,
         defaults.display_name,
@@ -636,6 +639,7 @@ pub async fn update_agent(
         sqlx::types::Json(defaults.default_post_backup_commands) as _,
         defaults.default_file_change_patterns_raw,
         defaults.domain,
+        defaults.default_include_patterns,
     )
     .fetch_one(pool)
     .await

@@ -6,8 +6,8 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 <script setup lang="ts">
 import { runLogLink } from '../utils/activityLink'
 import { legacyDetailLink } from '../utils/legacyDetailLink'
-import { useHostDumpSettings } from '../composables/useHostDumpSettings'
-import DatabaseDumpMismatch from '../components/DatabaseDumpMismatch.vue'
+import { hostsWithoutPaths, useHostSources } from '../composables/useHostSources'
+import SourceNotSetUp from '../components/SourceNotSetUp.vue'
 import { ref, computed, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { storeToRefs } from 'pinia'
@@ -42,12 +42,13 @@ import { useElapsedClock } from '../composables/useElapsedTimer'
 import { useTimeout } from '../composables/useTimeout'
 import {
   agentOverridePayload,
+  ownPathsPayload,
   primaryRepoId as primaryTargetRepoId,
   repoTargetsProblem,
   scheduleFormPayload,
+  sourcesProblem,
   type ScheduleFormPayload,
 } from '../utils/schedulePayload'
-import { parseLines } from '../utils/validation'
 import { normalizeBackupStatus } from '../utils/backupStatus'
 import { isAgentOffline, lastSeenText } from '../utils/agent'
 import {
@@ -158,6 +159,8 @@ const primaryRepoId = computed(() => schedule.value?.repo_id ?? null)
 const onFailure = ref<'stop' | 'continue'>('stop')
 const usePerHostPaths = ref(false)
 const perHostSources = ref<Record<number, string>>({})
+/** Whether the schedule on screen has per-host paths saved on the server. */
+const savedPerHostPaths = ref(false)
 
 // The Advanced section's per-agent overrides, grouped so the tab component
 // takes one v-model instead of seven.
@@ -299,18 +302,40 @@ const agentMap = computed(() => {
   return m
 })
 
+/** The saved schedule's known targets, in order. */
+const targetHosts = computed(() =>
+  selectedAgentIds.value.flatMap((id) => {
+    const agent = agentMap.value.get(id)
+    return agent ? [agent] : []
+  }),
+)
+
 /**
- * The saved schedule's hosts that have database dumps turned off themselves,
- * read only while the schedule asks for dumps: on those hosts its archives
- * hold no databases, which the agent only says in its own log.
+ * The saved schedule's hosts with no backup paths while it takes each host's
+ * files: it backs up no files on them. Kept in view since a schedule can be
+ * moved to such a host and its paths set up afterwards.
  */
-const { hostsWithDumpsOff: dumpHostsOff } = useHostDumpSettings(() =>
-  schedule.value?.database_backup_enabled
-    ? selectedAgentIds.value.flatMap((id) => {
-        const agent = agentMap.value.get(id)
-        return agent ? [agent] : []
-      })
-    : [],
+const fileHostsMissing = computed(() =>
+  schedule.value?.files_mode === 'host' ? hostsWithoutPaths(targetHosts.value) : [],
+)
+
+/**
+ * The saved schedule's hosts with no VMs or no database sources set up, read
+ * only while the schedule takes them: on those hosts its archives hold none,
+ * which the agent only says in its own log.
+ */
+const { hostsWithout: hostsWithoutSource } = useHostSources(
+  () =>
+    schedule.value?.vm_snapshot_enabled || schedule.value?.database_backup_enabled
+      ? targetHosts.value
+      : [],
+  { canReadDatabases: () => isAdmin.value },
+)
+const vmHostsMissing = computed(() =>
+  schedule.value?.vm_snapshot_enabled ? hostsWithoutSource('vms') : [],
+)
+const dumpHostsMissing = computed(() =>
+  schedule.value?.database_backup_enabled ? hostsWithoutSource('databases') : [],
 )
 
 const headerTypeLabel = computed(() => scheduleTypeLabel(scheduleType.value))
@@ -398,6 +423,8 @@ function populateForm(s: ScheduleRow): void {
     wake_override: s.wake_override,
     catch_up_min_lead_minutes: s.catch_up_min_lead_minutes,
     backup_sources: '',
+    files_mode: s.files_mode,
+    run_host_commands: s.run_host_commands,
   }
   onFailure.value = s.on_failure
 }
@@ -432,6 +459,7 @@ function clearScheduleState(): void {
   // save would write them onto the schedule now on screen.
   usePerHostPaths.value = false
   perHostSources.value = {}
+  savedPerHostPaths.value = false
   agentOverrides.value = emptyAgentOverrides()
   health.value = []
   reports.value = []
@@ -532,6 +560,7 @@ async function loadData(): Promise<void> {
     const perHost = sources.backup_sources_per_agent ?? []
     if (perHost.length > 0) {
       usePerHostPaths.value = true
+      savedPerHostPaths.value = true
       const map: Record<number, string> = {}
       for (const entry of perHost) {
         map[Number(entry.agent_id)] = entry.paths.join('\n')
@@ -682,27 +711,26 @@ async function refreshSchedule(): Promise<void> {
   }
 }
 
+/** A section's own Save: the page's save, with its error handed back. */
+async function commitFromSection(): Promise<string | null> {
+  await save()
+  return saveError.value
+}
+
 async function save(): Promise<void> {
   saving.value = true
   saveError.value = null
   saveSuccess.value = false
   try {
+    const ownPaths = {
+      usePerHostPaths: usePerHostPaths.value,
+      perHostSources: perHostSources.value,
+      clearSavedPerHost: savedPerHostPaths.value && !usePerHostPaths.value,
+    }
     const payload: ScheduleFormPayload = {
       ...scheduleFormPayload(form.value),
-      // Per-agent paths replace the shared list rather than adding to it.
-      ...(usePerHostPaths.value ? { backup_sources: [] } : {}),
-    }
-
-    if (usePerHostPaths.value) {
-      const perHost: { agent_id: number; paths: string[] }[] = []
-      for (const id of selectedAgentIds.value) {
-        const text = perHostSources.value[id] ?? ''
-        const paths = parseLines(text)
-        if (paths.length > 0) {
-          perHost.push({ agent_id: id, paths })
-        }
-      }
-      payload.backup_sources_per_agent = perHost
+      // Kept whatever the mode, so switching back to its own files finds them.
+      ...ownPathsPayload(form.value, ownPaths, selectedAgentIds.value),
     }
 
     Object.assign(payload, agentOverridePayload(agentOverrides.value, selectedAgentIds.value))
@@ -715,6 +743,13 @@ async function save(): Promise<void> {
       }
       if (repoTargetsProblem(repoTargets.value)) {
         saveError.value = 'Select at least one repository, and mark at least one of them required.'
+        return
+      }
+      const sources = isBackup.value
+        ? sourcesProblem(form.value, ownPaths, selectedAgentIds.value)
+        : null
+      if (sources) {
+        saveError.value = `Under Sources, give this schedule ${sources}.`
         return
       }
       const percentProblem = lvmSnapshotPercentProblem(form.value)
@@ -730,7 +765,13 @@ async function save(): Promise<void> {
         on_failure: onFailure.value,
       })
       schedule.value = updated
+      // The schedule row carries no paths (they are their own endpoint, read
+      // on load), so the ones just saved are kept rather than blanked.
+      const savedPaths = form.value.backup_sources
       populateForm(updated)
+      form.value.backup_sources = savedPaths
+      agentOverrides.value = { ...agentOverrides.value, clearPerHost: false }
+      savedPerHostPaths.value = usePerHostPaths.value
       saveSuccess.value = true
       saveSuccessTimeout.start(() => {
         saveSuccess.value = false
@@ -1061,10 +1102,23 @@ watch(activeTab, (tab) => {
         <h1 class="page-title">New Schedule</h1>
       </div>
 
-      <DatabaseDumpMismatch
-        v-if="schedule.database_backup_enabled && dumpHostsOff.length > 0"
+      <SourceNotSetUp
+        v-if="fileHostsMissing.length > 0"
         class="schedule-dump-mismatch"
-        :hosts="dumpHostsOff"
+        kind="files"
+        :hosts="fileHostsMissing"
+      />
+      <SourceNotSetUp
+        v-if="vmHostsMissing.length > 0"
+        class="schedule-dump-mismatch"
+        kind="vms"
+        :hosts="vmHostsMissing"
+      />
+      <SourceNotSetUp
+        v-if="dumpHostsMissing.length > 0"
+        class="schedule-dump-mismatch"
+        kind="databases"
+        :hosts="dumpHostsMissing"
       />
 
       <BaseTabs
@@ -1144,6 +1198,7 @@ watch(activeTab, (tab) => {
           :saving="saving"
           :catch-up-sources="catchUpSources"
           :schedule-id="schedule.id"
+          :commit="commitFromSection"
           @dependencies-saved="loadDependencies()"
         />
       </div>

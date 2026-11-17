@@ -19,7 +19,7 @@ Each row shows:
 |--------|---------|
 | **Dependency** | A status dot for what the last check found — green when it answered, yellow when it did not, grey before it was ever checked; hover it for the words — then the name over the protocol and `address:port`, and **Same machine as** the repository host it shares a machine with |
 | **Availability** | **Always online**, or **Intermittent** for a machine marked as not always online, followed by **woken** (**woken on demand** when intermittent) when the machine is woken before a backup |
-| **Used by** | How many schedules and how many agents' backup defaults require it. Each count opens the dependency's [Used by](#used-by) section |
+| **Used by** | How many schedules and how many hosts' files require it. Each count opens the dependency's [Used by](#used-by) section |
 | **Last checked** | When it was last checked; **Never** when it has not been |
 
 Select a row to open the dependency's page. When runs are waiting on a dependency to answer, a line under its row says how many, names each schedule and agent with the time the skipped run was due — and when it gives up, if it does — and **View run** opens the dependency's **Power & dependencies** section (described below), which lists them with **Check now**.
@@ -30,7 +30,7 @@ Checking and waking a dependency are on its own page, not on the list.
 
 ## Prerequisites
 
-- A [schedule](scheduling.md) or an [agent's backup defaults](agents.md#settings) with a pre-backup command that needs the machine, for example one that mounts a share.
+- A [schedule](scheduling.md) or a [host's files](agents.md#sources) with a pre-backup command that needs the machine, for example one that mounts a share.
 - Admin access to add, change or remove a dependency. Anyone signed in can see them, since a schedule's own settings name them.
 
 ## How a Run Uses a Dependency
@@ -155,7 +155,7 @@ The run's **Power management** timeline shows each dependency step under a **Dep
 | `POST` | `/api/dependency-hosts/{dependency_host_id}/test` | Check it now, without waking it |
 | `GET` | `/api/dependency-hosts/{dependency_host_id}/usage` | List the schedules and agents that need it |
 | `GET` / `PUT` | `/api/schedules/{id}/dependencies` | Get or set what each target agent of a schedule needs |
-| `GET` / `PUT` | `/api/agents/{hostname}/dependencies` | Get or set what an agent's backup defaults require |
+| `GET` / `PUT` | `/api/agents/{hostname}/dependencies` | Get or set what a host's files require |
 | `GET` / `PUT` | `/api/repo-hosts/{repo_host_id}/dependencies` | Get or set what every backup to a repository host requires |
 
 How its machine is woken and whether it is always online are set through the [machine endpoints](api-reference.md#machines).

@@ -52,6 +52,10 @@ export type AgentResponse = {
    */
   default_exclude_patterns: Array<string>;
   /**
+   * Include patterns: exceptions to the excludes.
+   */
+  default_include_patterns: Array<string>;
+  /**
    * Default commands to run before backups.
    */
   default_pre_backup_commands: Array<HookCommand>;
@@ -110,11 +114,6 @@ export type AgentResponse = {
    * its wake and availability settings.
    */
   machine_id: number;
-  /**
-   * Whether the host allows database dumps. A schedule that asks for them
-   * dumps nothing on a host where this is off.
-   */
-  database_backup_enabled: boolean;
   /**
    * Power-management settings: waking this agent's host before a backup,
    * and starting/stopping the agent process itself over SSH.

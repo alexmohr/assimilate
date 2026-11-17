@@ -44,9 +44,10 @@ Open the agent, then its **Sources** tab and the **Databases** section. Only adm
 
 ![The Databases section, listing a host's database sources and their databases](assets/screenshots/agent-databases.png)
 
-1. Turn on **Allow schedules to dump databases**. Like the VM setting, this is a permission rather than an action: nothing is dumped until a schedule asks for it.
-2. Choose **which sources** to dump. **All except excluded** dumps every source the agent finds, including one deployed after the last scan; **Only selected** dumps nothing until you pick the sources you want.
-3. Turn on each place the agent should look, and fill in how it reaches it:
+1. Choose **which sources** to dump. The sources included here are what every schedule that takes databases dumps; to dump none of them, choose **Only selected** and select none. **All except excluded** dumps every source the agent finds, including one deployed after the last scan; **Only selected** dumps nothing until you pick the sources you want.
+
+    Earlier versions had a host-wide **Database dumps** on/off switch. It is gone: upgrading turns a host that had it off into **Only selected** with every source deselected, so it still dumps nothing. Select the sources you want there to start dumping them.
+2. Turn on each place the agent should look, and fill in how it reaches it:
     - **Search the Kubernetes cluster**, with the **kubeconfig**, a path to a file on the agent's host. Leave it empty to use the in-cluster service account, or `$KUBECONFIG` and `~/.kube/config`. The file never leaves the host.
 
         To reach the API server through an HTTP or HTTPS proxy, set the cluster's `proxy-url` in the kubeconfig, or `HTTPS_PROXY` in the agent's environment. `NO_PROXY` is not consulted, so leave `HTTPS_PROXY` unset for the agent if the cluster should be reached directly.
@@ -55,14 +56,14 @@ Open the agent, then its **Sources** tab and the **Databases** section. Only adm
     - **Dump MySQL or MariaDB on this host**, with which **server** it is, the **OS user** the clients run as (`root` when empty) and, when needed, its **socket**, a TCP **port** instead, and the **programs directory**. See [MySQL and MariaDB on the host](#mysql-and-mariadb-on-the-host).
     - **Dump MongoDB on this host**, with the **OS user** (`root` when empty), a **config file** naming a server that wants a password, the **port** otherwise, and the **programs directory**. See [MongoDB on the host](#mongodb-on-the-host).
     - **Dump SQLite files on this host**, with the **database files**, one absolute path per line, the **OS user** that may read them (`root` when empty) and the **programs directory** holding `sqlite3`. See [SQLite files](#sqlite-files).
-4. Set the **dump directory**, an absolute path on the agent's host. It holds one named pipe per database while a backup runs, and the archive stores the dumps under it. It may not be below `/dev`, `/proc`, `/sys` or `/run`.
-5. Click **Scan for databases**. While the settings form is open, the scan searches with the settings in the form rather than the saved ones, so you can test them before saving. When one place cannot be searched but another can, the scan shows what it found together with why the other failed, and keeps the sources it had already found in the failed place rather than dropping them.
+3. Set the **dump directory**, an absolute path on the agent's host. It holds one named pipe per database while a backup runs, and the archive stores the dumps under it. It may not be below `/dev`, `/proc`, `/sys` or `/run`.
+4. Click **Scan for databases**. While the settings form is open, the scan searches with the settings in the form rather than the saved ones, so you can test them before saving. When one place cannot be searched but another can, the scan shows what it found together with why the other failed, and keeps the sources it had already found in the failed place rather than dropping them.
 
 Every place you turn on must be reachable when a backup runs: a backup whose cluster or container engine cannot be reached fails with the reason, rather than leaving databases out.
 
-Then turn on **Dump databases** in a schedule's **Settings → Advanced** section, or on the **Advanced** step of a new schedule.
+Every schedule takes **Databases** under its **Settings → Sources** (or the **Sources** step of a new schedule); turn it off to leave the dumps out of that schedule. See [Sources](scheduling.md#sources).
 
-Both switches have to be on. A schedule that asks for dumps on a host where **Allow schedules to dump databases** is off backs that host up without them, and says so: the schedule's form and its page name every such host with a link to its database settings, the host's database settings name the schedules asking, and each such run is reported as a **warning** in the Activity Log with the reason. The same applies to [virtual machines](vm-snapshots.md) a schedule asks for on a host with staging turned off.
+A schedule that takes databases on a host that includes no source backs that host up without them, and says so: the schedule's page and its Sources section name every such host with a link to its database settings, and the host's **Databases** section names the schedules asking. The same applies to [virtual machines](vm-snapshots.md) on a host that includes no domain.
 
 ## How sources are found
 

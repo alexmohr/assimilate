@@ -4,9 +4,11 @@
 import { describe, expect, it } from 'vitest'
 import {
   agentOverridePayload,
+  ownPathsPayload,
   primaryRepoId,
   repoTargetsProblem,
   scheduleFormPayload,
+  sourcesProblem,
 } from './schedulePayload'
 import { DEFAULT_SCHEDULE_FORM_STATE } from '../types/scheduleForm'
 import type { ScheduleAgentOverrides, ScheduleFormState } from '../types/scheduleForm'
@@ -62,6 +64,16 @@ describe('scheduleFormPayload', () => {
     expect(payload.keep_yearly).toBe(3)
     expect(payload.missed_backup_threshold).toBe(5)
     expect(payload.rate_limit_kbps).toBe(2048)
+  })
+
+  it("sends where the files come from and whether the hosts' commands run", () => {
+    expect(scheduleFormPayload(form())).toMatchObject({
+      files_mode: 'host',
+      run_host_commands: true,
+    })
+    expect(
+      scheduleFormPayload(form({ files_mode: 'off', run_host_commands: false })),
+    ).toMatchObject({ files_mode: 'off', run_host_commands: false })
   })
 })
 
@@ -156,6 +168,23 @@ describe('agentOverridePayload', () => {
       },
     ])
   })
+
+  // "Use the shared values" turns every override off; without the flag that
+  // would send nothing, and the server would keep the per-host rows it has.
+  it('sends empty per-agent lists once the per-host values are to be cleared', () => {
+    expect(agentOverridePayload(overrides({ clearPerHost: true }), [1, 2])).toEqual({
+      exclude_patterns_per_agent: [],
+      include_patterns_per_agent: [],
+      file_change_patterns_per_agent: [],
+      commands_per_agent: [],
+    })
+  })
+
+  it('leaves the shared values alone when clearing the per-host ones', () => {
+    const payload = agentOverridePayload(overrides({ clearPerHost: true }), [1])
+    expect(payload.exclude_patterns_raw).toBeUndefined()
+    expect(payload.pre_backup_commands).toBeUndefined()
+  })
 })
 
 describe('repoTargetsProblem', () => {
@@ -232,5 +261,75 @@ describe('scheduleFormPayload filesystem snapshots', () => {
       fs_snapshot: 'off',
       lvm_snapshot_percent: 10,
     })
+  })
+})
+
+describe('ownPathsPayload', () => {
+  const shared = { usePerHostPaths: false, perHostSources: {} }
+
+  it('sends one shared list while paths are not split per host', () => {
+    expect(ownPathsPayload(form({ backup_sources: '/home\n\n/etc' }), shared, [1, 2])).toEqual({
+      backup_sources: ['/home', '/etc'],
+    })
+  })
+
+  // Left in place, saved per-host paths would still win over the shared ones.
+  it('deletes the per-host paths a schedule saved once the split is turned off', () => {
+    const turnedOff = { ...shared, clearSavedPerHost: true }
+    expect(ownPathsPayload(form({ backup_sources: '/srv' }), turnedOff, [1, 2])).toEqual({
+      backup_sources: ['/srv'],
+      backup_sources_per_agent: [],
+    })
+  })
+
+  it('sends one list per host instead, leaving out a host with none', () => {
+    const perHost = { usePerHostPaths: true, perHostSources: { 1: '/home', 2: '  ', 3: '/srv' } }
+    expect(ownPathsPayload(form({ backup_sources: '/ignored' }), perHost, [1, 2])).toEqual({
+      backup_sources: [],
+      backup_sources_per_agent: [{ agent_id: 1, paths: ['/home'] }],
+    })
+  })
+})
+
+describe('sourcesProblem', () => {
+  const shared = { usePerHostPaths: false, perHostSources: {} }
+
+  it("takes each host's files as they are", () => {
+    expect(sourcesProblem(form({ files_mode: 'host' }), shared, [1])).toBeNull()
+  })
+
+  it("needs every host to list paths when it takes each host's files", () => {
+    const paths: Record<number, string[]> = { 1: [], 2: ['/etc'], 4: ['/srv'] }
+    const lookup = (id: number) => paths[id]
+    const bare = "paths on every host, or its own files: a host's Sources list none"
+    expect(sourcesProblem(form({ files_mode: 'host' }), shared, [1, 2], lookup)).toBe(bare)
+    // Not only the first host.
+    expect(sourcesProblem(form({ files_mode: 'host' }), shared, [2, 1], lookup)).toBe(bare)
+    expect(sourcesProblem(form({ files_mode: 'host' }), shared, [2, 4], lookup)).toBeNull()
+    // A host it knows nothing about is left to the server.
+    expect(sourcesProblem(form({ files_mode: 'host' }), shared, [3], lookup)).toBeNull()
+  })
+
+  it('needs a path for its own files, shared or per host', () => {
+    expect(sourcesProblem(form({ files_mode: 'own' }), shared, [1])).toBe(
+      'at least one backup path for its own files',
+    )
+    expect(
+      sourcesProblem(form({ files_mode: 'own', backup_sources: '/srv' }), shared, [1]),
+    ).toBeNull()
+    const perHost = { usePerHostPaths: true, perHostSources: { 1: '/srv' } }
+    expect(sourcesProblem(form({ files_mode: 'own' }), perHost, [1])).toBeNull()
+  })
+
+  it('needs virtual machines or databases when it reads no files', () => {
+    expect(sourcesProblem(form({ files_mode: 'off' }), shared, [1])).toBe(
+      'virtual machines or databases, since it reads no files',
+    )
+    expect(
+      sourcesProblem(form({ files_mode: 'off', vm_snapshot_enabled: true }), shared, [1]),
+    ).toBeNull()
+    expect(
+      sourcesProblem(form({ files_mode: 'off', database_backup_enabled: true }), shared, [1]),
+    ).toBeNull()
   })
 })

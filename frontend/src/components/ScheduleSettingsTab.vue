@@ -13,8 +13,8 @@ import PaneRow from './PaneRow.vue'
 import ScheduleRepoTargets from './ScheduleRepoTargets.vue'
 import ScheduleRetentionPlacement from './ScheduleRetentionPlacement.vue'
 import ToggleSwitch from './ToggleSwitch.vue'
-import PerAgentFields from './PerAgentFields.vue'
 import ScheduleAdvancedTab from './ScheduleAdvancedTab.vue'
+import ScheduleSourcesPane from './ScheduleSourcesPane.vue'
 import SchedulePowerTab from './SchedulePowerTab.vue'
 import ScheduleDependenciesTab from './ScheduleDependenciesTab.vue'
 import SettingsRail, { type SettingsSections } from './SettingsRail.vue'
@@ -59,6 +59,8 @@ const props = defineProps<{
    * its own. Without one there is nothing to attach them to yet.
    */
   scheduleId?: number | null
+  /** Saves the schedule from inside a section, for the own-files Save. */
+  commit?: () => Promise<string | null>
 }>()
 
 const emit = defineEmits<{
@@ -68,10 +70,10 @@ const emit = defineEmits<{
 }>()
 
 const form = defineModel<ScheduleFormState>('form', { required: true })
-const overrides = defineModel<ScheduleAgentOverrides>('overrides', { required: true })
 const selectedAgentIds = defineModel<number[]>('selectedAgentIds', { required: true })
 const repoTargets = defineModel<ScheduleRepoTarget[]>('repoTargets', { required: true })
 const onFailure = defineModel<'stop' | 'continue'>('onFailure', { required: true })
+const overrides = defineModel<ScheduleAgentOverrides>('overrides', { required: true })
 const usePerHostPaths = defineModel<boolean>('usePerHostPaths', { required: true })
 const perHostSources = defineModel<Record<number, string>>('perHostSources', { required: true })
 
@@ -85,6 +87,7 @@ const perHostSources = defineModel<Record<number, string>>('perHostSources', { r
 const sections = computed<SettingsSections<ScheduleSettingsSection>>(() => [
   { id: 'general', label: 'General' },
   { id: 'targets', label: 'Targets' },
+  ...(props.isBackup ? [{ id: 'sources', label: 'Sources' } as const] : []),
   { id: 'power', label: 'Power & dependencies' },
   ...(props.isBackup
     ? [
@@ -247,7 +250,7 @@ const catchUpSourceLinks = computed(() => {
       <div class="pane-head">
         <p class="pane-lede">
           Which hosts this schedule runs on, which repositories they write to, and what happens when
-          one of them fails.
+          one of them fails. What it backs up from each host is under Sources.
         </p>
       </div>
       <div class="pane-rows">
@@ -325,63 +328,20 @@ const catchUpSourceLinks = computed(() => {
             </div>
           </div>
         </PaneRow>
-
-        <template v-if="isBackup">
-          <PaneRow
-            v-if="selectedAgentIds.length > 1"
-            title="Configure paths per agent"
-            help="splitting the paths by host"
-          >
-            <template #help>
-              Give each host its own backup paths instead of one list for the schedule.
-            </template>
-            <ToggleSwitch
-              v-model="usePerHostPaths"
-              label="Configure paths per agent"
-            />
-          </PaneRow>
-
-          <PaneRow
-            title="Backup paths"
-            stack
-          >
-            <textarea
-              v-if="!usePerHostPaths"
-              v-model="form.backup_sources"
-              class="input area-input"
-              aria-label="Backup paths"
-              placeholder="Directories to back up, one per line"
-              spellcheck="false"
-            />
-            <span
-              v-if="!usePerHostPaths"
-              class="field-hint"
-            >
-              Leave empty to use the default paths configured for this agent.
-            </span>
-            <PerAgentFields
-              v-else
-              :agent-ids="selectedAgentIds"
-              :agent-label="agentLabel"
-            >
-              <template #default="{ agentId }">
-                <textarea
-                  :value="perHostSources[agentId] ?? ''"
-                  class="input area-input area-input-sm"
-                  placeholder="Directories to back up, one per line"
-                  spellcheck="false"
-                  @input="
-                    ($event) =>
-                      (perHostSources[agentId] = ($event.target as HTMLTextAreaElement).value)
-                  "
-                />
-              </template>
-              <template #hint> Leave an agent empty to use its default backup paths. </template>
-            </PerAgentFields>
-          </PaneRow>
-        </template>
       </div>
     </template>
+
+    <ScheduleSourcesPane
+      v-else-if="currentSection === 'sources'"
+      v-model:form="form"
+      v-model:overrides="overrides"
+      v-model:use-per-host-paths="usePerHostPaths"
+      v-model:per-host-sources="perHostSources"
+      :commit="commit"
+      :agent-ids="selectedAgentIds"
+      :agent-label="agentLabel"
+      :agents="agents"
+    />
 
     <template v-else-if="currentSection === 'retention'">
       <div class="pane-head">
@@ -470,7 +430,6 @@ const catchUpSourceLinks = computed(() => {
     <ScheduleAdvancedTab
       v-else-if="currentSection === 'advanced'"
       v-model:form="form"
-      v-model:overrides="overrides"
       :agent-ids="selectedAgentIds"
       :agent-label="agentLabel"
       :agents="agents"

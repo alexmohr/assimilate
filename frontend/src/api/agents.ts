@@ -31,6 +31,8 @@ export interface UpdateAgentRequest {
   domain?: string | null
   default_backup_paths?: string[]
   default_exclude_patterns?: string[]
+  /** Exceptions to the excludes. */
+  default_include_patterns?: string[]
   default_pre_backup_commands?: HookCommand[]
   default_post_backup_commands?: HookCommand[]
   default_file_change_patterns_raw?: string

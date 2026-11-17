@@ -154,13 +154,19 @@ export AGENT_TOKEN_1="$WEB01_TOKEN"
 export AGENT_TOKEN_2="$DB01_TOKEN"
 export AGENT_TOKEN_3="$MEDIA_TOKEN"
 
-echo "==> Setting an agent-level default file change pattern on db-server-01 (fallback for every schedule targeting this host)..."
+# db-server-01's own files (Sources -> Files): every field set, so a schedule
+# that takes each host's files, like "Everything on db-server-01" below, reads
+# all of it, and the schedule's Sources table shows where each part came from.
+echo "==> Setting db-server-01's own files..."
 api PUT "/api/agents/db-server-01" '{
     "display_name": "Primary Database",
+    "default_backup_paths": ["/etc", "/var/lib/postgresql"],
+    "default_exclude_patterns": ["*.tmp", "/var/lib/postgresql/*/pg_wal"],
+    "default_include_patterns": ["/var/lib/postgresql/16/pg_wal/archive_status"],
     "default_file_change_patterns_raw": "/var/lib/postgresql/**/*.tmp* ignore\n**/checkpoint_wal* warn"
 }' > /dev/null
 
-# Agent-level hook commands, so the Backup defaults pane shows the read-only
+# Agent-level hook commands, so the host's Files section shows the read-only
 # script block: a multi-line pre-backup command (which an inline <code> would
 # collapse onto one line) carrying its own generous timeout, next to a
 # post-backup one that inherits whatever the schedule sets.
@@ -448,7 +454,6 @@ api PUT "/api/machines/$WEB01_MACHINE_ID/power" '{
 # written directly because a real scan needs a libvirt host behind the agent.
 echo "==> Configuring virtual machine staging..."
 api PUT "/api/agents/db-server-01/vm-snapshot" '{
-    "enabled": true,
     "selection": "all",
     "staging_dir": "/srv/vm-staging",
     "full_interval": 7,
@@ -490,7 +495,6 @@ SQL
 # its runs would try to reach them and fail.
 echo "==> Configuring database dumps..."
 api PUT "/api/agents/db-server-01/database-backup" '{
-    "enabled": true,
     "selection": "all",
     "dump_dir": "/var/lib/assimilate/database-dumps",
     "runtimes": {
@@ -1168,23 +1172,65 @@ api POST "/api/schedules" "{
     ]
 }" > /dev/null
 
-# A schedule that asks for database dumps on two hosts, only one of which
-# allows them: web-server-01 has dumps turned off, so the schedule's page and
-# its Advanced tab warn that no databases will be dumped there
-# (docs/database-dumps.md). Left disabled so it never runs: a run would try to
-# reach db-server-01's database servers, which the demo does not have.
+# A databases-only schedule (Files: Off) on two hosts, only one of which has
+# database sources: web-server-01 includes none, so the schedule's page and its
+# Sources section warn that no databases will be dumped there
+# (docs/database-dumps.md, docs/scheduling.md#sources). Left disabled so it
+# never runs: a run would try to reach db-server-01's database servers, which
+# the demo does not have.
 api POST "/api/schedules" "{
     \"name\": \"Database dumps\",
     \"agent_ids\": [$WEB01_ID, $DB01_ID],
     \"repo_id\": $REPO_DAILY_ID,
     \"cron_expression\": \"30 1 * * *\",
     \"enabled\": false,
+    \"files_mode\": \"off\",
     \"database_backup_enabled\": true,
     \"keep_hourly\": 0,
     \"keep_daily\": 7,
     \"keep_weekly\": 4,
-    \"keep_monthly\": 6,
-    \"backup_sources\": [\"/etc\"]
+    \"keep_monthly\": 6
+}" > /dev/null
+
+# A schedule that takes everything db-server-01 lists under its Sources tab:
+# its own files (paths, excludes, include patterns, file change patterns), its
+# virtual machines and its database sources. Disabled for the same reason as
+# "Database dumps" above.
+api POST "/api/schedules" "{
+    \"name\": \"Everything on db-server-01\",
+    \"agent_ids\": [$DB01_ID],
+    \"repo_id\": $REPO_DAILY_ID,
+    \"cron_expression\": \"15 3 * * *\",
+    \"enabled\": false,
+    \"files_mode\": \"host\",
+    \"vm_snapshot_enabled\": true,
+    \"database_backup_enabled\": true,
+    \"keep_hourly\": 0,
+    \"keep_daily\": 7,
+    \"keep_weekly\": 4,
+    \"keep_monthly\": 6
+}" > /dev/null
+
+# A schedule taking each host's files that was moved onto web-server-01, which
+# lists no backup paths yet. Creating it there is refused, but moving it there
+# is allowed so the host's paths can be set up afterwards; until then the
+# schedule's page warns that no files will be backed up on web-server-01.
+WEB_FILES_ID=$(api POST "/api/schedules" "{
+    \"name\": \"Web files (paths pending)\",
+    \"agent_ids\": [$DB01_ID],
+    \"repo_id\": $REPO_DAILY_ID,
+    \"cron_expression\": \"45 3 * * *\",
+    \"enabled\": false,
+    \"files_mode\": \"host\",
+    \"keep_hourly\": 0,
+    \"keep_daily\": 7,
+    \"keep_weekly\": 4,
+    \"keep_monthly\": 6
+}" | jq -r '.id')
+api PUT "/api/schedules/$WEB_FILES_ID" "{
+    \"cron_expression\": \"45 3 * * *\",
+    \"enabled\": false,
+    \"agent_ids\": [$DB01_ID, $WEB01_ID]
 }" > /dev/null
 
 api POST "/api/schedules" "{

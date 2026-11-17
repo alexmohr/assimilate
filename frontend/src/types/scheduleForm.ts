@@ -1,12 +1,20 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
-import type { FsSnapshotMode, HookCommand, ScheduleWakeOverride } from './generated'
+import type {
+  FsSnapshotMode,
+  HookCommand,
+  ScheduleFilesMode,
+  ScheduleWakeOverride,
+} from './generated'
+
+export type { ScheduleFilesMode }
 
 /**
  * The editable shape behind the schedule detail form. Lives here rather than
  * inline in the view so the tab components can be typed against it.
  */
+
 export interface ScheduleFormState {
   name: string
   cron_expression: string
@@ -34,6 +42,9 @@ export interface ScheduleFormState {
   wake_override: ScheduleWakeOverride
   catch_up_min_lead_minutes: number
   backup_sources: string
+  files_mode: ScheduleFilesMode
+  /** Whether each host's own pre/post-backup commands run around the files. */
+  run_host_commands: boolean
 }
 
 /**
@@ -69,6 +80,8 @@ export const DEFAULT_SCHEDULE_FORM_STATE: ScheduleFormState = {
   wake_override: 'host_default',
   catch_up_min_lead_minutes: 120,
   backup_sources: '',
+  files_mode: 'host',
+  run_host_commands: true,
 }
 
 /**
@@ -85,4 +98,9 @@ export interface ScheduleAgentOverrides {
   usePerAgentCmds: boolean
   perAgentPreCmds: Record<number, HookCommand[]>
   perAgentPostCmds: Record<number, HookCommand[]>
+  /**
+   * Set when the user asked every host to use the schedule's shared values:
+   * the next save deletes the per-host rows rather than leaving them alone.
+   */
+  clearPerHost?: boolean
 }

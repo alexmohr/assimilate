@@ -16,6 +16,7 @@ use shared::{
     crypto::encrypt_passphrase,
     hooks::{HookCommand, MAX_HOOK_COMMAND_TIMEOUT_SECONDS},
     provider::HostProvider,
+    types::ScheduleFilesMode,
 };
 
 mod text_limits;
@@ -85,6 +86,7 @@ pub async fn export_config(
             domain: agent.domain.clone(),
             default_backup_paths: agent.default_backup_paths.clone(),
             default_exclude_patterns: agent.default_exclude_patterns.clone(),
+            default_include_patterns: agent.default_include_patterns.clone(),
             default_pre_backup_commands: agent.default_pre_backup_commands.0.clone(),
             default_post_backup_commands: agent.default_post_backup_commands.0.clone(),
             default_file_change_patterns_raw: agent.default_file_change_patterns_raw.clone(),
@@ -203,6 +205,8 @@ async fn build_schedule_export(
         database_backup_enabled: sched.database_backup_enabled,
         fs_snapshot: sched.fs_snapshot,
         lvm_snapshot_percent: sched.lvm_snapshot_percent,
+        files_mode: Some(sched.files_mode),
+        run_host_commands: sched.run_host_commands,
         execution_mode: sched.execution_mode,
         on_failure: sched.on_failure,
         exclude_patterns_raw: sched.exclude_patterns_raw.clone(),
@@ -558,6 +562,7 @@ async fn import_host(
                 domain: host.domain.as_deref(),
                 default_backup_paths: &host.default_backup_paths,
                 default_exclude_patterns: &host.default_exclude_patterns,
+                default_include_patterns: &host.default_include_patterns,
                 default_pre_backup_commands: &default_pre_backup_commands,
                 default_post_backup_commands: &default_post_backup_commands,
                 default_file_change_patterns_raw: &host.default_file_change_patterns_raw,
@@ -587,6 +592,7 @@ async fn import_host(
                 domain: host.domain.as_deref(),
                 default_backup_paths: &host.default_backup_paths,
                 default_exclude_patterns: &host.default_exclude_patterns,
+                default_include_patterns: &host.default_include_patterns,
                 default_pre_backup_commands: &default_pre_backup_commands,
                 default_post_backup_commands: &default_post_backup_commands,
                 default_file_change_patterns_raw: &host.default_file_change_patterns_raw,
@@ -647,6 +653,29 @@ fn resolve_imported_repo_targets(
     (None, warnings)
 }
 
+/// The files mode of a schedule from an export written before schedules had
+/// the choice: one that set any file field of its own took its own files.
+fn files_mode_of_older_export(sched: &ScheduleExport) -> ScheduleFilesMode {
+    let set = |text: &str| !text.trim().is_empty();
+    let schedule_sets_files = !sched.backup_sources.is_empty()
+        || set(&sched.exclude_patterns_raw)
+        || set(&sched.include_patterns_raw)
+        || set(&sched.file_change_patterns_raw)
+        || !sched.pre_backup_commands.is_empty()
+        || !sched.post_backup_commands.is_empty();
+    let a_target_sets_files = sched.targets.iter().any(|target| {
+        !target.backup_sources.is_empty()
+            || set(&target.exclude_patterns)
+            || set(&target.include_patterns)
+            || set(&target.file_change_patterns)
+    });
+    if schedule_sets_files || a_target_sets_files {
+        ScheduleFilesMode::Own
+    } else {
+        ScheduleFilesMode::Host
+    }
+}
+
 async fn import_schedule(
     pool: &sqlx::PgPool,
     sched: &ScheduleExport,
@@ -695,6 +724,10 @@ async fn import_schedule(
         // Clamped like the hook timeouts below: an uploaded export is
         // untrusted input, and the column refuses a size out of range.
         lvm_snapshot_percent: sched.lvm_snapshot_percent.clamp(1, 100),
+        files_mode: sched
+            .files_mode
+            .unwrap_or_else(|| files_mode_of_older_export(sched)),
+        run_host_commands: sched.run_host_commands,
         exclude_patterns_raw: &sched.exclude_patterns_raw,
         include_patterns_raw: &sched.include_patterns_raw,
         file_change_patterns_raw: &sched.file_change_patterns_raw,
@@ -726,6 +759,7 @@ async fn import_schedule(
         on_failure: sched.on_failure,
     };
 
+    let older_own = sched.files_mode.is_none() && params.files_mode == ScheduleFilesMode::Own;
     let new_sched = db::insert_schedule(pool, repo_id, &params, None).await?;
     db::insert_schedule_targets(pool, new_sched.id, &target_ids).await?;
 
@@ -751,8 +785,108 @@ async fn import_schedule(
     }
 
     insert_schedule_target_overrides(pool, new_sched.id, sched, hostname_to_id).await?;
+    if older_own {
+        bake_inherited_host_files(
+            pool,
+            new_sched.id,
+            sched,
+            &pre_backup_commands,
+            &post_backup_commands,
+            &target_ids,
+        )
+        .await?;
+    }
 
     result.schedules_created = result.schedules_created.saturating_add(1);
+    Ok(())
+}
+
+/// Writes into an older export's "own" schedule the host values it used to
+/// inherit, as the files-mode migration does for a schedule already stored.
+///
+/// Before files modes, a schedule's own paths replaced the host's but its
+/// excludes, file change patterns and commands were combined with the host's,
+/// and a schedule with no paths took the host's. An "own" schedule now reads
+/// only its own set, so for each target host this writes, per host, the
+/// host's paths where the export gives none and the combined excludes, file
+/// change patterns and commands where the host adds any. Include patterns
+/// were never inherited. Every imported backup reads what it read before.
+async fn bake_inherited_host_files(
+    pool: &sqlx::PgPool,
+    schedule_id: i64,
+    sched: &ScheduleExport,
+    pre_backup_commands: &[HookCommand],
+    post_backup_commands: &[HookCommand],
+    target_ids: &[(i64, i32)],
+) -> Result<(), ApiError> {
+    fn joined(parts: [&str; 2]) -> String {
+        parts
+            .into_iter()
+            .filter(|part| !part.is_empty())
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+    // `target_ids` holds each target's host, resolved in the same order.
+    for (target, &(agent_id, _)) in sched.targets.iter().zip(target_ids) {
+        let host = db::get_agent_by_id(pool, agent_id).await?;
+
+        if target.backup_sources.is_empty() && sched.backup_sources.is_empty() {
+            for (i, path) in host.default_backup_paths.iter().enumerate() {
+                let sort_order = i32::try_from(i).unwrap_or(0);
+                db::insert_backup_source_for_schedule_agent(
+                    pool,
+                    schedule_id,
+                    agent_id,
+                    path,
+                    sort_order,
+                )
+                .await?;
+            }
+        }
+
+        if !host.default_exclude_patterns.is_empty() {
+            let own = if target.exclude_patterns.is_empty() {
+                sched.exclude_patterns_raw.as_str()
+            } else {
+                target.exclude_patterns.as_str()
+            };
+            let hosts = host.default_exclude_patterns.join("\n");
+            db::upsert_per_agent_excludes_raw(pool, schedule_id, agent_id, &joined([&hosts, own]))
+                .await?;
+        }
+
+        if !host.default_file_change_patterns_raw.is_empty() {
+            let own = if target.file_change_patterns.is_empty() {
+                sched.file_change_patterns_raw.as_str()
+            } else {
+                target.file_change_patterns.as_str()
+            };
+            db::upsert_per_agent_file_change_patterns_raw(
+                pool,
+                schedule_id,
+                agent_id,
+                &joined([own, &host.default_file_change_patterns_raw]),
+            )
+            .await?;
+        }
+
+        if !host.default_pre_backup_commands.is_empty()
+            || !host.default_post_backup_commands.is_empty()
+        {
+            let pre: Vec<HookCommand> = host
+                .default_pre_backup_commands
+                .iter()
+                .chain(pre_backup_commands)
+                .cloned()
+                .collect();
+            let post: Vec<HookCommand> = post_backup_commands
+                .iter()
+                .chain(host.default_post_backup_commands.iter())
+                .cloned()
+                .collect();
+            db::upsert_per_agent_commands(pool, schedule_id, agent_id, &pre, &post).await?;
+        }
+    }
     Ok(())
 }
 
@@ -912,6 +1046,62 @@ mod tests {
 
     use super::*;
 
+    /// An export from before files modes: one that set any file field of its
+    /// own took its own files, anything else each host's.
+    #[test]
+    fn an_older_export_takes_its_own_files_when_it_set_any_file_field() {
+        let plain = export_with_targets(vec![]);
+        assert_eq!(files_mode_of_older_export(&plain), ScheduleFilesMode::Host);
+
+        let whitespace_only = ScheduleExport {
+            exclude_patterns_raw: "  \n ".to_owned(),
+            ..export_with_targets(vec![])
+        };
+        assert_eq!(
+            files_mode_of_older_export(&whitespace_only),
+            ScheduleFilesMode::Host
+        );
+
+        let own_fields: [fn(&mut ScheduleExport); 6] = [
+            |s| s.backup_sources = vec!["/srv".to_owned()],
+            |s| s.exclude_patterns_raw = "*.tmp".to_owned(),
+            |s| s.include_patterns_raw = "/srv/keep".to_owned(),
+            |s| s.file_change_patterns_raw = "/srv/** ignore".to_owned(),
+            |s| s.pre_backup_commands = vec![HookCommand::new("sync")],
+            |s| s.post_backup_commands = vec![HookCommand::new("sync")],
+        ];
+        for set in own_fields {
+            let mut sched = export_with_targets(vec![]);
+            set(&mut sched);
+            assert_eq!(files_mode_of_older_export(&sched), ScheduleFilesMode::Own);
+        }
+    }
+
+    #[test]
+    fn an_older_export_takes_its_own_files_when_a_target_set_any() {
+        let target_fields: [fn(&mut ScheduleTargetExport); 4] = [
+            |t| t.backup_sources = vec!["/srv".to_owned()],
+            |t| t.exclude_patterns = "*.tmp".to_owned(),
+            |t| t.include_patterns = "/srv/keep".to_owned(),
+            |t| t.file_change_patterns = "/srv/** ignore".to_owned(),
+        ];
+        for set in target_fields {
+            let mut sched = export_with_targets(vec![]);
+            let mut target = ScheduleTargetExport {
+                hostname: "web".to_owned(),
+                domain: None,
+                execution_order: 0,
+                backup_sources: Vec::new(),
+                exclude_patterns: String::new(),
+                include_patterns: String::new(),
+                file_change_patterns: String::new(),
+            };
+            set(&mut target);
+            sched.targets = vec![target];
+            assert_eq!(files_mode_of_older_export(&sched), ScheduleFilesMode::Own);
+        }
+    }
+
     fn export_with_targets(targets: Vec<(&str, bool)>) -> ScheduleExport {
         ScheduleExport {
             name: "nightly".to_owned(),
@@ -923,6 +1113,8 @@ mod tests {
             database_backup_enabled: false,
             fs_snapshot: shared::snapshot::FsSnapshotMode::Off,
             lvm_snapshot_percent: 10,
+            files_mode: Some(shared::types::ScheduleFilesMode::Host),
+            run_host_commands: true,
             execution_mode: ExecutionMode::default(),
             on_failure: OnFailure::default(),
             exclude_patterns_raw: String::new(),

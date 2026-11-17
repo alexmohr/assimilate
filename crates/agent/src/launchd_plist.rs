@@ -79,7 +79,8 @@ const DOCTYPE: &str = concat!(
 /// Only the owner can change the mode of a file, so one that a user owns
 /// stays open to that user whatever its mode says.
 pub const fn only_root_can_open(uid: u32, mode: u32) -> bool {
-    uid == 0 && mode & 0o077 == 0
+    // The low six bits are the group's and everyone else's: all clear.
+    uid == 0 && mode.trailing_zeros() >= 6
 }
 
 /// The first of `chain`, an executable and then every folder above it, as

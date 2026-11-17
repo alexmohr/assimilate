@@ -600,6 +600,24 @@ mod tests {
 
     #[ignore = "requires DATABASE_URL"]
     #[sqlx::test(migrations = "./migrations")]
+    async fn checking_a_provider_refuses_one_that_differs_from_the_hosts(pool: sqlx::PgPool) {
+        let host = "u7.your-storagebox.de";
+        add_repo_for_provider(&pool, "r", host, 23, Some(HostProvider::Hetzner))
+            .await
+            .unwrap();
+
+        let refused =
+            db::repo_hosts::check_repo_host_provider(&pool, host, 23, Some(HostProvider::Generic))
+                .await;
+
+        assert!(
+            matches!(refused, Err(ApiError::BadRequest(ref m)) if m.contains("hetzner")),
+            "{refused:?}"
+        );
+    }
+
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
     async fn a_failed_insert_leaves_no_host_pinned_to_its_provider(pool: sqlx::PgPool) {
         add_repo_for_provider(&pool, "taken", "nas.lan", 22, None)
             .await

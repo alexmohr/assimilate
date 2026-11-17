@@ -154,6 +154,38 @@ pub async fn mkdir(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::api::auth::AuthUser;
+
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn testing_an_unreachable_host_reports_it_without_registering_it(pool: sqlx::PgPool) {
+        let state = crate::test_support::build_test_state(pool.clone(), b"ssh-probe-test-key");
+
+        let Json(result) = test_connection(
+            State(state),
+            RequireAdmin(AuthUser {
+                user_id: 1,
+                username: "admin".to_owned(),
+                session_id: None,
+            }),
+            ApiJson(TestConnectionRequest {
+                ssh_host: "127.0.0.1".to_owned(),
+                ssh_user: "borg".to_owned(),
+                ssh_port: Some(1),
+                provider: Some(HostProvider::RsyncNet),
+            }),
+        )
+        .await
+        .unwrap();
+
+        assert!(!result.ssh_ok);
+        assert!(
+            db::repo_hosts::find_repo_host_by_name(&pool, "127.0.0.1")
+                .await
+                .unwrap()
+                .is_none()
+        );
+    }
 
     #[ignore = "requires DATABASE_URL"]
     #[sqlx::test(migrations = "./migrations")]

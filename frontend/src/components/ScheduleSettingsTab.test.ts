@@ -620,7 +620,14 @@ describe('ScheduleSettingsTab', () => {
       .find((b) => b.text() === 'Edit')!
       .trigger('click')
     await wrapper.findAll('textarea')[0].setValue('/custom/path')
-    expect(perHostSources[10]).toBe('/custom/path')
+    // The form edits a copy until Save, like every other field in it.
+    expect(perHostSources[10]).toBeUndefined()
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text() === 'Save')!
+      .trigger('click')
+    await flushPromises()
+    expect(wrapper.emitted('update:perHostSources')?.at(-1)).toEqual([{ 10: '/custom/path' }])
   })
 
   it('writes into each retention field', async () => {

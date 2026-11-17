@@ -12,7 +12,7 @@
 //! only interface launchd offers for loading a daemon, so this runs it.
 
 use std::{
-    os::unix::fs::{MetadataExt as _, OpenOptionsExt as _, PermissionsExt as _},
+    os::unix::fs::{MetadataExt as _, PermissionsExt as _},
     path::{Path, PathBuf},
     process::{ExitCode, Stdio},
 };
@@ -253,15 +253,15 @@ async fn open_private(
             .await
             .map_err(ServiceError::io(context.clone()))?;
     }
-    let file = std::fs::OpenOptions::new()
+    let file = fs::OpenOptions::new()
         .write(true)
         .create(true)
         .truncate(matches!(existing, Existing::Replace))
         .mode(mode)
         .custom_flags(nix::libc::O_NOFOLLOW)
         .open(path)
+        .await
         .map_err(ServiceError::io(context.clone()))?;
-    let file = fs::File::from_std(file);
     // A file someone else made first stays theirs, whatever its mode is set
     // to: refuse it before anything secret is written.
     let metadata = file

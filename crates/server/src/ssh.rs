@@ -54,6 +54,21 @@ pub struct TestConnectionRequest {
     pub ssh_user: String,
     /// SSH port to connect to; defaults to 22 when unset.
     pub ssh_port: Option<u16>,
+    /// The hosting service, whose borg binary the probe asks for. Left out,
+    /// the API uses the provider of the host if it is registered, and plain
+    /// `borg` otherwise.
+    #[serde(default)]
+    pub provider: Option<shared::provider::HostProvider>,
+}
+
+/// The command that asks the remote side which borg it runs: the provider's
+/// binary where it names one (rsync.net's `borg14`, say), plain `borg`
+/// otherwise.
+fn borg_version_command(provider: Option<shared::provider::HostProvider>) -> String {
+    let executable = provider
+        .and_then(|provider| provider.defaults().remote_borg)
+        .map_or("borg", shared::provider::RemoteBorg::executable);
+    format!("{executable} --version")
 }
 
 /// Result of a [`test_connection`] probe against a remote host.
@@ -617,8 +632,8 @@ async fn exec_command_with_input(
     ))
 }
 
-/// Connect to a candidate host via SSH and check whether `borg` is installed,
-/// reporting connectivity and borg availability without mutating remote state.
+/// Connect to a candidate host via SSH and check whether its `borg` (the
+/// provider's binary, if it has one) is installed, reporting connectivity and borg availability without mutating remote state.
 pub async fn test_connection(req: &TestConnectionRequest) -> TestConnectionResponse {
     let port = req.ssh_port.unwrap_or(22);
 
@@ -634,17 +649,18 @@ pub async fn test_connection(req: &TestConnectionRequest) -> TestConnectionRespo
         }
     };
 
-    let (exit_code, stdout, _stderr) = match exec_command(&session, "borg --version").await {
-        Ok(result) => result,
-        Err(e) => {
-            return TestConnectionResponse {
-                ssh_ok: true,
-                borg_installed: false,
-                borg_version: None,
-                error: Some(format!("SSH ok, but failed to check borg: {e}")),
-            };
-        }
-    };
+    let (exit_code, stdout, _stderr) =
+        match exec_command(&session, &borg_version_command(req.provider)).await {
+            Ok(result) => result,
+            Err(e) => {
+                return TestConnectionResponse {
+                    ssh_ok: true,
+                    borg_installed: false,
+                    borg_version: None,
+                    error: Some(format!("SSH ok, but failed to check borg: {e}")),
+                };
+            }
+        };
 
     if exit_code == 0 {
         let version = stdout.trim().to_string();
@@ -1620,6 +1636,25 @@ pub(crate) mod deploy_tests;
     reason = "tests use std::fs for simple synchronous setup/assertions"
 )]
 mod tests {
+    #[test]
+    fn the_borg_probe_asks_for_the_providers_binary() {
+        use shared::provider::HostProvider;
+
+        assert_eq!(super::borg_version_command(None), "borg --version");
+        assert_eq!(
+            super::borg_version_command(Some(HostProvider::Generic)),
+            "borg --version"
+        );
+        assert_eq!(
+            super::borg_version_command(Some(HostProvider::RsyncNet)),
+            "borg14 --version"
+        );
+        assert_eq!(
+            super::borg_version_command(Some(HostProvider::Hetzner)),
+            "borg-1.4 --version"
+        );
+    }
+
     const HOST_KEY_B64: &str =
         "AAAAC3NzaC1lZDI1NTE5AAAAINwxkbeQjd0zydveueMhRPJE+cxoP0DNuUcYAwqmOs6S";
 

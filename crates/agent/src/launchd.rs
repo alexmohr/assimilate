@@ -44,6 +44,12 @@ pub enum ServiceError {
         path.display()
     )]
     UntrustedExecutable { path: PathBuf },
+    #[error(
+        "{} must be owned by root and closed to everyone else, because it holds the agent's \
+         token; remove it and run `service install` again",
+        path.display()
+    )]
+    NotRootOnly { path: PathBuf },
     #[error("`launchctl {args}` failed ({status}): {stderr}")]
     Launchctl {
         args: String,
@@ -210,7 +216,18 @@ async fn create_private_dir(dir: &Path) -> Result<(), ServiceError> {
         .map_err(ServiceError::io(context.clone()))?;
     fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700))
         .await
-        .map_err(ServiceError::io(context))
+        .map_err(ServiceError::io(context.clone()))?;
+    // A folder someone else made first stays theirs whatever its mode is
+    // set to, and a link would send the token elsewhere.
+    let metadata = fs::symlink_metadata(dir)
+        .await
+        .map_err(ServiceError::io(context))?;
+    if !metadata.is_dir() || !launchd_plist::only_root_can_open(metadata.uid(), metadata.mode()) {
+        return Err(ServiceError::NotRootOnly {
+            path: dir.to_path_buf(),
+        });
+    }
+    Ok(())
 }
 
 /// What opening a private file does to one that is already there.
@@ -245,6 +262,17 @@ async fn open_private(
         .open(path)
         .map_err(ServiceError::io(context.clone()))?;
     let file = fs::File::from_std(file);
+    // A file someone else made first stays theirs, whatever its mode is set
+    // to: refuse it before anything secret is written.
+    let metadata = file
+        .metadata()
+        .await
+        .map_err(ServiceError::io(context.clone()))?;
+    if metadata.uid() != 0 {
+        return Err(ServiceError::NotRootOnly {
+            path: path.to_path_buf(),
+        });
+    }
     // `mode` only applies to a file that is new.
     file.set_permissions(std::fs::Permissions::from_mode(mode))
         .await

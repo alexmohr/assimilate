@@ -286,7 +286,7 @@ jobs:
           fi
           sudo "$agent" service uninstall
           test ! -e /Library/LaunchDaemons/$label.plist
-          test ! -e "/Library/Application Support/Assimilate/agent/agent.json"
+          test ! -e "/var/db/assimilate-agent/agent.json"
           if ! sudo launchctl print "system/$label" > /dev/null 2>&1; then :; else
             echo "the daemon is still loaded after uninstall"; failed=3
           fi

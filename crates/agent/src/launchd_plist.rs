@@ -36,7 +36,7 @@ impl DaemonPaths {
     pub fn under(root: &Path) -> Self {
         Self {
             daemons_dir: root.join("Library/LaunchDaemons"),
-            support_dir: root.join("Library/Application Support/Assimilate/agent"),
+            support_dir: root.join("var/db/assimilate-agent"),
             log: root.join("var/log/assimilate-agent.log"),
         }
     }
@@ -73,6 +73,14 @@ const DOCTYPE: &str = concat!(
     r#"<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "#,
     r#""http://www.apple.com/DTDs/PropertyList-1.0.dtd">"#
 );
+
+/// Whether a file or folder owned by `uid` with permission bits `mode` can be
+/// opened by no one but root: what the stored token and server key need.
+/// Only the owner can change the mode of a file, so one that a user owns
+/// stays open to that user whatever its mode says.
+pub const fn only_root_can_open(uid: u32, mode: u32) -> bool {
+    uid == 0 && mode & 0o077 == 0
+}
 
 /// The first of `chain`, an executable and then every folder above it, as
 /// (path, owner, permission bits), that anyone but root could change. Whoever
@@ -150,13 +158,10 @@ mod tests {
             paths.plist(),
             Path::new("/Library/LaunchDaemons/com.assimilate.agent.plist")
         );
-        assert_eq!(
-            paths.support_dir(),
-            Path::new("/Library/Application Support/Assimilate/agent")
-        );
+        assert_eq!(paths.support_dir(), Path::new("/var/db/assimilate-agent"));
         assert_eq!(
             paths.config(),
-            Path::new("/Library/Application Support/Assimilate/agent/agent.json")
+            Path::new("/var/db/assimilate-agent/agent.json")
         );
         assert_eq!(paths.log(), Path::new("/var/log/assimilate-agent.log"));
     }
@@ -193,6 +198,15 @@ mod tests {
         assert!(!only_root_can_write(501, 0o755), "owned by a user");
         assert!(!only_root_can_write(0, 0o775), "group-writable");
         assert!(!only_root_can_write(0, 0o757), "world-writable");
+    }
+
+    #[test]
+    fn a_secret_is_safe_only_when_root_owns_it_and_nobody_else_has_any_access() {
+        assert!(only_root_can_open(0, 0o600));
+        assert!(only_root_can_open(0, 0o700));
+        assert!(!only_root_can_open(501, 0o600), "its owner can read it");
+        assert!(!only_root_can_open(0, 0o640), "group-readable");
+        assert!(!only_root_can_open(0, 0o604), "world-readable");
     }
 
     #[test]

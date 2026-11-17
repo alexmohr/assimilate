@@ -193,8 +193,21 @@ const knownHostProvider = computed<HostProvider | null>(() => {
   return knownHosts.value.find((h) => h.ssh_host === host)?.provider ?? null
 })
 
-watch(knownHostProvider, (provider) => {
-  if (provider !== null) form.provider = provider
+/**
+ * The provider the picker held before a known host locked it, given back when
+ * the hostname moves off that host - otherwise the unlocked picker would keep
+ * the known host's provider, and its locked port and path, for a host that
+ * has nothing to do with it.
+ */
+let providerBeforeLock = form.provider
+
+watch(knownHostProvider, (provider, previous) => {
+  if (provider !== null) {
+    if (previous === null) providerBeforeLock = form.provider
+    form.provider = provider
+  } else if (previous !== null) {
+    form.provider = providerBeforeLock
+  }
 })
 
 const remoteBorg = computed(() => preset.value?.remote_borg ?? null)

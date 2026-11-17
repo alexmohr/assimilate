@@ -67,10 +67,6 @@ pub enum HostProvider {
 #[strum(serialize_all = "snake_case")]
 #[ts(export)]
 pub enum RemoteBorg {
-    /// Borg 1.x on rsync.net.
-    #[strum(serialize = "borg1")]
-    #[serde(rename = "borg1")]
-    RsyncNetBorg1,
     /// Borg 1.4 on rsync.net.
     #[strum(serialize = "borg14")]
     #[serde(rename = "borg14")]
@@ -86,7 +82,6 @@ impl RemoteBorg {
     #[must_use]
     pub const fn executable(self) -> &'static str {
         match self {
-            Self::RsyncNetBorg1 => "borg1",
             Self::RsyncNetBorg14 => "borg14",
             Self::HetznerBorg14 => "borg-1.4",
         }
@@ -286,7 +281,6 @@ mod tests {
 
     #[test]
     fn remote_borg_executables() {
-        assert_eq!(RemoteBorg::RsyncNetBorg1.executable(), "borg1");
         assert_eq!(RemoteBorg::RsyncNetBorg14.executable(), "borg14");
         assert_eq!(RemoteBorg::HetznerBorg14.executable(), "borg-1.4");
     }

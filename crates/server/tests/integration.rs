@@ -8168,6 +8168,113 @@ async fn importing_an_older_export_keeps_what_its_backups_read(pool: sqlx::PgPoo
     }
 }
 
+/// A schedule naming a host this server does not know gets a placeholder
+/// host, and keeps that target's own include and file change patterns; two
+/// repositories sharing a tag share one tag row.
+#[sqlx::test(migrations = "./migrations")]
+async fn importing_creates_placeholder_hosts_and_reuses_tags(pool: sqlx::PgPool) {
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+    let repo = |name: &str, path: &str| {
+        json!({
+            "name": name,
+            "repo_path": path,
+            "ssh_user": "borg",
+            "ssh_host": "remote",
+            "ssh_port": 22,
+            "compression": "lz4",
+            "encryption": "repokey",
+            "enabled": true,
+            "sync_schedule": "0 0 * * *",
+            "quota_warn_bytes": null,
+            "quota_critical_bytes": null,
+            "quota_warn_action": "",
+            "quota_critical_action": "",
+            "tags": ["shared"]
+        })
+    };
+    let payload = json!({
+        "version": 1,
+        "exported_at": "2026-06-01T00:00:00Z",
+        "hosts": [],
+        "repos": [repo("ghost-repo", "/backups/ghost"), repo("ghost-repo-2", "/backups/ghost2")],
+        "schedules": [{
+            "name": "ghost-schedule",
+            "schedule_type": "backup",
+            "cron_expression": "0 3 * * *",
+            "enabled": false,
+            "canary_enabled": false,
+            "execution_mode": "parallel",
+            "on_failure": "stop",
+            "files_mode": "own",
+            "exclude_patterns_raw": "",
+            "ignore_global_excludes": false,
+            "keep_hourly": 0,
+            "keep_daily": 7,
+            "keep_weekly": 4,
+            "keep_monthly": 6,
+            "keep_yearly": 0,
+            "compact_enabled": true,
+            "rate_limit_kbps": null,
+            "pre_backup_commands": [],
+            "post_backup_commands": [],
+            "repo_name": "ghost-repo",
+            "backup_sources": ["/srv"],
+            "targets": [{
+                "hostname": "ghost-host",
+                "execution_order": 0,
+                "backup_sources": [],
+                "exclude_patterns": "",
+                "include_patterns": "/srv/keep",
+                "file_change_patterns": "/srv/db/** ignore"
+            }]
+        }]
+    });
+    let resp = oneshot(
+        &mut app,
+        json_request("POST", "/api/config/import", Some(payload)),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    assert_eq!(body.get("schedules_created").unwrap(), 1);
+    let warnings = body.get("warnings").unwrap().to_string();
+    assert!(
+        warnings.contains("created placeholder agent \\\"ghost-host\\\""),
+        "{warnings}"
+    );
+
+    let (agent_id, token): (i64, String) =
+        sqlx::query_as("SELECT id, agent_token_hash FROM agents WHERE hostname = 'ghost-host'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(token, server::db::IMPORTED_TOKEN_HASH);
+    let patterns: (String, String) = sqlx::query_as(
+        "SELECT i.raw_text, f.raw_text FROM per_agent_includes i JOIN \
+         per_agent_file_change_patterns f ON f.schedule_id = i.schedule_id AND f.agent_id = \
+         i.agent_id WHERE i.agent_id = $1",
+    )
+    .bind(agent_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        patterns,
+        ("/srv/keep".to_owned(), "/srv/db/** ignore".to_owned())
+    );
+
+    let tags: Vec<i64> = sqlx::query_scalar(
+        "SELECT rt.tag_id FROM repo_tags rt JOIN repos r ON r.id = rt.repo_id WHERE r.name LIKE \
+         'ghost-repo%'",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(tags.len(), 2);
+    assert_eq!(tags.first(), tags.get(1), "both repositories share one tag");
+}
+
 #[sqlx::test(migrations = "./migrations")]
 async fn test_import_config_creates_schedule_with_matching_repo(pool: sqlx::PgPool) {
     create_test_user_and_session(&pool).await;

@@ -650,18 +650,18 @@ pub async fn test_connection(req: &TestConnectionRequest) -> TestConnectionRespo
         }
     };
 
-    let (exit_code, stdout, _stderr) =
-        match exec_command(&session, &borg_version_command(req.provider)).await {
-            Ok(result) => result,
-            Err(e) => {
-                return TestConnectionResponse {
-                    ssh_ok: true,
-                    borg_installed: false,
-                    borg_version: None,
-                    error: Some(format!("SSH ok, but failed to check borg: {e}")),
-                };
-            }
-        };
+    let command = borg_version_command(req.provider);
+    let (exit_code, stdout, _stderr) = match exec_command(&session, &command).await {
+        Ok(result) => result,
+        Err(e) => {
+            return TestConnectionResponse {
+                ssh_ok: true,
+                borg_installed: false,
+                borg_version: None,
+                error: Some(format!("SSH ok, but failed to check borg: {e}")),
+            };
+        }
+    };
 
     if exit_code == 0 {
         let version = stdout.trim().to_string();

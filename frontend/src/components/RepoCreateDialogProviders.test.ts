@@ -184,6 +184,22 @@ describe('RepoCreateDialog provider presets', () => {
     expect(select.disabled).toBe(true)
   })
 
+  it('gives the provider back when the hostname moves off a known host', async () => {
+    await open()
+    await pick('rsync_net')
+    const host = byLabel('SSH host')
+
+    await type(host, 'u9.your-storagebox.de')
+    const select = control('#repo-provider') as HTMLSelectElement
+    expect(select.value).toBe('hetzner')
+    expect(byLabel('SSH port').value).toBe('23')
+
+    await type(host, 'brand-new.example.org')
+    expect(select.disabled).toBe(false)
+    expect(select.value).toBe('rsync_net')
+    expect(byLabel('SSH port').value).toBe('22')
+  })
+
   it('sends the chosen provider with the repository', async () => {
     await open()
     await pick('rsync_net')

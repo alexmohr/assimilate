@@ -9,9 +9,9 @@ mod borg;
 mod database;
 mod endpoint;
 mod executor;
-// The macOS counterpart of the Windows service below, under the same name.
 mod live_file;
 mod pipe;
+// The macOS counterpart of the Windows service below, under the same name.
 #[cfg(target_os = "macos")]
 #[path = "launchd.rs"]
 mod service;

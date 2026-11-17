@@ -307,3 +307,102 @@ async fn remove(path: &Path) -> Result<(), ServiceError> {
         Ok(()) | Err(_) => Ok(()),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::os::unix::fs::symlink;
+
+    use super::*;
+
+    fn is_root() -> bool {
+        nix::unistd::geteuid().is_root()
+    }
+
+    #[tokio::test]
+    async fn removing_a_file_that_is_not_there_is_fine() {
+        let dir = tempfile::tempdir().unwrap();
+
+        assert!(remove(&dir.path().join("missing")).await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn a_symbolic_link_is_refused_instead_of_followed() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("target");
+        tokio::fs::write(&target, b"keep").await.unwrap();
+        let link = dir.path().join("link");
+        symlink(&target, &link).unwrap();
+
+        let result = write_private(&link, b"secret", 0o600).await;
+
+        assert!(matches!(result, Err(ServiceError::Io { .. })), "{result:?}");
+        assert_eq!(tokio::fs::read(&target).await.unwrap(), b"keep");
+    }
+
+    /// Whoever else made the file keeps it, so it is refused before anything
+    /// is written to it or taken out of it.
+    #[tokio::test]
+    async fn a_file_someone_else_owns_is_refused_and_left_as_it_was() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("agent.json");
+        tokio::fs::write(&path, b"keep").await.unwrap();
+
+        let result = write_private(&path, b"secret", 0o600).await;
+
+        // A test run as root owns the file it just made, which is fine.
+        if is_root() {
+            assert!(result.is_ok(), "{result:?}");
+        } else {
+            assert!(
+                matches!(result, Err(ServiceError::NotRootOnly { path: ref refused }) if *refused == path),
+                "{result:?}"
+            );
+            assert_eq!(tokio::fs::read(&path).await.unwrap(), b"keep");
+        }
+    }
+
+    #[tokio::test]
+    async fn a_folder_someone_else_owns_is_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let folder = dir.path().join("agent");
+
+        let result = create_private_dir(&folder).await;
+
+        if is_root() {
+            assert!(result.is_ok(), "{result:?}");
+        } else {
+            assert!(
+                matches!(result, Err(ServiceError::NotRootOnly { .. })),
+                "{result:?}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn an_executable_below_a_folder_anyone_can_write_is_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let exe = dir.path().join("assimilate-agent");
+        tokio::fs::write(&exe, b"").await.unwrap();
+
+        let result = require_root_owned_executable(&exe).await;
+
+        // The test's folder is under the system's temp folder, which anyone
+        // can write, and is the test user's own unless that is root.
+        assert!(
+            matches!(result, Err(ServiceError::UntrustedExecutable { .. })),
+            "{result:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn the_log_is_created_when_missing() {
+        let dir = tempfile::tempdir().unwrap();
+        let log = dir.path().join("agent.log");
+
+        let result = create_private(&log, 0o600).await;
+
+        // Made by the test user, so only root's own test run accepts it.
+        assert_eq!(result.is_ok(), is_root(), "{result:?}");
+        assert!(log.exists());
+    }
+}

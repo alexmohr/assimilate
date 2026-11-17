@@ -556,7 +556,7 @@ jobs:
         run: cargo +nightly-2026-08-21 clippy --locked -p agent --all-targets -- -D warnings
       - name: Test
         run: >
-          cargo +nightly-2026-08-21 test --locked -p agent -- service_config:: launchd_plist:: systemd:: service_command_lines
+          cargo +nightly-2026-08-21 test --locked -p agent -- service_config:: launchd_plist:: service::tests:: systemd:: service_command_lines
   # Builds and smoke-tests the desktop installers for every platform. On a
   # push to main, nightly-release publishes them.
   desktop-installers:

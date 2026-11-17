@@ -7711,8 +7711,8 @@ fn repo_import_payload(name: &str, host: &str, port: i64, provider: Option<&str>
         "sync_schedule": null,
         "ssh_host_key": null,
     });
-    if let Some(provider) = provider {
-        repo["provider"] = json!(provider);
+    if let (Some(provider), Some(fields)) = (provider, repo.as_object_mut()) {
+        fields.insert("provider".to_owned(), json!(provider));
     }
     json!({
         "version": 1,

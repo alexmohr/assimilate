@@ -7805,9 +7805,15 @@ async fn test_provider_presets_endpoint_lists_every_provider(pool: sqlx::PgPool)
         .map(|p| p.get("provider").unwrap().as_str().unwrap())
         .collect();
     assert_eq!(providers, ["generic", "hetzner", "rsync_net", "borgbase"]);
-    let hetzner = &presets.as_array().unwrap()[1];
-    assert_eq!(hetzner["defaults"]["ssh_port"], 23);
-    assert_eq!(hetzner["defaults"]["remote_borg"], "borg-1.4");
+    let hetzner = presets.as_array().unwrap().get(1).unwrap();
+    assert_eq!(
+        hetzner.get("defaults").unwrap().get("ssh_port").unwrap(),
+        23
+    );
+    assert_eq!(
+        hetzner.get("defaults").unwrap().get("remote_borg").unwrap(),
+        "borg-1.4"
+    );
 }
 
 #[sqlx::test(migrations = "./migrations")]

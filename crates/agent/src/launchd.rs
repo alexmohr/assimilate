@@ -256,14 +256,14 @@ async fn open_private(
     let file = fs::OpenOptions::new()
         .write(true)
         .create(true)
-        .truncate(matches!(existing, Existing::Replace))
         .mode(mode)
         .custom_flags(nix::libc::O_NOFOLLOW)
         .open(path)
         .await
         .map_err(ServiceError::io(context.clone()))?;
     // A file someone else made first stays theirs, whatever its mode is set
-    // to: refuse it before anything secret is written.
+    // to: refuse it before anything secret is written, and before emptying
+    // it, which is why the open doesn't truncate.
     let metadata = file
         .metadata()
         .await
@@ -276,7 +276,10 @@ async fn open_private(
     // `mode` only applies to a file that is new.
     file.set_permissions(std::fs::Permissions::from_mode(mode))
         .await
-        .map_err(ServiceError::io(context))?;
+        .map_err(ServiceError::io(context.clone()))?;
+    if matches!(existing, Existing::Replace) {
+        file.set_len(0).await.map_err(ServiceError::io(context))?;
+    }
     Ok(file)
 }
 

@@ -2407,6 +2407,7 @@ mod tests {
             "repo.example.com",
             22,
             Some("ssh-ed25519 AAAA"),
+            shared::provider::HostProvider::Generic,
         )
         .await;
 

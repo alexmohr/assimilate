@@ -124,6 +124,9 @@ pub fn borg_base_env_for_provider(
 /// stale entry for the host, causing every subsequent operation to fail with
 /// the same host-key-changed error the user had just accepted.
 ///
+/// The provider's remote borg binary is part of every environment built here
+/// (see [`borg_base_env_for_provider`]), so a caller cannot forget it.
+///
 /// If writing the pinned file fails, this falls back to the unpinned
 /// `accept-new` behavior (logging a warning) rather than failing the whole
 /// operation outright, matching the agent's equivalent fallback.
@@ -133,8 +136,9 @@ pub async fn borg_env_for_repo(
     ssh_host: &str,
     ssh_port: u16,
     ssh_host_key: Option<&str>,
+    provider: shared::provider::HostProvider,
 ) -> HashMap<String, String> {
-    let mut env = borg_base_env(passphrase);
+    let mut env = borg_base_env_for_provider(passphrase, provider);
 
     let Some(host_key) = ssh_host_key else {
         return env;
@@ -298,6 +302,23 @@ mod tests {
         assert_eq!(env.get("BORG_PASSPHRASE").map(String::as_str), Some("pw"));
     }
 
+    #[tokio::test]
+    async fn the_repo_environment_carries_the_providers_borg() {
+        let env = borg_env_for_repo(
+            "pw",
+            555_000_003,
+            "ab1.rsync.net",
+            22,
+            None,
+            HostProvider::RsyncNet,
+        )
+        .await;
+        assert_eq!(
+            env.get("BORG_REMOTE_PATH").map(String::as_str),
+            Some("borg14")
+        );
+    }
+
     #[test]
     fn generic_and_borgbase_hosts_run_plain_borg() {
         for provider in [HostProvider::Generic, HostProvider::Borgbase] {
@@ -308,7 +329,15 @@ mod tests {
 
     #[tokio::test]
     async fn borg_env_for_repo_falls_back_to_accept_new_without_host_key() {
-        let env = borg_env_for_repo("hunter2", 555_000_002, "repo.example.com", 22, None).await;
+        let env = borg_env_for_repo(
+            "hunter2",
+            555_000_002,
+            "repo.example.com",
+            22,
+            None,
+            HostProvider::Generic,
+        )
+        .await;
 
         let rsh = env.get("BORG_RSH").unwrap();
         assert!(rsh.contains("StrictHostKeyChecking=accept-new"));

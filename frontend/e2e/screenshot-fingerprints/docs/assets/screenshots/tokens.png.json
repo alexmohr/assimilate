@@ -1,5 +1,5 @@
 {
   "test": "settings pages",
   "pages": ["frontend/src/views/TokensView.vue"],
-  "fingerprint": "ab2a93a59d97303eee6337d73237bbc9ae5e47b6d916569eba1750b99c907026"
+  "fingerprint": "8f8fdba29e1c1548922a8fb80f0e57176d2521f951612b6047980d7b1ed53fb0"
 }

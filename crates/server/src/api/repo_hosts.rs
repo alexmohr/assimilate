@@ -113,8 +113,10 @@ fn validate_port(ssh_port: i32) -> Result<u16, ApiError> {
 )]
 /// List the provider presets a new repository host can start from, each with
 /// the defaults it fills in and locks (admin only).
-pub async fn list_host_providers(RequireAdmin(_admin): RequireAdmin) -> Json<Vec<ProviderPreset>> {
-    Json(HostProvider::presets())
+pub fn list_host_providers(
+    RequireAdmin(_admin): RequireAdmin,
+) -> std::future::Ready<Json<Vec<ProviderPreset>>> {
+    std::future::ready(Json(HostProvider::presets()))
 }
 
 #[utoipa::path(

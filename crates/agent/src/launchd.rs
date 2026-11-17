@@ -256,6 +256,7 @@ async fn open_private(
     let file = fs::OpenOptions::new()
         .write(true)
         .create(true)
+        .truncate(false)
         .mode(mode)
         .custom_flags(nix::libc::O_NOFOLLOW)
         .open(path)

@@ -8052,6 +8052,14 @@ async fn importing_an_older_export_keeps_what_its_backups_read(pool: sqlx::PgPoo
     .fetch_one(&pool)
     .await
     .unwrap();
+    let split: i64 = sqlx::query_scalar(
+        "INSERT INTO agents (hostname, agent_token_hash, default_exclude_patterns, \
+         default_file_change_patterns_raw) VALUES ('older-split', 'real-token', ARRAY['*.bak'], \
+         '/opt/** fatal') RETURNING id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
 
     // No files_mode: written before there was one.
     let payload = json!({
@@ -8083,7 +8091,9 @@ async fn importing_an_older_export_keeps_what_its_backups_read(pool: sqlx::PgPoo
                 { "hostname": "older-full", "execution_order": 0, "backup_sources": [],
                   "exclude_patterns": "" },
                 { "hostname": "older-bare", "execution_order": 1, "backup_sources": [],
-                  "exclude_patterns": "" }
+                  "exclude_patterns": "" },
+                { "hostname": "older-split", "execution_order": 2, "backup_sources": ["/opt"],
+                  "exclude_patterns": "*.log", "file_change_patterns": "/opt/db/** ignore" }
             ]
         }]
     });
@@ -8156,6 +8166,31 @@ async fn importing_an_older_export_keeps_what_its_backups_read(pool: sqlx::PgPoo
         names(commands.get("post_backup_commands").unwrap()),
         ["start app"]
     );
+
+    // A target's own values replaced the schedule's, so the host's are
+    // combined with those; its own paths are kept as they are.
+    assert_eq!(
+        for_host("backup_sources_per_agent", split)
+            .unwrap()
+            .get("paths")
+            .unwrap(),
+        &json!(["/opt"])
+    );
+    assert_eq!(
+        for_host("exclude_patterns_per_agent", split)
+            .unwrap()
+            .get("raw_text")
+            .unwrap(),
+        &json!("*.bak\n*.log")
+    );
+    assert_eq!(
+        for_host("file_change_patterns_per_agent", split)
+            .unwrap()
+            .get("raw_text")
+            .unwrap(),
+        &json!("/opt/db/** ignore\n/opt/** fatal")
+    );
+    assert!(for_host("commands_per_agent", split).is_none());
 
     // A host with nothing of its own adds nothing, and read no paths before.
     for field in [

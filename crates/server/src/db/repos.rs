@@ -589,7 +589,27 @@ pub async fn insert_repo(
     params: &InsertRepoParams<'_>,
 ) -> Result<RepoRow, ApiError> {
     let mut tx = pool.begin().await.map_err(ApiError::Database)?;
-    let (repo_id, _) = insert_repo_row(&mut tx, params).await?;
+    let (repo_id, _) = insert_repo_row(&mut tx, params, None).await?;
+    tx.commit().await.map_err(ApiError::Database)?;
+    get_repo_by_id(pool, repo_id).await
+}
+
+/// [`insert_repo`] on a host of `provider`: a host created for the repository
+/// takes it, and an existing one must already be it. The host is written in
+/// the same transaction as the repository, so a failure leaves neither.
+///
+/// # Errors
+///
+/// Returns [`ApiError::BadRequest`] if the provider does not accept the port
+/// or the host is another provider, or [`ApiError::Database`] if a query
+/// fails.
+pub async fn insert_repo_for_provider(
+    pool: &PgPool,
+    params: &InsertRepoParams<'_>,
+    provider: Option<HostProvider>,
+) -> Result<RepoRow, ApiError> {
+    let mut tx = pool.begin().await.map_err(ApiError::Database)?;
+    let (repo_id, _) = insert_repo_row(&mut tx, params, provider).await?;
     tx.commit().await.map_err(ApiError::Database)?;
     get_repo_by_id(pool, repo_id).await
 }
@@ -610,8 +630,24 @@ pub async fn insert_repo_pinning_host_key(
     params: &InsertRepoParams<'_>,
     ssh_host_key: &str,
 ) -> Result<RepoRow, ApiError> {
+    insert_repo_pinning_host_key_for_provider(pool, params, ssh_host_key, None).await
+}
+
+/// [`insert_repo_pinning_host_key`] on a host of `provider`: a host created
+/// for the repository takes it, and an existing one must already be it.
+///
+/// # Errors
+///
+/// As [`insert_repo_pinning_host_key`], and [`ApiError::BadRequest`] if the
+/// provider does not accept the port or the host is another provider.
+pub async fn insert_repo_pinning_host_key_for_provider(
+    pool: &PgPool,
+    params: &InsertRepoParams<'_>,
+    ssh_host_key: &str,
+    provider: Option<HostProvider>,
+) -> Result<RepoRow, ApiError> {
     let mut tx = pool.begin().await.map_err(ApiError::Database)?;
-    let (repo_id, repo_host_id) = insert_repo_row(&mut tx, params).await?;
+    let (repo_id, repo_host_id) = insert_repo_row(&mut tx, params, provider).await?;
     repo_hosts::pin_first_repo_host_key(&mut *tx, repo_host_id, params.ssh_host, ssh_host_key)
         .await?;
     tx.commit().await.map_err(ApiError::Database)?;
@@ -623,8 +659,11 @@ pub async fn insert_repo_pinning_host_key(
 async fn insert_repo_row(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     params: &InsertRepoParams<'_>,
+    provider: Option<HostProvider>,
 ) -> Result<(i64, i64), ApiError> {
-    let repo_host_id = repo_hosts::resolve_repo_host(tx, params.ssh_host, params.ssh_port).await?;
+    let repo_host_id =
+        repo_hosts::resolve_repo_host_for_provider(tx, params.ssh_host, params.ssh_port, provider)
+            .await?;
 
     let repo_id = if let Some(sync_schedule) = params.sync_schedule {
         sqlx::query_scalar!(

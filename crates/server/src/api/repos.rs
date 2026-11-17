@@ -406,7 +406,7 @@ pub async fn create_repo(
             let passphrase_encrypted = encrypt_passphrase(&req.passphrase, &state.encryption_key)?;
             let compression = helpers::validate_compression(req.compression.as_deref())?;
 
-            let repo = db::insert_repo_pinning_host_key(
+            let repo = db::insert_repo_pinning_host_key_for_provider(
                 &state.pool,
                 &InsertRepoParams {
                     name: &req.name,
@@ -421,6 +421,7 @@ pub async fn create_repo(
                     sync_schedule: None,
                 },
                 &ssh_host_key,
+                req.provider,
             )
             .await?;
             Ok((repo, info_result))
@@ -1044,18 +1045,17 @@ pub struct InitRepoRequest {
     pub provider: Option<HostProvider>,
 }
 
-/// Registers the host's provider, refusing one that disagrees with the host
-/// or its port, and returns the provider the host now has.
+/// The provider a repository on this host will have, refusing one that
+/// disagrees with the host or its port. Nothing is written: the host is
+/// created by the insert of the repository it is for, so a request that fails
+/// before that leaves no host behind.
 async fn resolve_provider(
     pool: &PgPool,
     ssh_host: &str,
     ssh_port: i32,
     requested: Option<HostProvider>,
 ) -> Result<HostProvider, ApiError> {
-    db::repo_hosts::ensure_repo_host_provider(pool, ssh_host, ssh_port, requested).await?;
-    Ok(db::repo_hosts::find_repo_host_by_name(pool, ssh_host)
-        .await?
-        .map_or_else(|| requested.unwrap_or_default(), |host| host.provider))
+    db::repo_hosts::check_repo_host_provider(pool, ssh_host, ssh_port, requested).await
 }
 
 #[utoipa::path(
@@ -1114,7 +1114,7 @@ pub async fn init_repo(
 
             let encryption = req.encryption.to_string();
 
-            let repo = db::insert_repo_pinning_host_key(
+            let repo = db::insert_repo_pinning_host_key_for_provider(
                 &state.pool,
                 &InsertRepoParams {
                     name: &req.name,
@@ -1129,6 +1129,7 @@ pub async fn init_repo(
                     sync_schedule: None,
                 },
                 &ssh_host_key,
+                req.provider,
             )
             .await?;
             Ok((borg_output, repo))
@@ -2720,11 +2721,8 @@ mod tests {
         ssh_port: i32,
         provider: HostProvider,
     ) -> i64 {
-        db::repo_hosts::ensure_repo_host_provider(pool, ssh_host, ssh_port, Some(provider))
-            .await
-            .unwrap();
         let passphrase = encrypt_passphrase("pw", &state.encryption_key).unwrap();
-        db::insert_repo(
+        db::insert_repo_for_provider(
             pool,
             &InsertRepoParams {
                 name: ssh_host,
@@ -2738,6 +2736,7 @@ mod tests {
                 owner_id: None,
                 sync_schedule: None,
             },
+            Some(provider),
         )
         .await
         .unwrap()

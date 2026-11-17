@@ -230,6 +230,15 @@ describe('RepoCreateDialog provider presets', () => {
     expect(document.body.textContent).not.toContain('deployed over SFTP')
   })
 
+  it('tells BorgBase apart from generic SSH with its own hint', async () => {
+    await open()
+    expect(document.body.textContent).not.toContain('plain borg')
+
+    await pick('borgbase')
+    expect(document.body.textContent).toContain('Runs plain borg on the remote side')
+    expect(document.body.textContent).toContain('deployed over the shell')
+  })
+
   it('sends the chosen provider with the repository', async () => {
     await open()
     await pick('rsync_net')

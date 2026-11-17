@@ -1822,11 +1822,8 @@ mod tests {
         ssh_host: &str,
         provider: Option<HostProvider>,
     ) -> i64 {
-        db::repo_hosts::ensure_repo_host_provider(pool, ssh_host, 22, provider)
-            .await
-            .unwrap();
         let passphrase = shared::crypto::encrypt_passphrase("pw", key).unwrap();
-        db::insert_repo(
+        db::insert_repo_for_provider(
             pool,
             &db::InsertRepoParams {
                 name: ssh_host,
@@ -1840,6 +1837,7 @@ mod tests {
                 owner_id: None,
                 sync_schedule: None,
             },
+            provider,
         )
         .await
         .unwrap()

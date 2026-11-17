@@ -212,6 +212,8 @@ watch(knownHostProvider, (provider, previous) => {
 
 const remoteBorg = computed(() => preset.value?.remote_borg ?? null)
 const deploysOverSftp = computed(() => preset.value?.key_deploy === 'sftp')
+/** A provider (not generic SSH) that runs plain borg, which the hint above has nothing to say about. */
+const providerIsFixed = computed(() => preset.value?.ssh_port != null)
 
 /** Completes a bare account name into the provider's hostname. */
 function completeHostname(): void {
@@ -590,6 +592,15 @@ defineExpose({ reset })
           Runs <code class="mono">{{ remoteBorg }}</code> on the remote side (<code class="mono"
             >--remote-path</code
           >)<template v-if="deploysOverSftp">, and the key is deployed over SFTP</template>.
+        </span>
+        <span
+          v-else-if="providerIsFixed"
+          class="field-hint"
+        >
+          Runs plain <code class="mono">borg</code> on the remote side<template
+            v-if="!deploysOverSftp"
+            >, and the key is deployed over the shell</template
+          >.
         </span>
       </div>
 

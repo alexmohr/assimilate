@@ -435,20 +435,14 @@ async fn import_repos(
                 repo_export.name,
             ));
 
-            // A generic host is whatever it already is; any other provider
-            // is registered first, so the host is created with it.
+            // A generic host is whatever it already is; any other provider is
+            // written with the repository, in one transaction, so a failed
+            // import leaves no host behind.
             let requested_provider = (!matches!(repo_export.provider, HostProvider::Generic))
                 .then_some(repo_export.provider);
-            db::repo_hosts::ensure_repo_host_provider(
-                pool,
-                &repo_export.ssh_host,
-                repo_export.ssh_port,
-                requested_provider,
-            )
-            .await?;
 
             // Create new repo
-            let new_repo = db::insert_repo(
+            let new_repo = db::insert_repo_for_provider(
                 pool,
                 &db::InsertRepoParams {
                     name: &repo_export.name,
@@ -462,6 +456,7 @@ async fn import_repos(
                     owner_id: None,
                     sync_schedule: Some(repo_export.sync_schedule.as_deref()),
                 },
+                requested_provider,
             )
             .await?;
 

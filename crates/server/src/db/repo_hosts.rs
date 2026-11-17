@@ -84,18 +84,48 @@ pub async fn resolve_repo_host(
     ssh_host: &str,
     ssh_port: i32,
 ) -> Result<i64, ApiError> {
+    resolve_repo_host_for_provider(tx, ssh_host, ssh_port, None).await
+}
+
+/// [`resolve_repo_host`] for a host of `provider`: a host created here takes
+/// it, and an existing one must already be it. `None` takes whatever the host
+/// is, and a new host is generic.
+///
+/// The host is written inside `tx`, so it is only kept if the repository it is
+/// created for is - a request that fails afterwards leaves no host behind to
+/// pin the provider of a later attempt.
+///
+/// # Errors
+///
+/// Returns [`ApiError::BadRequest`] if the provider does not accept the port,
+/// the host uses another port, or it is already another provider, or
+/// [`ApiError::Database`] if a query fails.
+pub async fn resolve_repo_host_for_provider(
+    tx: &mut sqlx::Transaction<'_, Postgres>,
+    ssh_host: &str,
+    ssh_port: i32,
+    provider: Option<HostProvider>,
+) -> Result<i64, ApiError> {
+    if let Some(provider) = provider {
+        let port = u16::try_from(ssh_port)
+            .map_err(|_| ApiError::BadRequest("ssh_port out of range".to_owned()))?;
+        provider.check_port(port).map_err(ApiError::BadRequest)?;
+    }
+    let provider_text = provider.unwrap_or_default().as_ref().to_owned();
     sqlx::query!(
-        "INSERT INTO repo_hosts (ssh_host, ssh_port) VALUES ($1, $2) ON CONFLICT (ssh_host) DO \
-         NOTHING",
+        "INSERT INTO repo_hosts (ssh_host, ssh_port, provider) VALUES ($1, $2, $3) ON CONFLICT \
+         (ssh_host) DO NOTHING",
         ssh_host,
         ssh_port,
+        provider_text,
     )
     .execute(&mut **tx)
     .await
     .map_err(ApiError::Database)?;
 
     let host = sqlx::query!(
-        "SELECT id, ssh_port FROM repo_hosts WHERE ssh_host = $1",
+        "SELECT id, ssh_port, provider AS \"provider: HostProvider\" FROM repo_hosts WHERE \
+         ssh_host = $1",
         ssh_host,
     )
     .fetch_one(&mut **tx)
@@ -109,62 +139,58 @@ pub async fn resolve_repo_host(
             host.ssh_port
         )));
     }
+    if let Some(requested) = provider.filter(|requested| *requested != host.provider) {
+        return Err(provider_mismatch(ssh_host, host.provider, requested));
+    }
     Ok(host.id)
 }
 
-/// Makes sure the host named `ssh_host` exists with `provider`, creating it
-/// with `ssh_port` if there is none. `None` takes whatever the host already
-/// is, and a new host is generic.
+fn provider_mismatch(ssh_host: &str, existing: HostProvider, requested: HostProvider) -> ApiError {
+    ApiError::BadRequest(format!(
+        "repository host {ssh_host} is a {existing} host, not a {requested} one"
+    ))
+}
+
+/// What provider a repository added on `ssh_host` will have, checked without
+/// writing anything: the host's own if it exists, else `requested`, else
+/// generic. Nothing is created here - the host is written by the insert it
+/// belongs to - so a request that fails after this check leaves nothing
+/// behind.
 ///
 /// A host is one provider for good: naming an existing host with another is
-/// refused, as it is for another port, because the provider fixes how every
-/// repository on the host is reached.
+/// refused, as it is for a port the provider does not use, because the
+/// provider fixes how every repository on the host is reached.
 ///
 /// # Errors
 ///
 /// Returns [`ApiError::BadRequest`] if the provider does not accept the port
-/// or the host is already another provider, or [`ApiError::Database`] if a
+/// or the host is already another provider, or [`ApiError::Database`] if the
 /// query fails.
-pub async fn ensure_repo_host_provider(
+pub async fn check_repo_host_provider(
     pool: &PgPool,
     ssh_host: &str,
     ssh_port: i32,
-    provider: Option<HostProvider>,
-) -> Result<(), ApiError> {
-    let Some(provider) = provider else {
-        return Ok(());
-    };
-    let port = u16::try_from(ssh_port)
-        .map_err(|_| ApiError::BadRequest("ssh_port out of range".to_owned()))?;
-    provider.check_port(port).map_err(ApiError::BadRequest)?;
-
-    let mut tx = pool.begin().await.map_err(ApiError::Database)?;
-    let provider_text = provider.as_ref();
-    sqlx::query!(
-        "INSERT INTO repo_hosts (ssh_host, ssh_port, provider) VALUES ($1, $2, $3) ON CONFLICT \
-         (ssh_host) DO NOTHING",
-        ssh_host,
-        ssh_port,
-        provider_text,
-    )
-    .execute(&mut *tx)
-    .await
-    .map_err(ApiError::Database)?;
+    requested: Option<HostProvider>,
+) -> Result<HostProvider, ApiError> {
+    if let Some(requested) = requested {
+        let port = u16::try_from(ssh_port)
+            .map_err(|_| ApiError::BadRequest("ssh_port out of range".to_owned()))?;
+        requested.check_port(port).map_err(ApiError::BadRequest)?;
+    }
     let existing = sqlx::query_scalar!(
         "SELECT provider AS \"provider: HostProvider\" FROM repo_hosts WHERE ssh_host = $1",
         ssh_host,
     )
-    .fetch_one(&mut *tx)
+    .fetch_optional(pool)
     .await
     .map_err(ApiError::Database)?;
-    tx.commit().await.map_err(ApiError::Database)?;
 
-    if existing == provider {
-        Ok(())
-    } else {
-        Err(ApiError::BadRequest(format!(
-            "repository host {ssh_host} is a {existing} host, not a {provider} one"
-        )))
+    match (existing, requested) {
+        (Some(existing), Some(requested)) if existing != requested => {
+            Err(provider_mismatch(ssh_host, existing, requested))
+        }
+        (Some(provider), _) | (None, Some(provider)) => Ok(provider),
+        (None, None) => Ok(HostProvider::default()),
     }
 }
 

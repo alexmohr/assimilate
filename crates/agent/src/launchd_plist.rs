@@ -74,6 +74,17 @@ const DOCTYPE: &str = concat!(
     r#""http://www.apple.com/DTDs/PropertyList-1.0.dtd">"#
 );
 
+/// The first of `chain`, an executable and then every folder above it, as
+/// (path, owner, permission bits), that anyone but root could change. Whoever
+/// can change any of them can swap the executable for their own after
+/// install, so each one counts, up to `/`.
+pub fn first_untrusted(chain: &[(PathBuf, u32, u32)]) -> Option<&Path> {
+    chain
+        .iter()
+        .find(|(_, uid, mode)| !only_root_can_write(*uid, *mode))
+        .map(|(path, _, _)| path.as_path())
+}
+
 /// `text` as XML character data.
 fn escape(text: &str) -> String {
     text.chars().fold(String::new(), |mut escaped, c| {
@@ -153,13 +164,13 @@ mod tests {
     #[test]
     fn the_plist_runs_the_service_and_keeps_it_alive() {
         let plist = render(
-            Path::new("/usr/local/lib/assimilate-agent/assimilate-agent"),
+            Path::new("/Library/Assimilate/assimilate-agent/assimilate-agent"),
             Path::new("/var/log/assimilate-agent.log"),
         );
 
         assert!(plist.contains("<string>com.assimilate.agent</string>"));
         assert!(plist.contains(
-            "<string>/usr/local/lib/assimilate-agent/assimilate-agent</string>\n    \
+            "<string>/Library/Assimilate/assimilate-agent/assimilate-agent</string>\n    \
              <string>service</string>\n    <string>run</string>"
         ));
         assert!(plist.contains("<key>PATH</key>\n    <string>/opt/homebrew/bin:"));
@@ -182,6 +193,35 @@ mod tests {
         assert!(!only_root_can_write(501, 0o755), "owned by a user");
         assert!(!only_root_can_write(0, 0o775), "group-writable");
         assert!(!only_root_can_write(0, 0o757), "world-writable");
+    }
+
+    #[test]
+    fn one_folder_anyone_else_can_write_anywhere_up_the_chain_is_untrusted() {
+        let entry = |path: &str, uid, mode| (PathBuf::from(path), uid, mode);
+        let trusted = [
+            entry("/usr/local/lib/agent/agent", 0, 0o755),
+            entry("/usr/local/lib/agent", 0, 0o755),
+            entry("/usr/local/lib", 0, 0o755),
+            entry("/", 0, 0o755),
+        ];
+        assert_eq!(first_untrusted(&trusted), None);
+
+        // Homebrew leaves /usr/local/lib group-writable for the admin group,
+        // so whoever is in it can replace the whole folder below.
+        let mut homebrew = trusted.clone();
+        homebrew[2] = entry("/usr/local/lib", 0, 0o775);
+        assert_eq!(
+            first_untrusted(&homebrew),
+            Some(Path::new("/usr/local/lib"))
+        );
+
+        let mut owned = trusted.clone();
+        owned[0] = entry("/usr/local/lib/agent/agent", 501, 0o755);
+        assert_eq!(
+            first_untrusted(&owned),
+            Some(Path::new("/usr/local/lib/agent/agent"))
+        );
+        assert_eq!(first_untrusted(&[]), None);
     }
 
     #[test]

@@ -207,11 +207,11 @@ jobs:
       - name: Smoke-test the package
         if: matrix.arch == 'aarch64'
         run: |
-          sudo mkdir -p /usr/local/lib
+          sudo mkdir -p /Library/Assimilate
           # Installed the documented way: owned by root, as the daemon,
           # which runs as root, requires.
-          sudo tar -xzf dist/*.tar.gz --no-same-owner -C /usr/local/lib
-          agent=/usr/local/lib/assimilate-agent
+          sudo tar -xzf dist/*.tar.gz --no-same-owner -C /Library/Assimilate
+          agent=/Library/Assimilate/assimilate-agent
           "$agent/assimilate-agent" --version
           "$agent/borg/borg.exe" --version
       # The packaged borg backs a folder up and restores it, the work the
@@ -219,7 +219,7 @@ jobs:
       - name: Back up and restore with the packaged borg
         if: matrix.arch == 'aarch64'
         run: |
-          borg=/usr/local/lib/assimilate-agent/borg/borg.exe
+          borg=/Library/Assimilate/assimilate-agent/borg/borg.exe
           work="$RUNNER_TEMP/borg-roundtrip"
           mkdir -p "$work/source" "$work/restore"
           echo "hello from macOS" > "$work/source/file.txt"
@@ -228,6 +228,23 @@ jobs:
           "$borg" create "$work/repo::smoke" "$work/source"
           (cd "$work/restore" && "$borg" extract "$work/repo::smoke")
           diff "$work/source/file.txt" "$work/restore${work}/source/file.txt"
+      # The daemon runs as root, so it refuses an agent that someone else
+      # could replace: here, one below a folder the admin group can write.
+      - name: Refuse an agent below a writable folder
+        if: matrix.arch == 'aarch64'
+        run: |
+          agent=/Library/Assimilate/assimilate-agent/assimilate-agent
+          export BORG_SERVER_URL=http://127.0.0.1:9
+          export BORG_AGENT_TOKEN=ci-smoke-test-token
+          export BORG_SERVER_KEY=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+          sudo chmod g+w /Library/Assimilate
+          refused=0
+          sudo --preserve-env=BORG_SERVER_URL,BORG_AGENT_TOKEN,BORG_SERVER_KEY "$agent" service install 2> "$RUNNER_TEMP/refused.log" || refused=1
+          sudo chmod g-w /Library/Assimilate
+          cat "$RUNNER_TEMP/refused.log"
+          test "$refused" = 1
+          grep -q 'writable by no one else' "$RUNNER_TEMP/refused.log"
+          test ! -e /Library/LaunchDaemons/com.assimilate.agent.plist
       # The daemon the documented way: root installs it, launchd runs it as
       # root and starts it again after it exits, before it is removed. Nothing
       # listens on the server URL; the agent keeps retrying it, so it stays
@@ -235,7 +252,7 @@ jobs:
       - name: Install, start, restart and remove the agent daemon
         if: matrix.arch == 'aarch64'
         run: |
-          agent=/usr/local/lib/assimilate-agent/assimilate-agent
+          agent=/Library/Assimilate/assimilate-agent/assimilate-agent
           label=com.assimilate.agent
           export BORG_SERVER_URL=http://127.0.0.1:9
           export BORG_AGENT_TOKEN=ci-smoke-test-token

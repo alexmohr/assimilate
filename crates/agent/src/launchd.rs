@@ -17,6 +17,7 @@ use std::{
     process::{ExitCode, Stdio},
 };
 
+use futures_util::future;
 use tokio::{fs, io::AsyncWriteExt as _, process::Command as Process};
 use tracing_subscriber::EnvFilter;
 
@@ -38,8 +39,8 @@ pub enum ServiceError {
     #[error("installing or removing the service needs root: run it with sudo")]
     NotRoot,
     #[error(
-        "{} runs as root, so it and its folder must be owned by root and writable by no one \
-         else; install the agent somewhere like /usr/local/lib/assimilate-agent with sudo",
+        "{} runs as root, so it and every folder above it must be owned by root and writable by \
+         no one else; install the agent somewhere like /Library/Assimilate with sudo",
         path.display()
     )]
     UntrustedExecutable { path: PathBuf },
@@ -131,7 +132,7 @@ async fn install(paths: &DaemonPaths, config: &StoredConfig) -> Result<(), Servi
     create_private_dir(paths.support_dir()).await?;
     let config_path = paths.config();
     write_private(&config_path, &config.to_json()?, 0o600).await?;
-    write_private(paths.log(), &[], 0o600).await?;
+    create_private(paths.log(), 0o600).await?;
     let plist = launchd_plist::render(&exe, paths.log());
     write_private(&paths.plist(), plist.as_bytes(), 0o644).await?;
 
@@ -181,21 +182,23 @@ async fn launchctl(args: &[&str]) -> Result<(), ServiceError> {
     })
 }
 
-/// Refuses an executable or folder anyone but root could replace, since
-/// launchd runs it as root.
+/// Refuses an executable that anyone but root could replace, or that sits
+/// below a folder anyone but root could replace, since launchd runs it as
+/// root.
 async fn require_root_owned_executable(exe: &Path) -> Result<(), ServiceError> {
-    for path in std::iter::once(exe).chain(exe.parent()) {
+    let chain = future::try_join_all(exe.ancestors().map(|path| async move {
         let metadata = fs::metadata(path).await.map_err(ServiceError::io(format!(
             "reading the permissions of {}",
             path.display()
         )))?;
-        if !launchd_plist::only_root_can_write(metadata.uid(), metadata.mode()) {
-            return Err(ServiceError::UntrustedExecutable {
-                path: path.to_path_buf(),
-            });
-        }
-    }
-    Ok(())
+        Ok::<_, ServiceError>((path.to_path_buf(), metadata.uid(), metadata.mode()))
+    }))
+    .await?;
+    launchd_plist::first_untrusted(&chain).map_or(Ok(()), |path| {
+        Err(ServiceError::UntrustedExecutable {
+            path: path.to_path_buf(),
+        })
+    })
 }
 
 /// Creates `dir` and its missing parents, with `dir` itself only root can
@@ -210,9 +213,23 @@ async fn create_private_dir(dir: &Path) -> Result<(), ServiceError> {
         .map_err(ServiceError::io(context))
 }
 
-/// Writes `contents` to `path` with permission bits `mode`, replacing what is
-/// there. A symbolic link at `path` is refused rather than followed.
-async fn write_private(path: &Path, contents: &[u8], mode: u32) -> Result<(), ServiceError> {
+/// What opening a private file does to one that is already there.
+#[derive(Clone, Copy)]
+enum Existing {
+    /// Empty it: its contents are being replaced.
+    Replace,
+    /// Leave its contents alone.
+    Keep,
+}
+
+/// Opens `path` for writing with permission bits `mode`, which also reset
+/// those of a file already there. A symbolic link at `path` is refused rather
+/// than followed.
+async fn open_private(
+    path: &Path,
+    mode: u32,
+    existing: Existing,
+) -> Result<fs::File, ServiceError> {
     let context = format!("writing {}", path.display());
     if let Some(dir) = path.parent() {
         fs::create_dir_all(dir)
@@ -222,20 +239,33 @@ async fn write_private(path: &Path, contents: &[u8], mode: u32) -> Result<(), Se
     let file = std::fs::OpenOptions::new()
         .write(true)
         .create(true)
-        .truncate(true)
+        .truncate(matches!(existing, Existing::Replace))
         .mode(mode)
         .custom_flags(nix::libc::O_NOFOLLOW)
         .open(path)
         .map_err(ServiceError::io(context.clone()))?;
-    let mut file = fs::File::from_std(file);
+    let file = fs::File::from_std(file);
     // `mode` only applies to a file that is new.
     file.set_permissions(std::fs::Permissions::from_mode(mode))
         .await
-        .map_err(ServiceError::io(context.clone()))?;
+        .map_err(ServiceError::io(context))?;
+    Ok(file)
+}
+
+/// Writes `contents` to `path`, replacing what is there.
+async fn write_private(path: &Path, contents: &[u8], mode: u32) -> Result<(), ServiceError> {
+    let context = format!("writing {}", path.display());
+    let mut file = open_private(path, mode, Existing::Replace).await?;
     file.write_all(contents)
         .await
         .map_err(ServiceError::io(context.clone()))?;
     file.flush().await.map_err(ServiceError::io(context))
+}
+
+/// Creates `path` if it isn't there, and keeps what is in it if it is: the
+/// log outlives every `service install`.
+async fn create_private(path: &Path, mode: u32) -> Result<(), ServiceError> {
+    open_private(path, mode, Existing::Keep).await.map(drop)
 }
 
 async fn remove(path: &Path) -> Result<(), ServiceError> {

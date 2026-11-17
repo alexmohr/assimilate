@@ -1359,6 +1359,7 @@ useQueryOverride(() => route.query.coverage, isCoverageFilter, filterCoverage)
     <BaseModal
       :open="showAddDialog"
       :title="newToken ? 'Agent created' : 'Add agent'"
+      :size="addMode === 'install' && installGenerated ? 'lg' : 'md'"
       @close="closeAddDialog"
     >
       <BaseTabs

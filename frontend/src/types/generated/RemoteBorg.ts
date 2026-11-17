@@ -4,4 +4,4 @@
  * The borg binary a remote side runs, passed to borg as `--remote-path`
  * (exported as `BORG_REMOTE_PATH`).
  */
-export type RemoteBorg = "borg1" | "borg14" | "borg-1.4";
+export type RemoteBorg = "borg14" | "borg-1.4";

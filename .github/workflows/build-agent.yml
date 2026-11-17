@@ -243,7 +243,8 @@ jobs:
           sudo chmod g-w /Library/Assimilate
           cat "$RUNNER_TEMP/refused.log"
           test "$refused" = 1
-          grep -q 'writable by no one else' "$RUNNER_TEMP/refused.log"
+          # The error names the folder that is writable.
+          grep -q 'UntrustedExecutable.*/Library/Assimilate"' "$RUNNER_TEMP/refused.log"
           test ! -e /Library/LaunchDaemons/com.assimilate.agent.plist
       # The daemon the documented way: root installs it, launchd runs it as
       # root and starts it again after it exits, before it is removed. Nothing

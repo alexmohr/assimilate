@@ -4,7 +4,7 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 -->
 
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import BaseSegmented, { type SegmentedOption } from './BaseSegmented.vue'
 import FileSourcesSection from './FileSourcesSection.vue'
 import SourceNotSetUp from './SourceNotSetUp.vue'
@@ -104,7 +104,21 @@ const ownFileSet = computed<FileSet>(() => ({
   postCommands: form.value.post_backup_commands,
 }))
 
+/**
+ * The per-host paths being edited. Like the rest of the form it is a copy
+ * taken when Edit opens and written back only on Save, so Cancel leaves the
+ * saved paths alone and a later save never picks up a cancelled edit.
+ */
+const perHostDraft = ref<Record<number, string>>({})
+watch(
+  () => ownFiles.value?.editing,
+  (editing) => {
+    if (editing) perHostDraft.value = { ...perHostSources.value }
+  },
+)
+
 async function saveOwnFiles(next: FileSet): Promise<void> {
+  if (usePerHostPaths.value) perHostSources.value = { ...perHostDraft.value }
   form.value.backup_sources = next.paths
   form.value.exclude_patterns = next.excludes
   form.value.include_patterns = next.includes
@@ -350,13 +364,13 @@ const preview = computed<HostPreview[]>(() =>
             >
               <template #default="{ agentId }">
                 <textarea
-                  :value="perHostSources[agentId] ?? ''"
+                  :value="perHostDraft[agentId] ?? ''"
                   class="input area-input area-input-sm"
                   placeholder="Directories to back up, one per line"
                   spellcheck="false"
                   @input="
                     ($event) =>
-                      (perHostSources[agentId] = ($event.target as HTMLTextAreaElement).value)
+                      (perHostDraft[agentId] = ($event.target as HTMLTextAreaElement).value)
                   "
                 />
               </template>

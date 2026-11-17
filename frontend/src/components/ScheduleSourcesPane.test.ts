@@ -319,7 +319,31 @@ describe('ScheduleSourcesPane', () => {
       const fields = wrapper.findAll('textarea[placeholder="Directories to back up, one per line"]')
       expect(fields).toHaveLength(2)
       await fields[1].setValue('/opt/data')
-      expect(perHostSources[2]).toBe('/opt/data')
+      // Edits a copy: the saved paths change on Save, not on each keystroke.
+      expect(perHostSources[2]).toBeUndefined()
+      await button(wrapper, 'Save')!.trigger('click')
+      await flushPromises()
+      expect(wrapper.emitted('update:perHostSources')?.at(-1)).toEqual([{ 2: '/opt/data' }])
+    })
+
+    // Cancel leaves the saved per-host paths alone, so a later save of
+    // anything else never writes the cancelled edit.
+    it('keeps the saved per-host paths when the edit is cancelled', async () => {
+      const perHostSources: Record<number, string> = { 1: '/srv' }
+      const wrapper = mount({ form: own(), usePerHostPaths: true, perHostSources })
+      await button(wrapper, 'Edit')!.trigger('click')
+      const fields = wrapper.findAll('textarea[placeholder="Directories to back up, one per line"]')
+      expect((fields[0].element as HTMLTextAreaElement).value).toBe('/srv')
+      await fields[0].setValue('/cancelled')
+      await button(wrapper, 'Cancel')!.trigger('click')
+
+      expect(perHostSources).toEqual({ 1: '/srv' })
+      expect(wrapper.emitted('update:perHostSources')).toBeUndefined()
+      await button(wrapper, 'Edit')!.trigger('click')
+      const reopened = wrapper.findAll(
+        'textarea[placeholder="Directories to back up, one per line"]',
+      )
+      expect((reopened[0].element as HTMLTextAreaElement).value).toBe('/srv')
     })
   })
 

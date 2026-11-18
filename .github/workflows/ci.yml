@@ -893,6 +893,7 @@ jobs:
     needs: [build-agent]
     env:
       ASSIMILATE_SECRET_KEY: ci_test_key_not_real
+      POSTGRES_PASSWORD: ci_test_password_not_real
     steps:
       - uses: actions/checkout@v4
         with:

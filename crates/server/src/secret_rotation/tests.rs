@@ -189,13 +189,75 @@ async fn a_second_run_finds_nothing_left_to_do(pool: PgPool) {
 #[ignore = "requires DATABASE_URL"]
 #[sqlx::test(migrations = "./migrations")]
 async fn values_already_under_the_current_key_are_left_untouched(pool: PgPool) {
-    let stored = encrypt("saved-after-rotation", &current());
-    let repo = insert_repo(&pool, "rotate-current", &stored).await;
+    let repo_secret = encrypt("saved-after-rotation", &current());
+    let totp_secret_value = encrypt("totp-after-rotation", &current());
+    let smtp_secret = encrypt("smtp-after-rotation", &current());
+    let header_secret = encrypt("header-after-rotation", &current());
+    let repo = insert_repo(&pool, "rotate-current", &repo_secret).await;
+    let user = insert_totp_user(&pool, "rotate-current-totp", Some(&totp_secret_value)).await;
+    let channel = insert_email_channel(&pool, "rotate-current-smtp", Some(&smtp_secret)).await;
+    insert_header(&pool, channel, "X-Current", Some(&header_secret)).await;
 
     let rotated = rotate_stored_secrets(&pool, &keys()).await.unwrap();
 
     assert_eq!(rotated, RotatedSecrets::default());
-    assert_eq!(repo_passphrase(&pool, repo).await, stored);
+    assert_eq!(repo_passphrase(&pool, repo).await, repo_secret);
+    assert_eq!(totp_secret(&pool, user).await, Some(totp_secret_value));
+    assert_eq!(smtp_password(&pool, channel).await, Some(smtp_secret));
+    assert_eq!(
+        header_value(&pool, channel, "X-Current").await,
+        Some(header_secret)
+    );
+}
+
+#[ignore = "requires DATABASE_URL"]
+#[sqlx::test(migrations = "./migrations")]
+async fn an_undecryptable_two_factor_secret_names_its_user(pool: PgPool) {
+    insert_totp_user(
+        &pool,
+        "rotate-foreign-totp",
+        Some(&encrypt("seed", &key(b"some other server"))),
+    )
+    .await;
+
+    let error = rotate_stored_secrets(&pool, &keys()).await.unwrap_err();
+
+    assert!(
+        matches!(
+            &error,
+            SecretRotationError::Undecryptable {
+                kind: StoredSecretKind::TotpSecret,
+                owner,
+            } if owner.contains("rotate-foreign-totp")
+        ),
+        "{error}"
+    );
+}
+
+#[ignore = "requires DATABASE_URL"]
+#[sqlx::test(migrations = "./migrations")]
+async fn an_undecryptable_header_value_names_its_header_and_channel(pool: PgPool) {
+    let channel = insert_email_channel(&pool, "rotate-foreign-hook", None).await;
+    insert_header(
+        &pool,
+        channel,
+        "Authorization",
+        Some(&encrypt("Bearer x", &key(b"some other server"))),
+    )
+    .await;
+
+    let error = rotate_stored_secrets(&pool, &keys()).await.unwrap_err();
+
+    assert!(
+        matches!(
+            &error,
+            SecretRotationError::Undecryptable {
+                kind: StoredSecretKind::WebhookHeaderValue,
+                owner,
+            } if owner.contains("Authorization") && owner.contains("rotate-foreign-hook")
+        ),
+        "{error}"
+    );
 }
 
 #[ignore = "requires DATABASE_URL"]

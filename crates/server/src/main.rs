@@ -223,13 +223,14 @@ async fn rotate_secret_key(
     };
     let keys = server::secret_rotation::RotationKeys::new(encryption_key, previous.encryption_key);
     let rotated = server::secret_rotation::rotate_stored_secrets(pool, &keys).await?;
+    // Tracing skips its arguments when no subscriber listens, so compute the total up front.
+    let total = rotated.total();
     tracing::info!(
         repository_passphrases = rotated.repository_passphrases,
         totp_secrets = rotated.totp_secrets,
         smtp_passwords = rotated.smtp_passwords,
         webhook_header_values = rotated.webhook_header_values,
-        "re-encrypted {} stored secrets under ASSIMILATE_SECRET_KEY",
-        rotated.total()
+        "re-encrypted {total} stored secrets under ASSIMILATE_SECRET_KEY"
     );
     let previous_fingerprint = previous.channel_key.public_key()?.fingerprint();
     tracing::warn!(

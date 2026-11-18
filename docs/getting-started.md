@@ -38,11 +38,12 @@ services:
     environment:
       POSTGRES_DB: borg
       POSTGRES_USER: borg
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-borg_secret}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
     volumes:
       - pgdata:/var/lib/postgresql
+    # Reachable from this machine only; the server uses the compose network.
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U borg -d borg"]
       interval: 5s
@@ -54,7 +55,7 @@ services:
     ports:
       - "8080:8080"
     environment:
-      DATABASE_URL: postgres://borg:${POSTGRES_PASSWORD:-borg_secret}@postgres:5432/borg
+      DATABASE_URL: postgres://borg:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}@postgres:5432/borg
       ASSIMILATE_SECRET_KEY: ${ASSIMILATE_SECRET_KEY:?ASSIMILATE_SECRET_KEY must be set}
       ASSIMILATE_BIND_ADDR: "0.0.0.0:8080"
       ASSIMILATE_STATIC_DIR: /app/static
@@ -88,6 +89,7 @@ services:
 **On the server machine:**
 
 ```bash
+export POSTGRES_PASSWORD=$(openssl rand -hex 24)
 export ASSIMILATE_SECRET_KEY=$(openssl rand -hex 32)
 docker compose up -d
 ```
@@ -109,9 +111,12 @@ docker compose up -d
 | Variable | Required | Default | Description |
 |---|---|---|---|
 | `ASSIMILATE_SECRET_KEY` | **Yes** | — | 32-byte hex key used to encrypt repository passphrases at rest (AES-256-GCM) |
-| `POSTGRES_PASSWORD` | No | `borg_secret` | Password for the PostgreSQL `borg` user |
+| `POSTGRES_PASSWORD` | **Yes** | — | Password for the PostgreSQL `borg` user. PostgreSQL stores it when the database volume is first created, so keep using the same value afterwards |
 | `BORG_AGENT_TOKEN` | Agent only | — | Token copied from the server UI after creating an agent |
 | `BORG_SERVER_KEY` | Agent only | — | The server key shown with the token, and on the **System** page |
+
+!!! warning "Upgrading from a compose file without `POSTGRES_PASSWORD`"
+    Earlier compose files fell back to the password `borg_secret` when `POSTGRES_PASSWORD` was unset. The compose file now refuses to start without it. If your database was created with that fallback, set `POSTGRES_PASSWORD=borg_secret` in your `.env` to start it as before, then change the password with `ALTER USER borg PASSWORD '...'` inside the `postgres` container and update `.env` to match.
 
 !!! warning "Protect `ASSIMILATE_SECRET_KEY`"
     This key derives the AES-256-GCM encryption key that protects all repository passphrases stored in the database. If you lose or rotate this value, every encrypted passphrase becomes **permanently unrecoverable**. Store it in a secrets manager or a secure `.env` file that is never committed to version control.
@@ -132,9 +137,9 @@ cd assimilate
 
 It brings up PostgreSQL and the server together, waits for the database to pass
 its health check before starting the server, and keeps the generated SSH keys in
-a named volume. The only values you need to supply are the two environment
-variables in the table above — put them in a `.env` file beside the compose file
-and see [First run](#first-run) below. The server listens on `8080`; to move it,
+a named volume. The only values you need to supply are `POSTGRES_PASSWORD` and
+`ASSIMILATE_SECRET_KEY` from the table above — put them in a `.env` file beside
+the compose file and see [First run](#first-run) below. The server listens on `8080`; to move it,
 override `ASSIMILATE_BIND_ADDR` and the published port.
 
 ### Agent: `docker-compose.yml`
@@ -155,9 +160,10 @@ services:
 
 ### First run
 
-Generate a secret key and start the server:
+Generate a database password and a secret key, then start the server:
 
 ```bash
+export POSTGRES_PASSWORD=$(openssl rand -hex 24)
 export ASSIMILATE_SECRET_KEY=$(openssl rand -hex 32)
 docker compose up -d
 ```
@@ -207,7 +213,7 @@ cp -r frontend/dist/* static/
 Start the server:
 
 ```bash
-export DATABASE_URL=postgres://borg:borg_secret@localhost:5432/borg
+export DATABASE_URL=postgres://borg:<your-postgres-password>@localhost:5432/borg
 export ASSIMILATE_SECRET_KEY=$(openssl rand -hex 32)
 cargo run -p server
 ```

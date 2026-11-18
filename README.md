@@ -61,6 +61,7 @@ Opens a complete, seeded demo (server, three hosts with agents, real borg reposi
 ### Run it yourself
 
 ```bash
+export POSTGRES_PASSWORD=$(openssl rand -hex 24)
 export ASSIMILATE_SECRET_KEY=$(openssl rand -hex 32)
 docker compose up -d postgres server
 ```

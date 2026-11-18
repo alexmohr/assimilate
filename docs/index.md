@@ -17,7 +17,7 @@ services:
     environment:
       POSTGRES_DB: borg
       POSTGRES_USER: borg
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-borg_secret}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -31,7 +31,7 @@ services:
     ports:
       - "8080:8080"
     environment:
-      DATABASE_URL: postgres://borg:${POSTGRES_PASSWORD:-borg_secret}@db:5432/borg
+      DATABASE_URL: postgres://borg:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}@db:5432/borg
       ASSIMILATE_SECRET_KEY: ${ASSIMILATE_SECRET_KEY:?must be set}
     volumes:
       - ssh_keys:/app/ssh
@@ -45,7 +45,9 @@ volumes:
 ```
 
 ```bash
-export ASSIMILATE_SECRET_KEY=$(openssl rand -hex 32) && docker compose up -d
+export POSTGRES_PASSWORD=$(openssl rand -hex 24)
+export ASSIMILATE_SECRET_KEY=$(openssl rand -hex 32)
+docker compose up -d
 ```
 
 Open [http://localhost:8080](http://localhost:8080) — login: `admin` / `admin`.

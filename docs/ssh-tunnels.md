@@ -48,7 +48,7 @@ Once created, the server connects to the agent machine over SSH and requests rem
 Install or update the agent with **Deploy agent** (or **Upgrade agent** / **Redeploy agent**) on the agent's page. Assimilate detects the enabled tunnel
 and writes `ws://127.0.0.1:<tunnel_port>` and the server key into the systemd service, and a
 generated token into its root-only token file, automatically. Redeploying refreshes these values
-even when the custom systemd unit already contains `BORG_SERVER_URL` and `BORG_SERVER_KEY` entries. The agent's
+even when the custom systemd unit already contains `BORG_SERVER_URL`, `BORG_SERVER_KEY` and `BORG_HOSTNAME` entries. The agent's
 connection through the tunnel is [encrypted end to end](agents.md#encrypted-connection) like any
 other. No agent configuration is required
 outside the UI.

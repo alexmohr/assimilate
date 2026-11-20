@@ -1015,6 +1015,17 @@ pub struct DeployAgentParams<'a> {
     pub password: Option<&'a str>,
     /// Custom systemd unit file contents; falls back to [`default_unit_content`] when unset.
     pub systemd_service_content: Option<&'a str>,
+    /// The hostname the agent is registered under, which the deployed agent
+    /// reports as `BORG_HOSTNAME` instead of the host's own name.
+    pub agent_hostname: &'a str,
+}
+
+/// What the deploy sets on the agent's unit, beside the token in
+/// [`TOKEN_FILE_PATH`].
+struct UnitEnvironment<'a> {
+    server_url: &'a str,
+    server_key: &'a str,
+    agent_hostname: &'a str,
 }
 
 /// Where the agent's token is installed, readable by root only. The unit
@@ -1023,7 +1034,10 @@ pub struct DeployAgentParams<'a> {
 /// values, but only the path of an `EnvironmentFile=`.
 const TOKEN_FILE_PATH: &str = "/etc/assimilate-agent.env";
 
-fn default_unit_content(remote_path: &str, server_url: &str, server_key: &str) -> String {
+fn default_unit_content(remote_path: &str, env: &UnitEnvironment<'_>) -> String {
+    let server_url = unit_env::assignment("BORG_SERVER_URL", env.server_url);
+    let server_key = unit_env::assignment("BORG_SERVER_KEY", env.server_key);
+    let hostname = unit_env::assignment("BORG_HOSTNAME", env.agent_hostname);
     format!(
         "\
 [Unit]
@@ -1034,9 +1048,10 @@ Wants=network-online.target
 [Service]
 Type=simple
 ExecStart={remote_path}
-Environment=BORG_SERVER_URL={server_url}
+Environment={server_url}
 EnvironmentFile={TOKEN_FILE_PATH}
-Environment=BORG_SERVER_KEY={server_key}
+Environment={server_key}
+Environment={hostname}
 Restart=on-failure
 RestartSec=10
 
@@ -1199,9 +1214,10 @@ pub(crate) fn shell_escape(s: &str) -> String {
 /// from [`TOKEN_FILE_PATH`] instead of holding it: a token left in the unit,
 /// such as one read back as `[REDACTED]` from an agent deployed before, is
 /// removed.
-fn inject_env_vars(content: &str, server_url: &str, server_key: &str) -> String {
-    let result = replace_or_insert_environment(content, "BORG_SERVER_URL", server_url);
-    let result = replace_or_insert_environment(&result, "BORG_SERVER_KEY", server_key);
+fn inject_env_vars(content: &str, env: &UnitEnvironment<'_>) -> String {
+    let result = replace_or_insert_environment(content, "BORG_SERVER_URL", env.server_url);
+    let result = replace_or_insert_environment(&result, "BORG_SERVER_KEY", env.server_key);
+    let result = replace_or_insert_environment(&result, "BORG_HOSTNAME", env.agent_hostname);
     let result = rewrite_agent_token(&result, None);
     let loads_token_file = result.lines().any(|line| {
         line.trim()
@@ -1231,7 +1247,7 @@ fn strip_env_quotes(s: &str) -> &str {
 /// `Environment=` line is replaced, keeping the line's other assignments,
 /// and a unit without one gets an `Environment=` line for it in `[Service]`.
 fn replace_or_insert_environment(content: &str, key: &str, value: &str) -> String {
-    let assignment = format!("{key}={value}");
+    let assignment = unit_env::assignment(key, value);
     let (result, replaced) = rewrite_environment_assignment(content, key, Some(&assignment));
     if replaced {
         result
@@ -1293,7 +1309,10 @@ fn rewrite_agent_token(content: &str, replacement: Option<&str>) -> String {
 /// Replaces each `key` assignment, quoted or not, on the unit's
 /// `Environment=` lines with `replacement`, or removes it when there is none,
 /// dropping a line left with no assignment. Other assignments and lines are
-/// kept as they are. Also returns whether any `key` assignment was found.
+/// kept as they are, except that a rewritten line loses any word that is not
+/// an assignment: systemd ignores those, and they are what is left of a
+/// placeholder such as `BORG_SERVER_URL=<will be set automatically>`. Also
+/// returns whether any `key` assignment was found.
 fn rewrite_environment_assignment(
     content: &str,
     key: &str,
@@ -1308,18 +1327,20 @@ fn rewrite_environment_assignment(
             let Some(assignments) = environment_content(line) else {
                 return Some(line.to_owned());
             };
-            if !assignments.split_whitespace().any(matches) {
+            let words = unit_env::split_words(assignments);
+            if !words.iter().copied().any(matches) {
                 return Some(line.to_owned());
             }
             found = true;
 
-            let rewritten = assignments
-                .split_whitespace()
-                .filter_map(|token| {
-                    if matches(token) {
+            let rewritten = words
+                .into_iter()
+                .filter(|word| unit_env::is_assignment(word))
+                .filter_map(|word| {
+                    if matches(word) {
                         replacement
                     } else {
-                        Some(token)
+                        Some(word)
                     }
                 })
                 .collect::<Vec<_>>();
@@ -1405,9 +1426,14 @@ pub async fn deploy_agent(
     on_step: &(dyn Fn(DeployStep) + Send + Sync),
 ) -> Result<(), SshError> {
     on_step(DeployStep::Connect);
+    let env = UnitEnvironment {
+        server_url: params.server_url,
+        server_key: params.server_key,
+        agent_hostname: params.agent_hostname,
+    };
     let unit_content = params.systemd_service_content.map_or_else(
-        || default_unit_content(params.remote_path, params.server_url, params.server_key),
-        |custom| inject_env_vars(custom, params.server_url, params.server_key),
+        || default_unit_content(params.remote_path, &env),
+        |custom| inject_env_vars(custom, &env),
     );
     let session = match params.password {
         Some(pw) => connect_with_password(params.host, params.user, params.port, pw).await?,
@@ -1605,6 +1631,8 @@ pub mod append_only;
 pub mod authorized_keys;
 /// The server's maintenance key.
 pub mod keys;
+/// The assignments on a systemd unit's `Environment=` lines.
+mod unit_env;
 
 #[cfg(test)]
 #[macro_use]
@@ -1620,6 +1648,13 @@ pub(crate) mod deploy_tests;
     reason = "tests use std::fs for simple synchronous setup/assertions"
 )]
 mod tests {
+    /// What the deploy sets on the unit in these tests.
+    const TEST_ENV: UnitEnvironment<'static> = UnitEnvironment {
+        server_url: "https://example.com",
+        server_key: "S3rverKey=",
+        agent_hostname: "test-host",
+    };
+
     const HOST_KEY_B64: &str =
         "AAAAC3NzaC1lZDI1NTE5AAAAINwxkbeQjd0zydveueMhRPJE+cxoP0DNuUcYAwqmOs6S";
 
@@ -1756,7 +1791,7 @@ mod tests {
             "BORG_SERVER_URL=<will be set automatically>\n",
             "BORG_AGENT_TOKEN=<will be set automatically>\n",
         );
-        let result = inject_env_vars(content, "https://example.com", "S3rverKey=");
+        let result = inject_env_vars(content, &TEST_ENV);
         assert!(result.contains("BORG_SERVER_URL=https://example.com"));
         assert!(result.contains("BORG_SERVER_KEY=S3rverKey="));
         assert!(result.contains("EnvironmentFile=/etc/assimilate-agent.env"));
@@ -1765,7 +1800,7 @@ mod tests {
     #[test]
     fn inject_env_vars_injects_missing_vars() {
         let content = "[Service]\nExecStart=/usr/local/bin/agent\n";
-        let result = inject_env_vars(content, "https://example.com", "S3rverKey=");
+        let result = inject_env_vars(content, &TEST_ENV);
         assert!(result.contains("Environment=BORG_SERVER_URL=https://example.com"));
         assert!(result.contains("EnvironmentFile=/etc/assimilate-agent.env"));
         assert!(result.contains("Environment=BORG_SERVER_KEY=S3rverKey="));
@@ -1782,12 +1817,13 @@ mod tests {
             "Environment=\"BORG_AGENT_TOKEN=[REDACTED]\"\n",
             "Environment=BORG_SERVER_KEY=0ldKey=\n",
         );
-        let result = inject_env_vars(content, "https://example.com", "S3rverKey=");
+        let result = inject_env_vars(content, &TEST_ENV);
         assert_eq!(
             result,
             concat!(
                 "[Service]\n",
                 "EnvironmentFile=/etc/assimilate-agent.env\n",
+                "Environment=BORG_HOSTNAME=test-host\n",
                 "Environment=BORG_SERVER_URL=https://example.com\n",
                 "Environment=BORG_SERVER_KEY=S3rverKey=\n",
             )
@@ -1797,7 +1833,7 @@ mod tests {
     #[test]
     fn inject_env_vars_keeps_the_other_assignments_on_a_token_line() {
         let content = "[Service]\nEnvironment=RUST_LOG=debug BORG_AGENT_TOKEN=[REDACTED] TZ=UTC\n";
-        let result = inject_env_vars(content, "https://example.com", "S3rverKey=");
+        let result = inject_env_vars(content, &TEST_ENV);
         assert!(
             result.contains("Environment=RUST_LOG=debug TZ=UTC\n"),
             "{result}"
@@ -1814,7 +1850,7 @@ mod tests {
             "EnvironmentFile=-/etc/assimilate-agent.env",
         ] {
             let content = format!("[Service]\n{line}\n");
-            let result = inject_env_vars(&content, "https://example.com", "S3rverKey=");
+            let result = inject_env_vars(&content, &TEST_ENV);
             assert_eq!(result.matches("EnvironmentFile=").count(), 1, "{result}");
             assert!(result.contains(line), "{result}");
         }
@@ -1823,7 +1859,7 @@ mod tests {
     #[test]
     fn inject_env_vars_adds_the_token_file_next_to_another_environment_file() {
         let content = "[Service]\nEnvironmentFile=/etc/default/proxy\n";
-        let result = inject_env_vars(content, "https://example.com", "S3rverKey=");
+        let result = inject_env_vars(content, &TEST_ENV);
         assert!(
             result.contains("EnvironmentFile=/etc/default/proxy\n"),
             "{result}"
@@ -1893,15 +1929,106 @@ mod tests {
             "EnvironmentFile=/etc/assimilate-agent.env\n",
             "Environment=BORG_SERVER_URL=https://old RUST_LOG=debug BORG_SERVER_KEY=0ldKey=\n",
         );
-        let result = inject_env_vars(content, "https://example.com", "S3rverKey=");
+        let result = inject_env_vars(content, &TEST_ENV);
         assert_eq!(
             result,
             concat!(
                 "[Service]\n",
+                "Environment=BORG_HOSTNAME=test-host\n",
                 "EnvironmentFile=/etc/assimilate-agent.env\n",
                 "Environment=BORG_SERVER_URL=https://example.com RUST_LOG=debug \
                  BORG_SERVER_KEY=S3rverKey=\n",
             )
+        );
+    }
+
+    /// The default unit the deploy dialog shows holds placeholders; every
+    /// word of each is replaced, so none is left behind for systemd to warn
+    /// about.
+    #[test]
+    fn inject_env_vars_leaves_nothing_of_the_dialog_placeholders() {
+        let content = concat!(
+            "[Service]\n",
+            "Environment=BORG_SERVER_URL=<will be set automatically>\n",
+            "EnvironmentFile=/etc/assimilate-agent.env\n",
+            "Environment=BORG_SERVER_KEY=<will be set automatically>\n",
+            "Environment=BORG_HOSTNAME=<will be set automatically>\n",
+        );
+        let result = inject_env_vars(content, &TEST_ENV);
+        assert_eq!(
+            result,
+            concat!(
+                "[Service]\n",
+                "Environment=BORG_SERVER_URL=https://example.com\n",
+                "EnvironmentFile=/etc/assimilate-agent.env\n",
+                "Environment=BORG_SERVER_KEY=S3rverKey=\n",
+                "Environment=BORG_HOSTNAME=test-host\n",
+            )
+        );
+    }
+
+    /// A unit deployed before the placeholders were cleaned up still holds
+    /// their leftover words; the next deploy drops them.
+    #[test]
+    fn inject_env_vars_cleans_up_placeholder_leftovers_of_an_earlier_deploy() {
+        let content = concat!(
+            "[Service]\n",
+            "Environment=BORG_SERVER_URL=https://old be set automatically>\n",
+            "EnvironmentFile=/etc/assimilate-agent.env\n",
+            "Environment=BORG_SERVER_KEY=0ldKey= be set automatically>\n",
+        );
+        let result = inject_env_vars(content, &TEST_ENV);
+        assert!(!result.contains("automatically"), "{result}");
+        assert!(
+            result.contains("Environment=BORG_SERVER_URL=https://example.com\n"),
+            "{result}"
+        );
+        assert!(
+            result.contains("Environment=BORG_SERVER_KEY=S3rverKey=\n"),
+            "{result}"
+        );
+    }
+
+    /// Splitting a line on whitespace would cut a quoted value with a space
+    /// in two; the other assignments on a rewritten line are kept whole.
+    #[test]
+    fn inject_env_vars_keeps_a_quoted_value_with_spaces_whole() {
+        let content =
+            "[Service]\nEnvironment=\"JAVA_OPTS=-Xmx1g -Xms1g\" BORG_SERVER_URL=https://old\n";
+        let result = inject_env_vars(content, &TEST_ENV);
+        assert!(
+            result.contains(
+                "Environment=\"JAVA_OPTS=-Xmx1g -Xms1g\" BORG_SERVER_URL=https://example.com\n"
+            ),
+            "{result}"
+        );
+    }
+
+    /// The deployed agent reports the hostname it is registered under,
+    /// whatever the host calls itself; a name systemd would not read
+    /// literally is quoted, so it can neither split nor end the line.
+    #[test]
+    fn inject_env_vars_sets_the_registered_hostname() {
+        let content = "[Service]\nEnvironment=BORG_HOSTNAME=old-name\n";
+        let result = inject_env_vars(content, &TEST_ENV);
+        assert!(
+            result.contains("Environment=BORG_HOSTNAME=test-host\n"),
+            "{result}"
+        );
+        assert!(!result.contains("old-name"), "{result}");
+
+        let env = UnitEnvironment {
+            agent_hostname: "web server\nExecStartPre=/bin/false",
+            ..TEST_ENV
+        };
+        let result = inject_env_vars("[Service]\n", &env);
+        assert!(
+            result.contains("Environment=\"BORG_HOSTNAME=web server\\nExecStartPre=/bin/false\"\n"),
+            "{result}"
+        );
+        assert!(
+            !result.lines().any(|line| line.starts_with("ExecStartPre")),
+            "{result}"
         );
     }
 
@@ -2109,13 +2236,13 @@ mod tests {
 
     #[test]
     fn default_unit_content_contains_exec_and_env() {
-        let content =
-            default_unit_content("/usr/local/bin/agent", "https://example.com", "S3rverKey=");
+        let content = default_unit_content("/usr/local/bin/agent", &TEST_ENV);
         assert!(content.contains("ExecStart=/usr/local/bin/agent"));
         assert!(content.contains("BORG_SERVER_URL=https://example.com"));
         assert!(content.contains("EnvironmentFile=/etc/assimilate-agent.env"));
         assert!(!content.contains("BORG_AGENT_TOKEN"), "{content}");
         assert!(content.contains("Environment=BORG_SERVER_KEY=S3rverKey="));
+        assert!(content.contains("Environment=BORG_HOSTNAME=test-host"));
         assert!(content.contains("[Unit]"));
         assert!(content.contains("[Service]"));
         assert!(content.contains("[Install]"));

@@ -4775,6 +4775,35 @@ exit 0
         assert_eq!(failures, 2);
     }
 
+    /// Hostnames are case-insensitive: an agent registered as `Mixed-Case-Host`
+    /// that reports its OS hostname as `mixed-case-host` is let in, and the
+    /// server knows it by the name it was registered under.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_hello_matches_the_registered_hostname_whatever_its_case(pool: PgPool) {
+        let agent = socket_agent(&pool, "Mixed-Case-Host").await;
+        let state = build_test_state(pool);
+        let mut ui = state.ui_broadcast.subscribe();
+
+        let (sink, sent) = recording_sink();
+        Box::pin(serve_agent(
+            sink,
+            frames(vec![hello_frame("mixed-case-host", SOCKET_TOKEN)]),
+            state.clone(),
+        ))
+        .await;
+
+        assert_eq!(close_reason(&sent), None);
+        let pushed = drain_ui(&mut ui);
+        assert!(
+            pushed.iter().any(|e| matches!(
+                e,
+                ServerToUi::AgentConnected { hostname } if *hostname == agent.hostname
+            )),
+            "{pushed:?}"
+        );
+    }
+
     /// With the database gone an agent cannot be authenticated; it is
     /// refused, and the failure to record that is logged.
     #[ignore = "requires DATABASE_URL"]

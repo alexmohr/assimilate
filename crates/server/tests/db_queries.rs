@@ -8928,6 +8928,25 @@ async fn agent_token_hash_lookup(pool: PgPool) {
     assert!(result.is_err());
 }
 
+/// Hostnames are case-insensitive: the lookup finds an agent whatever the
+/// case of the hostname it reports, and returns the hostname it was
+/// registered under.
+#[sqlx::test(migrations = "./migrations")]
+async fn agent_token_hash_lookup_ignores_hostname_case(pool: PgPool) {
+    let agent = db::insert_agent(&pool, "Case-Host", None, "case-hash", None, None)
+        .await
+        .unwrap();
+
+    for reported in ["case-host", "CASE-HOST", "Case-Host"] {
+        let candidates = db::get_agent_token_hashes(&pool, reported).await.unwrap();
+        let [candidate] = candidates.as_slice() else {
+            panic!("expected one candidate for {reported}");
+        };
+        assert_eq!(candidate.id, agent.id);
+        assert_eq!(candidate.hostname, "Case-Host");
+    }
+}
+
 #[sqlx::test(migrations = "./migrations")]
 async fn agent_last_seen_updates(pool: PgPool) {
     let agent = db::insert_agent(&pool, "seen-host", None, "hash-seen", None, None)

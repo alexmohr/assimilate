@@ -14,6 +14,8 @@ See [Getting Started](getting-started.md) for initial setup instructions.
 6. Click **Create** — the server generates a 32-byte random token and shows it once, together with the server key.
 7. Copy the token immediately; it is not shown again. The server key is the same for every agent and stays on the **System** page.
 
+Hostnames are not case sensitive: an agent registered as `Bot` is found when its machine reports `bot`. The agent reports the machine's own hostname unless `BORG_HOSTNAME` sets another, so a host registered under a different name, such as its fully qualified name, needs `BORG_HOSTNAME` set to that name. **Deploy agent** sets it for you.
+
 Pass the token to the agent via the `BORG_AGENT_TOKEN` environment variable and the server key via `BORG_SERVER_KEY`:
 
 ```bash
@@ -266,7 +268,7 @@ The dashboard can push the agent binary and install a systemd unit on a remote m
     | Server URL | URL the agent will use to connect back to the server |
     | Install path | Binary destination (default: `/usr/local/bin/assimilate-agent`) |
 
-3. Click **Deploy**. The server copies the binary, writes the systemd unit, and regenerates the agent token automatically. The token goes in `/etc/assimilate-agent.env`, which the unit loads with `EnvironmentFile=`, so it does not show up in `systemctl show`, which every user on the host can run. The binary, the unit and the token file are uploaded over SFTP to private temporary files and installed owned by root, so the SSH user cannot replace what systemd runs as root: the binary with mode 0755, and the unit and the token file readable by root only. None of them is ever written through a command. A sudo password goes to `sudo` on its standard input, never on the command line, which every user on the host can read.
+3. Click **Deploy**. The server copies the binary, writes the systemd unit, and regenerates the agent token automatically. The unit sets `BORG_HOSTNAME` to the hostname the agent is registered under, so the agent logs in under that name whatever the machine calls itself. The token goes in `/etc/assimilate-agent.env`, which the unit loads with `EnvironmentFile=`, so it does not show up in `systemctl show`, which every user on the host can run. The binary, the unit and the token file are uploaded over SFTP to private temporary files and installed owned by root, so the SSH user cannot replace what systemd runs as root: the binary with mode 0755, and the unit and the token file readable by root only. None of them is ever written through a command. A sudo password goes to `sudo` on its standard input, never on the command line, which every user on the host can read.
 
 If the agent is already at the latest version, the deploy is skipped and the existing token is preserved. The SSH user entered is remembered for this agent and prefilled the next time the dialog is opened.
 

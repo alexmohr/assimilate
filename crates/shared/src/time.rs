@@ -692,6 +692,19 @@ mod tests {
         assert!("yesterday".parse::<Timestamp>().is_err());
     }
 
+    /// The agent names VM checkpoints and snapshots with this pattern: three fractional
+    /// digits, no dot, truncated rather than rounded, and always three wide.
+    #[test]
+    fn the_checkpoint_name_pattern_has_exactly_three_fractional_digits() {
+        let pattern = "%Y%m%dT%H%M%S%3fZ";
+        let stamp = Timestamp::from_unix_micros(1_772_600_767_123_999).unwrap();
+        assert_eq!(stamp.strftime(pattern), "20260304T050607123Z");
+        let whole_second = Timestamp::from_unix_secs(1_772_600_767).unwrap();
+        assert_eq!(whole_second.strftime(pattern), "20260304T050607000Z");
+        let small = Timestamp::from_unix_micros(1_772_600_767_007_000).unwrap();
+        assert_eq!(small.strftime(pattern), "20260304T050607007Z");
+    }
+
     #[test]
     fn an_offsetless_date_time_is_read_as_utc() {
         let expected = at(2026, 3, 4, 5, 6, 7);

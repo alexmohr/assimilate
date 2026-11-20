@@ -32,7 +32,7 @@ use shared::{
     },
     vm::{DiscoveredVm, VmSelectionMode, VmSnapshotConfig, VmSnapshotMode, VmState},
 };
-use sqlx::PgPool;
+use sqlx::{PgPool, Row};
 
 /// The table sqlx records applied migrations in.
 const MIGRATIONS_TABLE: &str = "_sqlx_migrations";
@@ -19357,4 +19357,25 @@ async fn dropping_the_host_switches_keeps_a_switched_off_host_backing_up_nothing
     assert_eq!(vms.selection, shared::vm::VmSelectionMode::All);
     let dumps = db::databases::load_config(&pool, on.id).await.unwrap();
     assert_eq!(dumps.selection, DatabaseSelectionMode::All);
+}
+
+/// `raw_sql` runs over Postgres's simple query protocol, which sends every value in its text
+/// form. That is the one way to read `Timestamp` and `Date` through their text decoding, and
+/// it checks the parser against what Postgres itself renders (`+00`, `+05:30`, fractions).
+#[sqlx::test(migrations = "./migrations")]
+async fn timestamps_and_dates_decode_from_postgres_text_output(pool: PgPool) {
+    let row = sqlx::raw_sql(
+        "SET TIME ZONE 'UTC'; SELECT TIMESTAMPTZ '2026-03-04 05:06:07.123456+00' AS utc, \
+         TIMESTAMPTZ '2026-03-04 05:06:07+05:30' AS ahead, DATE '2026-03-04' AS day",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    let utc: Timestamp = row.try_get("utc").unwrap();
+    assert_eq!(utc.to_rfc3339(), "2026-03-04T05:06:07.123456Z");
+    let ahead: Timestamp = row.try_get("ahead").unwrap();
+    assert_eq!(ahead.to_rfc3339(), "2026-03-03T23:36:07Z");
+    let day: shared::time::Date = row.try_get("day").unwrap();
+    assert_eq!(day.to_string(), "2026-03-04");
 }

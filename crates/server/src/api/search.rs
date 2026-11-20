@@ -17,6 +17,11 @@ use super::{
 };
 use crate::{AppState, borg::Borg, error::ApiError};
 
+/// An archive entry's modification time as borg reports it, or the epoch when it has none.
+fn parse_mtime(mtime: &str) -> Timestamp {
+    mtime.parse::<Timestamp>().unwrap_or_default()
+}
+
 const SEARCH_TIMEOUT: Duration = Duration::from_mins(1);
 const PER_ARCHIVE_TIMEOUT: Duration = Duration::from_mins(1);
 const OVERALL_TIMEOUT: Duration = Duration::from_mins(5);
@@ -184,7 +189,7 @@ pub async fn search_archive(
                 .get("mtime")
                 .and_then(serde_json::Value::as_str)
                 .unwrap_or("");
-            let mtime = mtime_str.parse::<Timestamp>().unwrap_or_default();
+            let mtime = parse_mtime(mtime_str);
 
             Some(SearchEntry {
                 path,
@@ -455,7 +460,7 @@ async fn search_in_archive(
                 .get("mtime")
                 .and_then(serde_json::Value::as_str)
                 .unwrap_or("");
-            let mtime = mtime_str.parse::<Timestamp>().unwrap_or_default();
+            let mtime = parse_mtime(mtime_str);
 
             Some(CrossSearchEntry {
                 path: v
@@ -483,6 +488,16 @@ async fn search_in_archive(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn an_entry_mtime_parses_or_falls_back_to_the_epoch() {
+        assert_eq!(
+            parse_mtime("2026-03-04T05:06:07Z").to_rfc3339(),
+            "2026-03-04T05:06:07Z"
+        );
+        assert_eq!(parse_mtime(""), Timestamp::UNIX_EPOCH);
+        assert_eq!(parse_mtime("not a time"), Timestamp::UNIX_EPOCH);
+    }
+
     use super::*;
 
     #[test]

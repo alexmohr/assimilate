@@ -83,14 +83,12 @@ pub(super) fn write_known_hosts(
 
 /// The run's warning when its schedule asks for virtual machines that this
 /// host does not stage.
-pub(crate) const VMS_OFF_WARNING: &str =
-    "This schedule asks for virtual machines, but this host has virtual machine staging turned \
+pub(crate) const VMS_OFF_WARNING: &str = "This schedule asks for virtual machines, but this host has virtual machine staging turned \
      off, so none were included. Turn it on in the host's virtual machine settings.";
 
 /// The run's warning when its schedule asks for database dumps that this
 /// host has turned off.
-pub(crate) const DATABASES_OFF_WARNING: &str =
-    "This schedule asks for database dumps, but this host has database dumps turned off, so none \
+pub(crate) const DATABASES_OFF_WARNING: &str = "This schedule asks for database dumps, but this host has database dumps turned off, so none \
      were included. Turn them on in the host's database settings.";
 
 pub fn backup_target_from_repo(

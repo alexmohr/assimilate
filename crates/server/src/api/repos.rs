@@ -1579,6 +1579,12 @@ struct RenameAndReinitParams<'a> {
     target_encryption: BorgEncryption,
 }
 
+/// Where a repository's old directory is kept while it is re-created with another encryption:
+/// its own path with the day of the migration appended.
+fn migrated_repo_path(repo_path: &str, now: Timestamp) -> String {
+    format!("{repo_path}.migrated-{}", now.strftime("%Y-%m-%d"))
+}
+
 /// Renames the repository's on-disk directory to a `.migrated-<date>` path
 /// and runs `borg init` at the original path with the target encryption,
 /// rolling the rename back if `borg init` fails. Returns the migrated path
@@ -1593,8 +1599,7 @@ async fn rename_and_reinit_repo(params: RenameAndReinitParams<'_>) -> Result<Str
         target_encryption,
     } = params;
 
-    let date_suffix = Timestamp::now().strftime("%Y-%m-%d");
-    let migrated_path = format!("{}.migrated-{date_suffix}", repo.repo_path);
+    let migrated_path = migrated_repo_path(&repo.repo_path, Timestamp::now());
 
     run_ssh_command(
         &repo.ssh_user,
@@ -2233,6 +2238,15 @@ pub async fn reset_and_sync_repo(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_migrated_directory_is_named_for_the_day_of_the_migration() {
+        let now = shared::time::Timestamp::utc(2026, 3, 4, 23, 59, 59).unwrap();
+        assert_eq!(
+            migrated_repo_path("/srv/backups/repo", now),
+            "/srv/backups/repo.migrated-2026-03-04"
+        );
+    }
+
     use super::*;
 
     #[test]

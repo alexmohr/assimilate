@@ -98,3 +98,32 @@ pub async fn list_audit_log(
         per_page,
     }))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_rfc3339_range_bound_keeps_its_instant_whatever_the_offset() {
+        let utc = parse_iso_datetime("2026-03-04T05:06:07Z").unwrap();
+        assert_eq!(utc.to_rfc3339(), "2026-03-04T05:06:07Z");
+        let offset = parse_iso_datetime("2026-03-04T06:06:07+01:00").unwrap();
+        assert_eq!(offset, utc);
+    }
+
+    #[test]
+    fn a_bare_date_and_time_is_read_as_utc() {
+        let parsed = parse_iso_datetime("2026-03-04 05:06:07").unwrap();
+        assert_eq!(parsed.to_rfc3339(), "2026-03-04T05:06:07Z");
+    }
+
+    #[test]
+    fn a_range_bound_that_is_no_datetime_is_a_bad_request() {
+        for value in ["", "yesterday", "2026-13-01 00:00:00", "2026-03-04"] {
+            assert!(
+                matches!(parse_iso_datetime(value), Err(ApiError::BadRequest(_))),
+                "{value:?} should be rejected"
+            );
+        }
+    }
+}

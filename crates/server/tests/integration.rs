@@ -3624,11 +3624,17 @@ async fn test_sync_repo_times_out_on_hanging_borg_and_clears_importing() {
 /// What borg prints for `list --json-lines`: a file and a directory under `etc`, a file
 /// elsewhere, a line with no readable mtime, and a line that is not JSON at all.
 #[cfg(test)]
-const LISTED_LINES: &str = r#"{"path":"etc/hosts","type":"-","size":214,"mtime":"2026-03-04T05:06:07.123456Z"}
-{"path":"etc","type":"d","size":0,"mtime":"2026-03-04T05:00:00Z"}
-{"path":"srv/data.txt","type":"-","size":9,"mtime":"2026-03-05T00:00:00+01:00"}
-{"path":"srv/no-time.txt","type":"-","size":1}
-this line is not json"#;
+const LISTED_LINES: &str = concat!(
+    r#"{"path":"etc/hosts","type":"-","size":214,"mtime":"2026-03-04T05:06:07.123456Z"}"#,
+    "\n",
+    r#"{"path":"etc","type":"d","size":0,"mtime":"2026-03-04T05:00:00Z"}"#,
+    "\n",
+    r#"{"path":"srv/data.txt","type":"-","size":9,"mtime":"2026-03-05T00:00:00+01:00"}"#,
+    "\n",
+    r#"{"path":"srv/no-time.txt","type":"-","size":1}"#,
+    "\n",
+    "this line is not json",
+);
 
 /// The field `key` of a JSON object, which the test knows is there.
 #[cfg(test)]

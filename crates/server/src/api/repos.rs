@@ -2583,6 +2583,54 @@ mod tests {
         }
     }
 
+    /// A migration whose repository host cannot be reached fails at the rename, before
+    /// anything is created, and says which step it was.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_migration_whose_host_cannot_be_reached_fails_at_the_rename(pool: PgPool) {
+        let created = db::insert_repo(
+            &pool,
+            &db::InsertRepoParams {
+                name: "unreachable-repo",
+                repo_path: "/backup/unreachable",
+                ssh_user: "borg",
+                ssh_host: "127.0.0.1",
+                ssh_port: 1,
+                passphrase_encrypted: b"encrypted_data",
+                compression: "lz4",
+                encryption: "repokey",
+                owner_id: None,
+                sync_schedule: None,
+            },
+        )
+        .await
+        .unwrap();
+        let repo = db::get_repo_with_passphrase(&pool, created.id)
+            .await
+            .unwrap();
+        let state = crate::test_support::build_test_state(pool, b"repo-migration-test-key");
+
+        let result = rename_and_reinit_repo(RenameAndReinitParams {
+            state: &state,
+            repo_id: created.id,
+            repo: &repo,
+            repo_url: "ssh://borg@127.0.0.1:1/backup/unreachable",
+            passphrase: "secret",
+            target_encryption: BorgEncryption::Repokey,
+        })
+        .await;
+
+        match result {
+            Err(ApiError::BadGateway(message)) => {
+                assert!(
+                    message.contains("failed to rename old repository"),
+                    "{message}"
+                );
+            }
+            other => panic!("expected a bad gateway at the rename, got {other:?}"),
+        }
+    }
+
     #[ignore = "requires DATABASE_URL"]
     #[sqlx::test(migrations = "./migrations")]
     async fn check_known_repo_host_lets_an_unknown_or_matching_host_through(pool: PgPool) {

@@ -501,6 +501,10 @@ fn test_app_stats_and_notification_routes() -> Router<server::AppState> {
                 .delete(server::api::notifications::delete_channel),
         )
         .route(
+            "/api/notifications/channels/{id}/test",
+            post(server::api::notifications::test_channel),
+        )
+        .route(
             "/api/notifications/validate-smtp",
             post(server::api::notifications::validate_smtp),
         )
@@ -2349,6 +2353,40 @@ async fn test_notification_channel_update_rejects_a_config_for_another_transport
             .await
             .unwrap();
     assert_eq!(stored, "webhook");
+}
+
+/// "Send test" reaches the channel's delivery: a webhook on a loopback address is refused
+/// as an outbound target, which the admin is told as a server error rather than a silent
+/// success, and a channel that does not exist is a 404.
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn test_notification_channel_test_reports_a_refused_delivery_and_a_missing_channel() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+    let id: i64 = sqlx::query_scalar(
+        "INSERT INTO notification_channels (name, channel_type, config, enabled) VALUES \
+         ('loopback-hook', 'webhook', $1, true) RETURNING id",
+    )
+    .bind(json!({ "url": "http://127.0.0.1:9/hook" }))
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    let refused = oneshot(
+        &mut app,
+        post_request_without_body(&format!("/api/notifications/channels/{id}/test")),
+    )
+    .await;
+    assert_eq!(refused.status(), StatusCode::INTERNAL_SERVER_ERROR);
+
+    let missing = oneshot(
+        &mut app,
+        post_request_without_body("/api/notifications/channels/999999/test"),
+    )
+    .await;
+    assert_eq!(missing.status(), StatusCode::NOT_FOUND);
 }
 
 #[tokio::test]

@@ -6,7 +6,13 @@
       {
         "ordinal": 0,
         "name": "dir_path_id",
-        "type_info": "Int8"
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "archive_dirs",
+            "name": "dir_path_id"
+          }
+        }
       }
     ],
     "parameters": {

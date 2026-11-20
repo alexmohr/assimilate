@@ -6,17 +6,35 @@
       {
         "ordinal": 0,
         "name": "intermittent",
-        "type_info": "Bool"
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "machines",
+            "name": "intermittent"
+          }
+        }
       },
       {
         "ordinal": 1,
         "name": "recheck_minutes",
-        "type_info": "Int4"
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "machines",
+            "name": "catch_up_recheck_minutes"
+          }
+        }
       },
       {
         "ordinal": 2,
         "name": "give_up_minutes",
-        "type_info": "Int4"
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "machines",
+            "name": "catch_up_give_up_minutes"
+          }
+        }
       }
     ],
     "parameters": {

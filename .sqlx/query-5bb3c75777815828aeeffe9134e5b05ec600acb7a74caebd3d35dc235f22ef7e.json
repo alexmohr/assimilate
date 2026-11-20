@@ -6,22 +6,46 @@
       {
         "ordinal": 0,
         "name": "enabled",
-        "type_info": "Bool"
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "schedules",
+            "name": "enabled"
+          }
+        }
       },
       {
         "ordinal": 1,
         "name": "auto_disabled_agent_unreachable",
-        "type_info": "Bool"
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "schedules",
+            "name": "auto_disabled_agent_unreachable"
+          }
+        }
       },
       {
         "ordinal": 2,
         "name": "auto_disabled_by_agent_id",
-        "type_info": "Int8"
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "schedules",
+            "name": "auto_disabled_by_agent_id"
+          }
+        }
       },
       {
         "ordinal": 3,
         "name": "consecutive_failures",
-        "type_info": "Int4"
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "schedules",
+            "name": "consecutive_failures"
+          }
+        }
       }
     ],
     "parameters": {

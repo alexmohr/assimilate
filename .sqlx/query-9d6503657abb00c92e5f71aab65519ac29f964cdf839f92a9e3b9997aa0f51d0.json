@@ -6,72 +6,156 @@
       {
         "ordinal": 0,
         "name": "schedule_id",
-        "type_info": "Int8"
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "schedules",
+            "name": "id"
+          }
+        }
       },
       {
         "ordinal": 1,
         "name": "schedule_name",
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "schedules",
+            "name": "name"
+          }
+        }
       },
       {
         "ordinal": 2,
         "name": "repo_id",
-        "type_info": "Int8"
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "schedule_repos",
+            "name": "repo_id"
+          }
+        }
       },
       {
         "ordinal": 3,
         "name": "agent_id",
-        "type_info": "Int8"
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "schedule_targets",
+            "name": "agent_id"
+          }
+        }
       },
       {
         "ordinal": 4,
         "name": "hostname",
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "agents",
+            "name": "hostname"
+          }
+        }
       },
       {
         "ordinal": 5,
         "name": "schedule_type: ScheduleType",
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "schedules",
+            "name": "schedule_type"
+          }
+        }
       },
       {
         "ordinal": 6,
         "name": "cron_expression",
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "schedules",
+            "name": "cron_expression"
+          }
+        }
       },
       {
         "ordinal": 7,
         "name": "on_failure: OnFailure",
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "schedules",
+            "name": "on_failure"
+          }
+        }
       },
       {
         "ordinal": 8,
         "name": "execution_order",
-        "type_info": "Int4"
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "schedule_targets",
+            "name": "execution_order"
+          }
+        }
       },
       {
         "ordinal": 9,
         "name": "required",
-        "type_info": "Bool"
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "schedule_repos",
+            "name": "required"
+          }
+        }
       },
       {
         "ordinal": 10,
         "name": "missed_backup_threshold",
-        "type_info": "Int4"
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "schedules",
+            "name": "missed_backup_threshold"
+          }
+        }
       },
       {
         "ordinal": 11,
         "name": "agent_intermittent",
-        "type_info": "Bool"
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "machines",
+            "name": "intermittent"
+          }
+        }
       },
       {
         "ordinal": 12,
         "name": "wake_override: ScheduleWakeOverride",
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "schedules",
+            "name": "wake_override"
+          }
+        }
       },
       {
         "ordinal": 13,
         "name": "due_at!",
-        "type_info": "Timestamptz"
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "schedules",
+            "name": "next_run_at"
+          }
+        }
       }
     ],
     "parameters": {

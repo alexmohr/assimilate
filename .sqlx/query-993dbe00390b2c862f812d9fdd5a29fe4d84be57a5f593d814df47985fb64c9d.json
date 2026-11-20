@@ -6,12 +6,24 @@
       {
         "ordinal": 0,
         "name": "pre_backup_commands: HookCommands",
-        "type_info": "Jsonb"
+        "type_info": "Jsonb",
+        "origin": {
+          "Table": {
+            "table": "per_agent_commands",
+            "name": "pre_backup_commands"
+          }
+        }
       },
       {
         "ordinal": 1,
         "name": "post_backup_commands: HookCommands",
-        "type_info": "Jsonb"
+        "type_info": "Jsonb",
+        "origin": {
+          "Table": {
+            "table": "per_agent_commands",
+            "name": "post_backup_commands"
+          }
+        }
       }
     ],
     "parameters": {

@@ -6,242 +6,465 @@
       {
         "ordinal": 0,
         "name": "id",
-        "type_info": "Int8"
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "repos",
+            "name": "id"
+          }
+        }
       },
       {
         "ordinal": 1,
         "name": "name",
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "repos",
+            "name": "name"
+          }
+        }
       },
       {
         "ordinal": 2,
         "name": "repo_path",
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "repos",
+            "name": "repo_path"
+          }
+        }
       },
       {
         "ordinal": 3,
         "name": "ssh_user",
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "repos",
+            "name": "ssh_user"
+          }
+        }
       },
       {
         "ordinal": 4,
         "name": "ssh_host",
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "repo_hosts",
+            "name": "ssh_host"
+          }
+        }
       },
       {
         "ordinal": 5,
         "name": "ssh_port",
-        "type_info": "Int4"
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "repo_hosts",
+            "name": "ssh_port"
+          }
+        }
       },
       {
         "ordinal": 6,
         "name": "ssh_host_key",
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "repo_hosts",
+            "name": "ssh_host_key"
+          }
+        }
       },
       {
         "ordinal": 7,
         "name": "compression: Compression",
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "repos",
+            "name": "compression"
+          }
+        }
       },
       {
         "ordinal": 8,
         "name": "encryption: BorgEncryption",
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "repos",
+            "name": "encryption"
+          }
+        }
       },
       {
         "ordinal": 9,
         "name": "enabled",
-        "type_info": "Bool"
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "repos",
+            "name": "enabled"
+          }
+        }
       },
       {
         "ordinal": 10,
         "name": "owner_id",
-        "type_info": "Int8"
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "repos",
+            "name": "owner_id"
+          }
+        }
       },
       {
         "ordinal": 11,
         "name": "visibility: Visibility",
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "repos",
+            "name": "visibility"
+          }
+        }
       },
       {
         "ordinal": 12,
         "name": "sync_schedule",
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "repos",
+            "name": "sync_schedule"
+          }
+        }
       },
       {
         "ordinal": 13,
         "name": "repo_host_id",
-        "type_info": "Int8"
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "repos",
+            "name": "repo_host_id"
+          }
+        }
       },
       {
         "ordinal": 14,
         "name": "host_machine_id",
-        "type_info": "Int8"
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "repo_hosts",
+            "name": "machine_id"
+          }
+        }
       },
       {
         "ordinal": 15,
         "name": "host_intermittent",
-        "type_info": "Bool"
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "machines",
+            "name": "intermittent"
+          }
+        }
       },
       {
         "ordinal": 16,
         "name": "host_last_check_reachable",
-        "type_info": "Bool"
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "machines",
+            "name": "last_check_reachable"
+          }
+        }
       },
       {
         "ordinal": 17,
         "name": "host_last_checked_at",
-        "type_info": "Timestamptz"
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "machines",
+            "name": "last_checked_at"
+          }
+        }
       },
       {
         "ordinal": 18,
         "name": "wake_enabled",
-        "type_info": "Bool"
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "machines",
+            "name": "wake_enabled"
+          }
+        }
       },
       {
         "ordinal": 19,
         "name": "wake_mac_address",
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "machines",
+            "name": "wake_mac_address"
+          }
+        }
       },
       {
         "ordinal": 20,
         "name": "wake_broadcast_address",
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "machines",
+            "name": "wake_broadcast_address"
+          }
+        }
       },
       {
         "ordinal": 21,
         "name": "wake_timeout_seconds",
-        "type_info": "Int4"
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "machines",
+            "name": "wake_timeout_seconds"
+          }
+        }
       },
       {
         "ordinal": 22,
         "name": "shutdown_after_backup",
-        "type_info": "Bool"
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "machines",
+            "name": "shutdown_after_backup"
+          }
+        }
       },
       {
         "ordinal": 23,
         "name": "relocation_pending",
-        "type_info": "Bool"
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "repos",
+            "name": "relocation_pending"
+          }
+        }
       },
       {
         "ordinal": 24,
         "name": "total_original_size!",
-        "type_info": "Int8"
+        "type_info": "Int8",
+        "origin": "Expression"
       },
       {
         "ordinal": 25,
         "name": "total_compressed_size!",
-        "type_info": "Int8"
+        "type_info": "Int8",
+        "origin": "Expression"
       },
       {
         "ordinal": 26,
         "name": "total_deduplicated_size!",
-        "type_info": "Int8"
+        "type_info": "Int8",
+        "origin": "Expression"
       },
       {
         "ordinal": 27,
         "name": "archive_count!",
-        "type_info": "Int8"
+        "type_info": "Int8",
+        "origin": "Expression"
       },
       {
         "ordinal": 28,
         "name": "last_synced_at?",
-        "type_info": "Timestamptz"
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "repo_stats",
+            "name": "last_synced_at"
+          }
+        }
       },
       {
         "ordinal": 29,
         "name": "importing!",
-        "type_info": "Bool"
+        "type_info": "Bool",
+        "origin": "Expression"
       },
       {
         "ordinal": 30,
         "name": "import_error?",
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "repo_import_state",
+            "name": "error"
+          }
+        }
       },
       {
         "ordinal": 31,
         "name": "import_progress!",
-        "type_info": "Int4"
+        "type_info": "Int4",
+        "origin": "Expression"
       },
       {
         "ordinal": 32,
         "name": "import_total!",
-        "type_info": "Int4"
+        "type_info": "Int4",
+        "origin": "Expression"
       },
       {
         "ordinal": 33,
         "name": "import_status_message?",
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "repo_import_state",
+            "name": "status_message"
+          }
+        }
       },
       {
         "ordinal": 34,
         "name": "last_op_kind?: RepoOpKind",
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "repo_last_op",
+            "name": "kind"
+          }
+        }
       },
       {
         "ordinal": 35,
         "name": "last_op_at?",
-        "type_info": "Timestamptz"
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "repo_last_op",
+            "name": "at"
+          }
+        }
       },
       {
         "ordinal": 36,
         "name": "last_op_by?",
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "repo_last_op",
+            "name": "by_text"
+          }
+        }
       },
       {
         "ordinal": 37,
         "name": "last_backup_at?",
-        "type_info": "Timestamptz"
+        "type_info": "Timestamptz",
+        "origin": "Expression"
       },
       {
         "ordinal": 38,
         "name": "agent_count!",
-        "type_info": "Int8"
+        "type_info": "Int8",
+        "origin": "Expression"
       },
       {
         "ordinal": 39,
         "name": "unmatched_count!",
-        "type_info": "Int8"
+        "type_info": "Int8",
+        "origin": "Expression"
       },
       {
         "ordinal": 40,
         "name": "quota_warn_bytes?",
-        "type_info": "Int8"
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "repo_quotas",
+            "name": "warn_bytes"
+          }
+        }
       },
       {
         "ordinal": 41,
         "name": "quota_critical_bytes?",
-        "type_info": "Int8"
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "repo_quotas",
+            "name": "critical_bytes"
+          }
+        }
       },
       {
         "ordinal": 42,
         "name": "quota_warn_action?: QuotaAction",
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "repo_quotas",
+            "name": "warn_action"
+          }
+        }
       },
       {
         "ordinal": 43,
         "name": "quota_critical_action?: QuotaAction",
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "repo_quotas",
+            "name": "critical_action"
+          }
+        }
       },
       {
         "ordinal": 44,
         "name": "quota_enabled?",
-        "type_info": "Bool"
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "repo_quotas",
+            "name": "enabled"
+          }
+        }
       },
       {
         "ordinal": 45,
         "name": "append_only!",
-        "type_info": "Bool"
+        "type_info": "Bool",
+        "origin": "Expression"
       },
       {
         "ordinal": 46,
         "name": "maintenance_stopped!",
-        "type_info": "Bool"
+        "type_info": "Bool",
+        "origin": "Expression"
       },
       {
         "ordinal": 47,
         "name": "pending_deletion_count!",
-        "type_info": "Int8"
+        "type_info": "Int8",
+        "origin": "Expression"
       }
     ],
     "parameters": {
@@ -292,9 +515,9 @@
       null,
       true,
       true,
-      false,
-      false,
-      false,
+      true,
+      true,
+      true,
       null,
       null,
       null

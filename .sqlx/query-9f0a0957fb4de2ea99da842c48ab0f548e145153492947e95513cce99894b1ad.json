@@ -6,7 +6,13 @@
       {
         "ordinal": 0,
         "name": "passphrase_encrypted",
-        "type_info": "Bytea"
+        "type_info": "Bytea",
+        "origin": {
+          "Table": {
+            "table": "repos",
+            "name": "passphrase_encrypted"
+          }
+        }
       }
     ],
     "parameters": {

@@ -6,22 +6,46 @@
       {
         "ordinal": 0,
         "name": "status: ArchiveGrowthStatus",
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "archive_growth",
+            "name": "status"
+          }
+        }
       },
       {
         "ordinal": 1,
         "name": "result",
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "archive_growth",
+            "name": "result"
+          }
+        }
       },
       {
         "ordinal": 2,
         "name": "error_message",
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "archive_growth",
+            "name": "error_message"
+          }
+        }
       },
       {
         "ordinal": 3,
         "name": "finished_at",
-        "type_info": "Timestamptz"
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "archive_growth",
+            "name": "finished_at"
+          }
+        }
       }
     ],
     "parameters": {

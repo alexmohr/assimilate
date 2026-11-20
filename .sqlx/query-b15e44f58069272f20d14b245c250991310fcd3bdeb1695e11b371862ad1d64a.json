@@ -6,17 +6,35 @@
       {
         "ordinal": 0,
         "name": "schedule_id",
-        "type_info": "Int8"
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "schedules",
+            "name": "id"
+          }
+        }
       },
       {
         "ordinal": 1,
         "name": "schedule_name",
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "schedules",
+            "name": "name"
+          }
+        }
       },
       {
         "ordinal": 2,
         "name": "pending_for!",
-        "type_info": "Timestamptz"
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "schedule_targets",
+            "name": "catch_up_pending_for"
+          }
+        }
       }
     ],
     "parameters": {

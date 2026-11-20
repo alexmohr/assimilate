@@ -6,47 +6,91 @@
       {
         "ordinal": 0,
         "name": "ssh_host!",
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "repo_hosts",
+            "name": "ssh_host"
+          }
+        }
       },
       {
         "ordinal": 1,
         "name": "repo_count!",
-        "type_info": "Int8"
+        "type_info": "Int8",
+        "origin": "Expression"
       },
       {
         "ordinal": 2,
         "name": "total_deduplicated_size!",
-        "type_info": "Int8"
+        "type_info": "Int8",
+        "origin": "Expression"
       },
       {
         "ordinal": 3,
         "name": "warn_bytes?",
-        "type_info": "Int8"
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "server_quotas",
+            "name": "warn_bytes"
+          }
+        }
       },
       {
         "ordinal": 4,
         "name": "critical_bytes?",
-        "type_info": "Int8"
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "server_quotas",
+            "name": "critical_bytes"
+          }
+        }
       },
       {
         "ordinal": 5,
         "name": "warn_action?: QuotaAction",
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "server_quotas",
+            "name": "warn_action"
+          }
+        }
       },
       {
         "ordinal": 6,
         "name": "critical_action?: QuotaAction",
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "server_quotas",
+            "name": "critical_action"
+          }
+        }
       },
       {
         "ordinal": 7,
         "name": "enabled?",
-        "type_info": "Bool"
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "server_quotas",
+            "name": "enabled"
+          }
+        }
       },
       {
         "ordinal": 8,
         "name": "updated_at?",
-        "type_info": "Timestamptz"
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "server_quotas",
+            "name": "updated_at"
+          }
+        }
       }
     ],
     "parameters": {

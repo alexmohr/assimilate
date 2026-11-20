@@ -6,47 +6,101 @@
       {
         "ordinal": 0,
         "name": "id",
-        "type_info": "Int8"
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "ssh_tunnels",
+            "name": "id"
+          }
+        }
       },
       {
         "ordinal": 1,
         "name": "agent_id",
-        "type_info": "Int8"
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "ssh_tunnels",
+            "name": "agent_id"
+          }
+        }
       },
       {
         "ordinal": 2,
         "name": "ssh_host",
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "ssh_tunnels",
+            "name": "ssh_host"
+          }
+        }
       },
       {
         "ordinal": 3,
         "name": "ssh_user",
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "ssh_tunnels",
+            "name": "ssh_user"
+          }
+        }
       },
       {
         "ordinal": 4,
         "name": "ssh_port",
-        "type_info": "Int4"
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "ssh_tunnels",
+            "name": "ssh_port"
+          }
+        }
       },
       {
         "ordinal": 5,
         "name": "tunnel_port",
-        "type_info": "Int4"
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "ssh_tunnels",
+            "name": "tunnel_port"
+          }
+        }
       },
       {
         "ordinal": 6,
         "name": "ssh_host_key",
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "ssh_tunnels",
+            "name": "ssh_host_key"
+          }
+        }
       },
       {
         "ordinal": 7,
         "name": "enabled",
-        "type_info": "Bool"
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "ssh_tunnels",
+            "name": "enabled"
+          }
+        }
       },
       {
         "ordinal": 8,
         "name": "created_at",
-        "type_info": "Timestamptz"
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "ssh_tunnels",
+            "name": "created_at"
+          }
+        }
       }
     ],
     "parameters": {

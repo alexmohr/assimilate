@@ -6,37 +6,79 @@
       {
         "ordinal": 0,
         "name": "schedule_id",
-        "type_info": "Int8"
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "schedules",
+            "name": "id"
+          }
+        }
       },
       {
         "ordinal": 1,
         "name": "hostname",
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "agents",
+            "name": "hostname"
+          }
+        }
       },
       {
         "ordinal": 2,
         "name": "keep_hourly",
-        "type_info": "Int4"
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "schedules",
+            "name": "keep_hourly"
+          }
+        }
       },
       {
         "ordinal": 3,
         "name": "keep_daily",
-        "type_info": "Int4"
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "schedules",
+            "name": "keep_daily"
+          }
+        }
       },
       {
         "ordinal": 4,
         "name": "keep_weekly",
-        "type_info": "Int4"
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "schedules",
+            "name": "keep_weekly"
+          }
+        }
       },
       {
         "ordinal": 5,
         "name": "keep_monthly",
-        "type_info": "Int4"
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "schedules",
+            "name": "keep_monthly"
+          }
+        }
       },
       {
         "ordinal": 6,
         "name": "keep_yearly",
-        "type_info": "Int4"
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "schedules",
+            "name": "keep_yearly"
+          }
+        }
       }
     ],
     "parameters": {

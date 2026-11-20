@@ -6,7 +6,13 @@
       {
         "ordinal": 0,
         "name": "error",
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "repo_import_state",
+            "name": "error"
+          }
+        }
       }
     ],
     "parameters": {

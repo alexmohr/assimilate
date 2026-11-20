@@ -6,52 +6,112 @@
       {
         "ordinal": 0,
         "name": "schedule_id",
-        "type_info": "Int8"
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "schedules",
+            "name": "id"
+          }
+        }
       },
       {
         "ordinal": 1,
         "name": "schedule_name",
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "schedules",
+            "name": "name"
+          }
+        }
       },
       {
         "ordinal": 2,
         "name": "agent_id",
-        "type_info": "Int8"
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "schedule_targets",
+            "name": "agent_id"
+          }
+        }
       },
       {
         "ordinal": 3,
         "name": "hostname",
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "agents",
+            "name": "hostname"
+          }
+        }
       },
       {
         "ordinal": 4,
         "name": "schedule_type: ScheduleType",
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "schedules",
+            "name": "schedule_type"
+          }
+        }
       },
       {
         "ordinal": 5,
         "name": "cron_expression",
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "schedules",
+            "name": "cron_expression"
+          }
+        }
       },
       {
         "ordinal": 6,
         "name": "pending_for!",
-        "type_info": "Timestamptz"
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "schedule_targets",
+            "name": "catch_up_pending_for"
+          }
+        }
       },
       {
         "ordinal": 7,
         "name": "next_run_at",
-        "type_info": "Timestamptz"
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "schedules",
+            "name": "next_run_at"
+          }
+        }
       },
       {
         "ordinal": 8,
         "name": "min_lead_minutes",
-        "type_info": "Int4"
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "schedules",
+            "name": "catch_up_min_lead_minutes"
+          }
+        }
       },
       {
         "ordinal": 9,
         "name": "give_up_minutes",
-        "type_info": "Int4"
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "machines",
+            "name": "catch_up_give_up_minutes"
+          }
+        }
       }
     ],
     "parameters": {

@@ -6,102 +6,217 @@
       {
         "ordinal": 0,
         "name": "id",
-        "type_info": "Int8"
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "backup_reports",
+            "name": "id"
+          }
+        }
       },
       {
         "ordinal": 1,
         "name": "agent_id",
-        "type_info": "Int8"
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "backup_reports",
+            "name": "agent_id"
+          }
+        }
       },
       {
         "ordinal": 2,
         "name": "repo_id",
-        "type_info": "Int8"
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "backup_reports",
+            "name": "repo_id"
+          }
+        }
       },
       {
         "ordinal": 3,
         "name": "repo_name",
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "repos",
+            "name": "name"
+          }
+        }
       },
       {
         "ordinal": 4,
         "name": "schedule_id",
-        "type_info": "Int8"
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "backup_reports",
+            "name": "schedule_id"
+          }
+        }
       },
       {
         "ordinal": 5,
         "name": "schedule_name",
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": "Expression"
       },
       {
         "ordinal": 6,
         "name": "started_at",
-        "type_info": "Timestamptz"
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "backup_reports",
+            "name": "started_at"
+          }
+        }
       },
       {
         "ordinal": 7,
         "name": "finished_at",
-        "type_info": "Timestamptz"
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "backup_reports",
+            "name": "finished_at"
+          }
+        }
       },
       {
         "ordinal": 8,
         "name": "status: ReportStatus",
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "backup_reports",
+            "name": "status"
+          }
+        }
       },
       {
         "ordinal": 9,
         "name": "original_size",
-        "type_info": "Int8"
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "backup_reports",
+            "name": "original_size"
+          }
+        }
       },
       {
         "ordinal": 10,
         "name": "compressed_size",
-        "type_info": "Int8"
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "backup_reports",
+            "name": "compressed_size"
+          }
+        }
       },
       {
         "ordinal": 11,
         "name": "deduplicated_size",
-        "type_info": "Int8"
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "backup_reports",
+            "name": "deduplicated_size"
+          }
+        }
       },
       {
         "ordinal": 12,
         "name": "files_processed",
-        "type_info": "Int8"
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "backup_reports",
+            "name": "files_processed"
+          }
+        }
       },
       {
         "ordinal": 13,
         "name": "duration_secs",
-        "type_info": "Int8"
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "backup_reports",
+            "name": "duration_secs"
+          }
+        }
       },
       {
         "ordinal": 14,
         "name": "error_message",
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "backup_reports",
+            "name": "error_message"
+          }
+        }
       },
       {
         "ordinal": 15,
         "name": "warnings",
-        "type_info": "TextArray"
+        "type_info": "TextArray",
+        "origin": {
+          "Table": {
+            "table": "backup_reports",
+            "name": "warnings"
+          }
+        }
       },
       {
         "ordinal": 16,
         "name": "borg_version",
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "backup_reports",
+            "name": "borg_version"
+          }
+        }
       },
       {
         "ordinal": 17,
         "name": "archive_name",
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "backup_reports",
+            "name": "archive_name"
+          }
+        }
       },
       {
         "ordinal": 18,
         "name": "borg_command",
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "backup_reports",
+            "name": "borg_command"
+          }
+        }
       },
       {
         "ordinal": 19,
         "name": "run_id",
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "backup_reports",
+            "name": "run_id"
+          }
+        }
       }
     ],
     "parameters": {

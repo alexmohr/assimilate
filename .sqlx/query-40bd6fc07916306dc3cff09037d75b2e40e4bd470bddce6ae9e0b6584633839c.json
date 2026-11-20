@@ -6,37 +6,79 @@
       {
         "ordinal": 0,
         "name": "id",
-        "type_info": "Int8"
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "canary_results",
+            "name": "id"
+          }
+        }
       },
       {
         "ordinal": 1,
         "name": "schedule_id",
-        "type_info": "Int8"
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "canary_results",
+            "name": "schedule_id"
+          }
+        }
       },
       {
         "ordinal": 2,
         "name": "verified_at",
-        "type_info": "Timestamptz"
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "canary_results",
+            "name": "verified_at"
+          }
+        }
       },
       {
         "ordinal": 3,
         "name": "success",
-        "type_info": "Bool"
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "canary_results",
+            "name": "success"
+          }
+        }
       },
       {
         "ordinal": 4,
         "name": "canary_filename",
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "canary_results",
+            "name": "canary_filename"
+          }
+        }
       },
       {
         "ordinal": 5,
         "name": "error_message",
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "canary_results",
+            "name": "error_message"
+          }
+        }
       },
       {
         "ordinal": 6,
         "name": "archive_name",
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "canary_results",
+            "name": "archive_name"
+          }
+        }
       }
     ],
     "parameters": {

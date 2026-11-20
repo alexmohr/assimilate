@@ -6,37 +6,79 @@
       {
         "ordinal": 0,
         "name": "user_id",
-        "type_info": "Int8"
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "repo_permissions",
+            "name": "user_id"
+          }
+        }
       },
       {
         "ordinal": 1,
         "name": "repo_id",
-        "type_info": "Int8"
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "repo_permissions",
+            "name": "repo_id"
+          }
+        }
       },
       {
         "ordinal": 2,
         "name": "can_view",
-        "type_info": "Bool"
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "repo_permissions",
+            "name": "can_view"
+          }
+        }
       },
       {
         "ordinal": 3,
         "name": "can_backup",
-        "type_info": "Bool"
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "repo_permissions",
+            "name": "can_backup"
+          }
+        }
       },
       {
         "ordinal": 4,
         "name": "can_modify_schedules",
-        "type_info": "Bool"
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "repo_permissions",
+            "name": "can_modify_schedules"
+          }
+        }
       },
       {
         "ordinal": 5,
         "name": "can_extract",
-        "type_info": "Bool"
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "repo_permissions",
+            "name": "can_extract"
+          }
+        }
       },
       {
         "ordinal": 6,
         "name": "can_delete",
-        "type_info": "Bool"
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "repo_permissions",
+            "name": "can_delete"
+          }
+        }
       }
     ],
     "parameters": {

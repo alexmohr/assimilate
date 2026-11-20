@@ -6,27 +6,57 @@
       {
         "ordinal": 0,
         "name": "vm_snapshot_dir",
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "agents",
+            "name": "vm_snapshot_dir"
+          }
+        }
       },
       {
         "ordinal": 1,
         "name": "vm_snapshot_full_interval",
-        "type_info": "Int4"
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "agents",
+            "name": "vm_snapshot_full_interval"
+          }
+        }
       },
       {
         "ordinal": 2,
         "name": "vm_snapshot_timeout_seconds",
-        "type_info": "Int4"
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "agents",
+            "name": "vm_snapshot_timeout_seconds"
+          }
+        }
       },
       {
         "ordinal": 3,
         "name": "vm_snapshot_default_limit_bytes",
-        "type_info": "Int8"
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "agents",
+            "name": "vm_snapshot_default_limit_bytes"
+          }
+        }
       },
       {
         "ordinal": 4,
         "name": "vm_snapshot_selection: VmSelectionMode",
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "agents",
+            "name": "vm_snapshot_selection"
+          }
+        }
       }
     ],
     "parameters": {

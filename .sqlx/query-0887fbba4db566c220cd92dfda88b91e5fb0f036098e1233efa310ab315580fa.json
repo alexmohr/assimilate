@@ -6,17 +6,35 @@
       {
         "ordinal": 0,
         "name": "agent_id",
-        "type_info": "Int8"
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "schedule_targets",
+            "name": "agent_id"
+          }
+        }
       },
       {
         "ordinal": 1,
         "name": "execution_order",
-        "type_info": "Int4"
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "schedule_targets",
+            "name": "execution_order"
+          }
+        }
       },
       {
         "ordinal": 2,
         "name": "catch_up_pending_for",
-        "type_info": "Timestamptz"
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "schedule_targets",
+            "name": "catch_up_pending_for"
+          }
+        }
       }
     ],
     "parameters": {

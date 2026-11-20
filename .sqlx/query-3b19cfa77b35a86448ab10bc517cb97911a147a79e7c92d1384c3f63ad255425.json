@@ -6,7 +6,13 @@
       {
         "ordinal": 0,
         "name": "repo_id",
-        "type_info": "Int8"
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "repo_import_state",
+            "name": "repo_id"
+          }
+        }
       }
     ],
     "parameters": {

@@ -6,57 +6,123 @@
       {
         "ordinal": 0,
         "name": "id",
-        "type_info": "Int8"
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "machines",
+            "name": "id"
+          }
+        }
       },
       {
         "ordinal": 1,
         "name": "wake_enabled",
-        "type_info": "Bool"
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "machines",
+            "name": "wake_enabled"
+          }
+        }
       },
       {
         "ordinal": 2,
         "name": "wake_mac_address",
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "machines",
+            "name": "wake_mac_address"
+          }
+        }
       },
       {
         "ordinal": 3,
         "name": "wake_broadcast_address",
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "machines",
+            "name": "wake_broadcast_address"
+          }
+        }
       },
       {
         "ordinal": 4,
         "name": "wake_timeout_seconds",
-        "type_info": "Int4"
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "machines",
+            "name": "wake_timeout_seconds"
+          }
+        }
       },
       {
         "ordinal": 5,
         "name": "shutdown_after_backup",
-        "type_info": "Bool"
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "machines",
+            "name": "shutdown_after_backup"
+          }
+        }
       },
       {
         "ordinal": 6,
         "name": "intermittent",
-        "type_info": "Bool"
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "machines",
+            "name": "intermittent"
+          }
+        }
       },
       {
         "ordinal": 7,
         "name": "catch_up_recheck_minutes",
-        "type_info": "Int4"
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "machines",
+            "name": "catch_up_recheck_minutes"
+          }
+        }
       },
       {
         "ordinal": 8,
         "name": "catch_up_give_up_minutes",
-        "type_info": "Int4"
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "machines",
+            "name": "catch_up_give_up_minutes"
+          }
+        }
       },
       {
         "ordinal": 9,
         "name": "last_checked_at",
-        "type_info": "Timestamptz"
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "machines",
+            "name": "last_checked_at"
+          }
+        }
       },
       {
         "ordinal": 10,
         "name": "last_check_reachable",
-        "type_info": "Bool"
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "machines",
+            "name": "last_check_reachable"
+          }
+        }
       }
     ],
     "parameters": {

@@ -107,14 +107,28 @@ where
     }
 }
 
-/// Verifies `token` against every agent registered under `hostname` and
-/// returns the ID of the one it matches, if any.
+/// The agent a presented token belongs to.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct AuthenticatedAgent {
+    pub(crate) id: i64,
+    /// The hostname the agent is registered under. It can differ in case from
+    /// the one the agent reported, and is the one the rest of the server
+    /// knows the agent by.
+    pub(crate) hostname: String,
+}
+
+/// Verifies `token` against every agent registered under `hostname`, compared
+/// case-insensitively, and returns the one it matches, if any.
 ///
 /// More than one agent can share a hostname (agents in different domains),
 /// and a connecting agent only ever reports its OS hostname -- never which
 /// domain it belongs to -- so the presented token, not the hostname alone,
 /// is what identifies which specific agent this connection is for.
-pub(crate) async fn verify_agent_token(pool: &PgPool, hostname: &str, token: &str) -> Option<i64> {
+pub(crate) async fn verify_agent_token(
+    pool: &PgPool,
+    hostname: &str,
+    token: &str,
+) -> Option<AuthenticatedAgent> {
     let candidates = db::get_agent_token_hashes(pool, hostname).await.ok()?;
     for candidate in candidates {
         let token = token.to_owned();
@@ -124,7 +138,10 @@ pub(crate) async fn verify_agent_token(pool: &PgPool, hostname: &str, token: &st
             .unwrap_or(Ok(false))
             .unwrap_or(false);
         if verified {
-            return Some(candidate.id);
+            return Some(AuthenticatedAgent {
+                id: candidate.id,
+                hostname: candidate.hostname,
+            });
         }
     }
     None
@@ -132,18 +149,18 @@ pub(crate) async fn verify_agent_token(pool: &PgPool, hostname: &str, token: &st
 
 /// Looks up the agent's token hash and verifies the presented token.
 /// Sends a close frame and logs a system event on any failure. Returns the
-/// agent ID on success.
+/// agent on success.
 pub(super) async fn authenticate_agent<Si>(
     pool: &PgPool,
     ws_sink: &mut Si,
     hostname: &str,
     token: &str,
-) -> Option<i64>
+) -> Option<AuthenticatedAgent>
 where
     Si: Sink<Message> + Unpin,
     Si::Error: std::fmt::Display,
 {
-    let Some(agent_id) = verify_agent_token(pool, hostname, token).await else {
+    let Some(agent) = verify_agent_token(pool, hostname, token).await else {
         tracing::warn!(hostname = %hostname, "invalid agent token or unknown agent");
         if let Err(e) = db::insert_system_event(
             pool,
@@ -159,7 +176,7 @@ where
         return None;
     };
 
-    Some(agent_id)
+    Some(agent)
 }
 
 /// Records that the agent just connected, and the build it runs.
@@ -210,15 +227,16 @@ where
         "agent attempting connection"
     );
 
-    let Some(agent_id) =
-        authenticate_agent(&state.pool, &mut ws_sink, &hello.hostname, &hello.token).await
+    let Some(AuthenticatedAgent {
+        id: agent_id,
+        hostname,
+    }) = authenticate_agent(&state.pool, &mut ws_sink, &hello.hostname, &hello.token).await
     else {
         return;
     };
 
     record_agent_seen(&state.pool, agent_id, &hello).await;
     let HelloFields {
-        hostname,
         supports_restart,
         restart_unavailable_reason,
         instance_id,

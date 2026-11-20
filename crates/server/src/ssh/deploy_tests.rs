@@ -332,6 +332,12 @@ async fn a_deploy_keeps_the_token_and_the_sudo_password_off_every_command_line()
         unit.contains("EnvironmentFile=/etc/assimilate-agent.env"),
         "{unit}"
     );
+    // The agent logs in under the name it is registered as, not whatever
+    // the host calls itself.
+    assert!(
+        unit.contains("Environment=BORG_HOSTNAME=Registered-Host\n"),
+        "{unit}"
+    );
 }
 
 /// Deploys to the stand-in host on `port`, as a user whose sudo needs a
@@ -370,6 +376,7 @@ async fn deploy_reporting_with(
             server_key: "S3rverKey=",
             password: Some("passw0rd-s3cret"),
             systemd_service_content: None,
+            agent_hostname: "Registered-Host",
         },
         &|step| steps.lock().expect("steps").push(step),
     )

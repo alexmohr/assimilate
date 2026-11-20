@@ -3625,7 +3625,7 @@ async fn test_sync_repo_times_out_on_hanging_borg_and_clears_importing() {
 /// elsewhere, a line with no readable mtime, and a line that is not JSON at all.
 #[cfg(test)]
 const LISTED_LINES: &str = concat!(
-    r#"{"path":"etc/hosts","type":"-","size":214,"mtime":"2026-03-04T05:06:07.123456Z"}"#,
+    r#"{"path":"etc/hosts","type":"-","size":214,"mtime":"2026-03-04T05:06:07.123456"}"#,
     "\n",
     r#"{"path":"etc","type":"d","size":0,"mtime":"2026-03-04T05:00:00Z"}"#,
     "\n",

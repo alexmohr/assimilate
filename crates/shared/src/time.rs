@@ -320,25 +320,13 @@ impl FromStr for Date {
     }
 }
 
-/// Whole-unit views of a [`SignedDuration`] that jiff itself does not spell out.
+/// Whole days of a [`SignedDuration`], which jiff itself does not spell out.
 pub trait SignedDurationExt {
-    /// Whole minutes, truncated toward zero.
-    fn as_mins(&self) -> i64;
-    /// Whole hours, truncated toward zero.
-    fn as_hours(&self) -> i64;
     /// Whole 24-hour days, truncated toward zero.
     fn as_days(&self) -> i64;
 }
 
 impl SignedDurationExt for SignedDuration {
-    fn as_mins(&self) -> i64 {
-        self.as_secs() / 60
-    }
-
-    fn as_hours(&self) -> i64 {
-        self.as_secs() / 3600
-    }
-
     fn as_days(&self) -> i64 {
         self.as_secs() / 86_400
     }

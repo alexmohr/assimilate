@@ -15,8 +15,10 @@ import { Check, ChevronLeft, ChevronRight, TriangleAlert } from '@lucide/vue'
  * row of numbered dots with the current step named under it.
  *
  * A step counts as answered once `blockers` returns nothing for it; Continue
- * waits for that, and the create action waits for every step. The caller owns
- * the form; this owns which step is shown.
+ * waits for that, and the create action waits for every step. The rail ticks a
+ * step only once it has been visited and is answered, so a step whose defaults
+ * already satisfy it still reads as unseen until the user has looked at it. The
+ * caller owns the form; this owns which step is shown.
  */
 export interface WizardStep<V extends string> {
   id: V
@@ -76,8 +78,11 @@ type StepState = 'current' | 'done' | 'todo' | 'blank'
 
 function stepState(step: WizardStep<T>, index: number): StepState {
   if (index === stepIndex.value) return 'current'
-  if (props.blockers(step.id).length === 0) return 'done'
-  return visited.value.has(step.id) ? 'todo' : 'blank'
+  // A step with defaults that need nothing is not "done" until the user has
+  // actually been through it, or the whole rail would be green before the
+  // first click.
+  if (!visited.value.has(step.id)) return 'blank'
+  return props.blockers(step.id).length === 0 ? 'done' : 'todo'
 }
 
 function goToIndex(index: number): void {

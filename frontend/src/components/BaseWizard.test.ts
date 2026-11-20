@@ -251,7 +251,6 @@ describe('BaseWizard', () => {
 
   it('marks steps as current, done, todo once visited, or blank when not yet seen', async () => {
     const { wrapper, needs } = harness({ two: ['a port'], three: ['a review'] })
-    // An answered step is done before it is visited; an unanswered one stays blank.
     expect(states(wrapper)).toEqual(['current', 'blank', 'blank'])
 
     await railClick(wrapper, 1)
@@ -267,6 +266,19 @@ describe('BaseWizard', () => {
     needs.two = []
     await wrapper.vm.$nextTick()
     expect(states(wrapper)).toEqual(['current', 'done', 'todo'])
+  })
+
+  it('leaves an answered step blank until it has been visited', async () => {
+    // Nothing needs anything, as on a wizard whose defaults are all valid.
+    const { wrapper } = harness()
+    expect(states(wrapper)).toEqual(['current', 'blank', 'blank'])
+
+    await railClick(wrapper, 1)
+    // Step three was never opened, so it is not ticked even though it is answered.
+    expect(states(wrapper)).toEqual(['done', 'current', 'blank'])
+
+    await railClick(wrapper, 2)
+    expect(states(wrapper)).toEqual(['done', 'done', 'current'])
   })
 
   it('shows a tick instead of the number on a done step', async () => {

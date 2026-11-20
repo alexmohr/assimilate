@@ -131,6 +131,9 @@ echo "==> Registering hosts for protected, unassigned, never-succeeded, and disa
 # offline verdict), and unassigned-01 has never run (the neutral verdict).
 WEB01_TOKEN=$(api POST "/api/agents" '{"hostname":"web-server-01","display_name":"Production Web Server"}' | jq -r '.token')
 DB01_TOKEN=$(api POST "/api/agents" '{"hostname":"db-server-01","display_name":"Primary Database"}' | jq -r '.token')
+# media-store-01's agent reports its hostname as MEDIA-STORE-01 (BORG_HOSTNAME
+# in docker-compose.demo.yml): hostnames are compared without regard to case,
+# so it still connects as this agent.
 MEDIA_TOKEN=$(api POST "/api/agents" '{"hostname":"media-store-01","display_name":"Media Storage NAS"}' | jq -r '.token')
 api POST "/api/agents" '{"hostname":"unassigned-01","display_name":"Unassigned Demo Agent"}' > /dev/null
 api POST "/api/agents" '{"hostname":"offline-due-01","display_name":"Offline Due Soon"}' > /dev/null

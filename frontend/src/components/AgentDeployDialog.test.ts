@@ -118,6 +118,15 @@ describe('AgentDeployDialog', () => {
     expect(unit).not.toContain('BORG_AGENT_TOKEN')
   })
 
+  // The server sets the hostname the agent logs in under; the default unit
+  // shows that it will.
+  it('shows the registered hostname is set in the default unit', async () => {
+    mountDialog({ hostname: 'web-server-01', agentVersion: '1.0.0' })
+    await flushPromises()
+    const unit = document.querySelector<HTMLTextAreaElement>('textarea')?.value
+    expect(unit).toContain('Environment=BORG_HOSTNAME=<will be set automatically>')
+  })
+
   it('prefills SSH user from the lastSshUser prop', async () => {
     mountDialog({
       hostname: 'web-server-01',

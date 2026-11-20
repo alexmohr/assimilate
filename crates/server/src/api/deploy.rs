@@ -239,7 +239,7 @@ async fn start_deploy(
         jobs: state.deploy_jobs.clone(),
         job,
         agent_id: agent.id,
-        hostname: hostname.to_owned(),
+        hostname: agent.hostname.clone(),
         ssh_host: req.ssh_host,
         ssh_user: req.ssh_user,
         ssh_port: req.ssh_port.unwrap_or(22),

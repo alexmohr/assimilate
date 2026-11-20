@@ -92,15 +92,7 @@ impl TreeSearch {
 /// The day an entry was last modified, from borg's timestamp. Directories
 /// the index synthesised for a path's ancestors have no timestamp.
 fn modified_day(mtime: &str) -> Option<Date> {
-    mtime
-        .parse::<jiff::civil::DateTime>()
-        .map(|stamp| Date::from(stamp.date()))
-        .or_else(|_| {
-            mtime
-                .parse::<shared::time::Timestamp>()
-                .map(shared::time::Timestamp::utc_date)
-        })
-        .ok()
+    shared::time::Timestamp::parse_assuming_utc(mtime).map(shared::time::Timestamp::utc_date)
 }
 
 fn full_path(dir: &str, name: &str) -> String {
@@ -291,6 +283,45 @@ pub(crate) mod tests {
 
     fn day(text: &str) -> Date {
         text.parse::<Date>().unwrap()
+    }
+
+    /// An entry's day is its UTC day, whichever way the time is written: borg's own
+    /// offset-less form, `Z`, or an offset that puts the local day on the other side of
+    /// midnight.
+    #[test]
+    fn an_entrys_day_is_its_utc_day_however_the_time_is_written() {
+        assert_eq!(
+            modified_day("2026-01-10T02:00:00.000000"),
+            Some(day("2026-01-10"))
+        );
+        assert_eq!(
+            modified_day("2026-01-10T23:59:59Z"),
+            Some(day("2026-01-10"))
+        );
+        // 01:30 at +02:00 is 23:30 UTC the day before.
+        assert_eq!(
+            modified_day("2026-01-01T01:30:00+02:00"),
+            Some(day("2025-12-31"))
+        );
+        // 23:30 at -02:00 is 01:30 UTC the day after.
+        assert_eq!(
+            modified_day("2026-01-01T23:30:00-02:00"),
+            Some(day("2026-01-02"))
+        );
+        assert_eq!(modified_day(""), None);
+        assert_eq!(modified_day("not a time"), None);
+    }
+
+    #[test]
+    fn a_date_filter_compares_the_utc_day_of_an_offset_mtime() {
+        let search = TreeSearch {
+            modified_from: Some(day("2025-12-31")),
+            modified_to: Some(day("2025-12-31")),
+            ..TreeSearch::default()
+        };
+
+        assert!(search.matches("a", &entry("a", "-", 1, "2026-01-01T01:30:00+02:00")));
+        assert!(!search.matches("a", &entry("a", "-", 1, "2026-01-01T02:30:00+02:00")));
     }
 
     #[test]

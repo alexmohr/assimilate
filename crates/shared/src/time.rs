@@ -395,7 +395,7 @@ pub const fn millis(n: i64) -> SignedDuration {
 }
 
 #[cfg(feature = "sqlx")]
-mod pg {
+pub(super) mod pg {
     use std::mem;
 
     use sqlx::{
@@ -415,6 +415,22 @@ mod pg {
     const TIMESTAMPTZ_OID: u32 = 1184;
     /// Built-in OID of `timestamptz[]`.
     const TIMESTAMPTZ_ARRAY_OID: u32 = 1185;
+
+    /// Reads the text form Postgres renders a `timestamptz` in, e.g.
+    /// `2026-01-01 00:00:00+00` or `2026-01-01 05:06:07.123456+02`.
+    pub(super) fn parse_text(text: &str) -> Result<jiff::Timestamp, jiff::Error> {
+        // Postgres writes a whole-hour offset as `+00`, which `%:z` will not take without
+        // its minutes.
+        let padded;
+        let text = match text.rsplit_once(['+', '-']) {
+            Some((_, offset)) if offset.len() == 2 => {
+                padded = format!("{text}:00");
+                padded.as_str()
+            }
+            _ => text,
+        };
+        jiff::fmt::strtime::parse("%Y-%m-%d %H:%M:%S%.f%:z", text)?.to_timestamp()
+    }
 
     impl Type<Postgres> for Timestamp {
         fn type_info() -> PgTypeInfo {
@@ -453,17 +469,72 @@ mod pg {
                     Timestamp::from_unix_micros(unix)
                         .ok_or_else(|| "timestamptz out of range".into())
                 }
-                PgValueFormat::Text => {
-                    // Postgres renders `2026-01-01 00:00:00+00`; jiff wants a `T` or space
-                    // separator and a full offset, which `+00` is not.
-                    let text = value.as_str()?;
-                    let parsed: jiff::Timestamp =
-                        jiff::fmt::strtime::parse("%Y-%m-%d %H:%M:%S%.f%#z", text)?
-                            .to_timestamp()?;
-                    Ok(Timestamp(parsed))
-                }
+                PgValueFormat::Text => Ok(Timestamp(parse_text(value.as_str()?)?)),
             }
         }
+    }
+}
+
+#[cfg(all(test, feature = "sqlx"))]
+mod pg_tests {
+    use sqlx::{
+        Encode, Postgres, Type,
+        postgres::{PgArgumentBuffer, PgHasArrayType, types::Oid},
+    };
+
+    use super::{Date, Timestamp, pg::parse_text};
+
+    #[test]
+    fn text_timestamps_parse_with_short_offsets_and_fractions() {
+        assert_eq!(
+            parse_text("2026-01-01 00:00:00+00").unwrap().to_string(),
+            "2026-01-01T00:00:00Z"
+        );
+        assert_eq!(
+            parse_text("2026-01-01 05:06:07.123456+02")
+                .unwrap()
+                .to_string(),
+            "2026-01-01T03:06:07.123456Z"
+        );
+        assert_eq!(
+            parse_text("2026-01-01 05:30:00+05:30").unwrap().to_string(),
+            "2026-01-01T00:00:00Z"
+        );
+        assert_eq!(
+            parse_text("2026-01-01 00:00:00-03").unwrap().to_string(),
+            "2026-01-01T03:00:00Z"
+        );
+        assert!(parse_text("2026-01-01").is_err());
+        assert!(parse_text("not a timestamp").is_err());
+    }
+
+    #[test]
+    fn the_types_are_timestamptz_and_date_with_their_array_forms() {
+        assert_eq!(
+            <Timestamp as Type<Postgres>>::type_info().oid(),
+            Some(Oid(1184))
+        );
+        assert_eq!(
+            <Timestamp as PgHasArrayType>::array_type_info().oid(),
+            Some(Oid(1185))
+        );
+        assert_eq!(<Date as Type<Postgres>>::type_info().oid(), Some(Oid(1082)));
+        assert_eq!(
+            <Date as PgHasArrayType>::array_type_info().oid(),
+            Some(Oid(1182))
+        );
+    }
+
+    #[test]
+    fn encoding_writes_eight_bytes_for_a_timestamp_and_four_for_a_date() {
+        let stamp = Timestamp::from_unix_secs(1_700_000_000).unwrap();
+        assert_eq!(Encode::<Postgres>::size_hint(&stamp), 8);
+        assert!(
+            Encode::<Postgres>::encode_by_ref(&stamp, &mut PgArgumentBuffer::default()).is_ok()
+        );
+        let day = Date::new(2026, 3, 4).unwrap();
+        assert_eq!(Encode::<Postgres>::size_hint(&day), 4);
+        assert!(Encode::<Postgres>::encode_by_ref(&day, &mut PgArgumentBuffer::default()).is_ok());
     }
 }
 

@@ -36,6 +36,16 @@ pub fn calculate_next_run(
     from: Timestamp,
     tz: &TimeZone,
 ) -> Result<Timestamp, String> {
+    calculate_next_run_within(cron_expression, from, tz, MAX_GAP_MINUTES)
+}
+
+/// [`calculate_next_run`] with the longest DST gap it will roll forward out of.
+fn calculate_next_run_within(
+    cron_expression: &str,
+    from: Timestamp,
+    tz: &TimeZone,
+    max_gap_minutes: i64,
+) -> Result<Timestamp, String> {
     let cron = cron_expression
         .parse::<Cron>()
         .map_err(|e| format!("invalid cron expression '{cron_expression}': {e}"))?;
@@ -49,7 +59,7 @@ pub fn calculate_next_run(
         .map_err(|e| format!("no next occurrence for '{cron_expression}': {e}"))?;
 
     // Interpret the result as a local time in the target timezone, convert to UTC
-    resolve_local_time(next_local, tz).ok_or_else(|| {
+    resolve_local_time(next_local, tz, max_gap_minutes).ok_or_else(|| {
         format!(
             "local time {next_local} for '{cron_expression}' does not exist in timezone {}",
             tz.iana_name().unwrap_or("unknown")
@@ -59,8 +69,8 @@ pub fn calculate_next_run(
 
 /// Map a local wall-clock time to UTC, rolling forward to the first valid
 /// minute when `local` lies in a DST gap.
-fn resolve_local_time(local: DateTime, tz: &TimeZone) -> Option<Timestamp> {
-    (0..=MAX_GAP_MINUTES).find_map(|minutes| {
+fn resolve_local_time(local: DateTime, tz: &TimeZone, max_gap_minutes: i64) -> Option<Timestamp> {
+    (0..=max_gap_minutes).find_map(|minutes| {
         local
             .checked_add(SignedDuration::from_mins(minutes))
             .ok()
@@ -210,6 +220,19 @@ mod tests {
     fn invalid_cron() {
         let result = calculate_next_run("invalid", utc(2026, 1, 1, 0, 0), &TimeZone::UTC);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn a_local_time_in_a_gap_longer_than_the_limit_is_an_error() {
+        // 02:30 on 2026-03-29 does not exist in Berlin; with no room to roll forward
+        // out of the gap there is no instant to run at.
+        let from = utc(2026, 3, 28, 23, 0);
+        let err =
+            calculate_next_run_within("30 2 * * *", from, &tz("Europe/Berlin"), 0).unwrap_err();
+        assert!(
+            err.contains("does not exist in timezone Europe/Berlin"),
+            "{err}"
+        );
     }
 
     #[test]

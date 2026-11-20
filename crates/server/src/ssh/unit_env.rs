@@ -111,7 +111,7 @@ mod tests {
     #[test]
     fn words_are_split_on_whitespace() {
         assert_eq!(split_words("  A=1   B=2\tC=3 "), ["A=1", "B=2", "C=3"]);
-        assert!(split_words("   ").is_empty());
+        assert_eq!(split_words("   "), [] as [&str; 0]);
     }
 
     #[test]

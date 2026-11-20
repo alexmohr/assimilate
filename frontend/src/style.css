@@ -1122,6 +1122,27 @@
     padding-top: var(--space-8);
   }
 
+  /* A wizard pane is one column of groups spaced by the pane's own gap, so
+     nothing in it is ruled off from the group above: a hairline there only
+     doubles the one a `.pane-rows` draws beneath it. Rows keep a rule between
+     them, never above the first or below the last. */
+  .wizard-pane .pane-section {
+    border-top: none;
+    padding-top: 0;
+  }
+
+  .wizard-pane .pane-rows {
+    border-top: none;
+  }
+
+  .wizard-pane .pane-row {
+    border-bottom: none;
+  }
+
+  .wizard-pane .pane-row + .pane-row {
+    border-top: 1px solid var(--border-subtle);
+  }
+
   /* One editable block: its own Edit, and Cancel / Save at its foot. */
   .edit-block {
     display: flex;

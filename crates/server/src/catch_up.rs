@@ -628,6 +628,67 @@ mod tests {
         assert_eq!(deliveries, vec!["backup_catch_up_abandoned".to_owned()]);
     }
 
+    /// A host that never came back is reported as one abandoned run per repository
+    /// the schedule would have written, filed under the host.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn an_abandoned_host_catch_up_is_reported_under_the_host(pool: sqlx::PgPool) {
+        let agent = db::insert_agent(&pool, "lab-ws-02", None, "hash", None, None)
+            .await
+            .unwrap();
+        let repo = db::insert_repo(
+            &pool,
+            &db::InsertRepoParams {
+                name: "nas-daily",
+                repo_path: "/backup/nas-daily",
+                ssh_user: "borg",
+                ssh_host: "127.0.0.1",
+                ssh_port: 1,
+                passphrase_encrypted: b"encrypted_data",
+                compression: "lz4",
+                encryption: "repokey",
+                owner_id: None,
+                sync_schedule: None,
+            },
+        )
+        .await
+        .unwrap();
+        let schedule = db::insert_schedule(
+            &pool,
+            repo.id,
+            &db::ScheduleParams::for_test("Nightly workstations", "0 2 * * *"),
+            None,
+        )
+        .await
+        .unwrap();
+        let candidate = CatchUpCandidate {
+            schedule_id: schedule.id,
+            agent_id: agent.id,
+            ..waiting_since(now(), 1_440)
+        };
+        let state = crate::test_support::build_test_state(pool.clone(), b"catch-up-test-key");
+
+        report_abandoned_agent_catch_up(&state, &candidate, now()).await;
+
+        let events = db::get_system_events(&pool, 10, shared::types::AcknowledgedFilter::All)
+            .await
+            .unwrap();
+        let event = events
+            .iter()
+            .find(|e| e.event_type == shared::types::SystemEventType::ScheduleCatchUpAbandoned)
+            .expect("the abandoned run is recorded");
+        assert_eq!(event.hostname.as_deref(), Some("lab-ws-02"));
+        assert!(
+            event
+                .message
+                .contains("host 'lab-ws-02' did not come back within 1 day")
+        );
+        state
+            .task_registry
+            .shutdown(std::time::Duration::from_secs(30))
+            .await;
+    }
+
     #[test]
     fn a_next_run_further_out_than_the_floor_leaves_room() {
         let next = now().checked_add(shared::time::hours(17)).unwrap();

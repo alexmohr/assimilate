@@ -1036,6 +1036,51 @@ mod tests {
             .unwrap()
     }
 
+    /// A repository that never came back inside the window is given up on once: its
+    /// marker is cleared, the activity log says so, and a second pass finds nothing
+    /// left to give up on.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn an_abandoned_repo_catch_up_is_reported_once_and_its_marker_cleared(
+        pool: sqlx::PgPool,
+    ) {
+        let candidate = waiting_catch_up(&pool, "gave-up-repo").await;
+        let state = crate::test_support::build_test_state(pool.clone(), b"repo-catch-up-test-key");
+
+        assert!(abandon(&state, &candidate, now()).await);
+
+        let events = db::get_system_events(&pool, 10, shared::types::AcknowledgedFilter::All)
+            .await
+            .unwrap();
+        let reported: Vec<_> = events
+            .iter()
+            .filter(|e| e.event_type == shared::types::SystemEventType::ScheduleCatchUpAbandoned)
+            .collect();
+        assert_eq!(reported.len(), 1, "one report for the one repository");
+        let message = &reported.first().unwrap().message;
+        assert!(
+            message.contains("repository 'gave-up-repo' did not come back"),
+            "{message}"
+        );
+        assert!(
+            db::catch_up::list_repo_catch_up_candidates(
+                &state.pool,
+                RepoCatchUpFilter::Schedule(candidate.schedule_id),
+            )
+            .await
+            .unwrap()
+            .is_empty()
+        );
+        assert!(
+            !abandon(&state, &candidate, now()).await,
+            "a marker already taken is not acted on again"
+        );
+        state
+            .task_registry
+            .shutdown(std::time::Duration::from_secs(30))
+            .await;
+    }
+
     #[ignore = "requires DATABASE_URL"]
     #[sqlx::test(migrations = "./migrations")]
     async fn a_catch_up_with_room_before_the_next_run_is_dispatched(pool: sqlx::PgPool) {

@@ -1355,6 +1355,56 @@ mod tests {
         }
     }
 
+    /// A step of the run's timeline that cannot be stored (the database is down) is
+    /// still announced to the open pages, stamped with the moment it happened.
+    #[tokio::test]
+    async fn a_run_event_that_cannot_be_stored_is_still_announced_with_the_current_time() {
+        let pool = sqlx::postgres::PgPoolOptions::new()
+            .connect_lazy_with(sqlx::postgres::PgConnectOptions::new());
+        pool.close().await;
+        let registry = AgentRegistry::new();
+        let sessions = PowerSessionTracker::default();
+        let bus = UiBroadcast::new();
+        let mut rx = bus.subscribe();
+        let before = Timestamp::now();
+
+        record_run_event(
+            ctx(&pool, &registry, &bus, &sessions),
+            RunEventSite {
+                run_id: "run-1",
+                agent_id: 4,
+                repo_id: 9,
+                hostname: "lab-ws-02",
+            },
+            RunEventTarget::Source,
+            RunEventType::WakeSent,
+            "woke it",
+        )
+        .await;
+
+        match rx.recv().await.unwrap() {
+            ServerToUi::RunEvent {
+                run_id,
+                message,
+                occurred_at,
+                agent_id,
+                repo_id,
+                hostname,
+                ..
+            } => {
+                assert_eq!(run_id, "run-1");
+                assert_eq!(message, "woke it");
+                assert_eq!((agent_id, repo_id), (4, 9));
+                assert_eq!(hostname, "lab-ws-02");
+                assert!(
+                    occurred_at >= before,
+                    "stamped with the moment it was announced"
+                );
+            }
+            other => panic!("expected a run event, got {other:?}"),
+        }
+    }
+
     #[ignore = "requires DATABASE_URL"]
     #[sqlx::test(migrations = "./migrations")]
     async fn ensure_agent_online_is_a_noop_when_wake_and_start_are_both_disabled(

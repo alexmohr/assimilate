@@ -247,6 +247,31 @@ mod tests {
         });
     }
 
+    /// A client that reconnects mid-backup still gets progress for a run the server
+    /// saw no start for: the first complete progress line creates its snapshot.
+    #[test]
+    fn a_progress_line_for_an_unseen_backup_creates_its_snapshot() {
+        let broadcast = UiBroadcast::new();
+        let before = Timestamp::now();
+
+        broadcast.send(ServerToUi::BackupLog {
+            hostname: "web-server-01".to_string(),
+            schedule_id: Some(8),
+            repo_id: 31,
+            line: RUNNING_PROGRESS_LINE.to_string(),
+        });
+
+        let snapshots = broadcast.current_active_backups();
+        let snapshot = snapshots.iter().find(|s| s.repo_id == 31).unwrap();
+        assert_eq!(snapshot.hostname, "web-server-01");
+        assert_eq!(snapshot.schedule_id, Some(8));
+        assert_eq!(
+            snapshot.progress_line.as_deref(),
+            Some(RUNNING_PROGRESS_LINE)
+        );
+        assert!(snapshot.started_at >= before);
+    }
+
     #[test]
     fn stopping_all_active_backups_announces_and_clears_each() {
         let broadcast = UiBroadcast::new();

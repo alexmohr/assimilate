@@ -17,9 +17,33 @@ use super::{
 };
 use crate::{AppState, borg::Borg, error::ApiError};
 
-/// An archive entry's modification time as borg reports it, or the epoch when it has none.
-fn parse_mtime(mtime: &str) -> Timestamp {
-    mtime.parse::<Timestamp>().unwrap_or_default()
+/// One line of `borg list --json-lines`, read into the fields the search results carry.
+struct ListedEntry {
+    path: String,
+    size: i64,
+    mtime: Timestamp,
+    entry_type: String,
+}
+
+/// Reads one `borg list --json-lines` line, or `None` when it is not JSON. A missing field takes
+/// its empty value, and an `mtime` that is missing or unreadable is the epoch.
+fn listed_entry(line: &str) -> Option<ListedEntry> {
+    let v = parse_borg_list_json_line(line)?;
+    let text = |key: &str| {
+        v.get(key)
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("")
+            .to_string()
+    };
+    Some(ListedEntry {
+        path: text("path"),
+        size: v
+            .get("size")
+            .and_then(serde_json::Value::as_i64)
+            .unwrap_or(0),
+        mtime: text("mtime").parse::<Timestamp>().unwrap_or_default(),
+        entry_type: text("type"),
+    })
 }
 
 const SEARCH_TIMEOUT: Duration = Duration::from_mins(1);
@@ -171,38 +195,19 @@ pub async fn search_archive(
         .lines()
         .filter(|line| !line.is_empty())
         .filter_map(|line| {
-            let v = parse_borg_list_json_line(line)?;
-
-            let path = v
-                .get("path")
-                .and_then(serde_json::Value::as_str)
-                .unwrap_or("")
-                .to_string();
+            let entry = listed_entry(line)?;
 
             if let Some(ref prefix) = query.path_prefix
-                && !path.starts_with(prefix.as_str())
+                && !entry.path.starts_with(prefix.as_str())
             {
                 return None;
             }
 
-            let mtime_str = v
-                .get("mtime")
-                .and_then(serde_json::Value::as_str)
-                .unwrap_or("");
-            let mtime = parse_mtime(mtime_str);
-
             Some(SearchEntry {
-                path,
-                size: v
-                    .get("size")
-                    .and_then(serde_json::Value::as_i64)
-                    .unwrap_or(0),
-                mtime,
-                entry_type: v
-                    .get("type")
-                    .and_then(serde_json::Value::as_str)
-                    .unwrap_or("")
-                    .to_string(),
+                path: entry.path,
+                size: entry.size,
+                mtime: entry.mtime,
+                entry_type: entry.entry_type,
             })
         })
         .collect();
@@ -454,30 +459,13 @@ async fn search_in_archive(
         .lines()
         .filter(|line| !line.is_empty())
         .filter_map(|line| {
-            let v = parse_borg_list_json_line(line)?;
-
-            let mtime_str = v
-                .get("mtime")
-                .and_then(serde_json::Value::as_str)
-                .unwrap_or("");
-            let mtime = parse_mtime(mtime_str);
+            let entry = listed_entry(line)?;
 
             Some(CrossSearchEntry {
-                path: v
-                    .get("path")
-                    .and_then(serde_json::Value::as_str)
-                    .unwrap_or("")
-                    .to_string(),
-                size: v
-                    .get("size")
-                    .and_then(serde_json::Value::as_i64)
-                    .unwrap_or(0),
-                mtime,
-                entry_type: v
-                    .get("type")
-                    .and_then(serde_json::Value::as_str)
-                    .unwrap_or("")
-                    .to_string(),
+                path: entry.path,
+                size: entry.size,
+                mtime: entry.mtime,
+                entry_type: entry.entry_type,
                 archive_name: archive_name.to_string(),
             })
         })
@@ -488,17 +476,28 @@ async fn search_in_archive(
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
     #[test]
-    fn an_entry_mtime_parses_or_falls_back_to_the_epoch() {
-        assert_eq!(
-            parse_mtime("2026-03-04T05:06:07Z").to_rfc3339(),
-            "2026-03-04T05:06:07Z"
-        );
-        assert_eq!(parse_mtime(""), Timestamp::UNIX_EPOCH);
-        assert_eq!(parse_mtime("not a time"), Timestamp::UNIX_EPOCH);
+    fn a_listed_line_is_read_into_its_fields() {
+        let entry = listed_entry(
+            r#"{"path":"etc/hosts","size":214,"type":"-","mtime":"2026-03-04T05:06:07Z"}"#,
+        )
+        .unwrap();
+        assert_eq!(entry.path, "etc/hosts");
+        assert_eq!(entry.size, 214);
+        assert_eq!(entry.entry_type, "-");
+        assert_eq!(entry.mtime.to_rfc3339(), "2026-03-04T05:06:07Z");
     }
 
-    use super::*;
+    #[test]
+    fn a_listed_line_without_a_readable_mtime_or_fields_takes_empty_values() {
+        let entry = listed_entry(r#"{"path":"a","mtime":"not a time"}"#).unwrap();
+        assert_eq!((entry.size, entry.entry_type.as_str()), (0, ""));
+        assert_eq!(entry.mtime, Timestamp::UNIX_EPOCH);
+        assert_eq!(listed_entry("{}").unwrap().mtime, Timestamp::UNIX_EPOCH);
+        assert!(listed_entry("not json").is_none());
+    }
 
     #[test]
     fn empty_pattern_is_rejected() {

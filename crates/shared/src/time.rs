@@ -166,6 +166,19 @@ impl Timestamp {
             .map_or(self, Self)
     }
 
+    /// Reads an RFC 3339 instant, or a date-time written with no offset at all (as borg writes
+    /// its timestamps), which is taken to be UTC.
+    #[must_use]
+    pub fn parse_assuming_utc(text: &str) -> Option<Self> {
+        text.parse::<Self>().ok().or_else(|| {
+            let civil = text.parse::<jiff::civil::DateTime>().ok()?;
+            civil
+                .to_zoned(jiff::tz::TimeZone::UTC)
+                .ok()
+                .map(|zoned| Self(zoned.timestamp()))
+        })
+    }
+
     /// The RFC 3339 form, e.g. `2026-01-01T00:00:00Z`.
     #[must_use]
     pub fn to_rfc3339(self) -> String {
@@ -677,6 +690,29 @@ mod tests {
             stamp
         );
         assert!("yesterday".parse::<Timestamp>().is_err());
+    }
+
+    #[test]
+    fn an_offsetless_date_time_is_read_as_utc() {
+        let expected = at(2026, 3, 4, 5, 6, 7);
+        assert_eq!(
+            Timestamp::parse_assuming_utc("2026-03-04T05:06:07"),
+            Some(expected)
+        );
+        assert_eq!(
+            Timestamp::parse_assuming_utc("2026-03-04T05:06:07Z"),
+            Some(expected)
+        );
+        assert_eq!(
+            Timestamp::parse_assuming_utc("2026-03-04T06:06:07+01:00"),
+            Some(expected)
+        );
+        assert_eq!(
+            Timestamp::parse_assuming_utc("2026-03-04T05:06:07.123456").map(Timestamp::unix_micros),
+            Some(expected.unix_micros() + 123_456)
+        );
+        assert_eq!(Timestamp::parse_assuming_utc(""), None);
+        assert_eq!(Timestamp::parse_assuming_utc("not a time"), None);
     }
 
     #[test]

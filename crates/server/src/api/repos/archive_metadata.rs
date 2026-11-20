@@ -16,14 +16,8 @@ use crate::{
 };
 
 pub(super) fn parse_borg_timestamp(s: &str) -> Option<Timestamp> {
-    s.parse::<Timestamp>().ok().or_else(|| {
-        // Borg writes its own timestamps without an offset; they are UTC.
-        s.parse::<jiff::civil::DateTime>()
-            .ok()?
-            .to_zoned(jiff::tz::TimeZone::UTC)
-            .ok()
-            .map(|zoned| Timestamp::from(zoned.timestamp()))
-    })
+    // Borg writes its own timestamps without an offset; they are UTC.
+    Timestamp::parse_assuming_utc(s)
 }
 
 pub(super) fn archive_hostname(archive: &serde_json::Value) -> Option<&str> {

@@ -41,7 +41,7 @@ fn listed_entry(line: &str) -> Option<ListedEntry> {
             .get("size")
             .and_then(serde_json::Value::as_i64)
             .unwrap_or(0),
-        mtime: text("mtime").parse::<Timestamp>().unwrap_or_default(),
+        mtime: Timestamp::parse_assuming_utc(&text("mtime")).unwrap_or_default(),
         entry_type: text("type"),
     })
 }
@@ -488,6 +488,13 @@ mod tests {
         assert_eq!(entry.size, 214);
         assert_eq!(entry.entry_type, "-");
         assert_eq!(entry.mtime.to_rfc3339(), "2026-03-04T05:06:07Z");
+    }
+
+    /// Borg writes `mtime` with no offset, so that is what a real listing carries.
+    #[test]
+    fn a_listed_line_with_borgs_offsetless_mtime_is_read_as_utc() {
+        let entry = listed_entry(r#"{"path":"a","mtime":"2026-03-04T05:06:07.123456"}"#).unwrap();
+        assert_eq!(entry.mtime.to_rfc3339(), "2026-03-04T05:06:07.123456Z");
     }
 
     #[test]

@@ -109,6 +109,7 @@ async fn execute_deploy(run: &DeployRun, before: &Presence) -> Result<(), Deploy
             server_key: &run.server_key,
             password: run.ssh_password.as_deref(),
             systemd_service_content: run.systemd_service_content.as_deref(),
+            agent_hostname: &run.hostname,
         },
         &|step| run.jobs.begin_step(run.agent_id, run.job, step),
     )

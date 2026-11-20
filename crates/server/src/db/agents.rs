@@ -352,6 +352,9 @@ pub async fn get_agent_by_id(pool: &PgPool, agent_id: i64) -> Result<AgentRow, A
 pub struct AgentTokenCandidate {
     /// Agent ID.
     pub id: i64,
+    /// The hostname the agent is registered under, which may differ in case
+    /// from the one it reported.
+    pub hostname: String,
     /// Hash of the agent's authentication token.
     pub agent_token_hash: String,
 }
@@ -360,6 +363,9 @@ pub struct AgentTokenCandidate {
 /// reports its OS hostname, never its domain, so when more than one agent
 /// shares a hostname (agents in different domains), the caller must verify
 /// the presented token against each candidate to find the right one.
+///
+/// Hostnames are case-insensitive (RFC 4343), so an agent reporting `bot`
+/// finds one registered as `Bot`.
 ///
 /// # Errors
 ///
@@ -372,7 +378,7 @@ pub async fn get_agent_token_hashes(
 ) -> Result<Vec<AgentTokenCandidate>, ApiError> {
     let rows = sqlx::query_as!(
         AgentTokenCandidate,
-        "SELECT id, agent_token_hash FROM agents WHERE hostname = $1",
+        "SELECT id, hostname, agent_token_hash FROM agents WHERE lower(hostname) = lower($1)",
         hostname
     )
     .fetch_all(pool)

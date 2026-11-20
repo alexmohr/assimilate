@@ -74,6 +74,9 @@ services:
       - demo-seeds:/seeds
     environment:
       BORG_SERVER_URL: http://demo:8080
+      # Registered as media-store-01: hostnames are compared without regard
+      # to case, so the agent connects although it reports this one.
+      BORG_HOSTNAME: MEDIA-STORE-01
     depends_on:
       - demo
     entrypoint: ["/app/start-agent.sh"]

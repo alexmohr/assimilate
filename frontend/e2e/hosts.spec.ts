@@ -37,6 +37,25 @@ test.describe('Hosts management', () => {
     await expect(page.getByText('legacy-db-prod', { exact: true })).toBeVisible()
   })
 
+  // The demo's media-store-01 agent reports its hostname as MEDIA-STORE-01
+  // (BORG_HOSTNAME in the demo compose file). Hostnames are not case
+  // sensitive, so it still logs in as the agent registered as media-store-01.
+  test('an agent reporting its hostname in another case connects', async ({ page }) => {
+    await loginAsAdmin(page)
+    await expect
+      .poll(
+        async () => {
+          const agents = (await (await page.request.get('/api/agents')).json()) as {
+            hostname: string
+            is_connected: boolean
+          }[]
+          return agents.find((agent) => agent.hostname === 'media-store-01')?.is_connected
+        },
+        { timeout: 60_000 },
+      )
+      .toBe(true)
+  })
+
   test('hosts list shows the fleet tiles and a per-agent last-backup column', async ({ page }) => {
     await loginAsAdmin(page)
     await page.goto('/agents')

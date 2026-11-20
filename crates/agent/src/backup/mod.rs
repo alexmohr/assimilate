@@ -15,7 +15,6 @@ use shared::{
     database::EXCLUDED_WHILE_DUMPING,
     hooks::{HookCommand, HookPhase},
     task_registry::TaskRegistry,
-    time::Timestamp,
     types::{BackupStatus, BackupWarningKind},
 };
 use tokio::sync::mpsc;
@@ -415,7 +414,7 @@ fn snapshot_tag(schedule_id: Option<i64>) -> String {
     let unique = uuid::Uuid::new_v4().simple().to_string();
     format!(
         "{run}-{}-{}",
-        Timestamp::now().unix_secs(),
+        shared::time::Timestamp::now().unix_secs(),
         unique.get(..8).unwrap_or(&unique)
     )
 }

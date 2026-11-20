@@ -378,6 +378,14 @@ fn test_app_repo_routes() -> Router<server::AppState> {
             get(server::api::archives::list_contents),
         )
         .route(
+            "/api/repos/{repo_id}/search",
+            get(server::api::search::cross_archive_search),
+        )
+        .route(
+            "/api/repos/{repo_id}/archives/{archive_name}/search",
+            get(server::api::search::search_archive),
+        )
+        .route(
             "/api/repos/{repo_id}/archives/{archive_name}/index-status",
             get(server::api::archives::get_archive_index_status),
         )
@@ -3610,6 +3618,119 @@ async fn test_sync_repo_times_out_on_hanging_borg_and_clears_importing() {
     assert!(
         stats.import_error.is_some(),
         "import_error should be set after a timeout"
+    );
+}
+
+/// What borg prints for `list --json-lines`: a file and a directory under `etc`, a file
+/// elsewhere, a line with no readable mtime, and a line that is not JSON at all.
+#[cfg(test)]
+const LISTED_LINES: &str = r#"{"path":"etc/hosts","type":"-","size":214,"mtime":"2026-03-04T05:06:07.123456Z"}
+{"path":"etc","type":"d","size":0,"mtime":"2026-03-04T05:00:00Z"}
+{"path":"srv/data.txt","type":"-","size":9,"mtime":"2026-03-05T00:00:00+01:00"}
+{"path":"srv/no-time.txt","type":"-","size":1}
+this line is not json"#;
+
+/// The field `key` of a JSON object, which the test knows is there.
+#[cfg(test)]
+fn field<'a>(value: &'a Value, key: &str) -> &'a Value {
+    value.get(key).unwrap()
+}
+
+/// The `index`th item of a JSON array, which the test knows is there.
+#[cfg(test)]
+fn item(items: &[Value], index: usize) -> &Value {
+    items.get(index).unwrap()
+}
+
+/// A search of one archive reads borg's listing, drops lines that are not JSON, keeps the
+/// entries under the requested prefix, and gives an entry without a readable time the epoch.
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn test_search_archive_reads_borgs_listing() {
+    let _borg_lock = borg_binary_lock().await;
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+    let (_borg_dir, _borg_guard) = install_fake_borg("{}", "{}", "{}", "", LISTED_LINES).await;
+    let mut app = build_test_app(pool.clone());
+    let repo_id = insert_test_repo(&pool, "search-repo").await;
+
+    let all = oneshot(
+        &mut app,
+        get_request(&format!(
+            "/api/repos/{repo_id}/archives/daily-1/search?pattern=*"
+        )),
+    )
+    .await;
+    assert_eq!(all.status(), StatusCode::OK);
+    let body = body_json(all).await;
+    assert_eq!(
+        field(&body, "total_matched"),
+        4,
+        "the line that is not JSON is skipped"
+    );
+    let items = field(&body, "items").as_array().unwrap();
+    assert_eq!(field(item(items, 0), "path"), "etc/hosts");
+    assert_eq!(
+        field(item(items, 0), "mtime"),
+        "2026-03-04T05:06:07.123456Z"
+    );
+    assert_eq!(
+        field(item(items, 2), "mtime"),
+        "2026-03-04T23:00:00Z",
+        "an offset is read as the same instant"
+    );
+    assert_eq!(
+        field(item(items, 3), "mtime"),
+        "1970-01-01T00:00:00Z",
+        "no mtime is the epoch"
+    );
+
+    let under_etc = oneshot(
+        &mut app,
+        get_request(&format!(
+            "/api/repos/{repo_id}/archives/daily-1/search?pattern=*&path_prefix=etc"
+        )),
+    )
+    .await;
+    assert_eq!(under_etc.status(), StatusCode::OK);
+    assert_eq!(field(&body_json(under_etc).await, "total_matched"), 2);
+}
+
+/// A search across archives lists them, searches each, and reports a path once however
+/// many archives hold it.
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn test_cross_archive_search_lists_each_path_once() {
+    let _borg_lock = borg_binary_lock().await;
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+    let archives = r#"{"archives": [
+        {"name": "daily-1", "start": "2026-03-04T02:00:00"},
+        {"name": "daily-2", "start": "2026-03-05T02:00:00"}
+    ]}"#;
+    let (_borg_dir, _borg_guard) = install_fake_borg(archives, "{}", "{}", "", LISTED_LINES).await;
+    let mut app = build_test_app(pool.clone());
+    let repo_id = insert_test_repo(&pool, "cross-search-repo").await;
+
+    let resp = oneshot(
+        &mut app,
+        get_request(&format!("/api/repos/{repo_id}/search?pattern=*")),
+    )
+    .await;
+
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    assert_eq!(field(&body, "total_archives_searched"), 2);
+    let items = field(&body, "items").as_array().unwrap();
+    assert_eq!(items.len(), 4, "each path once, not once per archive");
+    assert_eq!(field(item(items, 0), "path"), "etc");
+    assert_eq!(field(item(items, 0), "mtime"), "2026-03-04T05:00:00Z");
+    assert_eq!(
+        field(item(items, 1), "archive_name"),
+        "daily-2",
+        "the newest archive reports the path"
     );
 }
 

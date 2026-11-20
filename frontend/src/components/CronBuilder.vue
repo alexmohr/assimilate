@@ -597,7 +597,6 @@ watch(() => props.modelValue, schedulePreview)
 .cron-preview {
   margin-top: var(--space-2);
   padding: var(--space-3) 0 0;
-  border-top: 1px solid var(--border-subtle);
   display: flex;
   flex-direction: column;
   gap: var(--space-2);

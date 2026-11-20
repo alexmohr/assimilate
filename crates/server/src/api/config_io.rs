@@ -15,6 +15,7 @@ pub use shared::responses::{
 use shared::{
     crypto::encrypt_passphrase,
     hooks::{HookCommand, MAX_HOOK_COMMAND_TIMEOUT_SECONDS},
+    provider::HostProvider,
     types::ScheduleFilesMode,
 };
 
@@ -120,6 +121,9 @@ pub async fn export_config(
             .map(|t| t.name)
             .collect();
 
+        let provider = db::repo_hosts::find_repo_host_by_name(&state.pool, &repo.ssh_host)
+            .await?
+            .map_or_else(Default::default, |host| host.provider);
         repo_exports.push(RepoExport {
             name: repo.name.clone(),
             repo_path: repo.repo_path.clone(),
@@ -131,6 +135,7 @@ pub async fn export_config(
             enabled: repo.enabled,
             sync_schedule: repo.sync_schedule.clone(),
             ssh_host_key: None,
+            provider,
             quota_warn_bytes: quota.as_ref().and_then(|q| q.warn_bytes),
             quota_critical_bytes: quota.as_ref().and_then(|q| q.critical_bytes),
             quota_warn_action: quota
@@ -430,8 +435,14 @@ async fn import_repos(
                 repo_export.name,
             ));
 
+            // A generic host is whatever it already is; any other provider is
+            // written with the repository, in one transaction, so a failed
+            // import leaves no host behind.
+            let requested_provider = (!matches!(repo_export.provider, HostProvider::Generic))
+                .then_some(repo_export.provider);
+
             // Create new repo
-            let new_repo = db::insert_repo(
+            let new_repo = db::insert_repo_for_provider(
                 pool,
                 &db::InsertRepoParams {
                     name: &repo_export.name,
@@ -445,6 +456,7 @@ async fn import_repos(
                     owner_id: None,
                     sync_schedule: Some(repo_export.sync_schedule.as_deref()),
                 },
+                requested_provider,
             )
             .await?;
 

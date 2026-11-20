@@ -51,6 +51,7 @@ pub(super) fn is_lock_error(stderr: &str) -> bool {
         || lower.contains("lockroster")
 }
 
+#[cfg(test)]
 pub(super) async fn run_borg_info(
     repo_url: &str,
     passphrase: &str,
@@ -69,13 +70,30 @@ pub(super) async fn run_borg_info(
 ///
 /// Returns the error of any other failure, since a repository borg cannot
 /// open should not be added.
+#[cfg(test)]
 pub(super) async fn run_borg_info_if_available(
     repo_url: &str,
     passphrase: &str,
     task_registry: &shared::task_registry::TaskRegistry,
     timeout: Duration,
 ) -> Result<Option<BorgInfoResult>, ApiError> {
-    match tokio::time::timeout(timeout, run_borg_info(repo_url, passphrase, task_registry)).await {
+    let env = helpers::borg_base_env(passphrase);
+    run_borg_info_with_env_if_available(repo_url, &env, task_registry, timeout).await
+}
+
+/// [`run_borg_info_if_available`] with the environment spelled out, for a
+/// repository on a host whose provider needs `BORG_REMOTE_PATH`.
+///
+/// # Errors
+///
+/// Returns the error of any failure other than a timeout or a held lock.
+pub(super) async fn run_borg_info_with_env_if_available(
+    repo_url: &str,
+    env: &std::collections::HashMap<String, String>,
+    task_registry: &shared::task_registry::TaskRegistry,
+    timeout: Duration,
+) -> Result<Option<BorgInfoResult>, ApiError> {
+    match tokio::time::timeout(timeout, run_borg_info_once(repo_url, env, task_registry)).await {
         Err(_) => Ok(None),
         Ok(Ok(info)) => Ok(Some(info)),
         Ok(Err(ApiError::BadGateway(ref msg))) if is_lock_error(msg) => Ok(None),
@@ -345,10 +363,11 @@ pub(super) async fn run_borg_break_lock(
     repo_id: i64,
     repo_url: &str,
     passphrase: &str,
+    provider: shared::provider::HostProvider,
     task_registry: &shared::task_registry::TaskRegistry,
     repo_lock: &RepoLock,
 ) -> Result<String, ApiError> {
-    let env = helpers::borg_base_env(passphrase);
+    let env = helpers::borg_base_env_for_provider(passphrase, provider);
 
     // Unlike the repository lock (which the unconditional `break-lock` call below has
     // always broken regardless of whether anything else is using it - a pre-existing,
@@ -691,6 +710,7 @@ mod tests {
             1,
             "ssh://user@host/repo",
             "hunter2",
+            shared::provider::HostProvider::Generic,
             &shared::task_registry::TaskRegistry::default(),
             repo_lock,
         )

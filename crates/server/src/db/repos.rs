@@ -8,6 +8,7 @@ use chrono::{DateTime, Utc};
 use serde::Serialize;
 use shared::{
     protocol::RepoOpKind,
+    provider::HostProvider,
     types::{BorgEncryption, Compression, QuotaAction, Visibility},
 };
 use sqlx::PgPool;
@@ -588,7 +589,27 @@ pub async fn insert_repo(
     params: &InsertRepoParams<'_>,
 ) -> Result<RepoRow, ApiError> {
     let mut tx = pool.begin().await.map_err(ApiError::Database)?;
-    let (repo_id, _) = insert_repo_row(&mut tx, params).await?;
+    let (repo_id, _) = insert_repo_row(&mut tx, params, None).await?;
+    tx.commit().await.map_err(ApiError::Database)?;
+    get_repo_by_id(pool, repo_id).await
+}
+
+/// [`insert_repo`] on a host of `provider`: a host created for the repository
+/// takes it, and an existing one must already be it. The host is written in
+/// the same transaction as the repository, so a failure leaves neither.
+///
+/// # Errors
+///
+/// Returns [`ApiError::BadRequest`] if the provider does not accept the port
+/// or the host is another provider, or [`ApiError::Database`] if a query
+/// fails.
+pub async fn insert_repo_for_provider(
+    pool: &PgPool,
+    params: &InsertRepoParams<'_>,
+    provider: Option<HostProvider>,
+) -> Result<RepoRow, ApiError> {
+    let mut tx = pool.begin().await.map_err(ApiError::Database)?;
+    let (repo_id, _) = insert_repo_row(&mut tx, params, provider).await?;
     tx.commit().await.map_err(ApiError::Database)?;
     get_repo_by_id(pool, repo_id).await
 }
@@ -609,8 +630,24 @@ pub async fn insert_repo_pinning_host_key(
     params: &InsertRepoParams<'_>,
     ssh_host_key: &str,
 ) -> Result<RepoRow, ApiError> {
+    insert_repo_pinning_host_key_for_provider(pool, params, ssh_host_key, None).await
+}
+
+/// [`insert_repo_pinning_host_key`] on a host of `provider`: a host created
+/// for the repository takes it, and an existing one must already be it.
+///
+/// # Errors
+///
+/// As [`insert_repo_pinning_host_key`], and [`ApiError::BadRequest`] if the
+/// provider does not accept the port or the host is another provider.
+pub async fn insert_repo_pinning_host_key_for_provider(
+    pool: &PgPool,
+    params: &InsertRepoParams<'_>,
+    ssh_host_key: &str,
+    provider: Option<HostProvider>,
+) -> Result<RepoRow, ApiError> {
     let mut tx = pool.begin().await.map_err(ApiError::Database)?;
-    let (repo_id, repo_host_id) = insert_repo_row(&mut tx, params).await?;
+    let (repo_id, repo_host_id) = insert_repo_row(&mut tx, params, provider).await?;
     repo_hosts::pin_first_repo_host_key(&mut *tx, repo_host_id, params.ssh_host, ssh_host_key)
         .await?;
     tx.commit().await.map_err(ApiError::Database)?;
@@ -622,8 +659,11 @@ pub async fn insert_repo_pinning_host_key(
 async fn insert_repo_row(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     params: &InsertRepoParams<'_>,
+    provider: Option<HostProvider>,
 ) -> Result<(i64, i64), ApiError> {
-    let repo_host_id = repo_hosts::resolve_repo_host(tx, params.ssh_host, params.ssh_port).await?;
+    let repo_host_id =
+        repo_hosts::resolve_repo_host_for_provider(tx, params.ssh_host, params.ssh_port, provider)
+            .await?;
 
     let repo_id = if let Some(sync_schedule) = params.sync_schedule {
         sqlx::query_scalar!(
@@ -949,8 +989,9 @@ pub async fn get_repo_with_passphrase(
         RepoWithPassphraseRow,
         "SELECT r.id, r.name, r.repo_path, r.ssh_user, h.ssh_host, h.ssh_port, h.ssh_host_key, \
          r.passphrase_encrypted, r.compression AS \"compression: Compression\", r.encryption AS \
-         \"encryption: BorgEncryption\", r.enabled, r.relocation_pending, r.sync_schedule FROM \
-         repos r JOIN repo_hosts h ON h.id = r.repo_host_id WHERE r.id = $1",
+         \"encryption: BorgEncryption\", r.enabled, r.relocation_pending, r.sync_schedule, \
+         h.provider AS \"provider: HostProvider\" FROM repos r JOIN repo_hosts h ON h.id = \
+         r.repo_host_id WHERE r.id = $1",
         repo_id,
     )
     .fetch_one(pool)
@@ -1028,6 +1069,8 @@ pub struct RepoWithPassphraseRow {
     pub relocation_pending: bool,
     /// Sync schedule cron expression, if any.
     pub sync_schedule: Option<String>,
+    /// The hosting service of the repository's host.
+    pub provider: HostProvider,
 }
 
 /// # Errors
@@ -1111,9 +1154,10 @@ pub async fn list_repos_for_agent(
         "SELECT DISTINCT r.id, r.name, r.repo_path, r.ssh_user, h.ssh_host, h.ssh_port, \
          h.ssh_host_key, r.passphrase_encrypted, r.compression AS \"compression: Compression\", \
          r.encryption AS \"encryption: BorgEncryption\", r.enabled, r.relocation_pending, \
-         r.sync_schedule FROM repos r JOIN repo_hosts h ON h.id = r.repo_host_id JOIN \
-         schedule_repos sr ON sr.repo_id = r.id JOIN schedule_targets st ON st.schedule_id = \
-         sr.schedule_id WHERE st.agent_id = $1 ORDER BY r.id",
+         r.sync_schedule, h.provider AS \"provider: HostProvider\" FROM repos r JOIN repo_hosts h \
+         ON h.id = r.repo_host_id JOIN schedule_repos sr ON sr.repo_id = r.id JOIN \
+         schedule_targets st ON st.schedule_id = sr.schedule_id WHERE st.agent_id = $1 ORDER BY \
+         r.id",
         agent_id,
     )
     .fetch_all(pool)

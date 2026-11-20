@@ -8,12 +8,16 @@ import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue'
 import { Folder, FolderPlus, Info } from '@lucide/vue'
 import { createRepo, initRepo, testRepoConnection } from '../api/repos'
 import type { TestRepoConnectionResponse } from '../api/repos'
+import { listHostProviders, listRepoHosts } from '../api/repoHosts'
+import type { RepoHost } from '../api/repoHosts'
 import { createSshDirectory, listSshDirectory } from '../api/ssh'
 import type { SshDirEntry } from '../api/ssh'
 import { extractError } from '../utils/error'
 import BaseModal from './BaseModal.vue'
 import SshKeyDeployPanel from './SshKeyDeployPanel.vue'
 import type { Repo, RepoWithStats } from '../types/repo'
+import { PROVIDER_LABELS } from '../utils/hostProvider'
+import type { HostProvider, ProviderPreset } from '../types/generated'
 
 /**
  * Create-or-import dialog for a repository, including the remote folder
@@ -36,6 +40,7 @@ type EncryptionType =
 export type RepoDialogMode = 'import' | 'create'
 
 interface RepoForm {
+  provider: HostProvider
   name: string
   repo_path: string
   ssh_user: string
@@ -88,6 +93,7 @@ const error = ref<string | null>(null)
 const showDeployKey = ref(false)
 
 const defaultRepoForm = (): RepoForm => ({
+  provider: 'generic',
   name: '',
   repo_path: '',
   ssh_user: 'borg',
@@ -158,6 +164,78 @@ const appendOnlySiblings = computed<RepoWithStats[]>(() => {
 
 const sshReady = computed(() => form.ssh_host.trim().length > 0)
 
+/** The presets the server offers; empty until loaded, which leaves only generic SSH. */
+const presets = ref<ProviderPreset[]>([])
+/** Every repository host, so a typed hostname that is one can lock the provider. */
+const knownHosts = ref<RepoHost[]>([])
+
+async function loadProviders(): Promise<void> {
+  try {
+    const [loadedPresets, loadedHosts] = await Promise.all([listHostProviders(), listRepoHosts()])
+    presets.value = loadedPresets
+    knownHosts.value = loadedHosts
+  } catch {
+    // Without presets the dialog is the generic form it always was.
+    presets.value = []
+    knownHosts.value = []
+  }
+}
+
+const providerOptions = computed<{ provider: HostProvider; label: string }[]>(() =>
+  presets.value.map((p) => ({ provider: p.provider, label: PROVIDER_LABELS[p.provider] })),
+)
+
+const preset = computed(() => presets.value.find((p) => p.provider === form.provider)?.defaults)
+
+/** The provider of the host already registered under the typed hostname, if any. */
+const knownHostProvider = computed<HostProvider | null>(() => {
+  const host = form.ssh_host.trim()
+  return knownHosts.value.find((h) => h.ssh_host === host)?.provider ?? null
+})
+
+/**
+ * The provider the picker held before a known host locked it, given back when
+ * the hostname moves off that host - otherwise the unlocked picker would keep
+ * the known host's provider, and its locked port and path, for a host that
+ * has nothing to do with it.
+ */
+let providerBeforeLock = form.provider
+
+watch(knownHostProvider, (provider, previous) => {
+  if (provider !== null) {
+    if (previous === null) providerBeforeLock = form.provider
+    form.provider = provider
+  } else if (previous !== null) {
+    form.provider = providerBeforeLock
+  }
+})
+
+const remoteBorg = computed(() => preset.value?.remote_borg ?? null)
+const deploysOverSftp = computed(() => preset.value?.key_deploy === 'sftp')
+/** A provider (not generic SSH) that runs plain borg, which the hint above has nothing to say about. */
+const providerIsFixed = computed(() => preset.value?.ssh_port != null)
+
+/** Completes a bare account name into the provider's hostname. */
+function completeHostname(): void {
+  const suffix = preset.value?.hostname_suffix
+  const host = form.ssh_host.trim()
+  if (suffix && host.length > 0 && !host.endsWith(suffix)) form.ssh_host = `${host}${suffix}`
+}
+
+/** Fills the directory the provider keeps repositories in, unless a path is already typed. */
+function applyProviderPath(): void {
+  const base = preset.value?.base_path
+  if (base && form.repo_path.trim().length === 0) form.repo_path = `${base}/`
+}
+
+watch(
+  () => form.provider,
+  () => {
+    completeHostname()
+    applyProviderPath()
+  },
+)
+
 /**
  * The port of the repository host already registered under the typed
  * hostname, if any. A host has exactly one port, so a new repository on it
@@ -168,6 +246,11 @@ const knownHostPort = computed<number | null>(() => {
   return props.repos.find((r) => r.ssh_host === host)?.ssh_port ?? null
 })
 
+/** The port the form cannot change: the existing host's, or the one the provider fixes. */
+const lockedPort = computed<number | null>(
+  () => knownHostPort.value ?? preset.value?.ssh_port ?? null,
+)
+
 /**
  * The port the field held before a known host locked it, given back when the
  * hostname moves off that host - otherwise the unlocked field would still hold
@@ -175,7 +258,7 @@ const knownHostPort = computed<number | null>(() => {
  */
 let portBeforeLock = form.ssh_port
 
-watch(knownHostPort, (port, previous) => {
+watch(lockedPort, (port, previous) => {
   if (port !== null) {
     if (previous === null) portBeforeLock = form.ssh_port
     form.ssh_port = port
@@ -363,12 +446,21 @@ function selectDir(entry: SshDirEntry): void {
   }
 }
 
+/**
+ * The provider to send, left out for a generic host so the request is what it
+ * always was and an existing host keeps whatever provider it has.
+ */
+function providerField(): { provider?: HostProvider } {
+  return form.provider === 'generic' ? {} : { provider: form.provider }
+}
+
 async function submit(): Promise<void> {
   loading.value = true
   error.value = null
   try {
     if (props.mode === 'import') {
       const repo = await createRepo({
+        ...providerField(),
         name: form.name.trim(),
         repo_path: form.repo_path.trim(),
         ssh_user: form.ssh_user.trim(),
@@ -382,6 +474,7 @@ async function submit(): Promise<void> {
       return
     }
     await initRepo({
+      ...providerField(),
       name: form.name.trim(),
       repo_path: form.repo_path.trim(),
       ssh_user: form.ssh_user.trim(),
@@ -408,6 +501,7 @@ async function testConnection(): Promise<void> {
       ssh_host: form.ssh_host.trim(),
       ssh_user: form.ssh_user.trim(),
       ssh_port: form.ssh_port,
+      ...providerField(),
     })
   } catch (e: unknown) {
     testConn.result = { ssh_ok: false, borg_installed: false, error: extractError(e) }
@@ -426,6 +520,11 @@ function reset(): void {
   browser.error = null
   browser.showBrowser = false
   Object.assign(form, defaultRepoForm())
+  // The unlock watchers fire after this and give back what a known host last
+  // locked, which belongs to the previous opening, not to this one.
+  providerBeforeLock = form.provider
+  portBeforeLock = form.ssh_port
+  void loadProviders()
 }
 
 defineExpose({ reset })
@@ -456,6 +555,54 @@ defineExpose({ reset })
           placeholder="e.g. inhouse-backups"
         />
         <span class="field-hint">A short identifier for this storage target</span>
+      </div>
+
+      <div
+        v-if="providerOptions.length > 0"
+        class="field field-full"
+      >
+        <label
+          class="field-label"
+          for="repo-provider"
+          >Provider</label
+        >
+        <select
+          id="repo-provider"
+          v-model="form.provider"
+          class="input"
+          :disabled="knownHostProvider !== null"
+        >
+          <option
+            v-for="option in providerOptions"
+            :key="option.provider"
+            :value="option.provider"
+          >
+            {{ option.label }}
+          </option>
+        </select>
+        <span
+          v-if="knownHostProvider !== null"
+          class="field-hint"
+        >
+          Set on the existing repository host.
+        </span>
+        <span
+          v-else-if="remoteBorg !== null"
+          class="field-hint"
+        >
+          Runs <code class="mono">{{ remoteBorg }}</code> on the remote side (<code class="mono"
+            >--remote-path</code
+          >)<template v-if="deploysOverSftp">, and the key is deployed over SFTP</template>.
+        </span>
+        <span
+          v-else-if="providerIsFixed"
+          class="field-hint"
+        >
+          Runs plain <code class="mono">borg</code> on the remote side<template
+            v-if="!deploysOverSftp"
+            >, and the key is deployed over the shell</template
+          >.
+        </span>
       </div>
 
       <!-- SSH params -->
@@ -493,6 +640,7 @@ defineExpose({ reset })
           v-model="form.ssh_host"
           class="input mono"
           placeholder="backup.example.com"
+          @blur="completeHostname"
         />
       </div>
       <div class="field field-narrow">
@@ -503,13 +651,19 @@ defineExpose({ reset })
           type="number"
           min="1"
           max="65535"
-          :disabled="knownHostPort !== null"
+          :disabled="lockedPort !== null"
         />
         <span
           v-if="knownHostPort !== null"
           class="field-hint"
         >
           Set on the existing repository host.
+        </span>
+        <span
+          v-else-if="lockedPort !== null"
+          class="field-hint"
+        >
+          Fixed by the provider.
         </span>
       </div>
 
@@ -548,6 +702,7 @@ defineExpose({ reset })
           :ssh-host="form.ssh_host"
           :ssh-user="form.ssh_user"
           :ssh-port="form.ssh_port"
+          :sftp="preset?.key_deploy"
         />
       </div>
     </div>

@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "UPDATE repo_hosts SET ssh_host = $2, ssh_port = $3 WHERE id = $1 RETURNING id, ssh_host, ssh_port, ssh_host_key, machine_id",
+  "query": "SELECT h.id, h.ssh_host, h.ssh_port, h.ssh_host_key, h.machine_id, h.provider AS \"provider: HostProvider\", (SELECT COUNT(*) FROM repos r WHERE r.repo_host_id = h.id) AS \"repo_count!\" FROM repo_hosts h ORDER BY h.ssh_host",
   "describe": {
     "columns": [
       {
@@ -27,22 +27,30 @@
         "ordinal": 4,
         "name": "machine_id",
         "type_info": "Int8"
+      },
+      {
+        "ordinal": 5,
+        "name": "provider: HostProvider",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 6,
+        "name": "repo_count!",
+        "type_info": "Int8"
       }
     ],
     "parameters": {
-      "Left": [
-        "Int8",
-        "Text",
-        "Int4"
-      ]
+      "Left": []
     },
     "nullable": [
       false,
       false,
       false,
       true,
-      false
+      false,
+      false,
+      null
     ]
   },
-  "hash": "2b99447d9d110a8b2fb4814f11aac2aec5ae29f8a62291f4491ccc5047e39ed9"
+  "hash": "38d6fd0d6b51963af98c7005b03c9f443818b920e96249a8804625b587007e17"
 }

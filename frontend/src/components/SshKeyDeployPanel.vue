@@ -4,11 +4,12 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 -->
 
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { deployAgentSshKey } from '../api/agents'
 import type { DeploySshKeyResult } from '../api/agents'
 import { extractError } from '../utils/error'
 import ToggleSwitch from './ToggleSwitch.vue'
+import type { KeyDeployMethod } from '../types/generated'
 
 const props = withDefaults(
   defineProps<{
@@ -16,11 +17,14 @@ const props = withDefaults(
     sshUser?: string
     sshPort?: number
     showCredentials?: boolean
+    /** The provider's key deploy method; omitted, SFTP is offered first as it always was. */
+    sftp?: KeyDeployMethod
   }>(),
   {
     sshUser: 'root',
     sshPort: 22,
     showCredentials: false,
+    sftp: 'sftp',
   },
 )
 
@@ -28,7 +32,16 @@ const localHost = ref(props.sshHost)
 const localUser = ref(props.sshUser)
 const localPort = ref(props.sshPort)
 const password = ref('')
-const useSftp = ref(true)
+const useSftp = ref(props.sftp === 'sftp')
+
+// The panel stays open while the provider above it changes, so the method
+// the provider calls for has to follow, not only seed the first value.
+watch(
+  () => props.sftp,
+  (method) => {
+    useSftp.value = method === 'sftp'
+  },
+)
 const loading = ref(false)
 const result = ref<DeploySshKeyResult | null>(null)
 

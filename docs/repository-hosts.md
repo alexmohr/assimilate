@@ -26,7 +26,7 @@ The page has five sections:
 
 | Section | Content |
 |---------|---------|
-| **Connection** | Hostname, SSH port and the pinned SSH host key |
+| **Connection** | Hostname, SSH port, [provider](#provider) and the pinned SSH host key |
 | **Power & dependencies** | The host's [machine](power-management.md#machines) — Wake-on-LAN, shutting down after a backup, [when the host is offline](power-management.md#when-the-host-is-offline) — and the dependencies every backup to it requires |
 | **Storage quota** | A [storage limit](server-quotas.md) shared by every repository on the host, measured against their combined size |
 | **Repositories** | Every repository on the host, with the user and path each one uses |
@@ -37,6 +37,30 @@ The page has five sections:
 **Hostname** and **SSH port** say where every repository on the host is reached. A host has exactly one port. A repository that names a known hostname with another port is refused, rather than silently pointed at a different SSH daemon.
 
 Changing either value moves every repository on the host at once. Each one is marked for [relocation](repositories.md#repository-relocation-safety), so borg accepts the new location on its next backup, and the host's [storage quota](server-quotas.md) follows the new name. If the new name already has a quota of its own while the host has one too, the change is refused until one of them is removed, so neither stops applying unnoticed.
+
+### Provider
+
+A host has one **provider**, the hosting service it belongs to. A provider fixes what would otherwise be typed by hand and gets wrong easily, so the [create and import dialogs](repositories.md) offer it first and lock the matching fields:
+
+| Provider | SSH port | Repository path | Remote borg (`--remote-path`) | Key deploy |
+|----------|----------|-----------------|-------------------------------|------------|
+| **Generic SSH** | You choose | You choose | Plain `borg` | SFTP offered first, as before |
+| **Hetzner Storage Box** | 23, locked | `./backups`, filled in when the path is empty | `borg-1.4` | SFTP |
+| **rsync.net** | 22, locked | You choose | `borg14` | SFTP |
+| **BorgBase** | 22, locked | You choose | Plain `borg` | Shell |
+
+Choosing **Hetzner Storage Box** also completes a bare account name: entering `u123456` in **SSH host** leaves the field as `u123456.your-storagebox.de`.
+
+The remote borg binary is exported to every borg command Assimilate runs against the host as `BORG_REMOTE_PATH`, the environment form of `--remote-path`. The server uses it for its own commands and sends it to the agents with their config, so no per-repository setting is needed.
+
+A provider belongs to the host, not to a repository:
+
+- A repository added on a host that already exists takes that host's provider, and the dialog shows it locked. Naming a different provider is refused.
+- Changing the port of a provider host to one other than the provider's is refused.
+- Hosts that existed before providers are **Generic SSH**.
+- A [configuration export](configuration.md) records each repository's provider, and an import creates the host with it.
+
+See [Provider Guides](provider-guides.md) for the steps on each service.
 
 ### SSH Host Key
 
@@ -111,6 +135,7 @@ The host's wake, shutdown and availability settings are its machine's (`machine_
 ## Related Pages
 
 - [Repository Management](repositories.md)
+- [Provider Guides](provider-guides.md)
 - [Power Management](power-management.md)
 - [Scheduling & Retention](scheduling.md#hosts-that-are-not-always-online)
 - [Host Storage Quotas](server-quotas.md)

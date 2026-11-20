@@ -57,6 +57,8 @@ pub mod machines;
 pub mod notifications;
 /// Message types exchanged over the agent/server WebSocket connection.
 pub mod protocol;
+/// Provider presets for repository hosts: Hetzner, rsync.net, BorgBase.
+pub mod provider;
 /// The retention arguments of `borg prune`.
 pub mod prune;
 /// API response DTOs returned by the server's REST endpoints.

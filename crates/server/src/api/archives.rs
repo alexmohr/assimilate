@@ -120,6 +120,7 @@ pub async fn get_repo_env(
         &repo.ssh_host,
         u16::try_from(repo.ssh_port).unwrap_or(22),
         repo.ssh_host_key.as_deref(),
+        repo.provider,
     )
     .await;
 
@@ -1811,7 +1812,57 @@ pub async fn extract_file(
 
 #[cfg(test)]
 mod tests {
+    use shared::provider::HostProvider;
+
     use super::*;
+
+    async fn repo_on(
+        pool: &sqlx::PgPool,
+        key: &[u8; 32],
+        ssh_host: &str,
+        provider: Option<HostProvider>,
+    ) -> i64 {
+        let passphrase = shared::crypto::encrypt_passphrase("pw", key).unwrap();
+        db::insert_repo_for_provider(
+            pool,
+            &db::InsertRepoParams {
+                name: ssh_host,
+                repo_path: "backups/r",
+                ssh_user: "u",
+                ssh_host,
+                ssh_port: 22,
+                passphrase_encrypted: &passphrase,
+                compression: "lz4",
+                encryption: "repokey",
+                owner_id: None,
+                sync_schedule: None,
+            },
+            provider,
+        )
+        .await
+        .unwrap()
+        .id
+    }
+
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_provider_host_runs_its_own_borg_and_a_generic_host_runs_plain_borg(
+        pool: sqlx::PgPool,
+    ) {
+        let key = [7u8; 32];
+        let rsync = repo_on(&pool, &key, "ab1.rsync.net", Some(HostProvider::RsyncNet)).await;
+        let plain = repo_on(&pool, &key, "nas.lan", None).await;
+
+        let (_, env) = get_repo_env(&pool, &key, rsync).await.unwrap();
+        assert_eq!(
+            env.get("BORG_REMOTE_PATH").map(String::as_str),
+            Some("borg14")
+        );
+        assert_eq!(env.get("BORG_PASSPHRASE").map(String::as_str), Some("pw"));
+
+        let (_, env) = get_repo_env(&pool, &key, plain).await.unwrap();
+        assert!(!env.contains_key("BORG_REMOTE_PATH"));
+    }
 
     #[ignore = "requires DATABASE_URL"]
     #[sqlx::test(migrations = "./migrations")]

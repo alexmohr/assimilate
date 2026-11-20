@@ -1290,6 +1290,7 @@ async fn check_ssh_reachability(pool: &PgPool, repo_id: i64) -> Result<(), ApiEr
         ssh_host: repo.ssh_host,
         ssh_user: repo.ssh_user,
         ssh_port: Some(ssh_port),
+        provider: None,
     })
     .await;
     if response.ssh_ok {

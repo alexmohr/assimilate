@@ -2710,6 +2710,67 @@ esac
         );
     }
 
+    /// A repository that has just synced is not due again until its next cron time,
+    /// so a tick leaves it alone: nothing starts and nothing is claimed.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn run_repo_sync_leaves_a_repo_whose_next_sync_is_not_due(pool: sqlx::PgPool) {
+        let repo = db::insert_repo(
+            &pool,
+            &InsertRepoParams {
+                name: "not-due-test-repo",
+                repo_path: "/backup/not-due-test",
+                ssh_user: "borg",
+                ssh_host: "storage.local",
+                ssh_port: 22,
+                passphrase_encrypted: b"encrypted_data",
+                compression: "lz4",
+                encryption: "repokey",
+                owner_id: None,
+                sync_schedule: None,
+            },
+        )
+        .await
+        .unwrap();
+        // Once a year, on the first of January, and it synced a moment ago: the next
+        // run is months away whatever day the test runs.
+        sqlx::query!(
+            "UPDATE repos SET sync_schedule = $2 WHERE id = $1",
+            repo.id,
+            "0 0 1 1 *",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        db::update_repo_last_synced(&pool, repo.id).await.unwrap();
+
+        let encryption_key = shared::crypto::derive_key(b"test-secret-key-for-not-due").unwrap();
+        let ui_broadcast = UiBroadcast::new();
+        let repo_op_tracker = RepoOpTracker::default();
+        let repo_lock = RepoLock::default();
+        let background_task_tracker = crate::background_tasks::BackgroundTaskTracker::default();
+        let task_registry = shared::task_registry::TaskRegistry::default();
+
+        run_repo_sync(
+            &pool,
+            &encryption_key,
+            &ui_broadcast,
+            &repo_op_tracker,
+            &repo_lock,
+            &background_task_tracker,
+            &task_registry,
+        )
+        .await;
+
+        background_task_tracker
+            .assert_idle(Duration::from_secs(5))
+            .await;
+        assert!(
+            !repo_op_tracker.any_active().await,
+            "a repo that is not due must not be claimed"
+        );
+    }
+
     /// A scheduled sync that finds new archives records a repo-sync system
     /// event naming the repository and the counts. The e2e demo reaches this
     /// only when one of its periodic syncs happens to find a change, so it is

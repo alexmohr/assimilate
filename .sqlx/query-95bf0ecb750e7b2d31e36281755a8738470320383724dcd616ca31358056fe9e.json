@@ -6,82 +6,178 @@
       {
         "ordinal": 0,
         "name": "id",
-        "type_info": "Uuid"
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "restore_runs",
+            "name": "id"
+          }
+        }
       },
       {
         "ordinal": 1,
         "name": "agent_id",
-        "type_info": "Int8"
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "restore_runs",
+            "name": "agent_id"
+          }
+        }
       },
       {
         "ordinal": 2,
         "name": "hostname",
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "agents",
+            "name": "hostname"
+          }
+        }
       },
       {
         "ordinal": 3,
         "name": "repo_id",
-        "type_info": "Int8"
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "restore_runs",
+            "name": "repo_id"
+          }
+        }
       },
       {
         "ordinal": 4,
         "name": "repo_name",
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "repos",
+            "name": "name"
+          }
+        }
       },
       {
         "ordinal": 5,
         "name": "archive_name",
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "restore_runs",
+            "name": "archive_name"
+          }
+        }
       },
       {
         "ordinal": 6,
         "name": "paths",
-        "type_info": "TextArray"
+        "type_info": "TextArray",
+        "origin": {
+          "Table": {
+            "table": "restore_runs",
+            "name": "paths"
+          }
+        }
       },
       {
         "ordinal": 7,
         "name": "target_path",
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "restore_runs",
+            "name": "target_path"
+          }
+        }
       },
       {
         "ordinal": 8,
         "name": "database: Json<DatabaseRestore>",
-        "type_info": "Jsonb"
+        "type_info": "Jsonb",
+        "origin": {
+          "Table": {
+            "table": "restore_runs",
+            "name": "database"
+          }
+        }
       },
       {
         "ordinal": 9,
         "name": "status: RestoreRunStatus",
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "restore_runs",
+            "name": "status"
+          }
+        }
       },
       {
         "ordinal": 10,
         "name": "files_restored",
-        "type_info": "Int8"
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "restore_runs",
+            "name": "files_restored"
+          }
+        }
       },
       {
         "ordinal": 11,
         "name": "error_message",
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "restore_runs",
+            "name": "error_message"
+          }
+        }
       },
       {
         "ordinal": 12,
         "name": "requested_by",
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "restore_runs",
+            "name": "requested_by"
+          }
+        }
       },
       {
         "ordinal": 13,
         "name": "created_at",
-        "type_info": "Timestamptz"
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "restore_runs",
+            "name": "created_at"
+          }
+        }
       },
       {
         "ordinal": 14,
         "name": "started_at",
-        "type_info": "Timestamptz"
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "restore_runs",
+            "name": "started_at"
+          }
+        }
       },
       {
         "ordinal": 15,
         "name": "finished_at",
-        "type_info": "Timestamptz"
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "restore_runs",
+            "name": "finished_at"
+          }
+        }
       }
     ],
     "parameters": {

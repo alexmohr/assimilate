@@ -6,97 +6,166 @@
       {
         "ordinal": 0,
         "name": "schedule_id",
-        "type_info": "Int8"
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "schedules",
+            "name": "id"
+          }
+        }
       },
       {
         "ordinal": 1,
         "name": "schedule_name",
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": "Expression"
       },
       {
         "ordinal": 2,
         "name": "cron_expression",
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "schedules",
+            "name": "cron_expression"
+          }
+        }
       },
       {
         "ordinal": 3,
         "name": "schedule_enabled",
-        "type_info": "Bool"
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "schedules",
+            "name": "enabled"
+          }
+        }
       },
       {
         "ordinal": 4,
         "name": "schedule_last_run_at",
-        "type_info": "Timestamptz"
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "schedules",
+            "name": "last_run_at"
+          }
+        }
       },
       {
         "ordinal": 5,
         "name": "next_run_at",
-        "type_info": "Timestamptz"
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "schedules",
+            "name": "next_run_at"
+          }
+        }
       },
       {
         "ordinal": 6,
         "name": "agent_id",
-        "type_info": "Int8"
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "agents",
+            "name": "id"
+          }
+        }
       },
       {
         "ordinal": 7,
         "name": "hostname",
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "agents",
+            "name": "hostname"
+          }
+        }
       },
       {
         "ordinal": 8,
         "name": "repo_id",
-        "type_info": "Int8"
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "repos",
+            "name": "id"
+          }
+        }
       },
       {
         "ordinal": 9,
         "name": "repo_name",
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "repos",
+            "name": "name"
+          }
+        }
       },
       {
         "ordinal": 10,
         "name": "latest_report_id",
-        "type_info": "Int8"
+        "type_info": "Int8",
+        "origin": "Expression"
       },
       {
         "ordinal": 11,
         "name": "latest_started_at",
-        "type_info": "Timestamptz"
+        "type_info": "Timestamptz",
+        "origin": "Expression"
       },
       {
         "ordinal": 12,
         "name": "latest_finished_at",
-        "type_info": "Timestamptz"
+        "type_info": "Timestamptz",
+        "origin": "Expression"
       },
       {
         "ordinal": 13,
         "name": "latest_failed",
-        "type_info": "Bool"
+        "type_info": "Bool",
+        "origin": "Expression"
       },
       {
         "ordinal": 14,
         "name": "latest_warning",
-        "type_info": "Bool"
+        "type_info": "Bool",
+        "origin": "Expression"
       },
       {
         "ordinal": 15,
         "name": "latest_started",
-        "type_info": "Bool"
+        "type_info": "Bool",
+        "origin": "Expression"
       },
       {
         "ordinal": 16,
         "name": "latest_acknowledged?",
-        "type_info": "Bool"
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "backup_reports",
+            "name": "acknowledged"
+          }
+        }
       },
       {
         "ordinal": 17,
         "name": "latest_message",
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": "Expression"
       },
       {
         "ordinal": 18,
         "name": "last_success_at",
-        "type_info": "Timestamptz"
+        "type_info": "Timestamptz",
+        "origin": "Expression"
       }
     ],
     "parameters": {

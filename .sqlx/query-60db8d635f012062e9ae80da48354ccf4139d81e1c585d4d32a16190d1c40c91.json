@@ -6,132 +6,288 @@
       {
         "ordinal": 0,
         "name": "database_dump_dir",
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "agents",
+            "name": "database_dump_dir"
+          }
+        }
       },
       {
         "ordinal": 1,
         "name": "database_selection: DatabaseSelectionMode",
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "agents",
+            "name": "database_selection"
+          }
+        }
       },
       {
         "ordinal": 2,
         "name": "database_kubernetes_enabled",
-        "type_info": "Bool"
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "agents",
+            "name": "database_kubernetes_enabled"
+          }
+        }
       },
       {
         "ordinal": 3,
         "name": "database_kubeconfig_path",
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "agents",
+            "name": "database_kubeconfig_path"
+          }
+        }
       },
       {
         "ordinal": 4,
         "name": "database_docker_enabled",
-        "type_info": "Bool"
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "agents",
+            "name": "database_docker_enabled"
+          }
+        }
       },
       {
         "ordinal": 5,
         "name": "database_docker_socket",
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "agents",
+            "name": "database_docker_socket"
+          }
+        }
       },
       {
         "ordinal": 6,
         "name": "database_host_enabled",
-        "type_info": "Bool"
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "agents",
+            "name": "database_host_enabled"
+          }
+        }
       },
       {
         "ordinal": 7,
         "name": "database_host_os_user",
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "agents",
+            "name": "database_host_os_user"
+          }
+        }
       },
       {
         "ordinal": 8,
         "name": "database_host_socket_dir",
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "agents",
+            "name": "database_host_socket_dir"
+          }
+        }
       },
       {
         "ordinal": 9,
         "name": "database_host_port",
-        "type_info": "Int4"
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "agents",
+            "name": "database_host_port"
+          }
+        }
       },
       {
         "ordinal": 10,
         "name": "database_host_bin_dir",
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "agents",
+            "name": "database_host_bin_dir"
+          }
+        }
       },
       {
         "ordinal": 11,
         "name": "database_host_mysql_enabled",
-        "type_info": "Bool"
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "agents",
+            "name": "database_host_mysql_enabled"
+          }
+        }
       },
       {
         "ordinal": 12,
         "name": "database_host_mysql_engine: MysqlEngine",
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "agents",
+            "name": "database_host_mysql_engine"
+          }
+        }
       },
       {
         "ordinal": 13,
         "name": "database_host_mysql_os_user",
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "agents",
+            "name": "database_host_mysql_os_user"
+          }
+        }
       },
       {
         "ordinal": 14,
         "name": "database_host_mysql_socket",
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "agents",
+            "name": "database_host_mysql_socket"
+          }
+        }
       },
       {
         "ordinal": 15,
         "name": "database_host_mysql_port",
-        "type_info": "Int4"
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "agents",
+            "name": "database_host_mysql_port"
+          }
+        }
       },
       {
         "ordinal": 16,
         "name": "database_host_mysql_bin_dir",
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "agents",
+            "name": "database_host_mysql_bin_dir"
+          }
+        }
       },
       {
         "ordinal": 17,
         "name": "database_host_mongodb_enabled",
-        "type_info": "Bool"
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "agents",
+            "name": "database_host_mongodb_enabled"
+          }
+        }
       },
       {
         "ordinal": 18,
         "name": "database_host_mongodb_os_user",
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "agents",
+            "name": "database_host_mongodb_os_user"
+          }
+        }
       },
       {
         "ordinal": 19,
         "name": "database_host_mongodb_port",
-        "type_info": "Int4"
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "agents",
+            "name": "database_host_mongodb_port"
+          }
+        }
       },
       {
         "ordinal": 20,
         "name": "database_host_mongodb_config_file",
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "agents",
+            "name": "database_host_mongodb_config_file"
+          }
+        }
       },
       {
         "ordinal": 21,
         "name": "database_host_mongodb_bin_dir",
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "agents",
+            "name": "database_host_mongodb_bin_dir"
+          }
+        }
       },
       {
         "ordinal": 22,
         "name": "database_host_sqlite_enabled",
-        "type_info": "Bool"
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "agents",
+            "name": "database_host_sqlite_enabled"
+          }
+        }
       },
       {
         "ordinal": 23,
         "name": "database_host_sqlite_os_user",
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "agents",
+            "name": "database_host_sqlite_os_user"
+          }
+        }
       },
       {
         "ordinal": 24,
         "name": "database_host_sqlite_files",
-        "type_info": "TextArray"
+        "type_info": "TextArray",
+        "origin": {
+          "Table": {
+            "table": "agents",
+            "name": "database_host_sqlite_files"
+          }
+        }
       },
       {
         "ordinal": 25,
         "name": "database_host_sqlite_bin_dir",
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "agents",
+            "name": "database_host_sqlite_bin_dir"
+          }
+        }
       }
     ],
     "parameters": {

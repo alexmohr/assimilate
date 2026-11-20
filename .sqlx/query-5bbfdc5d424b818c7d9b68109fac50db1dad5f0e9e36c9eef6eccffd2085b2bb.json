@@ -6,7 +6,13 @@
       {
         "ordinal": 0,
         "name": "last_synced_at",
-        "type_info": "Timestamptz"
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "repo_stats",
+            "name": "last_synced_at"
+          }
+        }
       }
     ],
     "parameters": {

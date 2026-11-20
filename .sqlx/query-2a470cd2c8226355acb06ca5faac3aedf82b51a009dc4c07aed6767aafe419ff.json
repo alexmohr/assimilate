@@ -6,12 +6,24 @@
       {
         "ordinal": 0,
         "name": "target: shared::types::RunEventTarget",
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "backup_run_events",
+            "name": "target"
+          }
+        }
       },
       {
         "ordinal": 1,
         "name": "event_type: shared::types::RunEventType",
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "backup_run_events",
+            "name": "event_type"
+          }
+        }
       }
     ],
     "parameters": {

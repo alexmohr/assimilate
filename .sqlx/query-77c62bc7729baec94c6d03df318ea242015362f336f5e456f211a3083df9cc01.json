@@ -6,12 +6,24 @@
       {
         "ordinal": 0,
         "name": "repo_host_id",
-        "type_info": "Int8"
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "repo_host_dependencies",
+            "name": "repo_host_id"
+          }
+        }
       },
       {
         "ordinal": 1,
         "name": "dependency_host_id",
-        "type_info": "Int8"
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "repo_host_dependencies",
+            "name": "dependency_host_id"
+          }
+        }
       }
     ],
     "parameters": {

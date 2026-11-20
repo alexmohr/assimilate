@@ -6,12 +6,24 @@
       {
         "ordinal": 0,
         "name": "staged_bytes",
-        "type_info": "Int8"
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "agent_vms",
+            "name": "staged_bytes"
+          }
+        }
       },
       {
         "ordinal": 1,
         "name": "chain_length",
-        "type_info": "Int4"
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "agent_vms",
+            "name": "chain_length"
+          }
+        }
       }
     ],
     "parameters": {

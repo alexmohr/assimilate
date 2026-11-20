@@ -6,132 +6,238 @@
       {
         "ordinal": 0,
         "name": "total_agents!",
-        "type_info": "Int8"
+        "type_info": "Int8",
+        "origin": "Expression"
       },
       {
         "ordinal": 1,
         "name": "total_repos!",
-        "type_info": "Int8"
+        "type_info": "Int8",
+        "origin": "Expression"
       },
       {
         "ordinal": 2,
         "name": "active_schedules!",
-        "type_info": "Int8"
+        "type_info": "Int8",
+        "origin": "Expression"
       },
       {
         "ordinal": 3,
         "name": "total_schedules!",
-        "type_info": "Int8"
+        "type_info": "Int8",
+        "origin": "Expression"
       },
       {
         "ordinal": 4,
         "name": "total_storage_bytes!",
-        "type_info": "Int8"
+        "type_info": "Int8",
+        "origin": "Expression"
       },
       {
         "ordinal": 5,
         "name": "last_backup_at",
-        "type_info": "Timestamptz"
+        "type_info": "Timestamptz",
+        "origin": "Expression"
       },
       {
         "ordinal": 6,
         "name": "next_backup_at",
-        "type_info": "Timestamptz"
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "schedules",
+            "name": "next_run_at"
+          }
+        }
       },
       {
         "ordinal": 7,
         "name": "last_backup_schedule_id",
-        "type_info": "Int8"
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "backup_reports",
+            "name": "schedule_id"
+          }
+        }
       },
       {
         "ordinal": 8,
         "name": "last_backup_repo_id",
-        "type_info": "Int8"
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "backup_reports",
+            "name": "repo_id"
+          }
+        }
       },
       {
         "ordinal": 9,
         "name": "last_backup_archive_name",
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "backup_reports",
+            "name": "archive_name"
+          }
+        }
       },
       {
         "ordinal": 10,
         "name": "next_backup_schedule_id",
-        "type_info": "Int8"
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "schedules",
+            "name": "id"
+          }
+        }
       },
       {
         "ordinal": 11,
         "name": "success_30d!",
-        "type_info": "Int8"
+        "type_info": "Int8",
+        "origin": "Expression"
       },
       {
         "ordinal": 12,
         "name": "failed_30d!",
-        "type_info": "Int8"
+        "type_info": "Int8",
+        "origin": "Expression"
       },
       {
         "ordinal": 13,
         "name": "total_30d!",
-        "type_info": "Int8"
+        "type_info": "Int8",
+        "origin": "Expression"
       },
       {
         "ordinal": 14,
         "name": "last_failure_at",
-        "type_info": "Timestamptz"
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "backup_reports",
+            "name": "finished_at"
+          }
+        }
       },
       {
         "ordinal": 15,
         "name": "last_warning_at",
-        "type_info": "Timestamptz"
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "backup_reports",
+            "name": "finished_at"
+          }
+        }
       },
       {
         "ordinal": 16,
         "name": "last_failure_schedule_id",
-        "type_info": "Int8"
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "backup_reports",
+            "name": "schedule_id"
+          }
+        }
       },
       {
         "ordinal": 17,
         "name": "last_warning_schedule_id",
-        "type_info": "Int8"
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "backup_reports",
+            "name": "schedule_id"
+          }
+        }
       },
       {
         "ordinal": 18,
         "name": "last_failure_message",
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "backup_reports",
+            "name": "error_message"
+          }
+        }
       },
       {
         "ordinal": 19,
         "name": "last_warning_message",
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": "Expression"
       },
       {
         "ordinal": 20,
         "name": "last_failure_repo_id",
-        "type_info": "Int8"
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "backup_reports",
+            "name": "repo_id"
+          }
+        }
       },
       {
         "ordinal": 21,
         "name": "last_warning_repo_id",
-        "type_info": "Int8"
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "backup_reports",
+            "name": "repo_id"
+          }
+        }
       },
       {
         "ordinal": 22,
         "name": "last_failure_repo_name",
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "repos",
+            "name": "name"
+          }
+        }
       },
       {
         "ordinal": 23,
         "name": "last_warning_repo_name",
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "repos",
+            "name": "name"
+          }
+        }
       },
       {
         "ordinal": 24,
         "name": "last_failure_schedule_name",
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "schedules",
+            "name": "cron_expression"
+          }
+        }
       },
       {
         "ordinal": 25,
         "name": "last_warning_schedule_name",
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "schedules",
+            "name": "cron_expression"
+          }
+        }
       }
     ],
     "parameters": {

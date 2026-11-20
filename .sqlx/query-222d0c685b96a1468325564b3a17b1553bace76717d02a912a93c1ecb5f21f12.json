@@ -6,22 +6,26 @@
       {
         "ordinal": 0,
         "name": "date!",
-        "type_info": "Date"
+        "type_info": "Date",
+        "origin": "Expression"
       },
       {
         "ordinal": 1,
         "name": "original_size!",
-        "type_info": "Int8"
+        "type_info": "Int8",
+        "origin": "Expression"
       },
       {
         "ordinal": 2,
         "name": "compressed_size!",
-        "type_info": "Int8"
+        "type_info": "Int8",
+        "origin": "Expression"
       },
       {
         "ordinal": 3,
         "name": "deduplicated_size?",
-        "type_info": "Int8"
+        "type_info": "Int8",
+        "origin": "Expression"
       }
     ],
     "parameters": {

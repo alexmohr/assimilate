@@ -6,202 +6,432 @@
       {
         "ordinal": 0,
         "name": "id",
-        "type_info": "Int8"
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "schedules",
+            "name": "id"
+          }
+        }
       },
       {
         "ordinal": 1,
         "name": "repo_id",
-        "type_info": "Int8"
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "schedules",
+            "name": "repo_id"
+          }
+        }
       },
       {
         "ordinal": 2,
         "name": "name",
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "schedules",
+            "name": "name"
+          }
+        }
       },
       {
         "ordinal": 3,
         "name": "schedule_type: ScheduleType",
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "schedules",
+            "name": "schedule_type"
+          }
+        }
       },
       {
         "ordinal": 4,
         "name": "cron_expression",
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "schedules",
+            "name": "cron_expression"
+          }
+        }
       },
       {
         "ordinal": 5,
         "name": "enabled",
-        "type_info": "Bool"
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "schedules",
+            "name": "enabled"
+          }
+        }
       },
       {
         "ordinal": 6,
         "name": "canary_enabled",
-        "type_info": "Bool"
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "schedules",
+            "name": "canary_enabled"
+          }
+        }
       },
       {
         "ordinal": 7,
         "name": "vm_snapshot_enabled",
-        "type_info": "Bool"
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "schedules",
+            "name": "vm_snapshot_enabled"
+          }
+        }
       },
       {
         "ordinal": 8,
         "name": "database_backup_enabled",
-        "type_info": "Bool"
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "schedules",
+            "name": "database_backup_enabled"
+          }
+        }
       },
       {
         "ordinal": 9,
         "name": "fs_snapshot: FsSnapshotMode",
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "schedules",
+            "name": "fs_snapshot"
+          }
+        }
       },
       {
         "ordinal": 10,
         "name": "lvm_snapshot_percent",
-        "type_info": "Int2"
+        "type_info": "Int2",
+        "origin": {
+          "Table": {
+            "table": "schedules",
+            "name": "lvm_snapshot_percent"
+          }
+        }
       },
       {
         "ordinal": 11,
         "name": "files_mode: ScheduleFilesMode",
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "schedules",
+            "name": "files_mode"
+          }
+        }
       },
       {
         "ordinal": 12,
         "name": "run_host_commands",
-        "type_info": "Bool"
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "schedules",
+            "name": "run_host_commands"
+          }
+        }
       },
       {
         "ordinal": 13,
         "name": "last_run_at",
-        "type_info": "Timestamptz"
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "schedules",
+            "name": "last_run_at"
+          }
+        }
       },
       {
         "ordinal": 14,
         "name": "next_run_at",
-        "type_info": "Timestamptz"
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "schedules",
+            "name": "next_run_at"
+          }
+        }
       },
       {
         "ordinal": 15,
         "name": "exclude_patterns_raw",
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "schedules",
+            "name": "exclude_patterns_raw"
+          }
+        }
       },
       {
         "ordinal": 16,
         "name": "include_patterns_raw",
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "schedules",
+            "name": "include_patterns_raw"
+          }
+        }
       },
       {
         "ordinal": 17,
         "name": "file_change_patterns_raw",
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "schedules",
+            "name": "file_change_patterns_raw"
+          }
+        }
       },
       {
         "ordinal": 18,
         "name": "ignore_global_excludes",
-        "type_info": "Bool"
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "schedules",
+            "name": "ignore_global_excludes"
+          }
+        }
       },
       {
         "ordinal": 19,
         "name": "keep_hourly",
-        "type_info": "Int4"
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "schedules",
+            "name": "keep_hourly"
+          }
+        }
       },
       {
         "ordinal": 20,
         "name": "keep_daily",
-        "type_info": "Int4"
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "schedules",
+            "name": "keep_daily"
+          }
+        }
       },
       {
         "ordinal": 21,
         "name": "keep_weekly",
-        "type_info": "Int4"
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "schedules",
+            "name": "keep_weekly"
+          }
+        }
       },
       {
         "ordinal": 22,
         "name": "keep_monthly",
-        "type_info": "Int4"
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "schedules",
+            "name": "keep_monthly"
+          }
+        }
       },
       {
         "ordinal": 23,
         "name": "keep_yearly",
-        "type_info": "Int4"
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "schedules",
+            "name": "keep_yearly"
+          }
+        }
       },
       {
         "ordinal": 24,
         "name": "compact_enabled",
-        "type_info": "Bool"
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "schedules",
+            "name": "compact_enabled"
+          }
+        }
       },
       {
         "ordinal": 25,
         "name": "rate_limit_kbps",
-        "type_info": "Int4"
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "schedules",
+            "name": "rate_limit_kbps"
+          }
+        }
       },
       {
         "ordinal": 26,
         "name": "pre_backup_commands: HookCommands",
-        "type_info": "Jsonb"
+        "type_info": "Jsonb",
+        "origin": {
+          "Table": {
+            "table": "schedules",
+            "name": "pre_backup_commands"
+          }
+        }
       },
       {
         "ordinal": 27,
         "name": "post_backup_commands: HookCommands",
-        "type_info": "Jsonb"
+        "type_info": "Jsonb",
+        "origin": {
+          "Table": {
+            "table": "schedules",
+            "name": "post_backup_commands"
+          }
+        }
       },
       {
         "ordinal": 28,
         "name": "hook_timeout_seconds",
-        "type_info": "Int4"
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "schedules",
+            "name": "hook_timeout_seconds"
+          }
+        }
       },
       {
         "ordinal": 29,
         "name": "missed_backup_threshold",
-        "type_info": "Int4"
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "schedules",
+            "name": "missed_backup_threshold"
+          }
+        }
       },
       {
         "ordinal": 30,
         "name": "catch_up_min_lead_minutes",
-        "type_info": "Int4"
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "schedules",
+            "name": "catch_up_min_lead_minutes"
+          }
+        }
       },
       {
         "ordinal": 31,
         "name": "execution_mode: ExecutionMode",
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "schedules",
+            "name": "execution_mode"
+          }
+        }
       },
       {
         "ordinal": 32,
         "name": "on_failure: OnFailure",
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "schedules",
+            "name": "on_failure"
+          }
+        }
       },
       {
         "ordinal": 33,
         "name": "owner_id",
-        "type_info": "Int8"
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "schedules",
+            "name": "owner_id"
+          }
+        }
       },
       {
         "ordinal": 34,
         "name": "visibility: Visibility",
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "schedules",
+            "name": "visibility"
+          }
+        }
       },
       {
         "ordinal": 35,
         "name": "wake_override: ScheduleWakeOverride",
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "schedules",
+            "name": "wake_override"
+          }
+        }
       },
       {
         "ordinal": 36,
         "name": "consecutive_failures",
-        "type_info": "Int4"
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "schedules",
+            "name": "consecutive_failures"
+          }
+        }
       },
       {
         "ordinal": 37,
         "name": "auto_disabled_agent_unreachable",
-        "type_info": "Bool"
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "schedules",
+            "name": "auto_disabled_agent_unreachable"
+          }
+        }
       },
       {
         "ordinal": 38,
         "name": "target_hostnames!",
-        "type_info": "TextArray"
+        "type_info": "TextArray",
+        "origin": "Expression"
       },
       {
         "ordinal": 39,
         "name": "catch_up_pending_count!",
-        "type_info": "Int8"
+        "type_info": "Int8",
+        "origin": "Expression"
       }
     ],
     "parameters": {

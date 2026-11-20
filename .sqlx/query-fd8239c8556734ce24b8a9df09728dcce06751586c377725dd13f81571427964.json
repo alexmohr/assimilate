@@ -6,57 +6,118 @@
       {
         "ordinal": 0,
         "name": "schedule_id",
-        "type_info": "Int8"
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "schedules",
+            "name": "id"
+          }
+        }
       },
       {
         "ordinal": 1,
         "name": "schedule_name!",
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": "Expression"
       },
       {
         "ordinal": 2,
         "name": "schedule_type: ScheduleType",
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "schedules",
+            "name": "schedule_type"
+          }
+        }
       },
       {
         "ordinal": 3,
         "name": "schedule_enabled",
-        "type_info": "Bool"
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "schedules",
+            "name": "enabled"
+          }
+        }
       },
       {
         "ordinal": 4,
         "name": "cron_expression",
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "schedules",
+            "name": "cron_expression"
+          }
+        }
       },
       {
         "ordinal": 5,
         "name": "hostname",
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "agents",
+            "name": "hostname"
+          }
+        }
       },
       {
         "ordinal": 6,
         "name": "domain",
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "agents",
+            "name": "domain"
+          }
+        }
       },
       {
         "ordinal": 7,
         "name": "repo_name",
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "repos",
+            "name": "name"
+          }
+        }
       },
       {
         "ordinal": 8,
         "name": "repo_host",
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "repo_hosts",
+            "name": "ssh_host"
+          }
+        }
       },
       {
         "ordinal": 9,
         "name": "latest_status?: ReportStatus",
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "backup_reports",
+            "name": "status"
+          }
+        }
       },
       {
         "ordinal": 10,
         "name": "last_success_at?",
-        "type_info": "Timestamptz"
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "backup_reports",
+            "name": "finished_at"
+          }
+        }
       }
     ],
     "parameters": {

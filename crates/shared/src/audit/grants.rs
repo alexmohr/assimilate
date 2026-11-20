@@ -105,16 +105,15 @@ impl RepoPermission {
 
 #[cfg(test)]
 mod tests {
-    use chrono::Utc;
-
     use super::*;
+    use crate::time::Timestamp;
 
     #[test]
     fn a_role_lists_only_what_it_grants() {
         let role = RoleResponse {
             id: 1,
             name: "backup-operator".to_owned(),
-            created_at: Utc::now(),
+            created_at: Timestamp::now(),
             can_create_agent: false,
             can_delete_agent: false,
             can_delete_own_agent: true,

@@ -48,7 +48,9 @@ fn main() -> Result<(), std::env::VarError> {
 
     let sha = resolve_git_sha().unwrap_or_default();
     let commit_count = resolve_git_commit_count().unwrap_or(0);
-    let build_timestamp = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    let build_timestamp = jiff::Timestamp::now()
+        .strftime("%Y-%m-%dT%H:%M:%SZ")
+        .to_string();
 
     println!("cargo::rustc-env=APP_VERSION={app_version}");
     println!("cargo::rustc-env=GIT_SHA={sha}");

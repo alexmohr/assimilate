@@ -1,0 +1,9 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2026 Alexander Mohr
+
+# sqlx has no jiff support, so `query!` maps `TIMESTAMPTZ` columns to the
+# workspace's own jiff-backed instant type.
+[macros.type-overrides]
+'TIMESTAMPTZ' = "shared::time::Timestamp"
+'DATE' = "shared::time::Date"
+'TIMESTAMPTZ[]' = "Vec<shared::time::Timestamp>"

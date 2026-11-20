@@ -20,10 +20,12 @@
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 
-use chrono::{DateTime, Utc};
-use shared::types::{
-    MachinePolicy, MachineWakeMode, ReportStatus, RunEventTarget, RunEventType,
-    ScheduleWakeOverride, SystemEventType, WaitReason,
+use shared::{
+    time::Timestamp,
+    types::{
+        MachinePolicy, MachineWakeMode, ReportStatus, RunEventTarget, RunEventType,
+        ScheduleWakeOverride, SystemEventType, WaitReason,
+    },
 };
 
 use crate::{
@@ -184,7 +186,7 @@ impl RepoWaitPlan {
 async fn probe(pool: &sqlx::PgPool, repo: &RepoRow) -> bool {
     let reachable = power::repo_reachable(repo).await;
     if let Err(e) =
-        db::machines::record_machine_check(pool, repo.machine_id, reachable, Utc::now()).await
+        db::machines::record_machine_check(pool, repo.machine_id, reachable, Timestamp::now()).await
     {
         tracing::warn!(repo_id = repo.id, error = %e, "failed to record a host check");
     }
@@ -237,7 +239,7 @@ pub(crate) struct SkippedTarget<'a> {
     /// The target that was skipped.
     pub target: &'a DueScheduleRow,
     /// When the run was decided on.
-    pub now: DateTime<Utc>,
+    pub now: Timestamp,
 }
 
 /// Reports a target skipped because the repository host it writes to was
@@ -416,7 +418,7 @@ mod tests {
             missed_backup_threshold: 3,
             agent_intermittent: false,
             wake_override: ScheduleWakeOverride::HostDefault,
-            due_at: Utc::now(),
+            due_at: Timestamp::now(),
         }
     }
 
@@ -577,7 +579,7 @@ mod tests {
             schedule_name: "nightly",
             run_id: "run-1",
             target: &skipped_target,
-            now: Utc::now(),
+            now: Timestamp::now(),
         };
 
         let warnings = warnings_while(report_skipped(&skipped, WaitReason::Schedule)).await;

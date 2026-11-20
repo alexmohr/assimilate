@@ -17,7 +17,7 @@ workspace = true
 [dependencies]
 serde = { workspace = true }
 serde_json = { workspace = true }
-utoipa = { version = "5", features = ["chrono"] }
+utoipa = { version = "5", features = ["jiff_0_2"] }
 thiserror = { workspace = true }
 aes-gcm = { workspace = true }
 rand = { workspace = true }
@@ -26,12 +26,11 @@ sha2 = { workspace = true }
 snow = { workspace = true }
 base64 = { workspace = true }
 uuid = { workspace = true }
-chrono = { workspace = true }
-chrono-tz = { workspace = true }
+jiff = { workspace = true }
 iana-time-zone = "0.1"
 croner = { workspace = true }
 tokio-tungstenite = { workspace = true }
-ts-rs = { version = "12", features = ["chrono-impl", "format"] }
+ts-rs = { version = "12", features = ["format"] }
 tokio = { workspace = true }
 tracing = { workspace = true }
 futures-util = { workspace = true }

@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
-use chrono::{DateTime, Utc};
 use serde::Serialize;
+use shared::time::Timestamp;
 use sqlx::PgPool;
 
 /// A user-assigned tag on a specific archive (e.g. `pre-upgrade`,
@@ -21,7 +21,7 @@ pub struct ArchiveTag {
     /// ID of the user who created the tag, if known.
     pub created_by: Option<i64>,
     /// Timestamp at which the tag was created.
-    pub created_at: DateTime<Utc>,
+    pub created_at: Timestamp,
 }
 
 /// Tags an archive, creating the archive's placeholder row first if it does

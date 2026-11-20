@@ -71,6 +71,9 @@ pub mod snapshot;
 pub mod ssh;
 /// Tracks fire-and-forget background tasks so shutdown can join them.
 pub mod task_registry;
+/// The instant type shared by every crate, built on jiff, with its Postgres, TypeScript
+/// and OpenAPI integrations.
+pub mod time;
 /// Core domain types (identifiers, hosts, repositories, backup reports, etc.)
 /// used throughout the workspace.
 pub mod types;

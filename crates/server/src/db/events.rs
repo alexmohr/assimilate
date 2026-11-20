@@ -3,9 +3,11 @@
 
 //! System events and acknowledging events and backup reports.
 
-use chrono::{DateTime, Utc};
 use serde::Serialize;
-use shared::types::{AcknowledgedFilter, BackupStatus, SystemEventSeverity, SystemEventType};
+use shared::{
+    time::Timestamp,
+    types::{AcknowledgedFilter, BackupStatus, SystemEventSeverity, SystemEventType},
+};
 use sqlx::PgPool;
 
 use crate::error::ApiError;
@@ -16,7 +18,7 @@ pub struct SystemEventRow {
     /// Unique identifier.
     pub id: i64,
     /// When the event occurred.
-    pub created_at: DateTime<Utc>,
+    pub created_at: Timestamp,
     /// Event type.
     pub event_type: SystemEventType,
     /// How the event reads - drives the badge and whether it can be
@@ -410,7 +412,7 @@ pub async fn acknowledge_all_outstanding(
 /// Returns [`ApiError::Database`] if the database query fails.
 pub async fn delete_system_events_before(
     pool: &PgPool,
-    before: DateTime<Utc>,
+    before: Timestamp,
 ) -> Result<u64, ApiError> {
     let result = sqlx::query!("DELETE FROM system_events WHERE created_at < $1", before)
         .execute(pool)
@@ -428,7 +430,7 @@ pub async fn delete_system_events_before(
 /// Returns [`ApiError::Database`] if the database query fails.
 pub async fn delete_notification_deliveries_before(
     pool: &PgPool,
-    before: DateTime<Utc>,
+    before: Timestamp,
 ) -> Result<u64, ApiError> {
     let result = sqlx::query!(
         "DELETE FROM notification_deliveries WHERE attempted_at < $1",

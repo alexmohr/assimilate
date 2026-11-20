@@ -472,11 +472,11 @@ mod tests {
     };
 
     use axum::extract::ws::Message;
-    use chrono::{TimeZone, Utc};
     use futures_util::{Sink, SinkExt, Stream, StreamExt};
     use shared::{
         crypto::{derive_key, encrypt_passphrase},
         protocol::{AgentToServer, ServerToAgent, ServerToUi},
+        time::Timestamp,
         types::{
             AcknowledgedFilter, AgentId, BackupReport, BackupStatus, QuotaAction, RepoId, ReportId,
             RunEventTarget, RunEventType, ScheduleType, ScheduleWakeOverride,
@@ -774,19 +774,14 @@ exit 0
         let _borg_guard = crate::borg::override_binary_for_tests(borg_binary);
         let state = build_test_state(pool.clone());
 
-        let started_at = Utc
-            .with_ymd_and_hms(2026, 6, 5, 12, 0, 0)
-            .single()
-            .expect("valid timestamp");
+        let started_at = Timestamp::utc(2026, 6, 5, 12, 0, 0).expect("valid timestamp");
         let report = BackupReport {
             id: ReportId(1),
             agent_id: AgentId(agent.id),
             repo_id: RepoId(repo.id),
             schedule_id: None,
             started_at,
-            finished_at: started_at
-                .checked_add_signed(chrono::Duration::minutes(5))
-                .unwrap(),
+            finished_at: started_at.checked_add(shared::time::minutes(5)).unwrap(),
             status: BackupStatus::Success,
             original_size: 1_000,
             compressed_size: 500,
@@ -992,7 +987,7 @@ exit 0
         let msg = serde_json::to_string(&AgentToServer::BackupStarted {
             repo_id: RepoId(assigned_repo.id),
             schedule_id: None,
-            started_at: chrono::Utc::now(),
+            started_at: Timestamp::now(),
             borg_command: Some("borg create --compression lz4 ::archive-name".into()),
             run_id: None,
         })
@@ -1865,10 +1860,7 @@ exit 0
     /// the run's own `borg prune` has just removed would be.
     #[cfg(test)]
     async fn record_pruned_archive(pool: &PgPool, agent_id: i64, repo_id: i64) {
-        let at = Utc
-            .with_ymd_and_hms(2026, 6, 1, 12, 0, 0)
-            .single()
-            .expect("valid timestamp");
+        let at = Timestamp::utc(2026, 6, 1, 12, 0, 0).expect("valid timestamp");
         crate::db::insert_backup_report(
             pool,
             &crate::db::InsertReportParams {
@@ -2351,19 +2343,14 @@ exit 0
         deduplicated_size: i64,
         repo_unique_csize: i64,
     ) -> String {
-        let started_at = Utc
-            .with_ymd_and_hms(2026, 6, 5, 12, 0, 0)
-            .single()
-            .expect("valid timestamp");
+        let started_at = Timestamp::utc(2026, 6, 5, 12, 0, 0).expect("valid timestamp");
         let report = BackupReport {
             id: ReportId(1),
             agent_id: AgentId(agent_id),
             repo_id: RepoId(repo_id),
             schedule_id: None,
             started_at,
-            finished_at: started_at
-                .checked_add_signed(chrono::Duration::minutes(5))
-                .unwrap(),
+            finished_at: started_at.checked_add(shared::time::minutes(5)).unwrap(),
             status: BackupStatus::Success,
             original_size: deduplicated_size,
             compressed_size: deduplicated_size,
@@ -2406,19 +2393,14 @@ exit 0
         run_id: Option<&str>,
         status: BackupStatus,
     ) -> String {
-        let started_at = Utc
-            .with_ymd_and_hms(2026, 6, 5, 12, 0, 0)
-            .single()
-            .expect("valid timestamp");
+        let started_at = Timestamp::utc(2026, 6, 5, 12, 0, 0).expect("valid timestamp");
         let report = BackupReport {
             id: ReportId(1),
             agent_id: AgentId(agent_id),
             repo_id: RepoId(repo_id),
             schedule_id,
             started_at,
-            finished_at: started_at
-                .checked_add_signed(chrono::Duration::minutes(1))
-                .unwrap(),
+            finished_at: started_at.checked_add(shared::time::minutes(1)).unwrap(),
             status,
             original_size: 0,
             compressed_size: 0,
@@ -2832,8 +2814,9 @@ exit 0
         // and what the give-up window is measured from. Truncated to what
         // Postgres itself stores, so the round-trip below is exact whichever
         // way the server version handles the sub-microsecond tail.
-        let missed = chrono::SubsecRound::trunc_subsecs(chrono::Utc::now(), 6)
-            .checked_sub_signed(chrono::Duration::hours(2))
+        let missed = Timestamp::now()
+            .trunc_subsecs(6)
+            .checked_sub(shared::time::hours(2))
             .unwrap();
         sqlx::query!(
             "UPDATE schedules SET last_run_at = $2 WHERE id = $1",
@@ -2869,7 +2852,7 @@ exit 0
             &pool,
             schedule.id,
             repo.id,
-            chrono::Utc::now(),
+            Timestamp::now(),
             None,
         )
         .await
@@ -3528,9 +3511,7 @@ exit 0
             .await
             .expect("insert schedule targets");
 
-        let next = chrono::Utc::now()
-            .checked_add_signed(chrono::Duration::days(1))
-            .unwrap();
+        let next = Timestamp::now().checked_add(shared::time::days(1)).unwrap();
         for _ in 0..3 {
             crate::db::record_schedule_failure(&pool, schedule.id, agent.id, next, 3, true)
                 .await
@@ -3683,9 +3664,7 @@ exit 0
             .await
             .expect("insert schedule targets");
 
-        let next = chrono::Utc::now()
-            .checked_add_signed(chrono::Duration::days(1))
-            .unwrap();
+        let next = Timestamp::now().checked_add(shared::time::days(1)).unwrap();
         // Two failures attributed to "broken", then the third (threshold-crossing) one
         // attributed to "flaky" - so `auto_disabled_by_agent_id` ends up naming flaky,
         // even though broken is the target that's actually still down.
@@ -3826,9 +3805,7 @@ exit 0
             .await
             .expect("insert schedule targets");
 
-        let next = chrono::Utc::now()
-            .checked_add_signed(chrono::Duration::days(1))
-            .unwrap();
+        let next = Timestamp::now().checked_add(shared::time::days(1)).unwrap();
         // Same attribution as the sibling test: the threshold-crossing failure is
         // recorded against "flaky", so auto_disabled_by_agent_id ends up naming flaky
         // even though "broken" is the one reconnecting below.
@@ -3878,7 +3855,7 @@ exit 0
     async fn insert_catch_up_fixture(
         pool: &PgPool,
         name: &str,
-        next_run_at: chrono::DateTime<chrono::Utc>,
+        next_run_at: Timestamp,
     ) -> (crate::db::AgentRow, i64) {
         let agent = crate::db::insert_agent(pool, name, None, "hash", None, None)
             .await
@@ -3965,8 +3942,8 @@ exit 0
             pool,
             schedule.id,
             agent.id,
-            chrono::Utc::now()
-                .checked_sub_signed(chrono::Duration::days(35))
+            Timestamp::now()
+                .checked_sub(shared::time::days(35))
                 .unwrap(),
         )
         .await
@@ -3995,8 +3972,8 @@ exit 0
     #[sqlx::test(migrations = "./migrations")]
     #[ignore = "requires DATABASE_URL"]
     async fn reconnect_runs_the_occurrence_the_host_missed(pool: PgPool) {
-        let next_run = chrono::Utc::now()
-            .checked_add_signed(chrono::Duration::hours(17))
+        let next_run = Timestamp::now()
+            .checked_add(shared::time::hours(17))
             .unwrap();
         let (agent, schedule_id) = insert_catch_up_fixture(&pool, "catch-up-runs", next_run).await;
 
@@ -4060,8 +4037,8 @@ exit 0
     #[sqlx::test(migrations = "./migrations")]
     #[ignore = "requires DATABASE_URL"]
     async fn reconnect_skips_a_catch_up_when_the_next_run_is_close(pool: PgPool) {
-        let next_run = chrono::Utc::now()
-            .checked_add_signed(chrono::Duration::minutes(30))
+        let next_run = Timestamp::now()
+            .checked_add(shared::time::minutes(30))
             .unwrap();
         let (agent, _) = insert_catch_up_fixture(&pool, "catch-up-skips", next_run).await;
 
@@ -4092,8 +4069,8 @@ exit 0
     #[sqlx::test(migrations = "./migrations")]
     #[ignore = "requires DATABASE_URL"]
     async fn reconnect_drops_a_catch_up_the_agent_no_longer_wants(pool: PgPool) {
-        let next_run = chrono::Utc::now()
-            .checked_add_signed(chrono::Duration::hours(17))
+        let next_run = Timestamp::now()
+            .checked_add(shared::time::hours(17))
             .unwrap();
         let (agent, _) = insert_catch_up_fixture(&pool, "catch-up-off", next_run).await;
         sqlx::query!(
@@ -4983,9 +4960,17 @@ exit 0
     async fn a_replacing_session_fails_the_old_sessions_backups(pool: PgPool) {
         let agent = socket_agent(&pool, "replaced-host").await;
         let (_owner, repo, _schedule) = create_agent_repo_schedule(&pool).await;
-        crate::db::insert_backup_started(&pool, agent.id, repo.id, None, Utc::now(), None, None)
-            .await
-            .expect("insert started backup");
+        crate::db::insert_backup_started(
+            &pool,
+            agent.id,
+            repo.id,
+            None,
+            Timestamp::now(),
+            None,
+            None,
+        )
+        .await
+        .expect("insert started backup");
         let state = build_test_state(pool.clone());
         let (old_tx, _old_rx) = mpsc::channel(1);
         state
@@ -5090,9 +5075,17 @@ exit 0
     async fn a_reconnecting_agent_process_keeps_its_running_backup(pool: PgPool) {
         let agent = socket_agent(&pool, "blip-host").await;
         let (_owner, repo, _schedule) = create_agent_repo_schedule(&pool).await;
-        crate::db::insert_backup_started(&pool, agent.id, repo.id, None, Utc::now(), None, None)
-            .await
-            .expect("insert started backup");
+        crate::db::insert_backup_started(
+            &pool,
+            agent.id,
+            repo.id,
+            None,
+            Timestamp::now(),
+            None,
+            None,
+        )
+        .await
+        .expect("insert started backup");
         let state = build_test_state(pool.clone());
         state
             .registry
@@ -5124,9 +5117,17 @@ exit 0
     #[sqlx::test(migrations = "./migrations")]
     async fn backup_not_running_settles_the_run_as_cancelled(pool: PgPool) {
         let (agent, repo, _schedule) = create_agent_repo_schedule(&pool).await;
-        crate::db::insert_backup_started(&pool, agent.id, repo.id, None, Utc::now(), None, None)
-            .await
-            .expect("insert started backup");
+        crate::db::insert_backup_started(
+            &pool,
+            agent.id,
+            repo.id,
+            None,
+            Timestamp::now(),
+            None,
+            None,
+        )
+        .await
+        .expect("insert started backup");
         let state = build_test_state(pool.clone());
         let mut outcomes = state.completion_bus.subscribe();
         let mut ui = state.ui_broadcast.subscribe();
@@ -5159,9 +5160,17 @@ exit 0
     #[sqlx::test(migrations = "./migrations")]
     async fn backup_not_running_that_cannot_be_recorded_is_logged(pool: PgPool) {
         let (agent, repo, _schedule) = create_agent_repo_schedule(&pool).await;
-        crate::db::insert_backup_started(&pool, agent.id, repo.id, None, Utc::now(), None, None)
-            .await
-            .expect("insert started backup");
+        crate::db::insert_backup_started(
+            &pool,
+            agent.id,
+            repo.id,
+            None,
+            Timestamp::now(),
+            None,
+            None,
+        )
+        .await
+        .expect("insert started backup");
         reject_writes(&pool, WriteRejecting::BackupReports).await;
         let state = build_test_state(pool);
 
@@ -5193,9 +5202,17 @@ exit 0
     async fn a_restarted_agent_survives_a_database_that_rejects_the_cleanup(pool: PgPool) {
         let agent = socket_agent(&pool, "restarted-db-host").await;
         let (_owner, repo, _schedule) = create_agent_repo_schedule(&pool).await;
-        crate::db::insert_backup_started(&pool, agent.id, repo.id, None, Utc::now(), None, None)
-            .await
-            .expect("insert started backup");
+        crate::db::insert_backup_started(
+            &pool,
+            agent.id,
+            repo.id,
+            None,
+            Timestamp::now(),
+            None,
+            None,
+        )
+        .await
+        .expect("insert started backup");
         reject_writes(&pool, WriteRejecting::BackupReports).await;
         let state = build_test_state(pool);
         state
@@ -5255,9 +5272,17 @@ exit 0
     async fn a_replacing_session_survives_a_database_that_rejects_the_cleanup(pool: PgPool) {
         let agent = socket_agent(&pool, "replaced-db-host").await;
         let (_owner, repo, _schedule) = create_agent_repo_schedule(&pool).await;
-        crate::db::insert_backup_started(&pool, agent.id, repo.id, None, Utc::now(), None, None)
-            .await
-            .expect("insert started backup");
+        crate::db::insert_backup_started(
+            &pool,
+            agent.id,
+            repo.id,
+            None,
+            Timestamp::now(),
+            None,
+            None,
+        )
+        .await
+        .expect("insert started backup");
         reject_writes(&pool, WriteRejecting::BackupReports).await;
         let state = build_test_state(pool);
         let (old_tx, _old_rx) = mpsc::channel(1);
@@ -5721,7 +5746,7 @@ exit 0
         let started = wire(&AgentToServer::BackupStarted {
             repo_id: RepoId(repo.id),
             schedule_id: None,
-            started_at: Utc::now(),
+            started_at: Timestamp::now(),
             borg_command: Some("borg create ::nightly-1".into()),
             run_id: Some("run-new".into()),
         });

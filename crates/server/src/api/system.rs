@@ -295,7 +295,7 @@ async fn fetch_settings_response(
         notification_delivery_retention_days,
         run_event_retention_days,
         archive_index_retention_days,
-        timezone: timezone.name().to_owned(),
+        timezone: timezone.iana_name().unwrap_or("UTC").to_owned(),
         borg_query_timeout_secs,
         secure_cookies: cookie_security.is_secure(),
         session_idle_timeout_minutes,
@@ -468,8 +468,7 @@ pub async fn update_settings(
     if let Some(ref timezone) = body.timezone
         && !timezone.is_empty()
     {
-        timezone
-            .parse::<chrono_tz::Tz>()
+        jiff::tz::TimeZone::get(timezone)
             .map_err(|_| ApiError::BadRequest(format!("invalid timezone: {timezone}")))?;
     }
 
@@ -716,6 +715,7 @@ pub async fn reset_system(
 
 #[cfg(test)]
 mod tests {
+    use shared::time::Timestamp;
     use sqlx::PgPool;
 
     use super::*;
@@ -750,17 +750,9 @@ mod tests {
         .await
         .unwrap()
         .id;
-        db::insert_backup_started(
-            &pool,
-            agent.id,
-            repo_id,
-            None,
-            chrono::Utc::now(),
-            None,
-            None,
-        )
-        .await
-        .unwrap();
+        db::insert_backup_started(&pool, agent.id, repo_id, None, Timestamp::now(), None, None)
+            .await
+            .unwrap();
         state
             .ui_broadcast
             .set_active_backup(crate::ws::ui_broadcast::ActiveBackupSnapshot {
@@ -770,7 +762,7 @@ mod tests {
                 schedule_id: None,
                 repo_id,
                 progress_line: None,
-                started_at: chrono::Utc::now(),
+                started_at: Timestamp::now(),
             });
         let mut ui = state.ui_broadcast.subscribe();
 

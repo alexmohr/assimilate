@@ -4,7 +4,7 @@
 //! Repository maintenance results: `borg check`, archive verification and
 //! canary restores.
 
-use shared::{protocol::ServerToUi, types::ScheduleType};
+use shared::{protocol::ServerToUi, time::Timestamp, types::ScheduleType};
 
 use super::{notify::spawn_notification_dispatch, validate_agent_repo};
 use crate::{
@@ -84,7 +84,7 @@ pub(super) async fn handle_check_completed(args: CheckCompletedArgs<'_>) {
         repo_name,
         status: if success { "success" } else { "failed" }.to_owned(),
         error_message,
-        timestamp: chrono::Utc::now(),
+        timestamp: Timestamp::now(),
         repo_id: Some(repo_id.0),
         agent_id: Some(agent_id),
         schedule_id: schedule.map(|s| s.id),

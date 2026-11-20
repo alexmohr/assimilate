@@ -3,10 +3,10 @@
 
 use std::time::Duration;
 
-use chrono::{DateTime, Utc};
 use shared::{
     protocol::{ServerToAgent, ServerToUi},
     schedule::calculate_next_run,
+    time::Timestamp,
     types::{OnFailure, RepoId, ScheduleType, ScheduleWakeOverride, SystemEventType},
 };
 use sqlx::PgPool;
@@ -128,7 +128,7 @@ async fn run_schedule_ticks(state: AppState, shutdown_token: tokio_util::sync::C
         })
         .await;
         match ticked {
-            Ok(()) => state.metrics.record_scheduler_tick(Utc::now()),
+            Ok(()) => state.metrics.record_scheduler_tick(Timestamp::now()),
             Err(e) => tracing::error!(error = %e, "scheduler tick failed"),
         }
     }
@@ -327,8 +327,8 @@ pub async fn run_repo_sync(
 
     let tz = db::get_schedule_timezone(pool)
         .await
-        .unwrap_or(chrono_tz::Tz::UTC);
-    let now = Utc::now();
+        .unwrap_or(jiff::tz::TimeZone::UTC);
+    let now = Timestamp::now();
 
     let importing_ids: std::collections::HashSet<i64> =
         match db::list_importing_repo_ids(pool).await {
@@ -356,8 +356,8 @@ pub async fn run_repo_sync(
             continue;
         };
 
-        let from = repo.last_synced_at.unwrap_or(DateTime::UNIX_EPOCH);
-        let next_run = match calculate_next_run(cron_expr, from, tz) {
+        let from = repo.last_synced_at.unwrap_or(Timestamp::UNIX_EPOCH);
+        let next_run = match calculate_next_run(cron_expr, from, &tz) {
             Ok(t) => t,
             Err(e) => {
                 tracing::warn!(
@@ -567,7 +567,7 @@ async fn handle_scheduled_sync_success(success: ScheduledSyncSuccess<'_>) {
         pool,
         repo_id,
         shared::protocol::RepoOpKind::ServerSync,
-        Utc::now(),
+        Timestamp::now(),
         "server",
     )
     .await
@@ -654,14 +654,13 @@ async fn run_retention_cleanup(pool: &PgPool) -> Result<(), crate::error::ApiErr
     let mut restore_runs_deleted: u64 = 0;
 
     if let Some(cutoff) =
-        Utc::now().checked_sub_signed(chrono::Duration::days(LOGIN_ATTEMPT_RETENTION_DAYS))
+        Timestamp::now().checked_sub(shared::time::days(LOGIN_ATTEMPT_RETENTION_DAYS))
     {
         login_attempts_deleted = db::delete_login_attempts_before(pool, cutoff).await?;
     }
 
     if report_days > 0 {
-        let Some(cutoff) = Utc::now().checked_sub_signed(chrono::Duration::days(report_days))
-        else {
+        let Some(cutoff) = Timestamp::now().checked_sub(shared::time::days(report_days)) else {
             return Ok(()); // clock went backwards, skip this cycle
         };
         archive_reports_deleted =
@@ -669,15 +668,14 @@ async fn run_retention_cleanup(pool: &PgPool) -> Result<(), crate::error::ApiErr
     }
 
     if failed_days > 0 {
-        let Some(cutoff) = Utc::now().checked_sub_signed(chrono::Duration::days(failed_days))
-        else {
+        let Some(cutoff) = Timestamp::now().checked_sub(shared::time::days(failed_days)) else {
             return Ok(());
         };
         reports_deleted = db::delete_backup_reports_before(pool, cutoff).await?;
     }
 
     if event_days > 0 {
-        let Some(cutoff) = Utc::now().checked_sub_signed(chrono::Duration::days(event_days)) else {
+        let Some(cutoff) = Timestamp::now().checked_sub(shared::time::days(event_days)) else {
             return Ok(());
         };
         events_deleted = db::delete_system_events_before(pool, cutoff).await?;
@@ -687,7 +685,7 @@ async fn run_retention_cleanup(pool: &PgPool) -> Result<(), crate::error::ApiErr
 
     if notification_delivery_days > 0 {
         let Some(cutoff) =
-            Utc::now().checked_sub_signed(chrono::Duration::days(notification_delivery_days))
+            Timestamp::now().checked_sub(shared::time::days(notification_delivery_days))
         else {
             return Ok(());
         };
@@ -696,8 +694,7 @@ async fn run_retention_cleanup(pool: &PgPool) -> Result<(), crate::error::ApiErr
     }
 
     if run_event_days > 0 {
-        let Some(cutoff) = Utc::now().checked_sub_signed(chrono::Duration::days(run_event_days))
-        else {
+        let Some(cutoff) = Timestamp::now().checked_sub(shared::time::days(run_event_days)) else {
             return Ok(());
         };
         run_events_deleted = db::run_events::delete_run_events_before(pool, cutoff).await?;
@@ -809,7 +806,7 @@ async fn tick(deps: &TickDeps<'_>) -> Result<(), crate::error::ApiError> {
         notification_service,
         task_registry,
     } = *deps;
-    let now = Utc::now();
+    let now = Timestamp::now();
     let due = db::list_due_schedules(pool, now).await?;
 
     if due.is_empty() {
@@ -887,7 +884,7 @@ async fn tick(deps: &TickDeps<'_>) -> Result<(), crate::error::ApiError> {
             targets,
             on_failure,
             triggered_at: now,
-            tz,
+            tz: tz.clone(),
             run_id,
             triggered_tx,
             task_guard,
@@ -962,8 +959,8 @@ struct SequentialExecution {
     cron: String,
     targets: Vec<DueScheduleRow>,
     on_failure: OnFailure,
-    triggered_at: DateTime<Utc>,
-    tz: chrono_tz::Tz,
+    triggered_at: Timestamp,
+    tz: jiff::tz::TimeZone,
     run_id: String,
     /// Signalled once the first target's messages have been sent (or skipped).
     /// Allows `tick()` to wait briefly so callers using `try_recv()` see messages.
@@ -990,8 +987,8 @@ struct SequentialTargetCtx<'a> {
     schedule_name: &'a str,
     cron: &'a str,
     on_failure: OnFailure,
-    now: DateTime<Utc>,
-    tz: chrono_tz::Tz,
+    now: Timestamp,
+    tz: &'a jiff::tz::TimeZone,
     run_id: &'a str,
     missed_backup_threshold: i32,
     /// Agents of this tick a dependency already kept from running, and which
@@ -1080,7 +1077,7 @@ async fn run_sequential_schedule(ctx: SequentialExecution) {
         cron: &cron,
         on_failure,
         now,
-        tz,
+        tz: &tz,
         run_id: &run_id,
         missed_backup_threshold,
         dependencies_down: &dependencies_down,
@@ -1867,7 +1864,7 @@ async fn push_pre_run_config(
 /// [`mark_schedule_triggered_once`] needs this same starting point too, but gets
 /// it via [`db::advance_schedule_run`], which both it and the manual/catch-up
 /// dispatch path in `run_dispatch.rs` now share.
-fn calculate_next_run_or_log(ctx: &SequentialTargetCtx<'_>) -> Option<DateTime<Utc>> {
+fn calculate_next_run_or_log(ctx: &SequentialTargetCtx<'_>) -> Option<Timestamp> {
     calculate_next_run(ctx.cron, ctx.now, ctx.tz)
         .inspect_err(|e| {
             tracing::error!(
@@ -1931,7 +1928,7 @@ async fn record_schedule_failure_once(
     *recorded_failure = true;
     let next = calculate_next_run_or_log(ctx).unwrap_or_else(|| {
         ctx.now
-            .checked_add_signed(chrono::Duration::hours(CRON_EVAL_FAILURE_BACKOFF_HOURS))
+            .checked_add(shared::time::hours(CRON_EVAL_FAILURE_BACKOFF_HOURS))
             .unwrap_or(ctx.now)
     });
     let schedule_id = ctx.schedule_id;
@@ -2225,7 +2222,6 @@ async fn await_target_completion(
 mod tests {
     use std::{os::unix::fs::PermissionsExt, sync::OnceLock, time::Duration};
 
-    use chrono::TimeZone;
     use shared::types::AcknowledgedFilter;
     use tempfile::TempDir;
     use tokio::sync::{Mutex, mpsc};
@@ -2464,33 +2460,33 @@ esac
     #[test]
     fn sync_due_when_next_run_in_past() {
         let cron_expr = "0 0,12 * * *";
-        let last_synced = Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap();
-        let now = Utc.with_ymd_and_hms(2026, 1, 1, 13, 0, 0).unwrap();
-        let tz = chrono_tz::Tz::UTC;
+        let last_synced = Timestamp::utc(2026, 1, 1, 0, 0, 0).unwrap();
+        let now = Timestamp::utc(2026, 1, 1, 13, 0, 0).unwrap();
+        let tz = jiff::tz::TimeZone::UTC;
 
-        let next = calculate_next_run(cron_expr, last_synced, tz).unwrap();
+        let next = calculate_next_run(cron_expr, last_synced, &tz).unwrap();
         assert!(next <= now);
     }
 
     #[test]
     fn sync_not_due_when_next_run_in_future() {
         let cron_expr = "0 0,12 * * *";
-        let last_synced = Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap();
-        let now = Utc.with_ymd_and_hms(2026, 1, 1, 11, 0, 0).unwrap();
-        let tz = chrono_tz::Tz::UTC;
+        let last_synced = Timestamp::utc(2026, 1, 1, 0, 0, 0).unwrap();
+        let now = Timestamp::utc(2026, 1, 1, 11, 0, 0).unwrap();
+        let tz = jiff::tz::TimeZone::UTC;
 
-        let next = calculate_next_run(cron_expr, last_synced, tz).unwrap();
+        let next = calculate_next_run(cron_expr, last_synced, &tz).unwrap();
         assert!(next > now);
     }
 
     #[test]
     fn sync_due_when_never_synced() {
         let cron_expr = "0 0,12 * * *";
-        let last_synced = DateTime::UNIX_EPOCH;
-        let now = Utc::now();
-        let tz = chrono_tz::Tz::UTC;
+        let last_synced = Timestamp::UNIX_EPOCH;
+        let now = Timestamp::now();
+        let tz = jiff::tz::TimeZone::UTC;
 
-        let next = calculate_next_run(cron_expr, last_synced, tz).unwrap();
+        let next = calculate_next_run(cron_expr, last_synced, &tz).unwrap();
         assert!(next <= now);
     }
 
@@ -2549,11 +2545,9 @@ esac
         .await
         .unwrap();
 
-        let stale_started_at = Utc::now()
-            .checked_sub_signed(chrono::Duration::days(1))
-            .unwrap();
+        let stale_started_at = Timestamp::now().checked_sub(shared::time::days(1)).unwrap();
         let stale_finished_at = stale_started_at
-            .checked_add_signed(chrono::Duration::minutes(5))
+            .checked_add(shared::time::minutes(5))
             .unwrap();
         sqlx::query!(
             "INSERT INTO backup_reports (agent_id, repo_id, schedule_id, started_at, finished_at, \
@@ -3045,8 +3039,8 @@ esac
         db::insert_schedule_targets(pool, schedule.id, &[(agent.id, 0)])
             .await
             .unwrap();
-        let past = Utc::now()
-            .checked_sub_signed(chrono::Duration::hours(1))
+        let past = Timestamp::now()
+            .checked_sub(shared::time::hours(1))
             .unwrap();
         db::set_next_run_at(pool, schedule.id, past).await.unwrap();
         (repo.id, schedule.id, agent.id)
@@ -3087,7 +3081,9 @@ esac
         .await
         .unwrap();
 
-        let due = db::list_due_schedules(&pool, Utc::now()).await.unwrap();
+        let due = db::list_due_schedules(&pool, Timestamp::now())
+            .await
+            .unwrap();
         assert_eq!(
             due.len(),
             0,
@@ -3248,7 +3244,9 @@ esac
         .await
         .unwrap();
 
-        let due = db::list_due_schedules(&pool, Utc::now()).await.unwrap();
+        let due = db::list_due_schedules(&pool, Timestamp::now())
+            .await
+            .unwrap();
         assert!(
             !due.iter().any(|s| s.schedule_id == schedule_id),
             "schedule must back off to the next scheduled run, not stay due for the next tick"
@@ -3437,8 +3435,8 @@ esac
     }
 
     /// The occurrence the next tick will run, i.e. the `next_run_at` that came due.
-    async fn due_occurrence(pool: &sqlx::PgPool) -> DateTime<Utc> {
-        db::list_due_schedules(pool, Utc::now())
+    async fn due_occurrence(pool: &sqlx::PgPool) -> Timestamp {
+        db::list_due_schedules(pool, Timestamp::now())
             .await
             .unwrap()
             .first()
@@ -3451,7 +3449,7 @@ esac
         pool: &sqlx::PgPool,
         schedule_id: i64,
         agent_id: i64,
-    ) -> Option<DateTime<Utc>> {
+    ) -> Option<Timestamp> {
         sqlx::query_scalar!(
             "SELECT catch_up_pending_for FROM schedule_targets WHERE schedule_id = $1 AND \
              agent_id = $2",
@@ -3568,8 +3566,8 @@ esac
 
         let mut last_due_at = None;
         for _ in 0..35 {
-            let past = Utc::now()
-                .checked_sub_signed(chrono::Duration::hours(1))
+            let past = Timestamp::now()
+                .checked_sub(shared::time::hours(1))
                 .unwrap();
             db::set_next_run_at(&pool, schedule_id, past).await.unwrap();
             last_due_at = Some(due_occurrence(&pool).await);
@@ -3769,7 +3767,9 @@ esac
         .await
         .unwrap();
 
-        let due = db::list_due_schedules(&pool, Utc::now()).await.unwrap();
+        let due = db::list_due_schedules(&pool, Timestamp::now())
+            .await
+            .unwrap();
         assert!(
             !due.iter().any(|s| s.schedule_id == schedule_id),
             "an unevaluatable cron must still back off next_run_at, not stay due for the next \
@@ -3803,8 +3803,8 @@ esac
 
         for attempt in 1..=MAX_CONSECUTIVE_FAILURES {
             // Simulate the missed run's cron occurrence having arrived again.
-            let past = Utc::now()
-                .checked_sub_signed(chrono::Duration::hours(1))
+            let past = Timestamp::now()
+                .checked_sub(shared::time::hours(1))
                 .unwrap();
             db::set_next_run_at(&pool, schedule_id, past).await.unwrap();
 
@@ -3837,7 +3837,9 @@ esac
             }
         }
 
-        let due = db::list_due_schedules(&pool, Utc::now()).await.unwrap();
+        let due = db::list_due_schedules(&pool, Timestamp::now())
+            .await
+            .unwrap();
         assert!(
             !due.iter().any(|s| s.schedule_id == schedule_id),
             "a disabled schedule must never be selected as due again"
@@ -3906,8 +3908,8 @@ esac
         let task_registry = shared::task_registry::TaskRegistry::default();
 
         for _ in 0..MAX_CONSECUTIVE_FAILURES {
-            let past = Utc::now()
-                .checked_sub_signed(chrono::Duration::hours(1))
+            let past = Timestamp::now()
+                .checked_sub(shared::time::hours(1))
                 .unwrap();
             db::set_next_run_at(&pool, schedule_id, past).await.unwrap();
 
@@ -3991,8 +3993,8 @@ esac
         let task_registry = shared::task_registry::TaskRegistry::default();
 
         for _ in 0..MAX_CONSECUTIVE_FAILURES {
-            let past = Utc::now()
-                .checked_sub_signed(chrono::Duration::hours(1))
+            let past = Timestamp::now()
+                .checked_sub(shared::time::hours(1))
                 .unwrap();
             db::set_next_run_at(&pool, schedule_id, past).await.unwrap();
 
@@ -4068,8 +4070,8 @@ esac
         let bus = CompletionBus::new();
 
         for attempt in 1..=custom_threshold {
-            let past = Utc::now()
-                .checked_sub_signed(chrono::Duration::hours(1))
+            let past = Timestamp::now()
+                .checked_sub(shared::time::hours(1))
                 .unwrap();
             db::set_next_run_at(&pool, schedule_id, past).await.unwrap();
 
@@ -4125,8 +4127,8 @@ esac
             .unwrap()
             .id;
 
-        let next = Utc::now()
-            .checked_add_signed(chrono::Duration::hours(1))
+        let next = Timestamp::now()
+            .checked_add(shared::time::hours(1))
             .unwrap();
         db::record_schedule_failure(
             pool,
@@ -4143,8 +4145,8 @@ esac
         assert!(enabled, "a single failure must not disable the schedule");
 
         // Make the schedule due again for the recovering tick.
-        let past = Utc::now()
-            .checked_sub_signed(chrono::Duration::hours(1))
+        let past = Timestamp::now()
+            .checked_sub(shared::time::hours(1))
             .unwrap();
         db::set_next_run_at(pool, schedule_id, past).await.unwrap();
         (repo_id, schedule_id, agent_id)
@@ -4384,8 +4386,8 @@ esac
         let bus = CompletionBus::new();
 
         for attempt in 1..=MAX_CONSECUTIVE_FAILURES {
-            let past = Utc::now()
-                .checked_sub_signed(chrono::Duration::hours(1))
+            let past = Timestamp::now()
+                .checked_sub(shared::time::hours(1))
                 .unwrap();
             db::set_next_run_at(&pool, schedule_id, past).await.unwrap();
 
@@ -4426,7 +4428,7 @@ esac
         // The agent "reconnecting" must not resurrect a schedule that's disabled for a
         // data/config reason, since nothing about the broken config actually changed.
         let reenabled =
-            db::reenable_system_disabled_schedules_for_agent(&pool, agent_id, Utc::now())
+            db::reenable_system_disabled_schedules_for_agent(&pool, agent_id, Timestamp::now())
                 .await
                 .unwrap();
         assert_eq!(reenabled, Vec::<i64>::new());
@@ -4452,9 +4454,7 @@ esac
             .await
             .unwrap()
             .id;
-        let next = Utc::now()
-            .checked_add_signed(chrono::Duration::days(1))
-            .unwrap();
+        let next = Timestamp::now().checked_add(shared::time::days(1)).unwrap();
 
         // Two connectivity failures, then a config-error failure that crosses the
         // threshold and actually disables the schedule.
@@ -4491,7 +4491,7 @@ esac
         );
 
         let reenabled =
-            db::reenable_system_disabled_schedules_for_agent(&pool, agent_id, Utc::now())
+            db::reenable_system_disabled_schedules_for_agent(&pool, agent_id, Timestamp::now())
                 .await
                 .unwrap();
         assert_eq!(
@@ -4522,9 +4522,7 @@ esac
             .await
             .unwrap()
             .id;
-        let next = Utc::now()
-            .checked_add_signed(chrono::Duration::days(1))
-            .unwrap();
+        let next = Timestamp::now().checked_add(shared::time::days(1)).unwrap();
 
         // Simulates a concurrent human/quota disable landing between this schedule
         // being selected as due and an in-flight failure write reaching the DB:
@@ -4572,9 +4570,7 @@ esac
             .await
             .unwrap()
             .id;
-        let next = Utc::now()
-            .checked_add_signed(chrono::Duration::days(1))
-            .unwrap();
+        let next = Timestamp::now().checked_add(shared::time::days(1)).unwrap();
 
         // Connectivity failure, then a config-error failure, then a connectivity
         // failure again that crosses the threshold and disables the schedule.
@@ -4625,7 +4621,7 @@ esac
         );
 
         let reenabled =
-            db::reenable_system_disabled_schedules_for_agent(&pool, agent_id, Utc::now())
+            db::reenable_system_disabled_schedules_for_agent(&pool, agent_id, Timestamp::now())
                 .await
                 .unwrap();
         assert_eq!(
@@ -4659,8 +4655,8 @@ esac
         let bus = CompletionBus::new();
         let ui_broadcast = UiBroadcast::new();
 
-        let past = Utc::now()
-            .checked_sub_signed(chrono::Duration::hours(1))
+        let past = Timestamp::now()
+            .checked_sub(shared::time::hours(1))
             .unwrap();
 
         // Tick 1: config error (wrong key) - marks the streak impure.
@@ -4751,9 +4747,7 @@ esac
             db::insert_agent(&pool, "retarget-test-new-agent", None, "hash", None, None)
                 .await
                 .unwrap();
-        let next = Utc::now()
-            .checked_add_signed(chrono::Duration::days(1))
-            .unwrap();
+        let next = Timestamp::now().checked_add(shared::time::days(1)).unwrap();
 
         for _ in 0..MAX_CONSECUTIVE_FAILURES {
             db::record_schedule_failure(
@@ -4801,7 +4795,7 @@ esac
         // The old (now-unrelated) agent reconnecting must never re-enable this
         // schedule again - it isn't even a target of it anymore.
         let reenabled =
-            db::reenable_system_disabled_schedules_for_agent(&pool, old_agent_id, Utc::now())
+            db::reenable_system_disabled_schedules_for_agent(&pool, old_agent_id, Timestamp::now())
                 .await
                 .unwrap();
         assert_eq!(reenabled, Vec::<i64>::new());
@@ -4834,9 +4828,7 @@ esac
         )
         .await
         .unwrap();
-        let next = Utc::now()
-            .checked_add_signed(chrono::Duration::days(1))
-            .unwrap();
+        let next = Timestamp::now().checked_add(shared::time::days(1)).unwrap();
 
         // One failure short of the threshold - still enabled, not yet auto-disabled.
         for _ in 0..MAX_CONSECUTIVE_FAILURES - 1 {
@@ -4897,9 +4889,7 @@ esac
             db::insert_agent(&pool, "retarget-config-new-agent", None, "hash", None, None)
                 .await
                 .unwrap();
-        let next = Utc::now()
-            .checked_add_signed(chrono::Duration::days(1))
-            .unwrap();
+        let next = Timestamp::now().checked_add(shared::time::days(1)).unwrap();
 
         // A config/data failure taints the streak's purity, one short of the threshold.
         db::record_schedule_failure(
@@ -4961,9 +4951,7 @@ esac
         db::insert_schedule_targets(&pool, schedule_id, &[(sibling_agent.id, 1)])
             .await
             .unwrap();
-        let next = Utc::now()
-            .checked_add_signed(chrono::Duration::days(1))
-            .unwrap();
+        let next = Timestamp::now().checked_add(shared::time::days(1)).unwrap();
 
         for _ in 0..MAX_CONSECUTIVE_FAILURES {
             db::record_schedule_failure(
@@ -5026,9 +5014,7 @@ esac
         db::insert_schedule_targets(&pool, schedule_id, &[(sibling_agent.id, 1)])
             .await
             .unwrap();
-        let next = Utc::now()
-            .checked_add_signed(chrono::Duration::days(1))
-            .unwrap();
+        let next = Timestamp::now().checked_add(shared::time::days(1)).unwrap();
 
         for _ in 0..MAX_CONSECUTIVE_FAILURES {
             db::record_schedule_failure(
@@ -5088,9 +5074,7 @@ esac
             .id;
 
         for _ in 0..MAX_CONSECUTIVE_FAILURES {
-            let next = Utc::now()
-                .checked_add_signed(chrono::Duration::days(1))
-                .unwrap();
+            let next = Timestamp::now().checked_add(shared::time::days(1)).unwrap();
             db::record_schedule_failure(
                 &pool,
                 auto_disabled_schedule_id,
@@ -5156,7 +5140,7 @@ esac
             .unwrap();
 
         let reenabled =
-            db::reenable_system_disabled_schedules_for_agent(&pool, agent_id, Utc::now())
+            db::reenable_system_disabled_schedules_for_agent(&pool, agent_id, Timestamp::now())
                 .await
                 .unwrap();
 
@@ -5191,9 +5175,7 @@ esac
             .id;
 
         for _ in 0..MAX_CONSECUTIVE_FAILURES {
-            let next = Utc::now()
-                .checked_add_signed(chrono::Duration::days(1))
-                .unwrap();
+            let next = Timestamp::now().checked_add(shared::time::days(1)).unwrap();
             db::record_schedule_failure(
                 &pool,
                 schedule_id,
@@ -5229,7 +5211,7 @@ esac
 
         // Reconnect must not silently lift this unrelated disable.
         let reenabled =
-            db::reenable_system_disabled_schedules_for_agent(&pool, agent_id, Utc::now())
+            db::reenable_system_disabled_schedules_for_agent(&pool, agent_id, Timestamp::now())
                 .await
                 .unwrap();
         assert_eq!(reenabled, Vec::<i64>::new());
@@ -5340,8 +5322,8 @@ esac
         let background_task_tracker = crate::background_tasks::BackgroundTaskTracker::default();
 
         for attempt in 1..=MAX_CONSECUTIVE_FAILURES {
-            let past = Utc::now()
-                .checked_sub_signed(chrono::Duration::hours(1))
+            let past = Timestamp::now()
+                .checked_sub(shared::time::hours(1))
                 .unwrap();
             db::set_next_run_at(&pool, schedule_id, past).await.unwrap();
 
@@ -5505,9 +5487,7 @@ esac
         .unwrap();
 
         for _ in 0..MAX_CONSECUTIVE_FAILURES {
-            let next = Utc::now()
-                .checked_add_signed(chrono::Duration::days(1))
-                .unwrap();
+            let next = Timestamp::now().checked_add(shared::time::days(1)).unwrap();
             db::record_schedule_failure(
                 &pool,
                 schedule_id,
@@ -5525,10 +5505,13 @@ esac
             "setup must have auto-disabled it"
         );
 
-        let reenabled_by_flaky =
-            db::reenable_system_disabled_schedules_for_agent(&pool, flaky_agent.id, Utc::now())
-                .await
-                .unwrap();
+        let reenabled_by_flaky = db::reenable_system_disabled_schedules_for_agent(
+            &pool,
+            flaky_agent.id,
+            Timestamp::now(),
+        )
+        .await
+        .unwrap();
         assert_eq!(
             reenabled_by_flaky,
             Vec::<i64>::new(),
@@ -5540,10 +5523,13 @@ esac
         assert!(still_auto_disabled);
         assert_eq!(consecutive_failures, MAX_CONSECUTIVE_FAILURES);
 
-        let reenabled_by_broken =
-            db::reenable_system_disabled_schedules_for_agent(&pool, broken_agent.id, Utc::now())
-                .await
-                .unwrap();
+        let reenabled_by_broken = db::reenable_system_disabled_schedules_for_agent(
+            &pool,
+            broken_agent.id,
+            Timestamp::now(),
+        )
+        .await
+        .unwrap();
         assert_eq!(reenabled_by_broken, vec![schedule_id]);
         let (consecutive_failures, enabled, auto_disabled) =
             schedule_failure_state(&pool, schedule_id).await;
@@ -5605,9 +5591,7 @@ esac
         };
 
         for _ in 0..MAX_CONSECUTIVE_FAILURES {
-            let next = Utc::now()
-                .checked_add_signed(chrono::Duration::days(1))
-                .unwrap();
+            let next = Timestamp::now().checked_add(shared::time::days(1)).unwrap();
             db::record_schedule_failure(
                 &pool,
                 schedule_id,
@@ -5642,7 +5626,7 @@ esac
 
         // Reconnect must still be able to re-enable it after that unrelated edit.
         let reenabled =
-            db::reenable_system_disabled_schedules_for_agent(&pool, agent_id, Utc::now())
+            db::reenable_system_disabled_schedules_for_agent(&pool, agent_id, Timestamp::now())
                 .await
                 .unwrap();
         assert_eq!(reenabled, vec![schedule_id]);
@@ -5650,9 +5634,7 @@ esac
         // Auto-disable it again, then this time actually flip `enabled` through the
         // same edit form - a real transition must still clear the bookkeeping.
         for _ in 0..MAX_CONSECUTIVE_FAILURES {
-            let next = Utc::now()
-                .checked_add_signed(chrono::Duration::days(1))
-                .unwrap();
+            let next = Timestamp::now().checked_add(shared::time::days(1)).unwrap();
             db::record_schedule_failure(
                 &pool,
                 schedule_id,
@@ -5748,8 +5730,8 @@ esac
         db::insert_schedule_targets(pool, schedule.id, &[(agent1.id, 0), (agent2.id, 1)])
             .await
             .unwrap();
-        let past = Utc::now()
-            .checked_sub_signed(chrono::Duration::hours(1))
+        let past = Timestamp::now()
+            .checked_sub(shared::time::hours(1))
             .unwrap();
         db::set_next_run_at(pool, schedule.id, past).await.unwrap();
         (repo.id, agent1.id, agent2.id)

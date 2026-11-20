@@ -14,8 +14,10 @@
 //! re-enable pass, so a schedule auto-disabled while the host was down is enabled
 //! again before its pending run is considered.
 
-use chrono::{DateTime, TimeDelta, Utc};
-use shared::types::{RepoId, ScheduleType, SystemEventType};
+use shared::{
+    time::Timestamp,
+    types::{RepoId, ScheduleType, SystemEventType},
+};
 use uuid::Uuid;
 
 use crate::{
@@ -57,18 +59,15 @@ impl std::fmt::Display for SkipReason {
 /// schedule, so it means the same thing whether the thing that was away was the
 /// host running the backup or the host receiving it.
 pub(crate) fn has_room_before_next_run(
-    next_run_at: Option<DateTime<Utc>>,
+    next_run_at: Option<Timestamp>,
     min_lead_minutes: i32,
-    now: DateTime<Utc>,
+    now: Timestamp,
 ) -> bool {
     let Some(next_run_at) = next_run_at else {
         return true;
     };
     let lead = i64::from(min_lead_minutes);
-    next_run_at
-        .signed_duration_since(now)
-        .num_minutes()
-        .ge(&lead)
+    next_run_at.since(now).as_mins().ge(&lead)
 }
 
 /// Runs whatever `agent_id` missed while it was unreachable, at most one run per
@@ -108,7 +107,7 @@ pub async fn run_catch_ups_on_reconnect(state: &AppState, agent_id: i64, hostnam
         }
     };
 
-    let now = Utc::now();
+    let now = Timestamp::now();
     for candidate in candidates
         .into_iter()
         .filter(|c| taken.contains(&c.schedule_id))
@@ -117,7 +116,7 @@ pub async fn run_catch_ups_on_reconnect(state: &AppState, agent_id: i64, hostnam
     }
 }
 
-async fn dispatch_catch_up(state: &AppState, candidate: &CatchUpCandidate, now: DateTime<Utc>) {
+async fn dispatch_catch_up(state: &AppState, candidate: &CatchUpCandidate, now: Timestamp) {
     // Checked before anything else: a host that reconnects after the window has
     // closed is not caught up, and the run it missed is reported as the failure
     // it became. The poller reports most of these long before the host is back;
@@ -206,7 +205,7 @@ pub(crate) struct CatchUpRun {
     /// Repositories to write, in order.
     pub repo_ids: Vec<i64>,
     /// The moment the run was decided on.
-    pub now: DateTime<Utc>,
+    pub now: Timestamp,
     /// Correlates the run's reports; decided by the caller so it can be
     /// recorded against the marker before the run can possibly fail.
     pub run_id: String,
@@ -270,17 +269,14 @@ pub(crate) async fn spawn_catch_up_run(state: &AppState, run: CatchUpRun) {
 /// Shared by both halves and by the Power pane's countdown, so all three agree
 /// to the minute. A window that runs off the end of the calendar is one nobody
 /// outlives, so it reads as the "indefinitely" it effectively is.
-pub(crate) fn give_up_deadline(
-    pending_for: DateTime<Utc>,
-    give_up_minutes: i32,
-) -> Option<DateTime<Utc>> {
+pub(crate) fn give_up_deadline(pending_for: Timestamp, give_up_minutes: i32) -> Option<Timestamp> {
     (give_up_minutes > 0)
-        .then(|| pending_for.checked_add_signed(TimeDelta::minutes(i64::from(give_up_minutes))))
+        .then(|| pending_for.checked_add(shared::time::minutes(i64::from(give_up_minutes))))
         .flatten()
 }
 
 /// Whether this wait is already past the window its agent set.
-fn gave_up_by(candidate: &CatchUpCandidate, now: DateTime<Utc>) -> bool {
+fn gave_up_by(candidate: &CatchUpCandidate, now: Timestamp) -> bool {
     give_up_deadline(candidate.pending_for, candidate.give_up_minutes)
         .is_some_and(|deadline| now >= deadline)
 }
@@ -292,7 +288,7 @@ fn gave_up_by(candidate: &CatchUpCandidate, now: DateTime<Utc>) -> bool {
 /// that never returns would leave its schedule reporting nothing at all - which
 /// is the state the window exists to end.
 pub async fn expire_agent_catch_ups(state: &AppState) {
-    let now = Utc::now();
+    let now = Timestamp::now();
     let expired = match db::catch_up::list_expired_agent_catch_ups(&state.pool, now).await {
         Ok(expired) => expired,
         Err(e) => {
@@ -355,7 +351,7 @@ pub(crate) async fn abandoned_pairs(
 async fn report_abandoned_agent_catch_up(
     state: &AppState,
     candidate: &CatchUpCandidate,
-    now: DateTime<Utc>,
+    now: Timestamp,
 ) {
     tracing::warn!(
         hostname = %candidate.hostname,
@@ -411,7 +407,7 @@ pub(crate) struct AbandonedCatchUp<'a> {
     /// Its display name.
     pub schedule_name: &'a str,
     /// The occurrence that was missed.
-    pub pending_for: DateTime<Utc>,
+    pub pending_for: Timestamp,
     /// The window that ran out, for the message.
     pub give_up_minutes: i32,
     /// What never came back, phrased for a sentence: `host 'lab-ws-02'` or
@@ -420,11 +416,11 @@ pub(crate) struct AbandonedCatchUp<'a> {
     /// Host the activity-log entry is filed under.
     pub event_host: &'a str,
     /// When the schedule next runs, carried into the alert.
-    pub next_run_at: Option<DateTime<Utc>>,
+    pub next_run_at: Option<Timestamp>,
     /// Every (host, repository) the run would have covered.
     pub pairs: Vec<AbandonedPair>,
     /// When the wait was ended.
-    pub now: DateTime<Utc>,
+    pub now: Timestamp,
 }
 
 /// Records an abandoned catch-up and alerts on it.
@@ -558,12 +554,10 @@ async fn record_catch_up_event(state: &AppState, candidate: &CatchUpCandidate) {
 
 #[cfg(test)]
 mod tests {
-    use chrono::TimeZone;
-
     use super::*;
 
-    fn now() -> DateTime<Utc> {
-        Utc.with_ymd_and_hms(2026, 9, 6, 9, 0, 0).unwrap()
+    fn now() -> Timestamp {
+        Timestamp::utc(2026, 9, 6, 9, 0, 0).unwrap()
     }
 
     /// An abandoned catch-up goes out as its own event, not as a plain failed
@@ -636,9 +630,7 @@ mod tests {
 
     #[test]
     fn a_next_run_further_out_than_the_floor_leaves_room() {
-        let next = now()
-            .checked_add_signed(chrono::Duration::hours(17))
-            .unwrap();
+        let next = now().checked_add(shared::time::hours(17)).unwrap();
         assert!(has_room_before_next_run(Some(next), 120, now()));
     }
 
@@ -646,18 +638,14 @@ mod tests {
     /// happen, so the catch-up would only duplicate it.
     #[test]
     fn a_next_run_closer_than_the_floor_leaves_no_room() {
-        let next = now()
-            .checked_add_signed(chrono::Duration::minutes(90))
-            .unwrap();
+        let next = now().checked_add(shared::time::minutes(90)).unwrap();
         assert!(!has_room_before_next_run(Some(next), 120, now()));
     }
 
     /// Exactly the floor still runs - the field reads "at least this much time".
     #[test]
     fn a_next_run_exactly_at_the_floor_leaves_room() {
-        let next = now()
-            .checked_add_signed(chrono::Duration::minutes(120))
-            .unwrap();
+        let next = now().checked_add(shared::time::minutes(120)).unwrap();
         assert!(has_room_before_next_run(Some(next), 120, now()));
     }
 
@@ -672,9 +660,7 @@ mod tests {
     /// An overdue next run is even further inside the floor than a due one.
     #[test]
     fn an_overdue_next_run_leaves_no_room() {
-        let next = now()
-            .checked_sub_signed(chrono::Duration::hours(3))
-            .unwrap();
+        let next = now().checked_sub(shared::time::hours(3)).unwrap();
         assert!(!has_room_before_next_run(Some(next), 1, now()));
     }
 
@@ -696,7 +682,7 @@ mod tests {
         );
     }
 
-    fn waiting_since(pending_for: DateTime<Utc>, give_up_minutes: i32) -> CatchUpCandidate {
+    fn waiting_since(pending_for: Timestamp, give_up_minutes: i32) -> CatchUpCandidate {
         CatchUpCandidate {
             schedule_id: 1,
             schedule_name: "Nightly workstations".to_owned(),
@@ -715,28 +701,28 @@ mod tests {
     /// to keep meaning "wait for as long as it takes" however long that is.
     #[test]
     fn a_zero_window_never_gives_up() {
-        let candidate = waiting_since(now() - chrono::Duration::days(365), 0);
+        let candidate = waiting_since(now() - shared::time::days(365), 0);
         assert!(!gave_up_by(&candidate, now()));
     }
 
     #[test]
     fn a_window_ends_exactly_when_it_says() {
-        let pending_for = now() - chrono::Duration::days(3);
+        let pending_for = now() - shared::time::days(3);
         let candidate = waiting_since(pending_for, 3 * 24 * 60);
         assert!(gave_up_by(&candidate, now()));
         assert!(
-            !gave_up_by(&candidate, now() - chrono::Duration::minutes(1)),
+            !gave_up_by(&candidate, now() - shared::time::minutes(1)),
             "a minute short of the window is still waiting"
         );
     }
 
     #[test]
     fn a_deadline_is_the_window_after_the_miss_or_none() {
-        let missed = Utc.with_ymd_and_hms(2026, 9, 1, 2, 0, 0).unwrap();
+        let missed = Timestamp::utc(2026, 9, 1, 2, 0, 0).unwrap();
         assert_eq!(give_up_deadline(missed, 0), None);
         assert_eq!(
             give_up_deadline(missed, 3 * 24 * 60),
-            Some(Utc.with_ymd_and_hms(2026, 9, 4, 2, 0, 0).unwrap())
+            Some(Timestamp::utc(2026, 9, 4, 2, 0, 0).unwrap())
         );
     }
 

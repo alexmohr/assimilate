@@ -12,8 +12,7 @@
 
 use std::time::Duration;
 
-use chrono::Utc;
-use shared::types::SystemEventType;
+use shared::{time::Timestamp, types::SystemEventType};
 use tracing::warn;
 
 use super::{
@@ -82,9 +81,7 @@ async fn fate(pool: &sqlx::PgPool, orphan: &PowerHoldRow) -> Option<Fate> {
     if !in_flight {
         return Some(Fate::Settled);
     }
-    let overdue = Utc::now()
-        .signed_duration_since(orphan.created_at)
-        .to_std()
+    let overdue = std::time::Duration::try_from(Timestamp::now().since(orphan.created_at))
         .is_ok_and(|age| age >= ABANDON_AFTER);
     Some(if overdue {
         Fate::Abandoned

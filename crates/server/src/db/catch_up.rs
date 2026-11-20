@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
-use chrono::{DateTime, Utc};
-use shared::types::ScheduleType;
+use shared::{time::Timestamp, types::ScheduleType};
 use sqlx::PgPool;
 
 use crate::error::ApiError;
@@ -26,12 +25,12 @@ pub struct CatchUpCandidate {
     /// this catch-up run the same way a scheduled tick does.
     pub cron_expression: String,
     /// The occurrence that was missed.
-    pub pending_for: DateTime<Utc>,
+    pub pending_for: Timestamp,
     /// When the schedule next runs on its own, which the lead-time floor is
     /// measured against. Never `None` in practice for an enabled schedule, but
     /// the column is nullable, and a schedule with no computed next run has no
     /// regular run for a catch-up to collide with.
-    pub next_run_at: Option<DateTime<Utc>>,
+    pub next_run_at: Option<Timestamp>,
     /// The schedule's configured floor: how much time must be left before
     /// `next_run_at` for the catch-up to still be worth running.
     pub min_lead_minutes: i32,
@@ -78,7 +77,7 @@ pub async fn mark_catch_up_pending(
     pool: &PgPool,
     schedule_id: i64,
     agent_id: i64,
-    due_at: DateTime<Utc>,
+    due_at: Timestamp,
 ) -> Result<(), ApiError> {
     sqlx::query!(
         "UPDATE schedule_targets SET catch_up_pending_for = $3 WHERE schedule_id = $1 AND \
@@ -143,7 +142,7 @@ pub async fn list_catch_up_candidates_for_agent(
 /// Returns [`ApiError::Database`] if the database query fails.
 pub async fn list_expired_agent_catch_ups(
     pool: &PgPool,
-    now: DateTime<Utc>,
+    now: Timestamp,
 ) -> Result<Vec<CatchUpCandidate>, ApiError> {
     sqlx::query_as!(
         CatchUpCandidate,
@@ -268,13 +267,13 @@ pub struct RepoCatchUpCandidate {
     pub repo_host_id: i64,
     /// The occurrence that was missed, and the point the give-up window is
     /// measured from.
-    pub pending_for: DateTime<Utc>,
+    pub pending_for: Timestamp,
     /// When this repository was last asked whether it is back, or `None` if it
     /// has not been asked since the miss was recorded.
-    pub last_probe_at: Option<DateTime<Utc>>,
+    pub last_probe_at: Option<Timestamp>,
     /// When the schedule next runs on its own, which the lead-time floor is
     /// measured against.
-    pub next_run_at: Option<DateTime<Utc>>,
+    pub next_run_at: Option<Timestamp>,
     /// How much time must be left before `next_run_at` for the catch-up to
     /// still be worth running - the schedule's setting.
     pub min_lead_minutes: i32,
@@ -309,7 +308,7 @@ pub async fn mark_repo_catch_up_pending(
     pool: &PgPool,
     schedule_id: i64,
     repo_id: i64,
-    due_at: DateTime<Utc>,
+    due_at: Timestamp,
     run_id: Option<&str>,
 ) -> Result<(), ApiError> {
     // A failed catch-up run keeps the occurrence it was catching up (see
@@ -376,7 +375,7 @@ pub async fn run_started_at(
     pool: &PgPool,
     run_id: &str,
     repo_id: i64,
-) -> Result<Option<DateTime<Utc>>, ApiError> {
+) -> Result<Option<Timestamp>, ApiError> {
     sqlx::query_scalar!(
         "SELECT MIN(started_at) FROM backup_reports WHERE run_id = $1 AND repo_id = $2",
         run_id,
@@ -453,7 +452,7 @@ pub async fn record_repo_catch_up_probe(
     pool: &PgPool,
     schedule_ids: &[i64],
     repo_ids: &[i64],
-    at: DateTime<Utc>,
+    at: Timestamp,
 ) -> Result<(), ApiError> {
     sqlx::query!(
         "UPDATE schedule_repos sr SET catch_up_last_probe_at = $3 FROM UNNEST($1::BIGINT[], \
@@ -596,7 +595,7 @@ pub struct AgentCatchUpWait {
     /// Its display name.
     pub schedule_name: String,
     /// The occurrence that was missed.
-    pub pending_for: DateTime<Utc>,
+    pub pending_for: Timestamp,
 }
 
 /// Every schedule waiting for this agent, for its Power pane. Unfiltered by the

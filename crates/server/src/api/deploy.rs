@@ -530,6 +530,8 @@ fn validate_deploy_lengths(req: &DeployAgentRequest) -> Result<(), ApiError> {
 
 #[cfg(test)]
 mod tests {
+    use shared::time::Timestamp;
+
     use super::*;
 
     fn deploy_request(overrides: &serde_json::Value) -> DeployAgentRequest {
@@ -602,7 +604,7 @@ mod tests {
             tunnel_port: 18080,
             enabled: true,
             ssh_host_key: None,
-            created_at: chrono::Utc::now(),
+            created_at: Timestamp::now(),
         };
 
         assert_eq!(
@@ -622,7 +624,7 @@ mod tests {
             tunnel_port: 18080,
             enabled: false,
             ssh_host_key: None,
-            created_at: chrono::Utc::now(),
+            created_at: Timestamp::now(),
         };
 
         assert_eq!(tunnel_server_url(&tunnel), None);

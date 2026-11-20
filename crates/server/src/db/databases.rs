@@ -7,11 +7,13 @@
 //! staging: the runtimes and the dump directory belong to the host, and a
 //! schedule only opts in.
 
-use chrono::{DateTime, Utc};
-use shared::database::{
-    DatabaseBackupConfig, DatabaseEngine, DatabaseRuntime, DatabaseRuntimes, DatabaseSelectionMode,
-    DatabaseSourceConfig, DatabaseSourceId, DatabaseSourceKind, DiscoveredDatabaseSource,
-    HostMongodb, HostMysql, HostSqlite, MysqlEngine,
+use shared::{
+    database::{
+        DatabaseBackupConfig, DatabaseEngine, DatabaseRuntime, DatabaseRuntimes,
+        DatabaseSelectionMode, DatabaseSourceConfig, DatabaseSourceId, DatabaseSourceKind,
+        DiscoveredDatabaseSource, HostMongodb, HostMysql, HostSqlite, MysqlEngine,
+    },
+    time::Timestamp,
 };
 use sqlx::PgPool;
 
@@ -67,7 +69,7 @@ pub struct AgentDatabaseSourceRow {
     /// Why the last scan could not list the databases, when it could not.
     pub last_error: Option<String>,
     /// When the agent last reported this source.
-    pub last_scanned_at: Option<DateTime<Utc>>,
+    pub last_scanned_at: Option<Timestamp>,
 }
 
 /// Longest Kubernetes name or namespace this server stores. Kubernetes caps

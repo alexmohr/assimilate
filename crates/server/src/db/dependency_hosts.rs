@@ -12,8 +12,10 @@
 //! agent, plus whatever the agent's backup defaults and the repository hosts
 //! the schedule writes to require.
 
-use chrono::{DateTime, Utc};
-use shared::types::{MachinePolicy, MachineWakeMode, ScheduleWakeOverride, WaitReason};
+use shared::{
+    time::Timestamp,
+    types::{MachinePolicy, MachineWakeMode, ScheduleWakeOverride, WaitReason},
+};
 use sqlx::PgPool;
 
 use crate::error::ApiError;
@@ -41,7 +43,7 @@ pub struct DependencyHostRow {
     /// Whether the machine wakes by default.
     pub wake_enabled: bool,
     /// When the machine was last checked, by anything.
-    pub last_checked_at: Option<DateTime<Utc>>,
+    pub last_checked_at: Option<Timestamp>,
     /// What that check found.
     pub last_check_reachable: Option<bool>,
 }

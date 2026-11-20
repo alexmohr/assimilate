@@ -677,6 +677,7 @@ mod tests {
     };
 
     use russh::{client::Handler, keys::PublicKey};
+    use shared::time::Timestamp;
     use tokio::sync::Notify;
     use tokio_util::sync::CancellationToken;
 
@@ -955,7 +956,7 @@ mod tests {
             tunnel_port: 0,
             ssh_host_key: None,
             enabled: true,
-            created_at: chrono::Utc::now(),
+            created_at: Timestamp::now(),
         }
     }
 

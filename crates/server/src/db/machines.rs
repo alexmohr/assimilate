@@ -9,8 +9,10 @@
 //! online - so a NAS that is both a repository host and an SMB dependency has
 //! one of each rather than one per role.
 
-use chrono::{DateTime, Utc};
-use shared::types::{MachineWakeMode, ScheduleWakeOverride};
+use shared::{
+    time::Timestamp,
+    types::{MachineWakeMode, ScheduleWakeOverride},
+};
 use sqlx::PgPool;
 
 use crate::error::ApiError;
@@ -38,7 +40,7 @@ pub struct MachineRow {
     /// How long a run waits on it before giving up; zero waits indefinitely.
     pub catch_up_give_up_minutes: i32,
     /// When it was last checked.
-    pub last_checked_at: Option<DateTime<Utc>>,
+    pub last_checked_at: Option<Timestamp>,
     /// What that check found.
     pub last_check_reachable: Option<bool>,
 }
@@ -152,7 +154,7 @@ pub async fn record_machine_check(
     pool: &PgPool,
     id: i64,
     reachable: bool,
-    at: DateTime<Utc>,
+    at: Timestamp,
 ) -> Result<(), ApiError> {
     sqlx::query!(
         "UPDATE machines SET last_checked_at = $2, last_check_reachable = $3 WHERE id = $1",

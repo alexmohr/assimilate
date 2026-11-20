@@ -3,10 +3,10 @@
 
 //! Dashboard, trend, storage and calendar figures.
 
-use chrono::{DateTime, Utc};
 use serde::Serialize;
 use shared::{
     snapshot::FsSnapshotMode,
+    time::{Date, Timestamp},
     types::{
         ExecutionMode, OnFailure, ReportStatus, ScheduleFilesMode, ScheduleType,
         ScheduleWakeOverride, Visibility,
@@ -31,9 +31,9 @@ pub struct DashboardSummaryRow {
     /// Total deduplicated storage across all repos.
     pub total_storage_bytes: i64,
     /// When the last successful backup finished.
-    pub last_backup_at: Option<DateTime<Utc>>,
+    pub last_backup_at: Option<Timestamp>,
     /// When the next backup is scheduled.
-    pub next_backup_at: Option<DateTime<Utc>>,
+    pub next_backup_at: Option<Timestamp>,
     /// Schedule ID of the last backup.
     pub last_backup_schedule_id: Option<i64>,
     /// Repo ID of the last backup.
@@ -49,9 +49,9 @@ pub struct DashboardSummaryRow {
     /// Total backups in the last 30 days.
     pub total_30d: i64,
     /// When the last failure occurred.
-    pub last_failure_at: Option<DateTime<Utc>>,
+    pub last_failure_at: Option<Timestamp>,
     /// When the last warning occurred.
-    pub last_warning_at: Option<DateTime<Utc>>,
+    pub last_warning_at: Option<Timestamp>,
     /// Schedule ID of the last failure.
     pub last_failure_schedule_id: Option<i64>,
     /// Schedule ID of the last warning.
@@ -239,7 +239,7 @@ pub async fn get_activity_feed_days(
 #[derive(Debug, Clone, Serialize, sqlx::FromRow)]
 pub struct TrendRow {
     /// The date of the trend point.
-    pub date: chrono::NaiveDate,
+    pub date: Date,
     /// Average original size.
     pub original_size: i64,
     /// Average compressed size.
@@ -301,7 +301,7 @@ pub async fn get_backup_trends(
 #[derive(Debug, Clone, Serialize, sqlx::FromRow)]
 pub struct CalendarEventRow {
     /// Event date.
-    pub date: chrono::NaiveDate,
+    pub date: Date,
     /// Event type (e.g. "backup").
     pub event_type: String,
     /// Backup status.
@@ -332,21 +332,12 @@ pub async fn get_calendar_events(
     year: i32,
     month: u32,
     repo_id: Option<i64>,
-    tz: chrono_tz::Tz,
+    tz: &jiff::tz::TimeZone,
 ) -> Result<Vec<CalendarEventRow>, ApiError> {
-    let start = chrono::NaiveDate::from_ymd_opt(year, month, 1)
+    let (start, end) = Date::month_bounds(year, month)
         .ok_or_else(|| ApiError::BadRequest("invalid month".to_string()))?;
-    let end = if month == 12 {
-        year.checked_add(1)
-            .and_then(|y| chrono::NaiveDate::from_ymd_opt(y, 1, 1))
-    } else {
-        month
-            .checked_add(1)
-            .and_then(|m| chrono::NaiveDate::from_ymd_opt(year, m, 1))
-    }
-    .ok_or_else(|| ApiError::BadRequest("invalid month".to_string()))?;
 
-    let tz_name = tz.name();
+    let tz_name = tz.iana_name().unwrap_or("UTC");
 
     if let Some(rid) = repo_id {
         sqlx::query_as!(
@@ -393,7 +384,7 @@ pub async fn get_calendar_events(
 #[derive(Debug, Clone, Serialize, sqlx::FromRow)]
 pub struct StorageTrendRow {
     /// The date of the trend point.
-    pub date: chrono::NaiveDate,
+    pub date: Date,
     /// Cumulative original size up to this date.
     pub original_size: i64,
     /// Cumulative compressed size up to this date.
@@ -406,7 +397,7 @@ pub struct StorageTrendRow {
 #[derive(Debug, Clone, Serialize, sqlx::FromRow)]
 pub struct StorageTrendByRepoRow {
     /// The date of the trend point.
-    pub date: chrono::NaiveDate,
+    pub date: Date,
     /// Repository ID.
     pub repo_id: i64,
     /// Repository name.

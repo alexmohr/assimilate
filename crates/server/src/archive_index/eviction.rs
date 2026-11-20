@@ -13,7 +13,7 @@
 
 use std::num::NonZeroU32;
 
-use chrono::{DateTime, Utc};
+use shared::time::Timestamp;
 use sqlx::PgPool;
 
 use crate::{RepoLock, db, error::ApiError};
@@ -53,12 +53,10 @@ impl IndexRetention {
     /// The point in time an index must have been used after to be kept, or
     /// `None` when nothing is evicted.
     #[must_use]
-    pub fn cutoff(self, now: DateTime<Utc>) -> Option<DateTime<Utc>> {
+    pub fn cutoff(self, now: Timestamp) -> Option<Timestamp> {
         match self {
             Self::Forever => None,
-            Self::Days(days) => {
-                now.checked_sub_signed(chrono::Duration::days(i64::from(days.get())))
-            }
+            Self::Days(days) => now.checked_sub(shared::time::days(i64::from(days.get()))),
         }
     }
 }
@@ -151,7 +149,7 @@ pub async fn run_index_eviction(
     pool: &PgPool,
     repo_lock: &RepoLock,
 ) -> Result<EvictionOutcome, ApiError> {
-    let Some(cutoff) = load_retention(pool).await?.cutoff(Utc::now()) else {
+    let Some(cutoff) = load_retention(pool).await?.cutoff(Timestamp::now()) else {
         return Ok(EvictionOutcome::default());
     };
     evict_stale_indexes(pool, repo_lock, cutoff).await
@@ -176,7 +174,7 @@ pub async fn run_index_eviction(
 pub async fn evict_stale_indexes(
     pool: &PgPool,
     repo_lock: &RepoLock,
-    cutoff: DateTime<Utc>,
+    cutoff: Timestamp,
 ) -> Result<EvictionOutcome, ApiError> {
     let repo_ids = sqlx::query_scalar!(
         "SELECT DISTINCT a.repo_id FROM archive_index_jobs j JOIN archives a ON a.id = \
@@ -203,7 +201,7 @@ async fn evict_stale_repo_indexes(
     pool: &PgPool,
     repo_lock: &RepoLock,
     repo_id: i64,
-    cutoff: DateTime<Utc>,
+    cutoff: Timestamp,
 ) -> Result<EvictionOutcome, ApiError> {
     let mut total = EvictionOutcome::default();
     loop {
@@ -227,7 +225,7 @@ async fn evict_stale_repo_indexes(
 async fn evict_batch(
     pool: &PgPool,
     repo_id: i64,
-    cutoff: DateTime<Utc>,
+    cutoff: Timestamp,
 ) -> Result<EvictionOutcome, ApiError> {
     let mut tx = pool.begin().await.map_err(ApiError::Database)?;
 
@@ -280,8 +278,6 @@ async fn evict_batch(
 
 #[cfg(test)]
 mod tests {
-    use chrono::TimeZone;
-
     use super::*;
 
     fn days(n: u32) -> IndexRetention {
@@ -315,19 +311,19 @@ mod tests {
 
     #[test]
     fn forever_has_no_cutoff() {
-        assert_eq!(IndexRetention::Forever.cutoff(Utc::now()), None);
+        assert_eq!(IndexRetention::Forever.cutoff(Timestamp::now()), None);
     }
 
     #[test]
     fn the_cutoff_is_that_many_days_before_now() {
-        let now = Utc.with_ymd_and_hms(2026, 10, 2, 12, 0, 0).unwrap();
-        let expected = Utc.with_ymd_and_hms(2026, 9, 2, 12, 0, 0).unwrap();
+        let now = Timestamp::utc(2026, 10, 2, 12, 0, 0).unwrap();
+        let expected = Timestamp::utc(2026, 9, 2, 12, 0, 0).unwrap();
         assert_eq!(days(30).cutoff(now), Some(expected));
     }
 
     #[test]
     fn a_cutoff_before_the_representable_range_evicts_nothing() {
-        assert_eq!(days(u32::MAX).cutoff(DateTime::<Utc>::MIN_UTC), None);
+        assert_eq!(days(u32::MAX).cutoff(Timestamp::MIN), None);
     }
 
     #[test]

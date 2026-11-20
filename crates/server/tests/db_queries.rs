@@ -12,8 +12,7 @@
 //! Each test uses `#[sqlx::test]` which creates an isolated database per test
 //! and applies migrations automatically.
 
-use chrono::{DateTime, Datelike, Duration, SubsecRound, Utc};
-use chrono_tz::Tz;
+use jiff::tz::TimeZone;
 use server::{
     archive_index::codec::{self, DirEntry},
     db::{self, patterns, *},
@@ -26,6 +25,7 @@ use shared::{
     },
     hooks::HookCommand,
     responses::{Theme, UserPreferences},
+    time::Timestamp,
     types::{
         AcknowledgedFilter, IndexStatus, QuotaAction, ScheduleFilesMode, ScheduleWakeOverride,
         SystemEventType,
@@ -33,6 +33,9 @@ use shared::{
     vm::{DiscoveredVm, VmSelectionMode, VmSnapshotConfig, VmSnapshotMode, VmState},
 };
 use sqlx::PgPool;
+
+/// The table sqlx records applied migrations in.
+const MIGRATIONS_TABLE: &str = "_sqlx_migrations";
 
 #[sqlx::test(migrations = "./migrations")]
 async fn agent_insert_and_get(pool: PgPool) {
@@ -324,9 +327,7 @@ async fn schedule_auto_disable_state(
 #[sqlx::test(migrations = "./migrations")]
 async fn agent_delete_clears_auto_disable_bookkeeping_for_its_schedules(pool: PgPool) {
     let (agent, _repo, schedule) = create_test_schedule(&pool).await;
-    let next = chrono::Utc::now()
-        .checked_add_signed(chrono::Duration::days(1))
-        .unwrap();
+    let next = Timestamp::now().checked_add(shared::time::days(1)).unwrap();
 
     for _ in 0..3 {
         db::record_schedule_failure(&pool, schedule.id, agent.id, next, 3, true)
@@ -466,9 +467,7 @@ async fn repo_delete(pool: PgPool) {
 #[sqlx::test(migrations = "./migrations")]
 async fn repo_delete_clears_auto_disable_bookkeeping_for_its_schedules(pool: PgPool) {
     let (agent, repo, schedule) = create_test_schedule(&pool).await;
-    let next = chrono::Utc::now()
-        .checked_add_signed(chrono::Duration::days(1))
-        .unwrap();
+    let next = Timestamp::now().checked_add(shared::time::days(1)).unwrap();
 
     for _ in 0..3 {
         db::record_schedule_failure(&pool, schedule.id, agent.id, next, 3, true)
@@ -494,7 +493,7 @@ async fn repo_delete_clears_auto_disable_bookkeeping_for_its_schedules(pool: PgP
     // The agent that caused the disable reconnecting later must never touch this
     // orphaned schedule again.
     let reenabled =
-        db::reenable_system_disabled_schedules_for_agent(&pool, agent.id, chrono::Utc::now())
+        db::reenable_system_disabled_schedules_for_agent(&pool, agent.id, Timestamp::now())
             .await
             .unwrap();
     assert_eq!(reenabled, Vec::<i64>::new());
@@ -1066,8 +1065,8 @@ async fn catch_up_marks_do_not_stack(pool: PgPool) {
         // Truncated to what Postgres itself stores, so the round-trip below is
         // exact whichever way the server version handles the sub-microsecond
         // tail: PG 16 rounds it, PG 18 truncates it.
-        let missed = Utc::now()
-            .checked_sub_signed(chrono::Duration::days(days_ago))
+        let missed = Timestamp::now()
+            .checked_sub(shared::time::days(days_ago))
             .unwrap()
             .trunc_subsecs(6);
         db::catch_up::mark_catch_up_pending(&pool, schedule.id, agent.id, missed)
@@ -1140,7 +1139,7 @@ async fn catch_up_still_applies_when_only_the_primary_repository_is_disabled(poo
         .execute(&pool)
         .await
         .unwrap();
-    db::catch_up::mark_catch_up_pending(&pool, schedule.id, agent.id, Utc::now())
+    db::catch_up::mark_catch_up_pending(&pool, schedule.id, agent.id, Timestamp::now())
         .await
         .unwrap();
 
@@ -1168,7 +1167,7 @@ async fn catch_up_still_applies_when_only_the_primary_repository_is_disabled(poo
 async fn catch_up_pending_clears_for_the_agent(pool: PgPool) {
     let (agent, _, schedule) = create_test_schedule(&pool).await;
     mark_schedule_hosts_intermittent(&pool, schedule.id).await;
-    db::catch_up::mark_catch_up_pending(&pool, schedule.id, agent.id, Utc::now())
+    db::catch_up::mark_catch_up_pending(&pool, schedule.id, agent.id, Timestamp::now())
         .await
         .unwrap();
 
@@ -1191,7 +1190,7 @@ async fn catch_up_pending_clears_for_the_agent(pool: PgPool) {
 async fn catch_up_candidates_respect_the_gates_a_tick_applies(pool: PgPool) {
     let (agent, repo, schedule) = create_test_schedule(&pool).await;
     mark_schedule_hosts_intermittent(&pool, schedule.id).await;
-    db::catch_up::mark_catch_up_pending(&pool, schedule.id, agent.id, Utc::now())
+    db::catch_up::mark_catch_up_pending(&pool, schedule.id, agent.id, Timestamp::now())
         .await
         .unwrap();
     assert_eq!(
@@ -1268,8 +1267,8 @@ async fn repo_catch_up_marks_do_not_stack(pool: PgPool) {
 
     let mut last = None;
     for days_ago in (0..35).rev() {
-        let missed = Utc::now()
-            .checked_sub_signed(chrono::Duration::days(days_ago))
+        let missed = Timestamp::now()
+            .checked_sub(shared::time::days(days_ago))
             .unwrap()
             .trunc_subsecs(6);
         db::catch_up::mark_repo_catch_up_pending(&pool, schedule.id, repo.id, missed, None)
@@ -1306,7 +1305,7 @@ async fn repo_catch_up_marks_do_not_stack(pool: PgPool) {
 async fn repo_catch_up_candidates_carry_their_gates_rather_than_being_filtered(pool: PgPool) {
     let (_, repo, schedule) = create_test_schedule(&pool).await;
     mark_schedule_hosts_intermittent(&pool, schedule.id).await;
-    db::catch_up::mark_repo_catch_up_pending(&pool, schedule.id, repo.id, Utc::now(), None)
+    db::catch_up::mark_repo_catch_up_pending(&pool, schedule.id, repo.id, Timestamp::now(), None)
         .await
         .unwrap();
 
@@ -1348,7 +1347,7 @@ async fn repo_catch_up_candidates_carry_their_gates_rather_than_being_filtered(p
 async fn recording_a_probe_covers_every_schedule_waiting_on_that_repository(pool: PgPool) {
     let (agent, repo, first) = create_test_schedule(&pool).await;
     let second = create_test_schedule_for(&pool, agent.id, repo.id, "second").await;
-    let missed = Utc::now().trunc_subsecs(6);
+    let missed = Timestamp::now().trunc_subsecs(6);
     for schedule_id in [first.id, second.id] {
         mark_schedule_hosts_intermittent(&pool, schedule_id).await;
         db::catch_up::mark_repo_catch_up_pending(&pool, schedule_id, repo.id, missed, None)
@@ -1356,7 +1355,7 @@ async fn recording_a_probe_covers_every_schedule_waiting_on_that_repository(pool
             .unwrap();
     }
 
-    let probed_at = Utc::now().trunc_subsecs(6);
+    let probed_at = Timestamp::now().trunc_subsecs(6);
     db::catch_up::record_repo_catch_up_probe(
         &pool,
         &[first.id, second.id],
@@ -1392,10 +1391,10 @@ async fn recording_a_probe_covers_every_schedule_waiting_on_that_repository(pool
 async fn clearing_a_repo_marker_resets_its_probe_clock(pool: PgPool) {
     let (_, repo, schedule) = create_test_schedule(&pool).await;
     mark_schedule_hosts_intermittent(&pool, schedule.id).await;
-    db::catch_up::mark_repo_catch_up_pending(&pool, schedule.id, repo.id, Utc::now(), None)
+    db::catch_up::mark_repo_catch_up_pending(&pool, schedule.id, repo.id, Timestamp::now(), None)
         .await
         .unwrap();
-    db::catch_up::record_repo_catch_up_probe(&pool, &[schedule.id], &[repo.id], Utc::now())
+    db::catch_up::record_repo_catch_up_probe(&pool, &[schedule.id], &[repo.id], Timestamp::now())
         .await
         .unwrap();
 
@@ -1409,7 +1408,7 @@ async fn clearing_a_repo_marker_resets_its_probe_clock(pool: PgPool) {
             .is_empty()
     );
 
-    db::catch_up::mark_repo_catch_up_pending(&pool, schedule.id, repo.id, Utc::now(), None)
+    db::catch_up::mark_repo_catch_up_pending(&pool, schedule.id, repo.id, Timestamp::now(), None)
         .await
         .unwrap();
     let candidates =
@@ -1426,7 +1425,7 @@ async fn clearing_a_repo_marker_resets_its_probe_clock(pool: PgPool) {
 async fn repo_catch_up_pending_clears_for_a_repository_host(pool: PgPool) {
     let (_, repo, schedule) = create_test_schedule(&pool).await;
     mark_schedule_hosts_intermittent(&pool, schedule.id).await;
-    db::catch_up::mark_repo_catch_up_pending(&pool, schedule.id, repo.id, Utc::now(), None)
+    db::catch_up::mark_repo_catch_up_pending(&pool, schedule.id, repo.id, Timestamp::now(), None)
         .await
         .unwrap();
 
@@ -1518,7 +1517,7 @@ async fn agent_catch_up_waits_list_each_schedule_waiting_on_the_agent(pool: PgPo
             .is_empty()
     );
 
-    let missed = Utc::now().trunc_subsecs(6);
+    let missed = Timestamp::now().trunc_subsecs(6);
     db::catch_up::mark_catch_up_pending(&pool, schedule.id, agent.id, missed)
         .await
         .unwrap();
@@ -1538,8 +1537,8 @@ async fn agent_catch_up_waits_list_each_schedule_waiting_on_the_agent(pool: PgPo
 async fn expired_agent_catch_ups_are_only_the_ones_past_their_window(pool: PgPool) {
     let (agent, _, schedule) = create_test_schedule(&pool).await;
     mark_schedule_hosts_intermittent(&pool, schedule.id).await;
-    let now = Utc::now();
-    let missed = now.checked_sub_signed(chrono::Duration::days(2)).unwrap();
+    let now = Timestamp::now();
+    let missed = now.checked_sub(shared::time::days(2)).unwrap();
     db::catch_up::mark_catch_up_pending(&pool, schedule.id, agent.id, missed)
         .await
         .unwrap();
@@ -1607,8 +1606,8 @@ async fn expired_agent_catch_ups_skip_a_schedule_with_no_enabled_repository(pool
     )
     .await
     .unwrap();
-    let now = Utc::now();
-    let missed = now.checked_sub_signed(chrono::Duration::days(1)).unwrap();
+    let now = Timestamp::now();
+    let missed = now.checked_sub(shared::time::days(1)).unwrap();
     db::catch_up::mark_catch_up_pending(&pool, schedule.id, agent.id, missed)
         .await
         .unwrap();
@@ -1641,8 +1640,8 @@ async fn expired_agent_catch_ups_skip_a_schedule_with_no_enabled_repository(pool
 async fn a_failed_repo_catch_up_keeps_the_occurrence_it_was_catching_up(pool: PgPool) {
     let (_, repo, schedule) = create_test_schedule(&pool).await;
     mark_schedule_hosts_intermittent(&pool, schedule.id).await;
-    let original = Utc::now()
-        .checked_sub_signed(chrono::Duration::days(2))
+    let original = Timestamp::now()
+        .checked_sub(shared::time::days(2))
         .unwrap()
         .trunc_subsecs(6);
     db::catch_up::mark_repo_catch_up_pending(&pool, schedule.id, repo.id, original, None)
@@ -1660,7 +1659,7 @@ async fn a_failed_repo_catch_up_keeps_the_occurrence_it_was_catching_up(pool: Pg
         "a marker handed to its run is no longer waiting"
     );
 
-    let retry_started = Utc::now().trunc_subsecs(6);
+    let retry_started = Timestamp::now().trunc_subsecs(6);
     db::catch_up::mark_repo_catch_up_pending(
         &pool,
         schedule.id,
@@ -1704,7 +1703,7 @@ async fn a_failed_repo_catch_up_keeps_the_occurrence_it_was_catching_up(pool: Pg
 async fn a_marker_is_taken_by_exactly_one_caller(pool: PgPool) {
     let (agent, repo, schedule) = create_test_schedule(&pool).await;
     mark_schedule_hosts_intermittent(&pool, schedule.id).await;
-    let missed = Utc::now().trunc_subsecs(6);
+    let missed = Timestamp::now().trunc_subsecs(6);
 
     db::catch_up::mark_repo_catch_up_pending(&pool, schedule.id, repo.id, missed, None)
         .await
@@ -1766,8 +1765,8 @@ async fn a_marker_is_taken_by_exactly_one_caller(pool: PgPool) {
 async fn switching_a_repository_off_forgets_a_handed_off_catch_up(pool: PgPool) {
     let (_, repo, schedule) = create_test_schedule(&pool).await;
     mark_schedule_hosts_intermittent(&pool, schedule.id).await;
-    let original = Utc::now()
-        .checked_sub_signed(chrono::Duration::days(2))
+    let original = Timestamp::now()
+        .checked_sub(shared::time::days(2))
         .unwrap()
         .trunc_subsecs(6);
     db::catch_up::mark_repo_catch_up_pending(&pool, schedule.id, repo.id, original, None)
@@ -1781,7 +1780,7 @@ async fn switching_a_repository_off_forgets_a_handed_off_catch_up(pool: PgPool) 
         .await
         .unwrap();
 
-    let later = Utc::now().trunc_subsecs(6);
+    let later = Timestamp::now().trunc_subsecs(6);
     db::catch_up::mark_repo_catch_up_pending(&pool, schedule.id, repo.id, later, Some("in-flight"))
         .await
         .unwrap();
@@ -1798,8 +1797,8 @@ async fn switching_a_repository_off_forgets_a_handed_off_catch_up(pool: PgPool) 
 async fn a_success_settles_a_handed_off_repo_catch_up(pool: PgPool) {
     let (_, repo, schedule) = create_test_schedule(&pool).await;
     mark_schedule_hosts_intermittent(&pool, schedule.id).await;
-    let original = Utc::now()
-        .checked_sub_signed(chrono::Duration::days(2))
+    let original = Timestamp::now()
+        .checked_sub(shared::time::days(2))
         .unwrap()
         .trunc_subsecs(6);
     db::catch_up::mark_repo_catch_up_pending(&pool, schedule.id, repo.id, original, None)
@@ -1823,7 +1822,7 @@ async fn a_success_settles_a_handed_off_repo_catch_up(pool: PgPool) {
 
     // With the hand-off forgotten, a later failure of that run id names its
     // own occurrence rather than the one the settled wait was for.
-    let later = Utc::now().trunc_subsecs(6);
+    let later = Timestamp::now().trunc_subsecs(6);
     db::catch_up::mark_repo_catch_up_pending(&pool, schedule.id, repo.id, later, Some("caught-up"))
         .await
         .unwrap();
@@ -1841,7 +1840,7 @@ async fn a_success_settles_a_handed_off_repo_catch_up(pool: PgPool) {
 async fn a_repository_wait_counts_as_a_pending_catch_up(pool: PgPool) {
     let (_, repo, schedule) = create_test_schedule(&pool).await;
     mark_schedule_hosts_intermittent(&pool, schedule.id).await;
-    let missed = Utc::now().trunc_subsecs(6);
+    let missed = Timestamp::now().trunc_subsecs(6);
     db::catch_up::mark_repo_catch_up_pending(&pool, schedule.id, repo.id, missed, None)
         .await
         .unwrap();
@@ -2174,8 +2173,8 @@ async fn schedule_delete(pool: PgPool) {
 #[sqlx::test(migrations = "./migrations")]
 async fn schedule_due_and_trigger(pool: PgPool) {
     let (_, _, schedule) = create_test_schedule(&pool).await;
-    let now = Utc::now();
-    let past = now.checked_sub_signed(Duration::hours(1)).unwrap();
+    let now = Timestamp::now();
+    let past = now.checked_sub(shared::time::hours(1)).unwrap();
 
     db::set_next_run_at(&pool, schedule.id, past).await.unwrap();
 
@@ -2183,7 +2182,7 @@ async fn schedule_due_and_trigger(pool: PgPool) {
     assert_eq!(due.len(), 1);
     assert_eq!(due.first().unwrap().schedule_id, schedule.id);
 
-    let future = now.checked_add_signed(Duration::hours(3)).unwrap();
+    let future = now.checked_add(shared::time::hours(3)).unwrap();
     db::mark_schedule_triggered(&pool, schedule.id, now, future)
         .await
         .unwrap();
@@ -2202,16 +2201,22 @@ async fn schedule_due_and_trigger(pool: PgPool) {
 #[sqlx::test(migrations = "./migrations")]
 async fn advance_schedule_run_updates_last_and_next_run(pool: PgPool) {
     let (_, _, schedule) = create_test_schedule(&pool).await;
-    let now = Utc::now();
+    let now = Timestamp::now();
 
-    let advanced =
-        db::advance_schedule_run(&pool, schedule.id, &schedule.cron_expression, Tz::UTC, now).await;
+    let advanced = db::advance_schedule_run(
+        &pool,
+        schedule.id,
+        &schedule.cron_expression,
+        &TimeZone::UTC,
+        now,
+    )
+    .await;
     assert!(advanced, "a valid cron expression must advance the run");
 
     let fetched = db::get_schedule_by_id(&pool, schedule.id).await.unwrap();
     assert_eq!(
-        fetched.last_run_at.map(|t| t.timestamp()),
-        Some(now.timestamp()),
+        fetched.last_run_at.map(Timestamp::unix_secs),
+        Some(now.unix_secs()),
         "last_run_at must advance to the moment the run was asked for"
     );
     assert!(
@@ -2227,10 +2232,16 @@ async fn advance_schedule_run_updates_last_and_next_run(pool: PgPool) {
 #[sqlx::test(migrations = "./migrations")]
 async fn advance_schedule_run_reports_failure_for_an_invalid_cron(pool: PgPool) {
     let (_, _, schedule) = create_test_schedule(&pool).await;
-    let now = Utc::now();
+    let now = Timestamp::now();
 
-    let advanced =
-        db::advance_schedule_run(&pool, schedule.id, "not a cron expression", Tz::UTC, now).await;
+    let advanced = db::advance_schedule_run(
+        &pool,
+        schedule.id,
+        "not a cron expression",
+        &TimeZone::UTC,
+        now,
+    )
+    .await;
     assert!(
         !advanced,
         "an invalid cron expression must not report success"
@@ -3175,14 +3186,14 @@ async fn canary_results_crud(pool: PgPool) {
 
 #[cfg(test)]
 async fn insert_test_report(pool: &PgPool, agent_id: i64, repo_id: i64) {
-    let now = Utc::now();
+    let now = Timestamp::now();
     db::insert_backup_report(
         pool,
         &InsertReportParams {
             agent_id,
             repo_id,
             schedule_id: None,
-            started_at: now.checked_sub_signed(Duration::minutes(5)).unwrap(),
+            started_at: now.checked_sub(shared::time::minutes(5)).unwrap(),
             finished_at: now,
             status: shared::types::BackupStatus::Success,
             original_size: 1_000_000,
@@ -3212,14 +3223,14 @@ async fn insert_test_report_for_schedule(
     schedule_id: i64,
     status: shared::types::BackupStatus,
 ) {
-    let now = Utc::now();
+    let now = Timestamp::now();
     db::insert_backup_report(
         pool,
         &InsertReportParams {
             agent_id,
             repo_id,
             schedule_id: Some(schedule_id),
-            started_at: now.checked_sub_signed(Duration::minutes(5)).unwrap(),
+            started_at: now.checked_sub(shared::time::minutes(5)).unwrap(),
             finished_at: now,
             status,
             original_size: 1_000_000,
@@ -3331,7 +3342,7 @@ async fn backup_report_list_for_agent_breaks_ties_on_started_at(pool: PgPool) {
         .await
         .unwrap();
     let repo = create_test_repo(&pool).await;
-    let now = Utc::now();
+    let now = Timestamp::now();
     // Distinct archive_name on each: `backup_reports` has a partial unique
     // index on (repo_id, agent_id, started_at) WHERE archive_name IS NULL,
     // used to upsert an in-progress report into its finished row - two NULL-
@@ -3405,7 +3416,7 @@ async fn backup_report_with_warnings(pool: PgPool) {
         .await
         .unwrap();
     let repo = create_test_repo(&pool).await;
-    let now = Utc::now();
+    let now = Timestamp::now();
 
     db::insert_backup_report(
         &pool,
@@ -3413,7 +3424,7 @@ async fn backup_report_with_warnings(pool: PgPool) {
             agent_id: agent.id,
             repo_id: repo.id,
             schedule_id: None,
-            started_at: now.checked_sub_signed(Duration::minutes(5)).unwrap(),
+            started_at: now.checked_sub(shared::time::minutes(5)).unwrap(),
             finished_at: now,
             status: shared::types::BackupStatus::Warning,
             original_size: 100,
@@ -3453,7 +3464,9 @@ async fn backup_report_delete_before(pool: PgPool) {
 
     insert_test_report(&pool, agent.id, repo.id).await;
 
-    let future = Utc::now().checked_add_signed(Duration::hours(1)).unwrap();
+    let future = Timestamp::now()
+        .checked_add(shared::time::hours(1))
+        .unwrap();
     let deleted = db::delete_backup_reports_before(&pool, future)
         .await
         .unwrap();
@@ -3581,7 +3594,9 @@ async fn insert_report_with_status(
     repo_id: i64,
     status: shared::types::BackupStatus,
 ) {
-    let started_at = Utc::now().checked_sub_signed(Duration::minutes(5)).unwrap();
+    let started_at = Timestamp::now()
+        .checked_sub(shared::time::minutes(5))
+        .unwrap();
     insert_report_with_status_at(pool, agent_id, repo_id, status, started_at).await;
 }
 
@@ -3593,7 +3608,7 @@ async fn insert_report_with_status_at(
     agent_id: i64,
     repo_id: i64,
     status: shared::types::BackupStatus,
-    started_at: chrono::DateTime<Utc>,
+    started_at: Timestamp,
 ) {
     db::insert_backup_report(
         pool,
@@ -3602,7 +3617,7 @@ async fn insert_report_with_status_at(
             repo_id,
             schedule_id: None,
             started_at,
-            finished_at: started_at.checked_add_signed(Duration::minutes(5)).unwrap(),
+            finished_at: started_at.checked_add(shared::time::minutes(5)).unwrap(),
             status,
             original_size: 1_000_000,
             compressed_size: 500_000,
@@ -3924,13 +3939,13 @@ async fn bulk_acknowledge_scoped_to_a_window_leaves_older_failures_outstanding(p
         .await
         .unwrap();
     let repo = create_test_repo(&pool).await;
-    let now = Utc::now();
+    let now = Timestamp::now();
     insert_report_with_status_at(
         &pool,
         agent.id,
         repo.id,
         shared::types::BackupStatus::Failed,
-        now.checked_sub_signed(Duration::days(2)).unwrap(),
+        now.checked_sub(shared::time::days(2)).unwrap(),
     )
     .await;
     insert_report_with_status_at(
@@ -3938,7 +3953,7 @@ async fn bulk_acknowledge_scoped_to_a_window_leaves_older_failures_outstanding(p
         agent.id,
         repo.id,
         shared::types::BackupStatus::Failed,
-        now.checked_sub_signed(Duration::days(20)).unwrap(),
+        now.checked_sub(shared::time::days(20)).unwrap(),
     )
     .await;
 
@@ -4316,13 +4331,13 @@ async fn get_ackable_backup_report_repo_id_test(pool: PgPool) {
         .await
         .unwrap();
     let repo = create_test_repo(&pool).await;
-    let now = Utc::now();
+    let now = Timestamp::now();
 
     let failed_params = InsertReportParams {
         agent_id: agent.id,
         repo_id: repo.id,
         schedule_id: None,
-        started_at: now.checked_sub_signed(Duration::minutes(5)).unwrap(),
+        started_at: now.checked_sub(shared::time::minutes(5)).unwrap(),
         finished_at: now,
         status: shared::types::BackupStatus::Failed,
         original_size: 0,
@@ -4565,10 +4580,10 @@ async fn health_summary_filters_to_one_schedule(pool: PgPool) {
 async fn health_summary_keeps_last_completed_backup_while_a_run_is_in_progress(pool: PgPool) {
     let (agent, repo, schedule) = create_test_schedule(&pool).await;
     // Truncated to microseconds: Postgres `timestamptz` only stores that much
-    // precision, so comparing the round-tripped value against a `Utc::now()`
+    // precision, so comparing the round-tripped value against a `Timestamp::now()`
     // with nanosecond-resolution jitter would be flaky.
-    let completed_finished_at = Utc::now()
-        .checked_sub_signed(Duration::hours(2))
+    let completed_finished_at = Timestamp::now()
+        .checked_sub(shared::time::hours(2))
         .unwrap()
         .trunc_subsecs(6);
     db::insert_backup_report(
@@ -4578,7 +4593,7 @@ async fn health_summary_keeps_last_completed_backup_while_a_run_is_in_progress(p
             repo_id: repo.id,
             schedule_id: Some(schedule.id),
             started_at: completed_finished_at
-                .checked_sub_signed(Duration::minutes(5))
+                .checked_sub(shared::time::minutes(5))
                 .unwrap(),
             finished_at: completed_finished_at,
             status: shared::types::BackupStatus::Success,
@@ -4606,7 +4621,7 @@ async fn health_summary_keeps_last_completed_backup_while_a_run_is_in_progress(p
         repo.id,
         Some(schedule.id),
         "run-in-progress",
-        Utc::now(),
+        Timestamp::now(),
     )
     .await
     .unwrap();
@@ -4654,8 +4669,8 @@ async fn health_summary_reports_the_primary_target_not_the_last_one_written(pool
     .await
     .unwrap();
 
-    let started = Utc::now()
-        .checked_sub_signed(Duration::minutes(10))
+    let started = Timestamp::now()
+        .checked_sub(shared::time::minutes(10))
         .unwrap();
     insert_report_for_schedule(
         &pool,
@@ -4673,7 +4688,7 @@ async fn health_summary_reports_the_primary_target_not_the_last_one_written(pool
         secondary.id,
         schedule.id,
         shared::types::BackupStatus::Failed,
-        started.checked_add_signed(Duration::minutes(5)).unwrap(),
+        started.checked_add(shared::time::minutes(5)).unwrap(),
     )
     .await;
 
@@ -4705,8 +4720,8 @@ async fn health_summary_reports_the_primary_target_not_the_last_one_written(pool
 #[sqlx::test(migrations = "./migrations")]
 async fn health_summary_reports_last_success_behind_a_newer_failure(pool: PgPool) {
     let (agent, repo, schedule) = create_test_schedule(&pool).await;
-    let success_started = Utc::now()
-        .checked_sub_signed(Duration::days(1))
+    let success_started = Timestamp::now()
+        .checked_sub(shared::time::days(1))
         .unwrap()
         .trunc_subsecs(6);
     insert_report_for_schedule(
@@ -4718,8 +4733,8 @@ async fn health_summary_reports_last_success_behind_a_newer_failure(pool: PgPool
         success_started,
     )
     .await;
-    let failure_started = Utc::now()
-        .checked_sub_signed(Duration::hours(12))
+    let failure_started = Timestamp::now()
+        .checked_sub(shared::time::hours(12))
         .unwrap()
         .trunc_subsecs(6);
     insert_report_for_schedule(
@@ -4745,7 +4760,7 @@ async fn health_summary_reports_last_success_behind_a_newer_failure(pool: PgPool
     );
     assert_eq!(
         entry.last_success_at,
-        success_started.checked_add_signed(Duration::minutes(1)),
+        success_started.checked_add(shared::time::minutes(1)),
         "last_success_at must be the earlier success's finish time"
     );
 }
@@ -4760,7 +4775,9 @@ async fn health_summary_has_no_last_success_when_every_run_failed(pool: PgPool) 
         repo.id,
         schedule.id,
         shared::types::BackupStatus::Failed,
-        Utc::now().checked_sub_signed(Duration::hours(1)).unwrap(),
+        Timestamp::now()
+            .checked_sub(shared::time::hours(1))
+            .unwrap(),
     )
     .await;
 
@@ -4782,7 +4799,7 @@ async fn insert_report_for_schedule(
     repo_id: i64,
     schedule_id: i64,
     status: shared::types::BackupStatus,
-    started_at: chrono::DateTime<Utc>,
+    started_at: Timestamp,
 ) {
     db::insert_backup_report(
         pool,
@@ -4791,7 +4808,7 @@ async fn insert_report_for_schedule(
             repo_id,
             schedule_id: Some(schedule_id),
             started_at,
-            finished_at: started_at.checked_add_signed(Duration::minutes(1)).unwrap(),
+            finished_at: started_at.checked_add(shared::time::minutes(1)).unwrap(),
             status,
             original_size: 1_000,
             compressed_size: 500,
@@ -5390,7 +5407,7 @@ async fn dashboard_summary_empty(pool: PgPool) {
 #[sqlx::test(migrations = "./migrations")]
 async fn dashboard_summary_failure_warning_schedule_split(pool: PgPool) {
     let (agent, repo, schedule) = create_test_schedule(&pool).await;
-    let now = Utc::now();
+    let now = Timestamp::now();
 
     // Older failure, with a schedule.
     db::insert_backup_report(
@@ -5399,8 +5416,8 @@ async fn dashboard_summary_failure_warning_schedule_split(pool: PgPool) {
             agent_id: agent.id,
             repo_id: repo.id,
             schedule_id: Some(schedule.id),
-            started_at: now.checked_sub_signed(Duration::hours(2)).unwrap(),
-            finished_at: now.checked_sub_signed(Duration::hours(2)).unwrap(),
+            started_at: now.checked_sub(shared::time::hours(2)).unwrap(),
+            finished_at: now.checked_sub(shared::time::hours(2)).unwrap(),
             status: shared::types::BackupStatus::Failed,
             original_size: 0,
             compressed_size: 0,
@@ -5427,7 +5444,7 @@ async fn dashboard_summary_failure_warning_schedule_split(pool: PgPool) {
             agent_id: agent.id,
             repo_id: repo.id,
             schedule_id: None,
-            started_at: now.checked_sub_signed(Duration::minutes(5)).unwrap(),
+            started_at: now.checked_sub(shared::time::minutes(5)).unwrap(),
             finished_at: now,
             status: shared::types::BackupStatus::Failed,
             original_size: 0,
@@ -5620,7 +5637,9 @@ async fn user_preferences_default_when_none_are_stored(pool: PgPool) {
 async fn session_crud(pool: PgPool) {
     let user = db::insert_user(&pool, "sessuser", "hash").await.unwrap();
 
-    let expires = Utc::now().checked_add_signed(Duration::hours(24)).unwrap();
+    let expires = Timestamp::now()
+        .checked_add(shared::time::hours(24))
+        .unwrap();
     db::insert_session(&pool, "sess_abc123", user.id, expires, false, false)
         .await
         .unwrap();
@@ -5641,7 +5660,9 @@ async fn session_crud(pool: PgPool) {
 async fn session_expired(pool: PgPool) {
     let user = db::insert_user(&pool, "expuser", "hash").await.unwrap();
 
-    let expired = Utc::now().checked_sub_signed(Duration::hours(1)).unwrap();
+    let expired = Timestamp::now()
+        .checked_sub(shared::time::hours(1))
+        .unwrap();
     db::insert_session(&pool, "sess_expired", user.id, expired, false, false)
         .await
         .unwrap();
@@ -5654,7 +5675,9 @@ async fn session_expired(pool: PgPool) {
 async fn session_delete_expired(pool: PgPool) {
     let user = db::insert_user(&pool, "cleanuser", "hash").await.unwrap();
 
-    let expired = Utc::now().checked_sub_signed(Duration::hours(1)).unwrap();
+    let expired = Timestamp::now()
+        .checked_sub(shared::time::hours(1))
+        .unwrap();
     db::insert_session(&pool, "sess_old", user.id, expired, false, false)
         .await
         .unwrap();
@@ -5669,7 +5692,7 @@ async fn session_remember_me(pool: PgPool) {
         .await
         .unwrap();
 
-    let expires = Utc::now().checked_add_signed(Duration::days(7)).unwrap();
+    let expires = Timestamp::now().checked_add(shared::time::days(7)).unwrap();
     db::insert_session(&pool, "sess_remember", user.id, expires, true, false)
         .await
         .unwrap();
@@ -5683,12 +5706,14 @@ async fn session_remember_me(pool: PgPool) {
 async fn session_extend(pool: PgPool) {
     let user = db::insert_user(&pool, "extenduser", "hash").await.unwrap();
 
-    let original_expires = Utc::now().checked_add_signed(Duration::hours(1)).unwrap();
+    let original_expires = Timestamp::now()
+        .checked_add(shared::time::hours(1))
+        .unwrap();
     db::insert_session(&pool, "sess_extend", user.id, original_expires, true, false)
         .await
         .unwrap();
 
-    let new_expires = Utc::now().checked_add_signed(Duration::days(7)).unwrap();
+    let new_expires = Timestamp::now().checked_add(shared::time::days(7)).unwrap();
     db::extend_session(&pool, "sess_extend", new_expires)
         .await
         .unwrap();
@@ -5703,7 +5728,9 @@ async fn session_revoke_by_id(pool: PgPool) {
     let user = db::insert_user(&pool, "revokeuser", "hash").await.unwrap();
     let other = db::insert_user(&pool, "otheruser", "hash2").await.unwrap();
 
-    let expires = Utc::now().checked_add_signed(Duration::hours(24)).unwrap();
+    let expires = Timestamp::now()
+        .checked_add(shared::time::hours(24))
+        .unwrap();
     db::insert_session(&pool, "sess_revoke_1", user.id, expires, false, false)
         .await
         .unwrap();
@@ -5741,7 +5768,9 @@ async fn session_revoke_by_id(pool: PgPool) {
 async fn session_last_seen_update(pool: PgPool) {
     let user = db::insert_user(&pool, "seenuser", "hash").await.unwrap();
 
-    let expires = Utc::now().checked_add_signed(Duration::hours(24)).unwrap();
+    let expires = Timestamp::now()
+        .checked_add(shared::time::hours(24))
+        .unwrap();
     db::insert_session(&pool, "sess_seen", user.id, expires, false, false)
         .await
         .unwrap();
@@ -5772,15 +5801,17 @@ async fn session_last_seen_update(pool: PgPool) {
 async fn session_idle_timeout_tracking(pool: PgPool) {
     let user = db::insert_user(&pool, "idleuser", "hash").await.unwrap();
 
-    let expires = Utc::now().checked_add_signed(Duration::hours(24)).unwrap();
+    let expires = Timestamp::now()
+        .checked_add(shared::time::hours(24))
+        .unwrap();
     db::insert_session(&pool, "sess_idle", user.id, expires, false, false)
         .await
         .unwrap();
 
     // Simulate a session that has been idle for longer than the default
     // 480-minute timeout by backdating last_seen_at.
-    let idle_since = Utc::now()
-        .checked_sub_signed(Duration::minutes(481))
+    let idle_since = Timestamp::now()
+        .checked_sub(shared::time::minutes(481))
         .unwrap();
     sqlx::query!(
         "UPDATE sessions SET last_seen_at = $1 WHERE id = $2",
@@ -5796,10 +5827,7 @@ async fn session_idle_timeout_tracking(pool: PgPool) {
     let session = db::get_session(&pool, "sess_idle").await.unwrap();
     assert_eq!(session.user_id, user.id);
     assert!(
-        Utc::now()
-            .signed_duration_since(session.last_seen_at)
-            .num_minutes()
-            >= 480,
+        Timestamp::now().since(session.last_seen_at).as_mins() >= 480,
         "session must be idle for at least the default timeout"
     );
 
@@ -5813,10 +5841,7 @@ async fn session_idle_timeout_tracking(pool: PgPool) {
         .unwrap();
     let session = db::get_session(&pool, "sess_idle").await.unwrap();
     assert!(
-        Utc::now()
-            .signed_duration_since(session.last_seen_at)
-            .num_minutes()
-            < 1,
+        Timestamp::now().since(session.last_seen_at).as_mins() < 1,
         "last_seen_at must be recent after refresh"
     );
 }
@@ -5827,7 +5852,9 @@ async fn session_pending_totp(pool: PgPool) {
         .await
         .unwrap();
 
-    let expires = Utc::now().checked_add_signed(Duration::hours(24)).unwrap();
+    let expires = Timestamp::now()
+        .checked_add(shared::time::hours(24))
+        .unwrap();
     // Session with pending_totp = true (temp session during two-step login)
     db::insert_session(&pool, "sess_pending", user.id, expires, false, true)
         .await
@@ -5964,8 +5991,8 @@ async fn account_lockout(pool: PgPool) {
     assert_eq!(count, 3);
 
     // Set a lockout
-    let lock_time = Utc::now()
-        .checked_add_signed(Duration::minutes(30))
+    let lock_time = Timestamp::now()
+        .checked_add(shared::time::minutes(30))
         .unwrap();
     sqlx::query!(
         "UPDATE users SET locked_until = $1 WHERE username = $2",
@@ -5979,7 +6006,7 @@ async fn account_lockout(pool: PgPool) {
     // Verify user is locked
     let user = db::get_user_by_username(&pool, "lockuser").await.unwrap();
     assert!(user.locked_until.is_some());
-    assert!(user.locked_until.unwrap() > Utc::now());
+    assert!(user.locked_until.unwrap() > Timestamp::now());
 
     // Clear lockout
     db::clear_account_lockout(&pool, "lockuser").await.unwrap();
@@ -6021,7 +6048,7 @@ async fn record_failed_login_triggers_lockout(pool: PgPool) {
         .await
         .unwrap();
     assert!(user.locked_until.is_some());
-    assert!(user.locked_until.unwrap() > Utc::now());
+    assert!(user.locked_until.unwrap() > Timestamp::now());
 }
 
 /// Simulates a lockout naturally expiring (time passing) without a
@@ -6092,7 +6119,7 @@ async fn lockout_escalation_reaches_60min_tier(pool: PgPool) {
     let locked_until = user.locked_until.expect("user should be locked");
 
     // Lockout duration should be >= 55 minutes (60 min tier, with some slack for test timing)
-    let duration_min = locked_until.signed_duration_since(Utc::now()).num_minutes();
+    let duration_min = locked_until.since(Timestamp::now()).as_mins();
     assert!(
         duration_min >= 55,
         "expected ~60 min lockout, got {duration_min} min"
@@ -6122,7 +6149,7 @@ async fn lockout_escalation_reaches_24h_tier(pool: PgPool) {
         .unwrap();
     let locked_until = user.locked_until.expect("user should be locked");
 
-    let duration_min = locked_until.signed_duration_since(Utc::now()).num_minutes();
+    let duration_min = locked_until.since(Timestamp::now()).as_mins();
     assert!(
         duration_min >= 1430,
         "expected ~1440 min lockout, got {duration_min} min"
@@ -6218,7 +6245,7 @@ async fn lockout_escalation_sliding_window_keeps_count_across_lockouts(pool: PgP
     let locked_until = user
         .locked_until
         .expect("user should be locked after phase 2");
-    let duration_min = locked_until.signed_duration_since(Utc::now()).num_minutes();
+    let duration_min = locked_until.since(Timestamp::now()).as_mins();
     assert!(
         duration_min >= 2,
         "expected level 1 (5 min), got {duration_min} min"
@@ -6320,7 +6347,7 @@ async fn record_failed_login_requires_a_fresh_batch_to_reescalate_after_expiry(p
     );
     let user = db::get_user_by_username(&pool, "freshbatch").await.unwrap();
     assert!(
-        user.locked_until.is_none_or(|lu| lu <= Utc::now()),
+        user.locked_until.is_none_or(|lu| lu <= Timestamp::now()),
         "the account must not be re-locked by a single post-expiry attempt"
     );
 
@@ -6337,7 +6364,7 @@ async fn record_failed_login_requires_a_fresh_batch_to_reescalate_after_expiry(p
     );
     let user = db::get_user_by_username(&pool, "freshbatch").await.unwrap();
     assert!(
-        user.locked_until.is_some_and(|lu| lu > Utc::now()),
+        user.locked_until.is_some_and(|lu| lu > Timestamp::now()),
         "the account must be locked again after a fresh full batch"
     );
 }
@@ -6427,8 +6454,12 @@ async fn an_expired_api_token_is_refused(pool: PgPool) {
     use shared::types::ApiTokenScope;
 
     let user = db::insert_user(&pool, "expiring", "hash").await.unwrap();
-    let past = Utc::now().checked_sub_signed(Duration::hours(1)).unwrap();
-    let future = Utc::now().checked_add_signed(Duration::days(30)).unwrap();
+    let past = Timestamp::now()
+        .checked_sub(shared::time::hours(1))
+        .unwrap();
+    let future = Timestamp::now()
+        .checked_add(shared::time::days(30))
+        .unwrap();
 
     let stale = db::insert_api_token_expiring(
         &pool,
@@ -6441,8 +6472,8 @@ async fn an_expired_api_token_is_refused(pool: PgPool) {
     .await
     .unwrap();
     assert_eq!(
-        stale.expires_at.map(|t| t.timestamp_micros()),
-        Some(past.timestamp_micros())
+        stale.expires_at.map(Timestamp::unix_micros),
+        Some(past.unix_micros())
     );
     db::insert_api_token_expiring(
         &pool,
@@ -6567,7 +6598,9 @@ async fn system_events_crud(pool: PgPool) {
         .unwrap();
     assert_eq!(events.len(), 2);
 
-    let future = Utc::now().checked_add_signed(Duration::hours(1)).unwrap();
+    let future = Timestamp::now()
+        .checked_add(shared::time::hours(1))
+        .unwrap();
     let deleted = db::delete_system_events_before(&pool, future)
         .await
         .unwrap();
@@ -7478,7 +7511,7 @@ async fn test_backup_trends_filtered_by_repo(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn test_calendar_events_empty(pool: PgPool) {
-    let events = db::get_calendar_events(&pool, 2026, 1, None, Tz::UTC)
+    let events = db::get_calendar_events(&pool, 2026, 1, None, &TimeZone::UTC)
         .await
         .unwrap();
     assert_eq!(events.len(), 0);
@@ -7493,13 +7526,13 @@ async fn test_calendar_events_with_data(pool: PgPool) {
 
     insert_test_report(&pool, agent.id, repo.id).await;
 
-    let now = Utc::now();
+    let now = Timestamp::now();
     let events = db::get_calendar_events(
         &pool,
-        now.date_naive().year(),
-        now.date_naive().month(),
+        i32::from(now.to_zoned(TimeZone::UTC).year()),
+        u32::try_from(now.to_zoned(TimeZone::UTC).month()).unwrap(),
         None,
-        Tz::UTC,
+        &TimeZone::UTC,
     )
     .await
     .unwrap();
@@ -7518,13 +7551,13 @@ async fn test_calendar_events_filtered_by_repo(pool: PgPool) {
 
     insert_test_report(&pool, agent.id, repo.id).await;
 
-    let now = Utc::now();
+    let now = Timestamp::now();
     let events = db::get_calendar_events(
         &pool,
-        now.date_naive().year(),
-        now.date_naive().month(),
+        i32::from(now.to_zoned(TimeZone::UTC).year()),
+        u32::try_from(now.to_zoned(TimeZone::UTC).month()).unwrap(),
         Some(repo.id),
-        Tz::UTC,
+        &TimeZone::UTC,
     )
     .await
     .unwrap();
@@ -7532,10 +7565,10 @@ async fn test_calendar_events_filtered_by_repo(pool: PgPool) {
 
     let events_other = db::get_calendar_events(
         &pool,
-        now.date_naive().year(),
-        now.date_naive().month(),
+        i32::from(now.to_zoned(TimeZone::UTC).year()),
+        u32::try_from(now.to_zoned(TimeZone::UTC).month()).unwrap(),
         Some(repo.id.saturating_add(999)),
-        Tz::UTC,
+        &TimeZone::UTC,
     )
     .await
     .unwrap();
@@ -7567,7 +7600,7 @@ async fn test_audit_filter_by_date_range(pool: PgPool) {
     .await
     .unwrap();
 
-    let now = Utc::now();
+    let now = Timestamp::now();
     let (items, total) = db::audit::list_audit_entries(
         &pool,
         &db::audit::AuditEntryFilters {
@@ -7576,8 +7609,8 @@ async fn test_audit_filter_by_date_range(pool: PgPool) {
             filter_user_id: None,
             filter_action: None,
             filter_target_type: None,
-            filter_from: Some(now.checked_sub_signed(Duration::hours(1)).unwrap()),
-            filter_to: Some(now.checked_add_signed(Duration::hours(1)).unwrap()),
+            filter_from: Some(now.checked_sub(shared::time::hours(1)).unwrap()),
+            filter_to: Some(now.checked_add(shared::time::hours(1)).unwrap()),
         },
     )
     .await
@@ -7594,8 +7627,8 @@ async fn test_audit_filter_by_date_range(pool: PgPool) {
             filter_user_id: None,
             filter_action: None,
             filter_target_type: None,
-            filter_from: Some(now.checked_add_signed(Duration::hours(1)).unwrap()),
-            filter_to: Some(now.checked_add_signed(Duration::hours(2)).unwrap()),
+            filter_from: Some(now.checked_add(shared::time::hours(1)).unwrap()),
+            filter_to: Some(now.checked_add(shared::time::hours(2)).unwrap()),
         },
     )
     .await
@@ -7890,7 +7923,7 @@ async fn test_merge_agent_clears_auto_disable_bookkeeping_for_its_schedules(pool
         .await
         .unwrap();
 
-    let next = Utc::now().checked_add_signed(Duration::days(1)).unwrap();
+    let next = Timestamp::now().checked_add(shared::time::days(1)).unwrap();
     for _ in 0..3 {
         db::record_schedule_failure(&pool, schedule.id, placeholder.id, next, 3, true)
             .await
@@ -7915,9 +7948,10 @@ async fn test_merge_agent_clears_auto_disable_bookkeeping_for_its_schedules(pool
     assert_eq!(failures, 0);
 
     // The merge target reconnecting later must never touch this orphaned schedule.
-    let reenabled = db::reenable_system_disabled_schedules_for_agent(&pool, target.id, Utc::now())
-        .await
-        .unwrap();
+    let reenabled =
+        db::reenable_system_disabled_schedules_for_agent(&pool, target.id, Timestamp::now())
+            .await
+            .unwrap();
     assert_eq!(reenabled, Vec::<i64>::new());
 }
 
@@ -7935,14 +7969,14 @@ async fn test_mark_agent_reports_matched(pool: PgPool) {
     .unwrap();
     let repo = create_test_repo(&pool).await;
 
-    let now = Utc::now();
+    let now = Timestamp::now();
     db::insert_backup_report(
         &pool,
         &InsertReportParams {
             agent_id: agent.id,
             repo_id: repo.id,
             schedule_id: None,
-            started_at: now.checked_sub_signed(Duration::minutes(5)).unwrap(),
+            started_at: now.checked_sub(shared::time::minutes(5)).unwrap(),
             finished_at: now,
             status: shared::types::BackupStatus::Success,
             original_size: 1_000_000,
@@ -8024,7 +8058,7 @@ async fn get_archives_for_agent_across_multiple_repos(pool: PgPool) {
     .await
     .unwrap();
 
-    let now = Utc::now();
+    let now = Timestamp::now();
 
     db::insert_backup_report(
         &pool,
@@ -8032,8 +8066,8 @@ async fn get_archives_for_agent_across_multiple_repos(pool: PgPool) {
             agent_id: agent.id,
             repo_id: repo1.id,
             schedule_id: None,
-            started_at: now.checked_sub_signed(Duration::minutes(10)).unwrap(),
-            finished_at: now.checked_sub_signed(Duration::minutes(5)).unwrap(),
+            started_at: now.checked_sub(shared::time::minutes(10)).unwrap(),
+            finished_at: now.checked_sub(shared::time::minutes(5)).unwrap(),
             status: shared::types::BackupStatus::Success,
             original_size: 1_000_000,
             compressed_size: 500_000,
@@ -8058,8 +8092,8 @@ async fn get_archives_for_agent_across_multiple_repos(pool: PgPool) {
             agent_id: agent.id,
             repo_id: repo1.id,
             schedule_id: None,
-            started_at: now.checked_sub_signed(Duration::minutes(20)).unwrap(),
-            finished_at: now.checked_sub_signed(Duration::minutes(15)).unwrap(),
+            started_at: now.checked_sub(shared::time::minutes(20)).unwrap(),
+            finished_at: now.checked_sub(shared::time::minutes(15)).unwrap(),
             status: shared::types::BackupStatus::Success,
             original_size: 2_000_000,
             compressed_size: 1_000_000,
@@ -8085,8 +8119,8 @@ async fn get_archives_for_agent_across_multiple_repos(pool: PgPool) {
             agent_id: agent.id,
             repo_id: repo2.id,
             schedule_id: None,
-            started_at: now.checked_sub_signed(Duration::minutes(30)).unwrap(),
-            finished_at: now.checked_sub_signed(Duration::minutes(25)).unwrap(),
+            started_at: now.checked_sub(shared::time::minutes(30)).unwrap(),
+            finished_at: now.checked_sub(shared::time::minutes(25)).unwrap(),
             status: shared::types::BackupStatus::Success,
             original_size: 3_000_000,
             compressed_size: 1_500_000,
@@ -8112,8 +8146,8 @@ async fn get_archives_for_agent_across_multiple_repos(pool: PgPool) {
             agent_id: agent.id,
             repo_id: repo1.id,
             schedule_id: None,
-            started_at: now.checked_sub_signed(Duration::minutes(40)).unwrap(),
-            finished_at: now.checked_sub_signed(Duration::minutes(35)).unwrap(),
+            started_at: now.checked_sub(shared::time::minutes(40)).unwrap(),
+            finished_at: now.checked_sub(shared::time::minutes(35)).unwrap(),
             status: shared::types::BackupStatus::Success,
             original_size: 100_000,
             compressed_size: 50_000,
@@ -8168,7 +8202,7 @@ async fn get_archives_for_agent_includes_pattern_matched_archives(pool: PgPool) 
         .unwrap();
 
     let repo = create_test_repo(&pool).await;
-    let now = Utc::now();
+    let now = Timestamp::now();
 
     db::insert_backup_report(
         &pool,
@@ -8176,8 +8210,8 @@ async fn get_archives_for_agent_includes_pattern_matched_archives(pool: PgPool) 
             agent_id: agent.id,
             repo_id: repo.id,
             schedule_id: None,
-            started_at: now.checked_sub_signed(Duration::minutes(10)).unwrap(),
-            finished_at: now.checked_sub_signed(Duration::minutes(5)).unwrap(),
+            started_at: now.checked_sub(shared::time::minutes(10)).unwrap(),
+            finished_at: now.checked_sub(shared::time::minutes(5)).unwrap(),
             status: shared::types::BackupStatus::Success,
             original_size: 1_000_000,
             compressed_size: 500_000,
@@ -8203,8 +8237,8 @@ async fn get_archives_for_agent_includes_pattern_matched_archives(pool: PgPool) 
             agent_id: agent.id,
             repo_id: repo.id,
             schedule_id: None,
-            started_at: now.checked_sub_signed(Duration::minutes(20)).unwrap(),
-            finished_at: now.checked_sub_signed(Duration::minutes(15)).unwrap(),
+            started_at: now.checked_sub(shared::time::minutes(20)).unwrap(),
+            finished_at: now.checked_sub(shared::time::minutes(15)).unwrap(),
             status: shared::types::BackupStatus::Success,
             original_size: 2_000_000,
             compressed_size: 1_000_000,
@@ -8240,8 +8274,8 @@ async fn get_archives_for_agent_includes_pattern_matched_archives(pool: PgPool) 
             agent_id: imported.id,
             repo_id: repo.id,
             schedule_id: None,
-            started_at: now.checked_sub_signed(Duration::minutes(30)).unwrap(),
-            finished_at: now.checked_sub_signed(Duration::minutes(25)).unwrap(),
+            started_at: now.checked_sub(shared::time::minutes(30)).unwrap(),
+            finished_at: now.checked_sub(shared::time::minutes(25)).unwrap(),
             status: shared::types::BackupStatus::Success,
             original_size: 3_000_000,
             compressed_size: 1_500_000,
@@ -8330,7 +8364,7 @@ async fn get_archives_for_agent_with_patterns_multiple_repos(pool: PgPool) {
     .await
     .unwrap();
 
-    let now = Utc::now();
+    let now = Timestamp::now();
 
     db::insert_backup_report(
         &pool,
@@ -8338,8 +8372,8 @@ async fn get_archives_for_agent_with_patterns_multiple_repos(pool: PgPool) {
             agent_id: agent.id,
             repo_id: repo1.id,
             schedule_id: None,
-            started_at: now.checked_sub_signed(Duration::minutes(10)).unwrap(),
-            finished_at: now.checked_sub_signed(Duration::minutes(5)).unwrap(),
+            started_at: now.checked_sub(shared::time::minutes(10)).unwrap(),
+            finished_at: now.checked_sub(shared::time::minutes(5)).unwrap(),
             status: shared::types::BackupStatus::Success,
             original_size: 1_000_000,
             compressed_size: 500_000,
@@ -8364,8 +8398,8 @@ async fn get_archives_for_agent_with_patterns_multiple_repos(pool: PgPool) {
             agent_id: agent.id,
             repo_id: repo2.id,
             schedule_id: None,
-            started_at: now.checked_sub_signed(Duration::minutes(20)).unwrap(),
-            finished_at: now.checked_sub_signed(Duration::minutes(15)).unwrap(),
+            started_at: now.checked_sub(shared::time::minutes(20)).unwrap(),
+            finished_at: now.checked_sub(shared::time::minutes(15)).unwrap(),
             status: shared::types::BackupStatus::Success,
             original_size: 5_000_000,
             compressed_size: 2_500_000,
@@ -8401,8 +8435,8 @@ async fn get_archives_for_agent_with_patterns_multiple_repos(pool: PgPool) {
             agent_id: imported.id,
             repo_id: repo1.id,
             schedule_id: None,
-            started_at: now.checked_sub_signed(Duration::minutes(30)).unwrap(),
-            finished_at: now.checked_sub_signed(Duration::minutes(25)).unwrap(),
+            started_at: now.checked_sub(shared::time::minutes(30)).unwrap(),
+            finished_at: now.checked_sub(shared::time::minutes(25)).unwrap(),
             status: shared::types::BackupStatus::Success,
             original_size: 1_500_000,
             compressed_size: 750_000,
@@ -8438,8 +8472,8 @@ async fn get_archives_for_agent_with_patterns_multiple_repos(pool: PgPool) {
             agent_id: imported2.id,
             repo_id: repo2.id,
             schedule_id: None,
-            started_at: now.checked_sub_signed(Duration::minutes(40)).unwrap(),
-            finished_at: now.checked_sub_signed(Duration::minutes(35)).unwrap(),
+            started_at: now.checked_sub(shared::time::minutes(40)).unwrap(),
+            finished_at: now.checked_sub(shared::time::minutes(35)).unwrap(),
             status: shared::types::BackupStatus::Success,
             original_size: 4_000_000,
             compressed_size: 2_000_000,
@@ -8475,8 +8509,8 @@ async fn get_archives_for_agent_with_patterns_multiple_repos(pool: PgPool) {
             agent_id: unrelated.id,
             repo_id: repo1.id,
             schedule_id: None,
-            started_at: now.checked_sub_signed(Duration::minutes(50)).unwrap(),
-            finished_at: now.checked_sub_signed(Duration::minutes(45)).unwrap(),
+            started_at: now.checked_sub(shared::time::minutes(50)).unwrap(),
+            finished_at: now.checked_sub(shared::time::minutes(45)).unwrap(),
             status: shared::types::BackupStatus::Success,
             original_size: 1_000_000,
             compressed_size: 500_000,
@@ -8683,15 +8717,15 @@ async fn bulk_insert_backup_reports_basic(pool: PgPool) {
         .await
         .unwrap();
     let repo = create_test_repo(&pool).await;
-    let now = Utc::now();
+    let now = Timestamp::now();
 
     let params = vec![
         InsertReportParams {
             agent_id: agent.id,
             repo_id: repo.id,
             schedule_id: None,
-            started_at: now.checked_sub_signed(Duration::minutes(10)).unwrap(),
-            finished_at: now.checked_sub_signed(Duration::minutes(5)).unwrap(),
+            started_at: now.checked_sub(shared::time::minutes(10)).unwrap(),
+            finished_at: now.checked_sub(shared::time::minutes(5)).unwrap(),
             status: shared::types::BackupStatus::Success,
             original_size: 2_000_000,
             compressed_size: 1_000_000,
@@ -8711,8 +8745,8 @@ async fn bulk_insert_backup_reports_basic(pool: PgPool) {
             agent_id: agent.id,
             repo_id: repo.id,
             schedule_id: None,
-            started_at: now.checked_sub_signed(Duration::minutes(20)).unwrap(),
-            finished_at: now.checked_sub_signed(Duration::minutes(15)).unwrap(),
+            started_at: now.checked_sub(shared::time::minutes(20)).unwrap(),
+            finished_at: now.checked_sub(shared::time::minutes(15)).unwrap(),
             status: shared::types::BackupStatus::Success,
             original_size: 1_000_000,
             compressed_size: 500_000,
@@ -8747,8 +8781,8 @@ async fn bulk_insert_backup_reports_conflict_skipped(pool: PgPool) {
         .await
         .unwrap();
     let repo = create_test_repo(&pool).await;
-    let now = Utc::now();
-    let started = now.checked_sub_signed(Duration::minutes(10)).unwrap();
+    let now = Timestamp::now();
+    let started = now.checked_sub(shared::time::minutes(10)).unwrap();
 
     let param = InsertReportParams {
         agent_id: agent.id,
@@ -8795,10 +8829,10 @@ async fn bulk_insert_keeps_distinct_archives_sharing_start_second(pool: PgPool) 
         .await
         .unwrap();
     let repo = create_test_repo(&pool).await;
-    let started = Utc::now()
-        .checked_sub_signed(Duration::minutes(10))
+    let started = Timestamp::now()
+        .checked_sub(shared::time::minutes(10))
         .unwrap();
-    let finished = started.checked_add_signed(Duration::minutes(1)).unwrap();
+    let finished = started.checked_add(shared::time::minutes(1)).unwrap();
 
     let base = InsertReportParams {
         agent_id: agent.id,
@@ -8864,7 +8898,7 @@ async fn repo_last_synced_at_updates(pool: PgPool) {
 
     db::update_repo_last_synced(&pool, repo.id).await.unwrap();
 
-    let after: Option<(chrono::DateTime<chrono::Utc>,)> =
+    let after: Option<(Timestamp,)> =
         sqlx::query_as("SELECT last_synced_at FROM repo_stats WHERE repo_id = $1")
             .bind(repo.id)
             .fetch_optional(&pool)
@@ -9407,14 +9441,14 @@ async fn a_schedule_is_not_due_until_its_next_run_is_set(pool: PgPool) {
         "insert_schedule must not schedule a run by itself"
     );
 
-    let now = Utc::now();
+    let now = Timestamp::now();
     assert!(
         db::list_due_schedules(&pool, now).await.unwrap().is_empty(),
         "a schedule with agent targets and a seeded repository target is still not dispatchable \
          before next_run_at is set"
     );
 
-    let past = now.checked_sub_signed(Duration::hours(1)).unwrap();
+    let past = now.checked_sub(shared::time::hours(1)).unwrap();
     db::set_next_run_at(&pool, schedule.id, past).await.unwrap();
     assert_eq!(db::list_due_schedules(&pool, now).await.unwrap().len(), 1);
 }
@@ -9451,8 +9485,8 @@ async fn due_schedules_yield_one_row_per_target_repository(pool: PgPool) {
         .await
         .unwrap();
 
-    let now = Utc::now();
-    let past = now.checked_sub_signed(Duration::hours(1)).unwrap();
+    let now = Timestamp::now();
+    let past = now.checked_sub(shared::time::hours(1)).unwrap();
     db::set_next_run_at(&pool, schedule.id, past).await.unwrap();
 
     let due = db::list_due_schedules(&pool, now).await.unwrap();
@@ -9489,8 +9523,8 @@ async fn due_schedules_skip_a_disabled_target_repository(pool: PgPool) {
     .await
     .unwrap();
 
-    let now = Utc::now();
-    let past = now.checked_sub_signed(Duration::hours(1)).unwrap();
+    let now = Timestamp::now();
+    let past = now.checked_sub(shared::time::hours(1)).unwrap();
     db::set_next_run_at(&pool, schedule.id, past).await.unwrap();
 
     let due = db::list_due_schedules(&pool, now).await.unwrap();
@@ -9588,7 +9622,7 @@ async fn get_schedule_targets_for_run_returns_ordered_and_excludes_hidden(pool: 
 #[sqlx::test(migrations = "./migrations")]
 async fn schedule_timezone_default(pool: PgPool) {
     let tz = db::get_schedule_timezone(&pool).await.unwrap();
-    assert_ne!(tz.name(), "");
+    assert!(tz.iana_name().is_some_and(|name| !name.is_empty()));
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -9598,7 +9632,7 @@ async fn schedule_timezone_set(pool: PgPool) {
         .unwrap();
 
     let tz = db::get_schedule_timezone(&pool).await.unwrap();
-    assert_eq!(tz, chrono_tz::Tz::Europe__Berlin);
+    assert_eq!(tz, TimeZone::get("Europe/Berlin").unwrap());
 }
 
 #[sqlx::test(migrations = "./migrations")]
@@ -9689,7 +9723,7 @@ async fn schedule_report_list_breaks_ties_on_started_at(pool: PgPool) {
     // backup_report_list_for_agent_breaks_ties_on_started_at, against the
     // schedule-scoped query instead of the agent-scoped one.
     let (agent, repo, schedule) = create_test_schedule(&pool).await;
-    let now = Utc::now();
+    let now = Timestamp::now();
     // Distinct archive_name on each - see the sibling agent-scoped test above
     // for why two NULL-archive reports with the same started_at would
     // collapse into one row instead of the two tied rows this test needs.
@@ -10082,14 +10116,14 @@ async fn activity_feed_days_limit_counts_runs_not_reports(pool: PgPool) {
         .await
         .unwrap();
 
-    let now = Utc::now();
+    let now = Timestamp::now();
     // (run id, hours before now) - oldest first.
     for (run_id, hours_ago) in [("run-cap-a", 3), ("run-cap-b", 2), ("run-cap-c", 1)] {
-        let run_start = now.checked_sub_signed(Duration::hours(hours_ago)).unwrap();
+        let run_start = now.checked_sub(shared::time::hours(hours_ago)).unwrap();
         // Targets run one after another, ten minutes apart.
         for (agent_id, offset_minutes) in [(first_agent.id, 0), (second_agent.id, 10)] {
             let started_at = run_start
-                .checked_add_signed(Duration::minutes(offset_minutes))
+                .checked_add(shared::time::minutes(offset_minutes))
                 .unwrap();
             // The scheduler queues a pending row per target under the run's
             // id; the agent's report then completes that row.
@@ -10110,7 +10144,7 @@ async fn activity_feed_days_limit_counts_runs_not_reports(pool: PgPool) {
                     repo_id: repo.id,
                     schedule_id: Some(schedule.id),
                     started_at,
-                    finished_at: started_at.checked_add_signed(Duration::minutes(5)).unwrap(),
+                    finished_at: started_at.checked_add(shared::time::minutes(5)).unwrap(),
                     status: shared::types::BackupStatus::Success,
                     original_size: 1_000_000,
                     compressed_size: 500_000,
@@ -10156,18 +10190,18 @@ async fn activity_feed_days_returns_a_run_straddling_the_window_whole(pool: PgPo
         .await
         .unwrap();
 
-    let now = Utc::now();
+    let now = Timestamp::now();
     let run_id = "run-window-straddle";
     // (agent, days ago): the first target ran just outside a 7-day window,
     // the second just inside it.
     for (agent_id, started_at) in [
         (
             first_agent.id,
-            now.checked_sub_signed(Duration::hours(7 * 24 + 1)).unwrap(),
+            now.checked_sub(shared::time::hours(7 * 24 + 1)).unwrap(),
         ),
         (
             second_agent.id,
-            now.checked_sub_signed(Duration::hours(7 * 24 - 1)).unwrap(),
+            now.checked_sub(shared::time::hours(7 * 24 - 1)).unwrap(),
         ),
     ] {
         db::insert_backup_pending(
@@ -10187,7 +10221,7 @@ async fn activity_feed_days_returns_a_run_straddling_the_window_whole(pool: PgPo
                 repo_id: repo.id,
                 schedule_id: Some(schedule.id),
                 started_at,
-                finished_at: started_at.checked_add_signed(Duration::minutes(5)).unwrap(),
+                finished_at: started_at.checked_add(shared::time::minutes(5)).unwrap(),
                 status: shared::types::BackupStatus::Success,
                 original_size: 1_000_000,
                 compressed_size: 500_000,
@@ -10236,16 +10270,16 @@ async fn activity_feed_days_ignores_hidden_reports_when_widening_the_window(pool
         .await
         .unwrap();
 
-    let now = Utc::now();
+    let now = Timestamp::now();
     let run_id = "run-window-hidden-sibling";
     for (agent_id, started_at) in [
         (
             visible_agent.id,
-            now.checked_sub_signed(Duration::hours(7 * 24 + 1)).unwrap(),
+            now.checked_sub(shared::time::hours(7 * 24 + 1)).unwrap(),
         ),
         (
             hidden_agent.id,
-            now.checked_sub_signed(Duration::hours(7 * 24 - 1)).unwrap(),
+            now.checked_sub(shared::time::hours(7 * 24 - 1)).unwrap(),
         ),
     ] {
         db::insert_backup_pending(
@@ -10352,7 +10386,7 @@ async fn storage_trends_dedup_never_exceeds_original(pool: PgPool) {
         .await
         .unwrap();
     let repo = create_test_repo(&pool).await;
-    let now = Utc::now();
+    let now = Timestamp::now();
 
     for day in 0..5i64 {
         db::insert_backup_report(
@@ -10362,12 +10396,12 @@ async fn storage_trends_dedup_never_exceeds_original(pool: PgPool) {
                 repo_id: repo.id,
                 schedule_id: None,
                 started_at: now
-                    .checked_sub_signed(Duration::days(6i64.saturating_sub(day)))
+                    .checked_sub(shared::time::days(6i64.saturating_sub(day)))
                     .unwrap()
-                    .checked_sub_signed(Duration::minutes(5))
+                    .checked_sub(shared::time::minutes(5))
                     .unwrap(),
                 finished_at: now
-                    .checked_sub_signed(Duration::days(6i64.saturating_sub(day)))
+                    .checked_sub(shared::time::days(6i64.saturating_sub(day)))
                     .unwrap(),
                 status: shared::types::BackupStatus::Success,
                 original_size: 1_000,
@@ -10447,7 +10481,7 @@ async fn archive_names_and_delete_test(pool: PgPool) {
         .await
         .unwrap();
     let repo = create_test_repo(&pool).await;
-    let now = Utc::now();
+    let now = Timestamp::now();
 
     db::insert_backup_report(
         &pool,
@@ -10455,8 +10489,8 @@ async fn archive_names_and_delete_test(pool: PgPool) {
             agent_id: agent.id,
             repo_id: repo.id,
             schedule_id: None,
-            started_at: now.checked_sub_signed(Duration::minutes(10)).unwrap(),
-            finished_at: now.checked_sub_signed(Duration::minutes(5)).unwrap(),
+            started_at: now.checked_sub(shared::time::minutes(10)).unwrap(),
+            finished_at: now.checked_sub(shared::time::minutes(5)).unwrap(),
             status: shared::types::BackupStatus::Success,
             original_size: 1_000_000,
             compressed_size: 500_000,
@@ -10482,8 +10516,8 @@ async fn archive_names_and_delete_test(pool: PgPool) {
             agent_id: agent.id,
             repo_id: repo.id,
             schedule_id: None,
-            started_at: now.checked_sub_signed(Duration::minutes(20)).unwrap(),
-            finished_at: now.checked_sub_signed(Duration::minutes(15)).unwrap(),
+            started_at: now.checked_sub(shared::time::minutes(20)).unwrap(),
+            finished_at: now.checked_sub(shared::time::minutes(15)).unwrap(),
             status: shared::types::BackupStatus::Success,
             original_size: 2_000_000,
             compressed_size: 1_000_000,
@@ -10534,13 +10568,13 @@ async fn list_archive_names_needing_stats_filters_enriched(pool: PgPool) {
         .await
         .unwrap();
     let repo = create_test_repo(&pool).await;
-    let now = Utc::now();
+    let now = Timestamp::now();
 
     let base = InsertReportParams {
         agent_id: agent.id,
         repo_id: repo.id,
         schedule_id: None,
-        started_at: now.checked_sub_signed(Duration::minutes(10)).unwrap(),
+        started_at: now.checked_sub(shared::time::minutes(10)).unwrap(),
         finished_at: now,
         status: shared::types::BackupStatus::Success,
         original_size: 0,
@@ -10561,7 +10595,7 @@ async fn list_archive_names_needing_stats_filters_enriched(pool: PgPool) {
     db::insert_backup_report(
         &pool,
         &InsertReportParams {
-            started_at: now.checked_sub_signed(Duration::minutes(20)).unwrap(),
+            started_at: now.checked_sub(shared::time::minutes(20)).unwrap(),
             original_size: 1_000,
             compressed_size: 500,
             deduplicated_size: 250,
@@ -10575,7 +10609,7 @@ async fn list_archive_names_needing_stats_filters_enriched(pool: PgPool) {
     db::insert_backup_report(
         &pool,
         &InsertReportParams {
-            started_at: now.checked_sub_signed(Duration::minutes(30)).unwrap(),
+            started_at: now.checked_sub(shared::time::minutes(30)).unwrap(),
             original_size: 1_000,
             compressed_size: 500,
             deduplicated_size: 250,
@@ -10730,7 +10764,7 @@ async fn delete_backup_reports_before_test(pool: PgPool) {
         .await
         .unwrap();
     let repo = create_test_repo(&pool).await;
-    let now = Utc::now();
+    let now = Timestamp::now();
 
     db::insert_backup_report(
         &pool,
@@ -10738,8 +10772,8 @@ async fn delete_backup_reports_before_test(pool: PgPool) {
             agent_id: agent.id,
             repo_id: repo.id,
             schedule_id: None,
-            started_at: now.checked_sub_signed(Duration::hours(2)).unwrap(),
-            finished_at: now.checked_sub_signed(Duration::hours(2)).unwrap(),
+            started_at: now.checked_sub(shared::time::hours(2)).unwrap(),
+            finished_at: now.checked_sub(shared::time::hours(2)).unwrap(),
             status: shared::types::BackupStatus::Success,
             original_size: 1_000_000,
             compressed_size: 500_000,
@@ -10759,7 +10793,7 @@ async fn delete_backup_reports_before_test(pool: PgPool) {
     .await
     .unwrap();
 
-    let cutoff = now.checked_sub_signed(Duration::hours(1)).unwrap();
+    let cutoff = now.checked_sub(shared::time::hours(1)).unwrap();
     let deleted = db::delete_backup_reports_before(&pool, cutoff)
         .await
         .unwrap();
@@ -10780,7 +10814,9 @@ async fn delete_backup_reports_before_keeps_archive_rows(pool: PgPool) {
         .await
         .unwrap();
     let repo = create_test_repo(&pool).await;
-    let old = Utc::now().checked_sub_signed(Duration::days(365)).unwrap();
+    let old = Timestamp::now()
+        .checked_sub(shared::time::days(365))
+        .unwrap();
 
     let base = InsertReportParams {
         agent_id: agent.id,
@@ -10809,8 +10845,8 @@ async fn delete_backup_reports_before_keeps_archive_rows(pool: PgPool) {
     db::insert_backup_report(
         &pool,
         &InsertReportParams {
-            started_at: old.checked_add_signed(Duration::seconds(1)).unwrap(),
-            finished_at: old.checked_add_signed(Duration::seconds(1)).unwrap(),
+            started_at: old.checked_add(shared::time::seconds(1)).unwrap(),
+            finished_at: old.checked_add(shared::time::seconds(1)).unwrap(),
             status: shared::types::BackupStatus::Failed,
             archive_name: None,
             ..base.clone()
@@ -10819,7 +10855,7 @@ async fn delete_backup_reports_before_keeps_archive_rows(pool: PgPool) {
     .await
     .unwrap();
 
-    let cutoff = Utc::now().checked_sub_signed(Duration::days(7)).unwrap();
+    let cutoff = Timestamp::now().checked_sub(shared::time::days(7)).unwrap();
     let deleted = db::delete_backup_reports_before(&pool, cutoff)
         .await
         .unwrap();
@@ -10838,8 +10874,8 @@ async fn delete_backup_reports_with_archive_before_test(pool: PgPool) {
         .await
         .unwrap();
     let repo = create_test_repo(&pool).await;
-    let now = Utc::now();
-    let old = now.checked_sub_signed(Duration::days(100)).unwrap();
+    let now = Timestamp::now();
+    let old = now.checked_sub(shared::time::days(100)).unwrap();
 
     // Old archived report -- should be deleted
     db::insert_backup_report(
@@ -10897,7 +10933,7 @@ async fn delete_backup_reports_with_archive_before_test(pool: PgPool) {
     .await
     .unwrap();
 
-    let cutoff = now.checked_sub_signed(Duration::days(30)).unwrap();
+    let cutoff = now.checked_sub(shared::time::days(30)).unwrap();
     let deleted = db::delete_backup_reports_with_archive_before(&pool, cutoff)
         .await
         .unwrap();
@@ -10917,8 +10953,8 @@ async fn delete_backup_reports_with_archive_before_keeps_null_archive(pool: PgPo
         .await
         .unwrap();
     let repo = create_test_repo(&pool).await;
-    let now = Utc::now();
-    let old = now.checked_sub_signed(Duration::days(100)).unwrap();
+    let now = Timestamp::now();
+    let old = now.checked_sub(shared::time::days(100)).unwrap();
 
     // Old report with NULL archive_name - not deleted by this function
     db::insert_backup_report(
@@ -10976,7 +11012,7 @@ async fn delete_backup_reports_with_archive_before_keeps_null_archive(pool: PgPo
     .await
     .unwrap();
 
-    let cutoff = now.checked_sub_signed(Duration::days(30)).unwrap();
+    let cutoff = now.checked_sub(shared::time::days(30)).unwrap();
     let deleted = db::delete_backup_reports_with_archive_before(&pool, cutoff)
         .await
         .unwrap();
@@ -10997,7 +11033,7 @@ async fn delete_backup_reports_with_archive_before_boundary_exact(pool: PgPool) 
         .await
         .unwrap();
     let repo = create_test_repo(&pool).await;
-    let now = Utc::now();
+    let now = Timestamp::now();
 
     db::insert_backup_report(
         &pool,
@@ -11005,8 +11041,8 @@ async fn delete_backup_reports_with_archive_before_boundary_exact(pool: PgPool) 
             agent_id: agent.id,
             repo_id: repo.id,
             schedule_id: None,
-            started_at: now.checked_sub_signed(Duration::days(30)).unwrap(),
-            finished_at: now.checked_sub_signed(Duration::days(30)).unwrap(),
+            started_at: now.checked_sub(shared::time::days(30)).unwrap(),
+            finished_at: now.checked_sub(shared::time::days(30)).unwrap(),
             status: shared::types::BackupStatus::Success,
             original_size: 100,
             compressed_size: 50,
@@ -11026,7 +11062,7 @@ async fn delete_backup_reports_with_archive_before_boundary_exact(pool: PgPool) 
     .await
     .unwrap();
 
-    let cutoff = now.checked_sub_signed(Duration::days(30)).unwrap();
+    let cutoff = now.checked_sub(shared::time::days(30)).unwrap();
     let deleted = db::delete_backup_reports_with_archive_before(&pool, cutoff)
         .await
         .unwrap();
@@ -11044,7 +11080,7 @@ async fn delete_backup_reports_with_archive_before_one_sec_before(pool: PgPool) 
         .await
         .unwrap();
     let repo = create_test_repo(&pool).await;
-    let now = Utc::now();
+    let now = Timestamp::now();
 
     db::insert_backup_report(
         &pool,
@@ -11053,12 +11089,12 @@ async fn delete_backup_reports_with_archive_before_one_sec_before(pool: PgPool) 
             repo_id: repo.id,
             schedule_id: None,
             started_at: now
-                .checked_sub_signed(Duration::days(30))
-                .and_then(|dt| dt.checked_sub_signed(Duration::seconds(1)))
+                .checked_sub(shared::time::days(30))
+                .and_then(|dt| dt.checked_sub(shared::time::seconds(1)))
                 .unwrap(),
             finished_at: now
-                .checked_sub_signed(Duration::days(30))
-                .and_then(|dt| dt.checked_sub_signed(Duration::seconds(1)))
+                .checked_sub(shared::time::days(30))
+                .and_then(|dt| dt.checked_sub(shared::time::seconds(1)))
                 .unwrap(),
             status: shared::types::BackupStatus::Success,
             original_size: 100,
@@ -11079,7 +11115,7 @@ async fn delete_backup_reports_with_archive_before_one_sec_before(pool: PgPool) 
     .await
     .unwrap();
 
-    let cutoff = now.checked_sub_signed(Duration::days(30)).unwrap();
+    let cutoff = now.checked_sub(shared::time::days(30)).unwrap();
     let deleted = db::delete_backup_reports_with_archive_before(&pool, cutoff)
         .await
         .unwrap();
@@ -11100,7 +11136,7 @@ async fn delete_backup_reports_before_boundary_exact(pool: PgPool) {
         .await
         .unwrap();
     let repo = create_test_repo(&pool).await;
-    let now = Utc::now();
+    let now = Timestamp::now();
 
     db::insert_backup_report(
         &pool,
@@ -11108,8 +11144,8 @@ async fn delete_backup_reports_before_boundary_exact(pool: PgPool) {
             agent_id: agent.id,
             repo_id: repo.id,
             schedule_id: None,
-            started_at: now.checked_sub_signed(Duration::days(7)).unwrap(),
-            finished_at: now.checked_sub_signed(Duration::days(7)).unwrap(),
+            started_at: now.checked_sub(shared::time::days(7)).unwrap(),
+            finished_at: now.checked_sub(shared::time::days(7)).unwrap(),
             status: shared::types::BackupStatus::Failed,
             original_size: 0,
             compressed_size: 0,
@@ -11129,7 +11165,7 @@ async fn delete_backup_reports_before_boundary_exact(pool: PgPool) {
     .await
     .unwrap();
 
-    let cutoff = now.checked_sub_signed(Duration::days(7)).unwrap();
+    let cutoff = now.checked_sub(shared::time::days(7)).unwrap();
     let deleted = db::delete_backup_reports_before(&pool, cutoff)
         .await
         .unwrap();
@@ -11150,7 +11186,7 @@ async fn delete_backup_reports_before_one_sec_before(pool: PgPool) {
         .await
         .unwrap();
     let repo = create_test_repo(&pool).await;
-    let now = Utc::now();
+    let now = Timestamp::now();
 
     db::insert_backup_report(
         &pool,
@@ -11159,12 +11195,12 @@ async fn delete_backup_reports_before_one_sec_before(pool: PgPool) {
             repo_id: repo.id,
             schedule_id: None,
             started_at: now
-                .checked_sub_signed(Duration::days(7))
-                .and_then(|dt| dt.checked_sub_signed(Duration::seconds(1)))
+                .checked_sub(shared::time::days(7))
+                .and_then(|dt| dt.checked_sub(shared::time::seconds(1)))
                 .unwrap(),
             finished_at: now
-                .checked_sub_signed(Duration::days(7))
-                .and_then(|dt| dt.checked_sub_signed(Duration::seconds(1)))
+                .checked_sub(shared::time::days(7))
+                .and_then(|dt| dt.checked_sub(shared::time::seconds(1)))
                 .unwrap(),
             status: shared::types::BackupStatus::Failed,
             original_size: 0,
@@ -11185,7 +11221,7 @@ async fn delete_backup_reports_before_one_sec_before(pool: PgPool) {
     .await
     .unwrap();
 
-    let cutoff = now.checked_sub_signed(Duration::days(7)).unwrap();
+    let cutoff = now.checked_sub(shared::time::days(7)).unwrap();
     let deleted = db::delete_backup_reports_before(&pool, cutoff)
         .await
         .unwrap();
@@ -11209,7 +11245,7 @@ async fn delete_failed_backup_reports_for_agent_test(pool: PgPool) {
         .await
         .unwrap();
     let repo = create_test_repo(&pool).await;
-    let now = Utc::now();
+    let now = Timestamp::now();
 
     let base = InsertReportParams {
         agent_id: agent.id,
@@ -11238,8 +11274,8 @@ async fn delete_failed_backup_reports_for_agent_test(pool: PgPool) {
     db::insert_backup_report(
         &pool,
         &InsertReportParams {
-            started_at: now.checked_add_signed(Duration::seconds(1)).unwrap(),
-            finished_at: now.checked_add_signed(Duration::seconds(1)).unwrap(),
+            started_at: now.checked_add(shared::time::seconds(1)).unwrap(),
+            finished_at: now.checked_add(shared::time::seconds(1)).unwrap(),
             ..base.clone()
         },
     )
@@ -11366,7 +11402,7 @@ async fn delete_failed_backup_reports_for_schedule_test(pool: PgPool) {
     )
     .await
     .unwrap();
-    let now = Utc::now();
+    let now = Timestamp::now();
 
     let base = InsertReportParams {
         agent_id: agent.id,
@@ -11395,8 +11431,8 @@ async fn delete_failed_backup_reports_for_schedule_test(pool: PgPool) {
     db::insert_backup_report(
         &pool,
         &InsertReportParams {
-            started_at: now.checked_add_signed(Duration::seconds(1)).unwrap(),
-            finished_at: now.checked_add_signed(Duration::seconds(1)).unwrap(),
+            started_at: now.checked_add(shared::time::seconds(1)).unwrap(),
+            finished_at: now.checked_add(shared::time::seconds(1)).unwrap(),
             ..base.clone()
         },
     )
@@ -11425,8 +11461,8 @@ async fn delete_failed_backup_reports_for_schedule_test(pool: PgPool) {
         &pool,
         &InsertReportParams {
             schedule_id: Some(other_schedule.id),
-            started_at: now.checked_add_signed(Duration::seconds(2)).unwrap(),
-            finished_at: now.checked_add_signed(Duration::seconds(2)).unwrap(),
+            started_at: now.checked_add(shared::time::seconds(2)).unwrap(),
+            finished_at: now.checked_add(shared::time::seconds(2)).unwrap(),
             ..base.clone()
         },
     )
@@ -11488,7 +11524,7 @@ async fn delete_failed_backup_reports_for_schedule_test(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn delete_system_events_before_keeps_recent(pool: PgPool) {
-    let before_insert = Utc::now();
+    let before_insert = Timestamp::now();
     db::insert_system_event(
         &pool,
         shared::types::SystemEventType::RepoSync,
@@ -11499,9 +11535,7 @@ async fn delete_system_events_before_keeps_recent(pool: PgPool) {
     .unwrap();
 
     // Use a cutoff just before the insert -- guaranteed to be before created_at
-    let cutoff = before_insert
-        .checked_sub_signed(Duration::seconds(1))
-        .unwrap();
+    let cutoff = before_insert.checked_sub(shared::time::seconds(1)).unwrap();
     let deleted = db::delete_system_events_before(&pool, cutoff)
         .await
         .unwrap();
@@ -11517,7 +11551,7 @@ async fn delete_system_events_before_keeps_recent(pool: PgPool) {
 }
 
 #[cfg(test)]
-async fn insert_test_notification_delivery(pool: &PgPool, attempted_at: DateTime<Utc>) {
+async fn insert_test_notification_delivery(pool: &PgPool, attempted_at: Timestamp) {
     let channel_id: i64 = sqlx::query_scalar!(
         "INSERT INTO notification_channels (name, channel_type) VALUES ('test-channel', \
          'webhook') RETURNING id",
@@ -11539,10 +11573,14 @@ async fn insert_test_notification_delivery(pool: &PgPool, attempted_at: DateTime
 
 #[sqlx::test(migrations = "./migrations")]
 async fn delete_notification_deliveries_before_deletes_old(pool: PgPool) {
-    let old = Utc::now().checked_sub_signed(Duration::days(60)).unwrap();
+    let old = Timestamp::now()
+        .checked_sub(shared::time::days(60))
+        .unwrap();
     insert_test_notification_delivery(&pool, old).await;
 
-    let cutoff = Utc::now().checked_sub_signed(Duration::days(30)).unwrap();
+    let cutoff = Timestamp::now()
+        .checked_sub(shared::time::days(30))
+        .unwrap();
     let deleted = db::delete_notification_deliveries_before(&pool, cutoff)
         .await
         .unwrap();
@@ -11551,12 +11589,10 @@ async fn delete_notification_deliveries_before_deletes_old(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn delete_notification_deliveries_before_keeps_recent(pool: PgPool) {
-    let before_insert = Utc::now();
+    let before_insert = Timestamp::now();
     insert_test_notification_delivery(&pool, before_insert).await;
 
-    let cutoff = before_insert
-        .checked_sub_signed(Duration::seconds(1))
-        .unwrap();
+    let cutoff = before_insert.checked_sub(shared::time::seconds(1)).unwrap();
     let deleted = db::delete_notification_deliveries_before(&pool, cutoff)
         .await
         .unwrap();
@@ -11577,7 +11613,9 @@ async fn delete_system_events_before_deletes_old(pool: PgPool) {
     .await
     .unwrap();
 
-    let cutoff = Utc::now().checked_add_signed(Duration::hours(1)).unwrap();
+    let cutoff = Timestamp::now()
+        .checked_add(shared::time::hours(1))
+        .unwrap();
     let deleted = db::delete_system_events_before(&pool, cutoff)
         .await
         .unwrap();
@@ -11763,13 +11801,17 @@ async fn delete_login_attempts_before_deletes_old_keeps_recent(pool: PgPool) {
         .await
         .unwrap();
 
-    let past_cutoff = Utc::now().checked_sub_signed(Duration::hours(1)).unwrap();
+    let past_cutoff = Timestamp::now()
+        .checked_sub(shared::time::hours(1))
+        .unwrap();
     let deleted = db::delete_login_attempts_before(&pool, past_cutoff)
         .await
         .unwrap();
     assert_eq!(deleted, 0, "attempt is newer than the cutoff");
 
-    let future_cutoff = Utc::now().checked_add_signed(Duration::hours(1)).unwrap();
+    let future_cutoff = Timestamp::now()
+        .checked_add(shared::time::hours(1))
+        .unwrap();
     let deleted = db::delete_login_attempts_before(&pool, future_cutoff)
         .await
         .unwrap();
@@ -11914,7 +11956,7 @@ async fn cancel_backup_report_updates_started_row(pool: PgPool) {
         .unwrap();
     let repo = create_test_repo(&pool).await;
 
-    let started_at = Utc::now();
+    let started_at = Timestamp::now();
     db::insert_backup_started(&pool, agent.id, repo.id, None, started_at, None, None)
         .await
         .unwrap();
@@ -11939,7 +11981,7 @@ async fn cancel_backup_report_ignores_already_completed(pool: PgPool) {
         .await
         .unwrap();
     let repo = create_test_repo(&pool).await;
-    let now = Utc::now();
+    let now = Timestamp::now();
 
     db::insert_backup_report(
         &pool,
@@ -11947,7 +11989,7 @@ async fn cancel_backup_report_ignores_already_completed(pool: PgPool) {
             agent_id: agent.id,
             repo_id: repo.id,
             schedule_id: None,
-            started_at: now.checked_sub_signed(Duration::minutes(5)).unwrap(),
+            started_at: now.checked_sub(shared::time::minutes(5)).unwrap(),
             finished_at: now,
             status: shared::types::BackupStatus::Success,
             original_size: 0,
@@ -12023,7 +12065,7 @@ async fn run_id_update_scoped_to_agent(pool: PgPool) {
         .await
         .unwrap();
     let repo = create_test_repo(&pool).await;
-    let now = Utc::now();
+    let now = Timestamp::now();
     let run_id = "shared-run-id";
 
     db::insert_backup_pending(&pool, agent_a.id, repo.id, None, run_id, now)
@@ -12056,7 +12098,7 @@ async fn run_id_update_scoped_to_agent(pool: PgPool) {
             repo_id: repo.id,
             schedule_id: None,
             started_at: now,
-            finished_at: now.checked_add_signed(Duration::minutes(10)).unwrap(),
+            finished_at: now.checked_add(shared::time::minutes(10)).unwrap(),
             status: shared::types::BackupStatus::Failed,
             original_size: 0,
             compressed_size: 0,
@@ -12465,10 +12507,18 @@ async fn fail_started_backups_for_agent_reconnect_covers_all_repos(pool: PgPool)
     let repo_a = create_test_repo_with_host(&pool, "reconnect-repo-a", "storage-a.local").await;
     let repo_b = create_test_repo_with_host(&pool, "reconnect-repo-b", "storage-b.local").await;
 
-    db::insert_backup_started(&pool, agent.id, repo_a.id, None, Utc::now(), None, None)
-        .await
-        .unwrap();
-    db::insert_backup_pending(&pool, agent.id, repo_b.id, None, "run-b", Utc::now())
+    db::insert_backup_started(
+        &pool,
+        agent.id,
+        repo_a.id,
+        None,
+        Timestamp::now(),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    db::insert_backup_pending(&pool, agent.id, repo_b.id, None, "run-b", Timestamp::now())
         .await
         .unwrap();
     // A different agent's in-flight backup must be left untouched.
@@ -12477,7 +12527,7 @@ async fn fail_started_backups_for_agent_reconnect_covers_all_repos(pool: PgPool)
         other_agent.id,
         repo_a.id,
         None,
-        Utc::now(),
+        Timestamp::now(),
         None,
         None,
     )
@@ -12517,7 +12567,9 @@ async fn session_insert_and_get(pool: PgPool) {
     let user = db::insert_user(&pool, "session-user", "hash")
         .await
         .unwrap();
-    let expires = Utc::now().checked_add_signed(Duration::hours(1)).unwrap();
+    let expires = Timestamp::now()
+        .checked_add(shared::time::hours(1))
+        .unwrap();
 
     db::insert_session(&pool, "session-hash-1", user.id, expires, false, false)
         .await
@@ -12535,7 +12587,9 @@ async fn session_pending_totp_flag_roundtrip(pool: PgPool) {
     let user = db::insert_user(&pool, "totp-pending-user", "hash")
         .await
         .unwrap();
-    let expires = Utc::now().checked_add_signed(Duration::hours(1)).unwrap();
+    let expires = Timestamp::now()
+        .checked_add(shared::time::hours(1))
+        .unwrap();
 
     db::insert_session(&pool, "pending-session-1", user.id, expires, false, true)
         .await
@@ -12550,7 +12604,9 @@ async fn session_expired_returns_error(pool: PgPool) {
     let user = db::insert_user(&pool, "expired-session-user", "hash")
         .await
         .unwrap();
-    let past = Utc::now().checked_add_signed(Duration::hours(-1)).unwrap();
+    let past = Timestamp::now()
+        .checked_add(shared::time::hours(-1))
+        .unwrap();
 
     db::insert_session(&pool, "expired-session", user.id, past, false, false)
         .await
@@ -12565,8 +12621,12 @@ async fn session_list_for_user_excludes_expired_and_pending_totp(pool: PgPool) {
     let user = db::insert_user(&pool, "list-session-user", "hash")
         .await
         .unwrap();
-    let future = Utc::now().checked_add_signed(Duration::hours(1)).unwrap();
-    let past = Utc::now().checked_add_signed(Duration::hours(-1)).unwrap();
+    let future = Timestamp::now()
+        .checked_add(shared::time::hours(1))
+        .unwrap();
+    let past = Timestamp::now()
+        .checked_add(shared::time::hours(-1))
+        .unwrap();
 
     db::insert_session(&pool, "active-session", user.id, future, false, false)
         .await
@@ -12593,7 +12653,9 @@ async fn session_delete_by_id_with_ownership_check(pool: PgPool) {
     let other_user = db::insert_user(&pool, "other-del-user", "hash")
         .await
         .unwrap();
-    let future = Utc::now().checked_add_signed(Duration::hours(1)).unwrap();
+    let future = Timestamp::now()
+        .checked_add(shared::time::hours(1))
+        .unwrap();
 
     db::insert_session(&pool, "del-session", user.id, future, false, false)
         .await
@@ -12623,7 +12685,9 @@ async fn session_update_last_seen(pool: PgPool) {
     let user = db::insert_user(&pool, "last-seen-user", "hash")
         .await
         .unwrap();
-    let future = Utc::now().checked_add_signed(Duration::hours(1)).unwrap();
+    let future = Timestamp::now()
+        .checked_add(shared::time::hours(1))
+        .unwrap();
 
     db::insert_session(&pool, "seen-session", user.id, future, false, false)
         .await
@@ -12637,7 +12701,10 @@ async fn session_update_last_seen(pool: PgPool) {
 
     let session = db::get_session(&pool, "seen-session").await.unwrap();
     assert!(
-        session.last_seen_at > Utc::now().checked_add_signed(Duration::hours(-1)).unwrap(),
+        session.last_seen_at
+            > Timestamp::now()
+                .checked_add(shared::time::hours(-1))
+                .unwrap(),
         "last_seen_at must have been updated"
     );
 }
@@ -12645,13 +12712,17 @@ async fn session_update_last_seen(pool: PgPool) {
 #[sqlx::test(migrations = "./migrations")]
 async fn session_extend_expiry(pool: PgPool) {
     let user = db::insert_user(&pool, "extend-user", "hash").await.unwrap();
-    let expires = Utc::now().checked_add_signed(Duration::hours(1)).unwrap();
+    let expires = Timestamp::now()
+        .checked_add(shared::time::hours(1))
+        .unwrap();
 
     db::insert_session(&pool, "extend-session", user.id, expires, false, false)
         .await
         .unwrap();
 
-    let new_expires = Utc::now().checked_add_signed(Duration::hours(24)).unwrap();
+    let new_expires = Timestamp::now()
+        .checked_add(shared::time::hours(24))
+        .unwrap();
     db::extend_session(&pool, "extend-session", new_expires)
         .await
         .unwrap();
@@ -12668,7 +12739,9 @@ async fn session_delete_removes_session(pool: PgPool) {
     let user = db::insert_user(&pool, "delete-sess-user", "hash")
         .await
         .unwrap();
-    let future = Utc::now().checked_add_signed(Duration::hours(1)).unwrap();
+    let future = Timestamp::now()
+        .checked_add(shared::time::hours(1))
+        .unwrap();
 
     db::insert_session(&pool, "delete-me", user.id, future, false, false)
         .await
@@ -13592,12 +13665,7 @@ async fn run_events_are_scoped_to_their_own_target_pairing_within_a_shared_run_i
 }
 
 #[cfg(test)]
-async fn insert_test_run_event(
-    pool: &PgPool,
-    agent_id: i64,
-    repo_id: i64,
-    occurred_at: DateTime<Utc>,
-) {
+async fn insert_test_run_event(pool: &PgPool, agent_id: i64, repo_id: i64, occurred_at: Timestamp) {
     sqlx::query!(
         "INSERT INTO backup_run_events (run_id, agent_id, repo_id, target, event_type, message, \
          occurred_at) VALUES ('retention-test-run', $1, $2, 'source', 'wake_sent', 'test event', \
@@ -13617,10 +13685,14 @@ async fn delete_run_events_before_deletes_old(pool: PgPool) {
         .await
         .unwrap();
     let repo = create_test_repo(&pool).await;
-    let old = Utc::now().checked_sub_signed(Duration::days(120)).unwrap();
+    let old = Timestamp::now()
+        .checked_sub(shared::time::days(120))
+        .unwrap();
     insert_test_run_event(&pool, agent.id, repo.id, old).await;
 
-    let cutoff = Utc::now().checked_sub_signed(Duration::days(90)).unwrap();
+    let cutoff = Timestamp::now()
+        .checked_sub(shared::time::days(90))
+        .unwrap();
     let deleted = db::run_events::delete_run_events_before(&pool, cutoff)
         .await
         .unwrap();
@@ -13633,12 +13705,10 @@ async fn delete_run_events_before_keeps_recent(pool: PgPool) {
         .await
         .unwrap();
     let repo = create_test_repo(&pool).await;
-    let before_insert = Utc::now();
+    let before_insert = Timestamp::now();
     insert_test_run_event(&pool, agent.id, repo.id, before_insert).await;
 
-    let cutoff = before_insert
-        .checked_sub_signed(Duration::seconds(1))
-        .unwrap();
+    let cutoff = before_insert.checked_sub(shared::time::seconds(1)).unwrap();
     let deleted = db::run_events::delete_run_events_before(&pool, cutoff)
         .await
         .unwrap();
@@ -14249,12 +14319,14 @@ async fn list_due_schedules_carries_the_wake_override(pool: PgPool) {
     .execute(&pool)
     .await
     .unwrap();
-    let past = Utc::now()
-        .checked_sub_signed(chrono::Duration::hours(1))
+    let past = Timestamp::now()
+        .checked_sub(shared::time::hours(1))
         .unwrap();
     db::set_next_run_at(&pool, schedule.id, past).await.unwrap();
 
-    let due = db::list_due_schedules(&pool, Utc::now()).await.unwrap();
+    let due = db::list_due_schedules(&pool, Timestamp::now())
+        .await
+        .unwrap();
 
     assert_eq!(
         due.first().unwrap().wake_override,
@@ -14529,8 +14601,8 @@ async fn repo_stats_carry_the_hosts_last_check(pool: PgPool) {
     assert_eq!(before.host_last_check_reachable, None);
     assert_eq!(before.host_last_checked_at, None);
 
-    let at = Utc::now()
-        .checked_sub_signed(Duration::minutes(12))
+    let at = Timestamp::now()
+        .checked_sub(shared::time::minutes(12))
         .unwrap();
     db::machines::record_machine_check(&pool, before.host_machine_id, false, at)
         .await
@@ -14539,8 +14611,8 @@ async fn repo_stats_carry_the_hosts_last_check(pool: PgPool) {
     let after = db::get_repo_with_stats(&pool, repo.id).await.unwrap();
     assert_eq!(after.host_last_check_reachable, Some(false));
     assert_eq!(
-        after.host_last_checked_at.map(|t| t.timestamp_micros()),
-        Some(at.timestamp_micros()),
+        after.host_last_checked_at.map(Timestamp::unix_micros),
+        Some(at.unix_micros()),
     );
     let listed = db::list_repos_with_stats(&pool).await.unwrap();
     let row = listed.iter().find(|r| r.id == repo.id).unwrap();
@@ -14801,7 +14873,7 @@ async fn repo_catch_up_candidates_group_under_their_host(pool: PgPool) {
     .unwrap();
     let second = create_test_schedule_for(&pool, agent.id, sibling.id, "sibling").await;
     mark_schedule_hosts_intermittent(&pool, schedule.id).await;
-    let missed = Utc::now().trunc_subsecs(6);
+    let missed = Timestamp::now().trunc_subsecs(6);
     db::catch_up::mark_repo_catch_up_pending(&pool, schedule.id, repo.id, missed, None)
         .await
         .unwrap();
@@ -14819,7 +14891,7 @@ async fn repo_catch_up_candidates_group_under_their_host(pool: PgPool) {
     assert!(on_host.iter().all(|c| c.repo_host_id == repo.repo_host_id));
     assert!(on_host.iter().all(|c| c.waits));
 
-    let probed_at = Utc::now().trunc_subsecs(6);
+    let probed_at = Timestamp::now().trunc_subsecs(6);
     db::catch_up::record_repo_catch_up_probe(
         &pool,
         &[schedule.id, second.id],
@@ -14858,12 +14930,14 @@ async fn the_repo_hosts_migration_breaks_a_key_tie_by_the_latest_write(pool: PgP
     const REPO_HOSTS_MIGRATION: i64 = 20_260_926_120_000;
     let migrator = sqlx::migrate!("./migrations");
     let mut conn = pool.acquire().await.unwrap();
-    conn.ensure_migrations_table().await.unwrap();
+    conn.ensure_migrations_table(MIGRATIONS_TABLE)
+        .await
+        .unwrap();
     for migration in migrator
         .iter()
         .filter(|m| m.version < REPO_HOSTS_MIGRATION && m.migration_type.is_up_migration())
     {
-        conn.apply(migration).await.unwrap();
+        conn.apply(MIGRATIONS_TABLE, migration).await.unwrap();
     }
 
     sqlx::query(
@@ -14888,7 +14962,7 @@ async fn the_repo_hosts_migration_breaks_a_key_tie_by_the_latest_write(pool: PgP
         .iter()
         .filter(|m| m.version >= REPO_HOSTS_MIGRATION && m.migration_type.is_up_migration())
     {
-        conn.apply(migration).await.unwrap();
+        conn.apply(MIGRATIONS_TABLE, migration).await.unwrap();
     }
     drop(conn);
 
@@ -14911,12 +14985,14 @@ async fn the_repo_hosts_migration_groups_aliases_and_logs_what_it_decided(pool: 
     const REPO_HOSTS_MIGRATION: i64 = 20_260_926_120_000;
     let migrator = sqlx::migrate!("./migrations");
     let mut conn = pool.acquire().await.unwrap();
-    conn.ensure_migrations_table().await.unwrap();
+    conn.ensure_migrations_table(MIGRATIONS_TABLE)
+        .await
+        .unwrap();
     for migration in migrator
         .iter()
         .filter(|m| m.version < REPO_HOSTS_MIGRATION && m.migration_type.is_up_migration())
     {
-        conn.apply(migration).await.unwrap();
+        conn.apply(MIGRATIONS_TABLE, migration).await.unwrap();
     }
 
     sqlx::query(
@@ -14944,7 +15020,7 @@ async fn the_repo_hosts_migration_groups_aliases_and_logs_what_it_decided(pool: 
         .iter()
         .filter(|m| m.version >= REPO_HOSTS_MIGRATION && m.migration_type.is_up_migration())
     {
-        conn.apply(migration).await.unwrap();
+        conn.apply(MIGRATIONS_TABLE, migration).await.unwrap();
     }
     drop(conn);
 
@@ -15255,11 +15331,11 @@ async fn a_dependency_catch_up_survives_retries_and_ends_on_a_report(pool: PgPoo
     let (agent, _, schedule) = create_test_schedule(&pool).await;
     let nas = create_test_dependency(&pool, "nas-media", None).await;
     let other = create_test_dependency(&pool, "files-01", None).await;
-    let first = Utc::now()
+    let first = Timestamp::now()
         .trunc_subsecs(0)
-        .checked_sub_signed(Duration::days(2))
+        .checked_sub(shared::time::days(2))
         .unwrap();
-    let second = first.checked_add_signed(Duration::days(1)).unwrap();
+    let second = first.checked_add(shared::time::days(1)).unwrap();
 
     mark_dependency_catch_up(&pool, schedule.id, agent.id, nas.id, first)
         .await
@@ -15289,7 +15365,7 @@ async fn a_dependency_catch_up_survives_retries_and_ends_on_a_report(pool: PgPoo
 
     // Another catch-up of a different kind finding a dependency away does not
     // replace the original occurrence.
-    mark_dependency_catch_up_if_absent(&pool, schedule.id, agent.id, other.id, Utc::now())
+    mark_dependency_catch_up_if_absent(&pool, schedule.id, agent.id, other.id, Timestamp::now())
         .await
         .unwrap();
     // The catch-up found files-01 away instead; it waits on that now.
@@ -15337,11 +15413,11 @@ async fn recording_a_probe_covers_every_target_waiting_on_that_dependency(pool: 
         schedule.id,
         agent.id,
         nas.id,
-        Utc::now(),
+        Timestamp::now(),
     )
     .await
     .unwrap();
-    let at = Utc::now().trunc_subsecs(0);
+    let at = Timestamp::now().trunc_subsecs(0);
     db::dependency_catch_ups::record_dependency_catch_up_probe(&pool, nas.id, at)
         .await
         .unwrap();
@@ -15375,7 +15451,7 @@ async fn marking_a_dependency_always_online_drops_its_catch_ups(pool: PgPool) {
         schedule.id,
         agent.id,
         nas.id,
-        Utc::now(),
+        Timestamp::now(),
     )
     .await
     .unwrap();
@@ -15407,7 +15483,7 @@ async fn marking_a_dependency_always_online_drops_its_catch_ups(pool: PgPool) {
 #[sqlx::test(migrations = "./migrations")]
 async fn a_skipped_run_settles_its_pending_reports_and_is_not_a_backup(pool: PgPool) {
     let (agent, repo, schedule) = create_test_schedule(&pool).await;
-    let now = Utc::now();
+    let now = Timestamp::now();
     db::insert_backup_pending(&pool, agent.id, repo.id, Some(schedule.id), "run-skip", now)
         .await
         .unwrap();
@@ -15453,7 +15529,7 @@ async fn deleting_a_dependency_frees_its_schedules_and_waits(pool: PgPool) {
         schedule.id,
         agent.id,
         nas.id,
-        Utc::now(),
+        Timestamp::now(),
     )
     .await
     .unwrap();
@@ -15515,8 +15591,10 @@ async fn mark_index_done(
 }
 
 #[cfg(test)]
-fn days_ago(days: i64) -> DateTime<Utc> {
-    Utc::now().checked_sub_signed(Duration::days(days)).unwrap()
+fn days_ago(days: i64) -> Timestamp {
+    Timestamp::now()
+        .checked_sub(shared::time::days(days))
+        .unwrap()
 }
 
 #[cfg(test)]
@@ -16447,12 +16525,14 @@ async fn the_machines_migration_moves_settings_and_merges_linked_dependencies(po
     const MACHINES_MIGRATION: i64 = 20_261_011_120_000;
     let migrator = sqlx::migrate!("./migrations");
     let mut conn = pool.acquire().await.unwrap();
-    conn.ensure_migrations_table().await.unwrap();
+    conn.ensure_migrations_table(MIGRATIONS_TABLE)
+        .await
+        .unwrap();
     for migration in migrator
         .iter()
         .filter(|m| m.version < MACHINES_MIGRATION && m.migration_type.is_up_migration())
     {
-        conn.apply(migration).await.unwrap();
+        conn.apply(MIGRATIONS_TABLE, migration).await.unwrap();
     }
     sqlx::query(
         "INSERT INTO agents (hostname, agent_token_hash, wake_enabled, wake_mac_address, \
@@ -16490,7 +16570,7 @@ async fn the_machines_migration_moves_settings_and_merges_linked_dependencies(po
         .iter()
         .filter(|m| m.version >= MACHINES_MIGRATION && m.migration_type.is_up_migration())
     {
-        conn.apply(migration).await.unwrap();
+        conn.apply(MIGRATIONS_TABLE, migration).await.unwrap();
     }
     drop(conn);
 
@@ -16848,7 +16928,7 @@ async fn a_schedule_that_waits_for_a_repo_host_keeps_its_catch_up(pool: PgPool) 
     use shared::types::MachineWakeMode;
 
     let (_, repo, schedule) = create_test_schedule(&pool).await;
-    db::catch_up::mark_repo_catch_up_pending(&pool, schedule.id, repo.id, Utc::now(), None)
+    db::catch_up::mark_repo_catch_up_pending(&pool, schedule.id, repo.id, Timestamp::now(), None)
         .await
         .unwrap();
     let candidates =
@@ -16918,7 +16998,7 @@ async fn a_schedule_that_waits_for_a_dependency_keeps_its_catch_up(pool: PgPool)
         schedule.id,
         agent.id,
         nas.id,
-        Utc::now(),
+        Timestamp::now(),
     )
     .await
     .unwrap();
@@ -17083,7 +17163,7 @@ async fn machine_settings_round_trip(pool: PgPool) {
     assert!(available.intermittent);
     assert_eq!(available.catch_up_give_up_minutes, 600);
 
-    let at = Utc::now().trunc_subsecs(6);
+    let at = Timestamp::now().trunc_subsecs(6);
     db::machines::record_machine_check(&pool, machine.id, true, at)
         .await
         .unwrap();
@@ -17846,8 +17926,8 @@ async fn archives_for_an_agent_include_the_hosts_its_patterns_claim(pool: PgPool
                 agent_id,
                 repo_id: repo.id,
                 schedule_id: None,
-                started_at: Utc::now(),
-                finished_at: Utc::now(),
+                started_at: Timestamp::now(),
+                finished_at: Timestamp::now(),
                 status: shared::types::BackupStatus::Success,
                 original_size: 0,
                 compressed_size: 0,
@@ -18048,8 +18128,8 @@ async fn a_schedule_run_that_cannot_be_recorded_is_not_advanced(pool: PgPool) {
         &pool,
         schedule.id,
         &schedule.cron_expression,
-        chrono_tz::UTC,
-        Utc::now(),
+        &jiff::tz::TimeZone::UTC,
+        Timestamp::now(),
     )
     .await;
 
@@ -18066,7 +18146,7 @@ async fn cancelling_all_active_backups_leaves_finished_ones(pool: PgPool) {
         .await
         .unwrap();
     insert_test_report(&pool, finished_on.id, repo.id).await;
-    db::insert_backup_started(&pool, agent.id, repo.id, None, Utc::now(), None, None)
+    db::insert_backup_started(&pool, agent.id, repo.id, None, Timestamp::now(), None, None)
         .await
         .unwrap();
 
@@ -18252,7 +18332,7 @@ async fn missing_tags_groups_and_roles_are_not_found(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn the_calendar_covers_december(pool: PgPool) {
-    let events = db::get_calendar_events(&pool, 2025, 12, None, chrono_tz::UTC)
+    let events = db::get_calendar_events(&pool, 2025, 12, None, &jiff::tz::TimeZone::UTC)
         .await
         .unwrap();
 
@@ -18399,16 +18479,15 @@ fn audit_errors_become_api_errors() {
 /// schedule and its runs, and the archives vanished or queued for deletion.
 #[cfg(test)]
 mod append_only_queries {
-    use chrono::{Duration, Utc};
     use server::db::{self, append_only::CheckRecord};
-    use shared::append_only::MaintenanceOutcome;
+    use shared::{append_only::MaintenanceOutcome, time::Timestamp};
     use sqlx::PgPool;
 
     use super::{create_test_repo, create_test_schedule};
 
     /// The time `delta` from now, negative for the past.
-    fn from_now(delta: Duration) -> chrono::DateTime<Utc> {
-        Utc::now().checked_add_signed(delta).unwrap()
+    fn from_now(delta: shared::time::SignedDuration) -> Timestamp {
+        Timestamp::now().checked_add(delta).unwrap()
     }
 
     #[sqlx::test(migrations = "./migrations")]
@@ -18530,7 +18609,7 @@ mod append_only_queries {
     #[sqlx::test(migrations = "./migrations")]
     async fn a_maintenance_schedule_is_created_once_and_kept(pool: PgPool) {
         let repo = create_test_repo(&pool).await;
-        let first = from_now(Duration::days(1));
+        let first = from_now(shared::time::days(1));
         db::append_only::ensure_maintenance(&pool, repo.id, Some(first))
             .await
             .unwrap();
@@ -18578,15 +18657,15 @@ mod append_only_queries {
     #[sqlx::test(migrations = "./migrations")]
     async fn only_due_unstopped_append_only_repositories_are_listed(pool: PgPool) {
         let repo = create_test_repo(&pool).await;
-        let past = from_now(Duration::minutes(-5));
-        let future = from_now(Duration::hours(1));
+        let past = from_now(shared::time::minutes(-5));
+        let future = from_now(shared::time::hours(1));
         db::append_only::ensure_maintenance(&pool, repo.id, Some(past))
             .await
             .unwrap();
 
         // Not append-only yet: never due.
         assert_eq!(
-            db::append_only::list_due_maintenance(&pool, Utc::now())
+            db::append_only::list_due_maintenance(&pool, Timestamp::now())
                 .await
                 .unwrap()
                 .len(),
@@ -18596,7 +18675,7 @@ mod append_only_queries {
         db::append_only::upsert_login(&pool, repo.repo_host_id, &repo.ssh_user)
             .await
             .unwrap();
-        let due = db::append_only::list_due_maintenance(&pool, Utc::now())
+        let due = db::append_only::list_due_maintenance(&pool, Timestamp::now())
             .await
             .unwrap();
         let [only] = due.as_slice() else {
@@ -18608,7 +18687,7 @@ mod append_only_queries {
             .await
             .unwrap();
         assert_eq!(
-            db::append_only::list_due_maintenance(&pool, Utc::now())
+            db::append_only::list_due_maintenance(&pool, Timestamp::now())
                 .await
                 .unwrap()
                 .len(),
@@ -18618,11 +18697,11 @@ mod append_only_queries {
         db::append_only::set_next_run(&pool, repo.id, Some(past))
             .await
             .unwrap();
-        db::append_only::finish_maintenance(&pool, repo.id, Utc::now(), None, true)
+        db::append_only::finish_maintenance(&pool, repo.id, Timestamp::now(), None, true)
             .await
             .unwrap();
         assert_eq!(
-            db::append_only::list_due_maintenance(&pool, Utc::now())
+            db::append_only::list_due_maintenance(&pool, Timestamp::now())
                 .await
                 .unwrap()
                 .len(),
@@ -18637,11 +18716,11 @@ mod append_only_queries {
             .await
             .unwrap();
 
-        let first = from_now(Duration::hours(-2));
+        let first = from_now(shared::time::hours(-2));
         db::append_only::finish_maintenance(&pool, repo.id, first, None, true)
             .await
             .unwrap();
-        db::append_only::finish_maintenance(&pool, repo.id, Utc::now(), None, true)
+        db::append_only::finish_maintenance(&pool, repo.id, Timestamp::now(), None, true)
             .await
             .unwrap();
         let stopped = db::append_only::get_maintenance(&pool, repo.id)
@@ -18649,12 +18728,12 @@ mod append_only_queries {
             .unwrap()
             .unwrap();
         assert_eq!(
-            stopped.stopped_at.map(|t| t.timestamp()),
-            Some(first.timestamp())
+            stopped.stopped_at.map(Timestamp::unix_secs),
+            Some(first.unix_secs())
         );
         assert!(stopped.next_run_at.is_none());
 
-        let next = from_now(Duration::days(1));
+        let next = from_now(shared::time::days(1));
         db::append_only::resume_maintenance(&pool, repo.id, Some(next))
             .await
             .unwrap();
@@ -18672,12 +18751,18 @@ mod append_only_queries {
         db::append_only::ensure_maintenance(&pool, repo.id, None)
             .await
             .unwrap();
-        db::append_only::finish_maintenance(&pool, repo.id, Utc::now(), None, true)
+        db::append_only::finish_maintenance(&pool, repo.id, Timestamp::now(), None, true)
             .await
             .unwrap();
-        db::append_only::finish_maintenance(&pool, repo.id, Utc::now(), Some(Utc::now()), false)
-            .await
-            .unwrap();
+        db::append_only::finish_maintenance(
+            &pool,
+            repo.id,
+            Timestamp::now(),
+            Some(Timestamp::now()),
+            false,
+        )
+        .await
+        .unwrap();
         let row = db::append_only::get_maintenance(&pool, repo.id)
             .await
             .unwrap()
@@ -18902,7 +18987,7 @@ mod append_only_queries {
         db::append_only::queue_deletion(&pool, repo.id, "x", "admin")
             .await
             .unwrap();
-        db::append_only::finish_maintenance(&pool, repo.id, Utc::now(), None, true)
+        db::append_only::finish_maintenance(&pool, repo.id, Timestamp::now(), None, true)
             .await
             .unwrap();
 
@@ -19052,12 +19137,14 @@ async fn the_files_mode_migration_keeps_every_backup_reading_the_same_files(pool
     const FILES_MODE_MIGRATION: i64 = 20_261_115_120_000;
     let migrator = sqlx::migrate!("./migrations");
     let mut conn = pool.acquire().await.unwrap();
-    conn.ensure_migrations_table().await.unwrap();
+    conn.ensure_migrations_table(MIGRATIONS_TABLE)
+        .await
+        .unwrap();
     for migration in migrator
         .iter()
         .filter(|m| m.version < FILES_MODE_MIGRATION && m.migration_type.is_up_migration())
     {
-        conn.apply(migration).await.unwrap();
+        conn.apply(MIGRATIONS_TABLE, migration).await.unwrap();
     }
 
     sqlx::query(
@@ -19103,7 +19190,7 @@ async fn the_files_mode_migration_keeps_every_backup_reading_the_same_files(pool
         .iter()
         .filter(|m| m.version >= FILES_MODE_MIGRATION && m.migration_type.is_up_migration())
     {
-        conn.apply(migration).await.unwrap();
+        conn.apply(MIGRATIONS_TABLE, migration).await.unwrap();
     }
     drop(conn);
 
@@ -19200,12 +19287,14 @@ async fn dropping_the_host_switches_keeps_a_switched_off_host_backing_up_nothing
     const SWITCHES_MIGRATION: i64 = 20_261_115_130_000;
     let migrator = sqlx::migrate!("./migrations");
     let mut conn = pool.acquire().await.unwrap();
-    conn.ensure_migrations_table().await.unwrap();
+    conn.ensure_migrations_table(MIGRATIONS_TABLE)
+        .await
+        .unwrap();
     for migration in migrator
         .iter()
         .filter(|m| m.version < SWITCHES_MIGRATION && m.migration_type.is_up_migration())
     {
-        conn.apply(migration).await.unwrap();
+        conn.apply(MIGRATIONS_TABLE, migration).await.unwrap();
     }
 
     sqlx::query(
@@ -19235,7 +19324,7 @@ async fn dropping_the_host_switches_keeps_a_switched_off_host_backing_up_nothing
         .iter()
         .filter(|m| m.version >= SWITCHES_MIGRATION && m.migration_type.is_up_migration())
     {
-        conn.apply(migration).await.unwrap();
+        conn.apply(MIGRATIONS_TABLE, migration).await.unwrap();
     }
     drop(conn);
 

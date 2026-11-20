@@ -14,7 +14,6 @@ use axum::{
     extract::{Path, Query, State},
     http::StatusCode,
 };
-use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use shared::{
     audit::AuditEvent,
@@ -24,6 +23,7 @@ use shared::{
         NotificationLink, NotificationLinkTarget, NotificationRuleResponse, TemplatePreviewRequest,
         TemplatePreviewResponse, UpdateChannelRequest, WebhookHeaderStatus,
     },
+    time::Timestamp,
 };
 use sqlx::{FromRow, types::Json as JsonColumn};
 
@@ -56,8 +56,8 @@ struct ChannelRow {
     scope: serde_json::Value,
     link_target: String,
     link_url: Option<String>,
-    created_at: DateTime<Utc>,
-    updated_at: DateTime<Utc>,
+    created_at: Timestamp,
+    updated_at: Timestamp,
 }
 
 impl TryFrom<ChannelRow> for NotificationChannelResponse {
@@ -128,7 +128,7 @@ struct DeliveryRow {
     payload: serde_json::Value,
     status: String,
     error_message: Option<String>,
-    attempted_at: DateTime<Utc>,
+    attempted_at: Timestamp,
 }
 
 impl TryFrom<DeliveryRow> for NotificationDeliveryResponse {
@@ -176,7 +176,7 @@ pub struct PushSubscription {
     /// User agent string of the browser that registered the subscription, if known.
     pub user_agent: Option<String>,
     /// Timestamp when the subscription was created.
-    pub created_at: DateTime<Utc>,
+    pub created_at: Timestamp,
 }
 
 /// Request body for registering a new web-push subscription.
@@ -609,7 +609,7 @@ pub async fn test_channel(
         "hostname": "test-host",
         "repo_name": "test-repo",
         "status": "This is a test notification from Assimilate",
-        "timestamp": Utc::now().to_rfc3339(),
+        "timestamp": Timestamp::now().to_rfc3339(),
     });
 
     crate::notifications::deliver_to_channel(

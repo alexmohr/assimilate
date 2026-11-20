@@ -1,9 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
-use chrono::{DateTime, Utc};
 use serde_json::Value;
-use shared::{audit::AuditEvent, responses::AuditEntryResponse};
+use shared::{audit::AuditEvent, responses::AuditEntryResponse, time::Timestamp};
 use sqlx::PgPool;
 
 /// A row from the `audit_log` table, before its `action` and `details` are parsed into an
@@ -27,7 +26,7 @@ pub struct AuditEntryRow {
     /// IP address from which the request originated.
     pub ip_address: Option<String>,
     /// When the entry was created.
-    pub created_at: DateTime<Utc>,
+    pub created_at: Timestamp,
 }
 
 impl TryFrom<AuditEntryRow> for AuditEntryResponse {
@@ -121,9 +120,9 @@ pub struct AuditEntryFilters<'a> {
     /// Filter by target type.
     pub filter_target_type: Option<&'a str>,
     /// Only include entries created at or after this time.
-    pub filter_from: Option<DateTime<Utc>>,
+    pub filter_from: Option<Timestamp>,
     /// Only include entries created at or before this time.
-    pub filter_to: Option<DateTime<Utc>>,
+    pub filter_to: Option<Timestamp>,
 }
 
 /// # Errors

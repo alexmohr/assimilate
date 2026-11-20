@@ -10,10 +10,11 @@
 
 use std::collections::BTreeMap;
 
-use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 use utoipa::ToSchema;
+
+use crate::time::Timestamp;
 
 /// Supported notification channel types.
 #[derive(
@@ -621,7 +622,7 @@ pub struct NotificationEvent {
     /// Optional error or warning message from the operation.
     pub error_message: Option<String>,
     /// When the event occurred.
-    pub timestamp: DateTime<Utc>,
+    pub timestamp: Timestamp,
     /// Optional repository ID for scoping.
     #[ts(type = "number | null")]
     pub repo_id: Option<i64>,
@@ -658,7 +659,7 @@ pub struct NotificationEvent {
     #[serde(default)]
     pub warnings: Vec<String>,
     /// When the schedule that triggered this event is next due to run.
-    pub next_run_at: Option<DateTime<Utc>>,
+    pub next_run_at: Option<Timestamp>,
     /// Absolute URL deep-linking to this event's entry in the Activity Log,
     /// when the `public_url` system setting is configured and the event is
     /// precise enough to link.
@@ -745,9 +746,9 @@ pub struct NotificationChannelResponse {
     #[serde(default)]
     pub link: NotificationLink,
     /// When the channel was created.
-    pub created_at: DateTime<Utc>,
+    pub created_at: Timestamp,
     /// When the channel was last updated.
-    pub updated_at: DateTime<Utc>,
+    pub updated_at: Timestamp,
 }
 
 /// A rule routing events of one type to a notification channel.
@@ -791,7 +792,7 @@ pub struct NotificationDeliveryResponse {
     /// Error message, if the attempt failed.
     pub error_message: Option<String>,
     /// When the delivery was attempted.
-    pub attempted_at: DateTime<Utc>,
+    pub attempted_at: Timestamp,
 }
 
 /// Request body for creating a notification channel.
@@ -1028,8 +1029,8 @@ mod tests {
             enabled: true,
             scope: ChannelScope::default(),
             link: NotificationLink::default(),
-            created_at: DateTime::UNIX_EPOCH,
-            updated_at: DateTime::UNIX_EPOCH,
+            created_at: Timestamp::UNIX_EPOCH,
+            updated_at: Timestamp::UNIX_EPOCH,
         };
         let value = serde_json::to_value(&channel).unwrap();
         assert_eq!(value.get("channel_type"), Some(&json!("web_push")));

@@ -10,10 +10,9 @@
 
 use std::collections::HashMap;
 
-use chrono::{NaiveDate, NaiveDateTime};
 use futures_util::TryStreamExt as _;
 use serde::Deserialize;
-use shared::responses::PathTotals;
+use shared::{responses::PathTotals, time::Date};
 use sqlx::PgPool;
 
 use super::{archive_id, codec::DirEntry, decode_dir_blob, links};
@@ -51,9 +50,9 @@ pub struct TreeSearch {
     /// Largest size kept, in bytes.
     pub max_size: Option<i64>,
     /// Earliest modification day kept.
-    pub modified_from: Option<NaiveDate>,
+    pub modified_from: Option<Date>,
     /// Latest modification day kept.
-    pub modified_to: Option<NaiveDate>,
+    pub modified_to: Option<Date>,
 }
 
 impl TreeSearch {
@@ -92,10 +91,15 @@ impl TreeSearch {
 
 /// The day an entry was last modified, from borg's timestamp. Directories
 /// the index synthesised for a path's ancestors have no timestamp.
-fn modified_day(mtime: &str) -> Option<NaiveDate> {
-    NaiveDateTime::parse_from_str(mtime, "%Y-%m-%dT%H:%M:%S%.f")
-        .map(|stamp| stamp.date())
-        .or_else(|_| chrono::DateTime::parse_from_rfc3339(mtime).map(|stamp| stamp.date_naive()))
+fn modified_day(mtime: &str) -> Option<Date> {
+    mtime
+        .parse::<jiff::civil::DateTime>()
+        .map(|stamp| Date::from(stamp.date()))
+        .or_else(|_| {
+            mtime
+                .parse::<shared::time::Timestamp>()
+                .map(shared::time::Timestamp::utc_date)
+        })
         .ok()
 }
 
@@ -285,8 +289,8 @@ pub(crate) mod tests {
         }
     }
 
-    fn day(text: &str) -> NaiveDate {
-        NaiveDate::parse_from_str(text, "%Y-%m-%d").unwrap()
+    fn day(text: &str) -> Date {
+        text.parse::<Date>().unwrap()
     }
 
     #[test]

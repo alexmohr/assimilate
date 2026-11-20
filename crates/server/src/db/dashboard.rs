@@ -3,7 +3,7 @@
 
 use std::collections::HashSet;
 
-use chrono::{DateTime, Utc};
+use shared::time::Timestamp;
 use sqlx::PgPool;
 
 use crate::error::ApiError;
@@ -20,9 +20,9 @@ pub struct TargetRow {
     /// Whether the schedule is enabled.
     pub schedule_enabled: bool,
     /// When the schedule last ran.
-    pub schedule_last_run_at: Option<DateTime<Utc>>,
+    pub schedule_last_run_at: Option<Timestamp>,
     /// When the schedule is next due.
-    pub next_run_at: Option<DateTime<Utc>>,
+    pub next_run_at: Option<Timestamp>,
     /// Agent primary key.
     pub agent_id: i64,
     /// Agent hostname.
@@ -34,9 +34,9 @@ pub struct TargetRow {
     /// Most recent backup report ID for this target.
     pub latest_report_id: Option<i64>,
     /// When the latest backup started.
-    pub latest_started_at: Option<DateTime<Utc>>,
+    pub latest_started_at: Option<Timestamp>,
     /// When the latest backup finished.
-    pub latest_finished_at: Option<DateTime<Utc>>,
+    pub latest_finished_at: Option<Timestamp>,
     /// Whether the latest backup failed.
     pub latest_failed: Option<bool>,
     /// Whether the latest backup completed with warnings.
@@ -49,7 +49,7 @@ pub struct TargetRow {
     /// Human-readable message from the latest backup.
     pub latest_message: Option<String>,
     /// When the last successful backup finished.
-    pub last_success_at: Option<DateTime<Utc>>,
+    pub last_success_at: Option<Timestamp>,
 }
 
 /// An agent with counts of enabled/disabled/successful schedule assignments.
@@ -79,7 +79,7 @@ pub struct UpcomingScheduleRow {
     /// Repository name.
     pub repo_name: String,
     /// When the schedule is next due.
-    pub next_run_at: Option<DateTime<Utc>>,
+    pub next_run_at: Option<Timestamp>,
     /// Number of target agents assigned to this schedule.
     pub target_count: Option<i64>,
 }
@@ -106,7 +106,7 @@ pub struct RepositoryRow {
     /// Error message from a failed import, if any.
     pub import_error: Option<String>,
     /// When repo stats were last synced.
-    pub last_synced_at: Option<DateTime<Utc>>,
+    pub last_synced_at: Option<Timestamp>,
 }
 
 /// # Errors

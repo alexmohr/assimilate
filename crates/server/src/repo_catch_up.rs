@@ -29,8 +29,7 @@
 
 use std::collections::BTreeMap;
 
-use chrono::{DateTime, TimeDelta, Utc};
-use shared::types::SystemEventType;
+use shared::{time::Timestamp, types::SystemEventType};
 use uuid::Uuid;
 
 use crate::{
@@ -86,8 +85,8 @@ pub(crate) enum PendingAction {
 /// and how often and for how long to keep asking.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct WaitWindow {
-    pub(crate) pending_for: DateTime<Utc>,
-    pub(crate) last_probe_at: Option<DateTime<Utc>>,
+    pub(crate) pending_for: Timestamp,
+    pub(crate) last_probe_at: Option<Timestamp>,
     pub(crate) recheck_minutes: i32,
     pub(crate) give_up_minutes: i32,
 }
@@ -100,23 +99,23 @@ impl WaitWindow {
     /// interval after the occurrence, which for a run that failed slowly is
     /// already in the past - deliberately, because by then the news is worth
     /// having at once.
-    pub(crate) fn next_probe_at(self) -> DateTime<Utc> {
+    pub(crate) fn next_probe_at(self) -> Timestamp {
         let from = self.last_probe_at.unwrap_or(self.pending_for);
         // An interval that overflows the calendar leaves the probe due now,
         // which is the harmless direction: one extra probe rather than a wait
         // that silently never ends.
-        from.checked_add_signed(TimeDelta::minutes(i64::from(self.recheck_minutes)))
+        from.checked_add(shared::time::minutes(i64::from(self.recheck_minutes)))
             .unwrap_or(from)
     }
 
     /// When this catch-up stops being worth waiting for, or `None` when the
     /// schedule is set to wait indefinitely.
-    pub(crate) fn give_up_at(self) -> Option<DateTime<Utc>> {
+    pub(crate) fn give_up_at(self) -> Option<Timestamp> {
         give_up_deadline(self.pending_for, self.give_up_minutes)
     }
 
     /// Give up, probe or wait, for a marker that still qualifies.
-    pub(crate) fn action(self, now: DateTime<Utc>) -> PendingAction {
+    pub(crate) fn action(self, now: Timestamp) -> PendingAction {
         // Ordered ahead of the probe: a marker past its window is abandoned
         // rather than asked one more time, so the window means what it says -
         // except for one that never had a chance to be asked. A window equal
@@ -180,7 +179,7 @@ fn window(candidate: &RepoCatchUpCandidate) -> WaitWindow {
     }
 }
 
-fn next_action(candidate: &RepoCatchUpCandidate, now: DateTime<Utc>) -> PendingAction {
+fn next_action(candidate: &RepoCatchUpCandidate, now: Timestamp) -> PendingAction {
     if !candidate.waits || !candidate.schedule_enabled || !candidate.repo_enabled {
         return PendingAction::Drop;
     }
@@ -228,14 +227,14 @@ pub async fn run_pending_repo_catch_ups(state: &AppState) {
             return;
         }
     };
-    run_pass(state, candidates, Utc::now(), ProbePolicy::Scheduled).await;
+    run_pass(state, candidates, Timestamp::now(), ProbePolicy::Scheduled).await;
 }
 
 async fn waiting(
     state: &AppState,
     filter: RepoCatchUpFilter,
 ) -> Result<Vec<shared::responses::CatchUpWaitResponse>, ApiError> {
-    let now = Utc::now();
+    let now = Timestamp::now();
     Ok(
         db::catch_up::list_repo_catch_up_candidates(&state.pool, filter)
             .await?
@@ -287,7 +286,7 @@ pub(crate) async fn check_host_now(
         RepoCatchUpFilter::Host(repo_host_id),
     )
     .await?;
-    Ok(run_pass(state, candidates, Utc::now(), ProbePolicy::Forced).await)
+    Ok(run_pass(state, candidates, Timestamp::now(), ProbePolicy::Forced).await)
 }
 
 /// Asks one host whether it answers SSH right now, whether or not anything is
@@ -312,9 +311,13 @@ pub(crate) async fn probe_host(state: &AppState, repo_host_id: i64) -> Result<bo
 }
 
 async fn record_machine_check(state: &AppState, repo: &db::RepoRow, reachable: bool) {
-    if let Err(e) =
-        db::machines::record_machine_check(&state.pool, repo.machine_id, reachable, Utc::now())
-            .await
+    if let Err(e) = db::machines::record_machine_check(
+        &state.pool,
+        repo.machine_id,
+        reachable,
+        Timestamp::now(),
+    )
+    .await
     {
         tracing::warn!(repo_id = repo.id, error = %e, "failed to record a host check");
     }
@@ -323,7 +326,7 @@ async fn record_machine_check(state: &AppState, repo: &db::RepoRow, reachable: b
 async fn run_pass(
     state: &AppState,
     candidates: Vec<RepoCatchUpCandidate>,
-    now: DateTime<Utc>,
+    now: Timestamp,
     policy: ProbePolicy,
 ) -> PassOutcome {
     let mut by_host: BTreeMap<i64, Vec<RepoCatchUpCandidate>> = BTreeMap::new();
@@ -346,7 +349,7 @@ async fn process_host(
     state: &AppState,
     repo_host_id: i64,
     group: Vec<RepoCatchUpCandidate>,
-    now: DateTime<Utc>,
+    now: Timestamp,
     policy: ProbePolicy,
 ) -> PassOutcome {
     let mut outcome = PassOutcome::default();
@@ -438,7 +441,7 @@ async fn process_host(
 ///
 /// Returns whether a run was started. Either way the marker is gone: the
 /// decision is made once, here.
-async fn dispatch(state: &AppState, candidate: &RepoCatchUpCandidate, now: DateTime<Utc>) -> bool {
+async fn dispatch(state: &AppState, candidate: &RepoCatchUpCandidate, now: Timestamp) -> bool {
     // Handed off rather than simply dropped, under the run id the catch-up
     // will carry: should that run fail against the repository again, the new
     // wait keeps this occurrence instead of starting its window over.
@@ -535,7 +538,7 @@ async fn dispatch(state: &AppState, candidate: &RepoCatchUpCandidate, now: DateT
 ///
 /// Returns whether the wait was actually ended: a marker that could not be
 /// cleared is left for the next pass rather than reported now and again then.
-async fn abandon(state: &AppState, candidate: &RepoCatchUpCandidate, now: DateTime<Utc>) -> bool {
+async fn abandon(state: &AppState, candidate: &RepoCatchUpCandidate, now: Timestamp) -> bool {
     if !drop_marker(state, candidate, "give-up window passed").await {
         return false;
     }
@@ -616,12 +619,10 @@ impl PassOutcome {
 
 #[cfg(test)]
 mod tests {
-    use chrono::TimeZone;
-
     use super::*;
 
-    fn now() -> DateTime<Utc> {
-        Utc.with_ymd_and_hms(2026, 9, 6, 9, 0, 0).unwrap()
+    fn now() -> Timestamp {
+        Timestamp::utc(2026, 9, 6, 9, 0, 0).unwrap()
     }
 
     /// A miss recorded at 02:00 this morning, seven hours before `now()`,
@@ -635,9 +636,9 @@ mod tests {
             repo_id: 7,
             repo_name: "borg-nas".to_owned(),
             repo_host_id: 3,
-            pending_for: Utc.with_ymd_and_hms(2026, 9, 6, 2, 0, 0).unwrap(),
+            pending_for: Timestamp::utc(2026, 9, 6, 2, 0, 0).unwrap(),
             last_probe_at: None,
-            next_run_at: Some(Utc.with_ymd_and_hms(2026, 9, 7, 2, 0, 0).unwrap()),
+            next_run_at: Some(Timestamp::utc(2026, 9, 7, 2, 0, 0).unwrap()),
             min_lead_minutes: 120,
             recheck_minutes: 15,
             give_up_minutes: 0,
@@ -652,7 +653,7 @@ mod tests {
         let c = candidate();
         assert_eq!(
             window(&c).next_probe_at(),
-            c.pending_for + TimeDelta::minutes(15)
+            c.pending_for + shared::time::minutes(15)
         );
         assert_eq!(next_action(&c, now()), PendingAction::Probe);
     }
@@ -660,14 +661,14 @@ mod tests {
     #[test]
     fn a_marker_probed_moments_ago_waits_out_its_interval() {
         let mut c = candidate();
-        c.last_probe_at = Some(now() - TimeDelta::minutes(6));
+        c.last_probe_at = Some(now() - shared::time::minutes(6));
         assert_eq!(next_action(&c, now()), PendingAction::Wait);
     }
 
     #[test]
     fn a_marker_probed_a_full_interval_ago_is_due_again() {
         let mut c = candidate();
-        c.last_probe_at = Some(now() - TimeDelta::minutes(15));
+        c.last_probe_at = Some(now() - shared::time::minutes(15));
         assert_eq!(next_action(&c, now()), PendingAction::Probe);
     }
 
@@ -693,7 +694,7 @@ mod tests {
         assert_eq!(window(&c).give_up_at(), None);
         // A week past the miss and it is still only ever due another probe.
         assert_eq!(
-            next_action(&c, now() + TimeDelta::days(7)),
+            next_action(&c, now() + shared::time::days(7)),
             PendingAction::Probe
         );
     }
@@ -704,10 +705,10 @@ mod tests {
         c.give_up_minutes = 3 * 24 * 60;
         assert_eq!(
             window(&c).give_up_at(),
-            Some(c.pending_for + TimeDelta::days(3))
+            Some(c.pending_for + shared::time::days(3))
         );
         assert_eq!(
-            next_action(&c, c.pending_for + TimeDelta::days(3)),
+            next_action(&c, c.pending_for + shared::time::days(3)),
             PendingAction::GiveUp
         );
     }
@@ -718,9 +719,9 @@ mod tests {
     fn probing_does_not_extend_the_give_up_window() {
         let mut c = candidate();
         c.give_up_minutes = 60;
-        c.last_probe_at = Some(c.pending_for + TimeDelta::minutes(45));
+        c.last_probe_at = Some(c.pending_for + shared::time::minutes(45));
         assert_eq!(
-            next_action(&c, c.pending_for + TimeDelta::minutes(61)),
+            next_action(&c, c.pending_for + shared::time::minutes(61)),
             PendingAction::GiveUp
         );
     }
@@ -732,7 +733,7 @@ mod tests {
     fn giving_up_is_decided_before_probing() {
         let mut c = candidate();
         c.give_up_minutes = 30;
-        let later = c.pending_for + TimeDelta::hours(2);
+        let later = c.pending_for + shared::time::hours(2);
         assert!(later >= window(&c).next_probe_at());
         assert_eq!(next_action(&c, later), PendingAction::GiveUp);
     }
@@ -744,7 +745,7 @@ mod tests {
     fn a_window_equal_to_the_interval_is_probed_once_before_giving_up() {
         let mut c = candidate();
         c.give_up_minutes = c.recheck_minutes;
-        let deadline = c.pending_for + TimeDelta::minutes(i64::from(c.recheck_minutes));
+        let deadline = c.pending_for + shared::time::minutes(i64::from(c.recheck_minutes));
         assert_eq!(next_action(&c, deadline), PendingAction::Probe);
 
         c.last_probe_at = Some(deadline);
@@ -759,7 +760,7 @@ mod tests {
         c.give_up_minutes = 30;
         c.schedule_enabled = false;
         assert_eq!(
-            next_action(&c, c.pending_for + TimeDelta::days(1)),
+            next_action(&c, c.pending_for + shared::time::days(1)),
             PendingAction::Drop
         );
     }
@@ -769,7 +770,7 @@ mod tests {
         let mut c = candidate();
         c.give_up_minutes = 3 * 24 * 60;
         assert_eq!(
-            next_action(&c, c.pending_for + TimeDelta::days(2)),
+            next_action(&c, c.pending_for + shared::time::days(2)),
             PendingAction::Probe
         );
     }
@@ -965,7 +966,7 @@ mod tests {
             schedule_id: schedule.id,
             repo_id: repo.id,
             repo_host_id: repo.repo_host_id,
-            next_run_at: now().checked_add_signed(TimeDelta::hours(1)),
+            next_run_at: now().checked_add(shared::time::hours(1)),
             min_lead_minutes: 120,
             ..candidate()
         };
@@ -1039,7 +1040,7 @@ mod tests {
     #[sqlx::test(migrations = "./migrations")]
     async fn a_catch_up_with_room_before_the_next_run_is_dispatched(pool: sqlx::PgPool) {
         let candidate = RepoCatchUpCandidate {
-            next_run_at: Some(Utc.with_ymd_and_hms(2026, 9, 9, 9, 0, 0).unwrap()),
+            next_run_at: Some(Timestamp::utc(2026, 9, 9, 9, 0, 0).unwrap()),
             min_lead_minutes: 120,
             ..waiting_catch_up(&pool, "catch-up-with-room").await
         };

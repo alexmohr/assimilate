@@ -6,8 +6,8 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use chrono::{DateTime, Utc};
 use serde::Serialize;
+use shared::time::Timestamp;
 use tracing::{Event, Subscriber, field::Visit};
 use tracing_subscriber::{Layer, layer::Context, registry::LookupSpan};
 
@@ -17,7 +17,7 @@ const DEFAULT_CAPACITY: usize = 2000;
 #[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
 pub struct LogEntry {
     /// When the log entry was created.
-    pub timestamp: DateTime<Utc>,
+    pub timestamp: Timestamp,
     /// Log level (ERROR, WARN, INFO, DEBUG, TRACE).
     pub level: String,
     /// Tracing target / module path.
@@ -192,7 +192,7 @@ where
         event.record(&mut visitor);
 
         let entry = LogEntry {
-            timestamp: Utc::now(),
+            timestamp: Timestamp::now(),
             level: metadata.level().to_string(),
             target: metadata.target().to_string(),
             message: visitor.message,
@@ -211,7 +211,7 @@ mod tests {
         let buf = LogBuffer::new(3);
         for i in 0..5 {
             buf.push(LogEntry {
-                timestamp: Utc::now(),
+                timestamp: Timestamp::now(),
                 level: "INFO".to_string(),
                 target: "test".to_string(),
                 message: format!("msg {i}"),
@@ -230,19 +230,19 @@ mod tests {
     fn filter_by_level() {
         let buf = LogBuffer::new(10);
         buf.push(LogEntry {
-            timestamp: Utc::now(),
+            timestamp: Timestamp::now(),
             level: "DEBUG".to_string(),
             target: "test".to_string(),
             message: "debug msg".to_string(),
         });
         buf.push(LogEntry {
-            timestamp: Utc::now(),
+            timestamp: Timestamp::now(),
             level: "ERROR".to_string(),
             target: "test".to_string(),
             message: "error msg".to_string(),
         });
         buf.push(LogEntry {
-            timestamp: Utc::now(),
+            timestamp: Timestamp::now(),
             level: "INFO".to_string(),
             target: "test".to_string(),
             message: "info msg".to_string(),
@@ -263,13 +263,13 @@ mod tests {
     fn filter_by_search() {
         let buf = LogBuffer::new(10);
         buf.push(LogEntry {
-            timestamp: Utc::now(),
+            timestamp: Timestamp::now(),
             level: "INFO".to_string(),
             target: "server::api".to_string(),
             message: "request handled".to_string(),
         });
         buf.push(LogEntry {
-            timestamp: Utc::now(),
+            timestamp: Timestamp::now(),
             level: "ERROR".to_string(),
             target: "server::db".to_string(),
             message: "connection failed".to_string(),

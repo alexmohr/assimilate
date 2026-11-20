@@ -4,10 +4,10 @@
 //! Repositories: connection details, passphrases and host keys, import and
 //! sync state, relocation and the stats views.
 
-use chrono::{DateTime, Utc};
 use serde::Serialize;
 use shared::{
     protocol::RepoOpKind,
+    time::Timestamp,
     types::{BorgEncryption, Compression, QuotaAction, Visibility},
 };
 use sqlx::PgPool;
@@ -1077,7 +1077,7 @@ pub struct RepoRowWithSync {
     /// Sync schedule cron expression.
     pub sync_schedule: Option<String>,
     /// When the repo was last synced.
-    pub last_synced_at: Option<DateTime<Utc>>,
+    pub last_synced_at: Option<Timestamp>,
 }
 
 /// # Errors
@@ -1241,11 +1241,11 @@ pub struct RepoWithStatsRow {
     /// Sync schedule cron expression.
     pub sync_schedule: Option<String>,
     /// When the repo was last synced.
-    pub last_synced_at: Option<DateTime<Utc>>,
+    pub last_synced_at: Option<Timestamp>,
     /// Number of archives.
     pub archive_count: i64,
     /// When the last successful backup finished.
-    pub last_backup_at: Option<DateTime<Utc>>,
+    pub last_backup_at: Option<Timestamp>,
     /// Total original size in bytes.
     pub total_original_size: i64,
     /// Total compressed size in bytes.
@@ -1261,7 +1261,7 @@ pub struct RepoWithStatsRow {
     /// Whether a relocation is pending confirmation.
     pub relocation_pending: bool,
     /// When the last operation was performed.
-    pub last_op_at: Option<DateTime<Utc>>,
+    pub last_op_at: Option<Timestamp>,
     /// Who performed the last operation.
     pub last_op_by: Option<String>,
     /// Own quota warn threshold in bytes, if a quota row exists.
@@ -1282,7 +1282,7 @@ pub struct RepoWithStatsRow {
     /// before it was ever checked.
     pub host_last_check_reachable: Option<bool>,
     /// When that machine was last checked.
-    pub host_last_checked_at: Option<DateTime<Utc>>,
+    pub host_last_checked_at: Option<Timestamp>,
     /// Whether a quota row exists for this repo, and if so, whether it's enabled.
     /// `NULL` means no quota is configured at all.
     pub quota_enabled: Option<bool>,
@@ -1413,7 +1413,7 @@ pub async fn update_repo_last_op(
     pool: &PgPool,
     repo_id: i64,
     kind: RepoOpKind,
-    at: chrono::DateTime<chrono::Utc>,
+    at: Timestamp,
     by: &str,
 ) -> Result<(), ApiError> {
     sqlx::query!(

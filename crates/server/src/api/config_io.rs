@@ -4,7 +4,6 @@
 use std::collections::{HashMap, HashSet};
 
 use axum::{Json, extract::State};
-use chrono::Utc;
 // Re-exported for openapi.rs etc.
 pub use shared::responses::{
     ConfigExportResponse as ConfigExport, HostExportResponse as HostExport,
@@ -15,6 +14,7 @@ pub use shared::responses::{
 use shared::{
     crypto::encrypt_passphrase,
     hooks::{HookCommand, MAX_HOOK_COMMAND_TIMEOUT_SECONDS},
+    time::Timestamp,
     types::ScheduleFilesMode,
 };
 
@@ -153,7 +153,7 @@ pub async fn export_config(
 
     Ok(Json(ConfigExport {
         version: EXPORT_VERSION,
-        exported_at: Utc::now(),
+        exported_at: Timestamp::now(),
         hosts,
         schedules,
         repos: repo_exports,

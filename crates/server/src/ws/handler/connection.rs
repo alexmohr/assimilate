@@ -10,6 +10,7 @@ use axum::extract::ws::{CloseFrame, Message, WebSocket};
 use futures_util::{Sink, SinkExt, Stream, StreamExt};
 use shared::{
     protocol::{AgentToServer, ServerToAgent, ServerToUi},
+    time::Timestamp,
     types::SystemEventType,
 };
 use sqlx::PgPool;
@@ -492,8 +493,7 @@ pub(super) async fn reenable_system_disabled_schedules_on_reconnect(
         return;
     }
 
-    match db::reenable_specific_schedules(&state.pool, &safe_to_reenable, chrono::Utc::now()).await
-    {
+    match db::reenable_specific_schedules(&state.pool, &safe_to_reenable, Timestamp::now()).await {
         Ok(schedule_ids) if !schedule_ids.is_empty() => {
             tracing::info!(
                 hostname = %hostname,

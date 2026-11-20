@@ -3,6 +3,7 @@
 
 //! Classifying a failed backup run and the catch-up bookkeeping it drives.
 
+use shared::time::Timestamp;
 use sqlx::PgPool;
 
 use crate::{db, notifications::EventType};
@@ -145,7 +146,7 @@ pub(super) async fn mark_repo_catch_up_pending(
         let Ok(schedule) = db::get_schedule_by_id(pool, schedule_id).await else {
             return;
         };
-        schedule.last_run_at.unwrap_or_else(chrono::Utc::now)
+        schedule.last_run_at.unwrap_or_else(Timestamp::now)
     };
     if let Err(e) =
         db::catch_up::mark_repo_catch_up_pending(pool, schedule_id, repo_id, due_at, run_id).await

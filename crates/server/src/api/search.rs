@@ -7,8 +7,8 @@ use axum::{
     Json,
     extract::{Path as AxumPath, Query, State},
 };
-use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use shared::time::Timestamp;
 
 use super::{
     archives::{LOCK_WAIT_SECS, classify_borg_error, ensure_borg_success, get_repo_env},
@@ -44,7 +44,7 @@ pub struct SearchEntry {
     /// File size in bytes.
     pub size: i64,
     /// Last modification timestamp.
-    pub mtime: DateTime<Utc>,
+    pub mtime: Timestamp,
     /// Entry type ("-" for file, "d" for directory).
     #[serde(rename = "type")]
     pub entry_type: String,
@@ -184,10 +184,7 @@ pub async fn search_archive(
                 .get("mtime")
                 .and_then(serde_json::Value::as_str)
                 .unwrap_or("");
-            let mtime = DateTime::parse_from_rfc3339(mtime_str)
-                .map(|dt| dt.with_timezone(&Utc))
-                .or_else(|_| mtime_str.parse::<DateTime<Utc>>())
-                .unwrap_or_default();
+            let mtime = mtime_str.parse::<Timestamp>().unwrap_or_default();
 
             Some(SearchEntry {
                 path,
@@ -237,7 +234,7 @@ pub struct CrossSearchEntry {
     /// File size in bytes.
     pub size: i64,
     /// Last modification timestamp.
-    pub mtime: DateTime<Utc>,
+    pub mtime: Timestamp,
     /// Entry type ("-" for file, "d" for directory).
     #[serde(rename = "type")]
     pub entry_type: String,
@@ -458,10 +455,7 @@ async fn search_in_archive(
                 .get("mtime")
                 .and_then(serde_json::Value::as_str)
                 .unwrap_or("");
-            let mtime = DateTime::parse_from_rfc3339(mtime_str)
-                .map(|dt| dt.with_timezone(&Utc))
-                .or_else(|_| mtime_str.parse::<DateTime<Utc>>())
-                .unwrap_or_default();
+            let mtime = mtime_str.parse::<Timestamp>().unwrap_or_default();
 
             Some(CrossSearchEntry {
                 path: v
@@ -533,7 +527,7 @@ mod tests {
         let entry = SearchEntry {
             path: "etc/hosts".to_string(),
             size: 220,
-            mtime: DateTime::default(),
+            mtime: Timestamp::default(),
             entry_type: "r".to_string(),
         };
         let json = serde_json::to_value(&entry).unwrap();

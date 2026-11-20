@@ -3,8 +3,8 @@
 
 //! Repository permissions, groups and roles.
 
-use chrono::{DateTime, Utc};
 use serde::Serialize;
+use shared::time::Timestamp;
 use sqlx::PgPool;
 
 use crate::error::ApiError;
@@ -147,7 +147,7 @@ pub struct GroupRow {
     /// Optional group description.
     pub description: Option<String>,
     /// When the group was created.
-    pub created_at: DateTime<Utc>,
+    pub created_at: Timestamp,
 }
 
 /// A row from the `roles` table representing an RBAC role.
@@ -188,12 +188,12 @@ pub struct RoleRow {
     /// Permission to upgrade agents.
     pub can_upgrade_agent: bool,
     /// When the role was created.
-    pub created_at: DateTime<Utc>,
+    pub created_at: Timestamp,
 }
 
 #[cfg(test)]
 mod wake_secret_permission_tests {
-    use chrono::Utc;
+    use shared::time::Timestamp;
 
     use super::RoleRow;
 
@@ -215,7 +215,7 @@ mod wake_secret_permission_tests {
             can_view_all_repos: false,
             can_manage_tunnels: false,
             can_upgrade_agent: false,
-            created_at: Utc::now(),
+            created_at: Timestamp::now(),
         }
     }
 
@@ -728,6 +728,6 @@ pub async fn get_effective_permissions(pool: &PgPool, user_id: i64) -> Result<Ro
         can_view_all_repos: row.can_view_all_repos.unwrap_or(false),
         can_manage_tunnels: row.can_manage_tunnels.unwrap_or(false),
         can_upgrade_agent: row.can_upgrade_agent.unwrap_or(false),
-        created_at: Utc::now(),
+        created_at: Timestamp::now(),
     })
 }

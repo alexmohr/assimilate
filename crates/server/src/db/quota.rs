@@ -1,9 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
-use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use shared::types::QuotaAction;
+use shared::{time::Timestamp, types::QuotaAction};
 use sqlx::PgPool;
 
 /// Per-repository storage quota configuration.
@@ -22,7 +21,7 @@ pub struct RepoQuota {
     /// Whether this quota is enforced.
     pub enabled: bool,
     /// When this quota was last updated.
-    pub updated_at: DateTime<Utc>,
+    pub updated_at: Timestamp,
 }
 
 /// Health classification of a storage quota.
@@ -170,7 +169,7 @@ mod tests {
             warn_action: QuotaAction::BlockBackups,
             critical_action: QuotaAction::DisableSchedule,
             enabled: true,
-            updated_at: Utc::now(),
+            updated_at: Timestamp::now(),
         }
     }
 

@@ -9,9 +9,10 @@
 //! `borg serve --append-only` in the host's `authorized_keys`, and the server
 //! keeps a second, full-access key that it alone can use.
 
-use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
+
+use crate::time::Timestamp;
 
 /// How a maintenance run ended.
 #[derive(
@@ -107,7 +108,7 @@ pub struct AppendOnlySiblingResponse {
 #[ts(export)]
 pub struct AppendOnlyCheckResponse {
     /// When the connections were tried.
-    pub checked_at: DateTime<Utc>,
+    pub checked_at: Timestamp,
     /// Whether the key agents use reaches borg.
     pub backup_key_ok: bool,
     /// Whether the maintenance key reaches the host.
@@ -126,7 +127,7 @@ pub struct AppendOnlyCheckResponse {
 #[ts(export)]
 pub struct MaintenanceStoppedResponse {
     /// When maintenance stopped.
-    pub since: DateTime<Utc>,
+    pub since: Timestamp,
     /// Archives that are gone from borg although Assimilate did not delete
     /// them.
     pub vanished_archives: Vec<String>,
@@ -140,9 +141,9 @@ pub struct MaintenanceRunResponse {
     /// Run ID.
     pub id: i64,
     /// When the run started.
-    pub started_at: DateTime<Utc>,
+    pub started_at: Timestamp,
     /// When the run ended, if it has.
-    pub finished_at: Option<DateTime<Utc>>,
+    pub finished_at: Option<Timestamp>,
     #[ts(type = "string")]
     /// How the run ended.
     pub outcome: MaintenanceOutcome,
@@ -165,9 +166,9 @@ pub struct MaintenanceSettingsResponse {
     /// Whether `borg check --repository-only` runs before anything is written.
     pub check_before_prune: bool,
     /// When maintenance runs next, or `None` while it is stopped.
-    pub next_run_at: Option<DateTime<Utc>>,
+    pub next_run_at: Option<Timestamp>,
     /// When maintenance last ran.
-    pub last_run_at: Option<DateTime<Utc>>,
+    pub last_run_at: Option<Timestamp>,
     /// Set while maintenance is stopped, waiting for an admin.
     pub stopped: Option<MaintenanceStoppedResponse>,
 }
@@ -184,7 +185,7 @@ pub struct PendingDeletionResponse {
     /// Who queued it.
     pub requested_by: Option<String>,
     /// When it was queued.
-    pub requested_at: DateTime<Utc>,
+    pub requested_at: Timestamp,
 }
 
 /// Why setting append-only up, or taking it away, did not work.
@@ -220,7 +221,7 @@ pub struct AppendOnlyStatusResponse {
     /// The login the setting covers.
     pub login: AppendOnlyLoginResponse,
     /// When the keys were last installed on the host.
-    pub installed_at: Option<DateTime<Utc>>,
+    pub installed_at: Option<Timestamp>,
     /// The result of the last connection check.
     pub check: Option<AppendOnlyCheckResponse>,
     /// The key the agents use.

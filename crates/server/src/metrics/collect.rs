@@ -9,8 +9,10 @@
 
 use std::collections::HashSet;
 
-use chrono::{DateTime, Utc};
-use shared::types::{BackupStatus, ReportStatus, ScheduleType};
+use shared::{
+    time::Timestamp,
+    types::{BackupStatus, ReportStatus, ScheduleType},
+};
 
 use super::exposition::{Family, Sample};
 use crate::{
@@ -42,9 +44,9 @@ const OUTCOMES: [BackupStatus; 3] = [
 #[derive(Debug, Clone)]
 pub struct Snapshot {
     /// When the snapshot was taken.
-    pub now: DateTime<Utc>,
+    pub now: Timestamp,
     /// The timezone schedules' cron expressions are evaluated in.
-    pub timezone: chrono_tz::Tz,
+    pub timezone: jiff::tz::TimeZone,
     /// Every schedule target.
     pub targets: Vec<ScheduleTargetMetricsRow>,
     /// Every repository.
@@ -54,7 +56,7 @@ pub struct Snapshot {
     /// IDs of the agents connected right now.
     pub connected_agents: HashSet<i64>,
     /// When the scheduler last finished a tick, if it has since start-up.
-    pub scheduler_last_tick: Option<DateTime<Utc>>,
+    pub scheduler_last_tick: Option<Timestamp>,
     /// Running and queued repository operations.
     pub jobs: RepoOpTotals,
     /// This server's version.
@@ -99,8 +101,8 @@ fn agent_labels(sample: Sample, agent: &AgentMetricsRow) -> Sample {
 /// expression that does not parse.
 fn backup_deadline(
     target: &ScheduleTargetMetricsRow,
-    timezone: chrono_tz::Tz,
-) -> Option<DateTime<Utc>> {
+    timezone: &jiff::tz::TimeZone,
+) -> Option<Timestamp> {
     if !target.schedule_enabled {
         return None;
     }
@@ -142,7 +144,7 @@ fn schedule_target_families(snapshot: &Snapshot) -> Vec<Family> {
         if !matches!(target.schedule_type, ScheduleType::Backup) {
             return;
         }
-        last_success.push_opt(target.last_success_at.map(|at| at.timestamp()), |s| {
+        last_success.push_opt(target.last_success_at.map(Timestamp::unix_secs), |s| {
             target_labels(s, target)
         });
         if let Some(outcome) = target.latest_status.and_then(ReportStatus::outcome) {
@@ -153,10 +155,10 @@ fn schedule_target_families(snapshot: &Snapshot) -> Vec<Family> {
                 );
             }
         }
-        if let Some(due) = backup_deadline(target, snapshot.timezone) {
-            deadline.push(target_labels(Sample::new(due.timestamp()), target));
+        if let Some(due) = backup_deadline(target, &snapshot.timezone) {
+            deadline.push(target_labels(Sample::new(due.unix_secs()), target));
             overdue.push(target_labels(
-                Sample::new(snapshot.now.signed_duration_since(due).num_seconds().max(0)),
+                Sample::new(snapshot.now.since(due).as_secs().max(0)),
                 target,
             ));
         }
@@ -198,7 +200,7 @@ fn repository_families(snapshot: &Snapshot) -> Vec<Family> {
         archives.push_opt(repo.archive_count.map(i64::from), |s| {
             repository_labels(s, repo)
         });
-        updated.push_opt(repo.stats_updated_at.map(|at| at.timestamp()), |s| {
+        updated.push_opt(repo.stats_updated_at.map(Timestamp::unix_secs), |s| {
             repository_labels(s, repo)
         });
         warn.push_opt(repo.quota_warn_bytes, |s| repository_labels(s, repo));
@@ -235,7 +237,7 @@ fn agent_families(snapshot: &Snapshot) -> Vec<Family> {
                 .label_opt("version", agent.agent_version.as_deref())
                 .label_opt("borg_version", agent.borg_version.as_deref()),
         );
-        last_seen.push_opt(agent.last_seen_at.map(|at| at.timestamp()), |s| {
+        last_seen.push_opt(agent.last_seen_at.map(Timestamp::unix_secs), |s| {
             agent_labels(s, agent)
         });
     });
@@ -255,7 +257,10 @@ fn server_families(snapshot: &Snapshot) -> Vec<Family> {
         "Unix time the scheduler last finished a pass over the schedules. Absent until its first \
          pass after the server started.",
     );
-    last_tick.push_opt(snapshot.scheduler_last_tick.map(|at| at.timestamp()), |s| s);
+    last_tick.push_opt(
+        snapshot.scheduler_last_tick.map(Timestamp::unix_secs),
+        |s| s,
+    );
 
     let mut running = Family::gauge(
         "assimilate_jobs_running",
@@ -288,13 +293,11 @@ pub fn families(snapshot: &Snapshot) -> Vec<Family> {
 
 #[cfg(test)]
 mod tests {
-    use chrono::TimeZone as _;
-
     use super::*;
     use crate::metrics::exposition::render;
 
-    fn at(hour: u32) -> DateTime<Utc> {
-        Utc.with_ymd_and_hms(2026, 10, 17, hour, 0, 0).unwrap()
+    fn at(hour: i8) -> Timestamp {
+        Timestamp::utc(2026, 10, 17, hour, 0, 0).unwrap()
     }
 
     fn target() -> ScheduleTargetMetricsRow {
@@ -340,7 +343,7 @@ mod tests {
     fn snapshot() -> Snapshot {
         Snapshot {
             now: at(12),
-            timezone: chrono_tz::UTC,
+            timezone: jiff::tz::TimeZone::UTC,
             targets: Vec::new(),
             repositories: Vec::new(),
             agents: Vec::new(),
@@ -391,7 +394,7 @@ mod tests {
 
         assert!(text.contains(&format!(
             "assimilate_backup_last_success_timestamp_seconds{{{TARGET_LABELS}}} {}\n",
-            at(2).timestamp()
+            at(2).unix_secs()
         )));
         assert!(text.contains(&format!(
             "assimilate_backup_last_run_status{{{TARGET_LABELS},status=\"success\"}} 1\n"
@@ -399,10 +402,10 @@ mod tests {
         assert!(text.contains(&format!(
             "assimilate_backup_last_run_status{{{TARGET_LABELS},status=\"failed\"}} 0\n"
         )));
-        let deadline = Utc.with_ymd_and_hms(2026, 10, 18, 2, 30, 0).unwrap();
+        let deadline = Timestamp::utc(2026, 10, 18, 2, 30, 0).unwrap();
         assert!(text.contains(&format!(
             "assimilate_backup_deadline_timestamp_seconds{{{TARGET_LABELS}}} {}\n",
-            deadline.timestamp()
+            deadline.unix_secs()
         )));
         assert!(text.contains(&format!(
             "assimilate_backup_overdue_seconds{{{TARGET_LABELS}}} 0\n"
@@ -412,7 +415,7 @@ mod tests {
     #[test]
     fn a_target_past_its_deadline_reports_how_far_past_it_is() {
         let snapshot = Snapshot {
-            now: Utc.with_ymd_and_hms(2026, 10, 18, 3, 30, 0).unwrap(),
+            now: Timestamp::utc(2026, 10, 18, 3, 30, 0).unwrap(),
             targets: vec![ScheduleTargetMetricsRow {
                 latest_status: Some(ReportStatus::Failed),
                 last_success_at: Some(at(2)),
@@ -544,7 +547,7 @@ mod tests {
         assert!(text.contains("assimilate_agent_info{host=\"db-01\"} 1\n"));
         assert!(text.contains(&format!(
             "assimilate_agent_last_seen_timestamp_seconds{{host=\"web-01\"}} {}\n",
-            at(11).timestamp()
+            at(11).unix_secs()
         )));
         assert!(!text.contains("assimilate_agent_last_seen_timestamp_seconds{host=\"db-01\"}"));
     }
@@ -619,7 +622,7 @@ mod tests {
 
         assert!(text(&snapshot).contains(&format!(
             "assimilate_scheduler_last_tick_timestamp_seconds {}\n",
-            at(12).timestamp()
+            at(12).unix_secs()
         )));
     }
 

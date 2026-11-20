@@ -19,6 +19,7 @@ use shared::{
     },
     schedule::{calculate_next_run, validate_cron},
     snapshot::{DEFAULT_LVM_SNAPSHOT_PERCENT, FsSnapshotMode, is_valid_lvm_snapshot_percent},
+    time::Timestamp,
     types::{OnFailure, RepoId, ScheduleFilesMode, ScheduleType, ScheduleWakeOverride},
 };
 use sqlx::PgPool;
@@ -1124,7 +1125,7 @@ pub async fn update_schedule(
     if enabled {
         refresh_next_run(&state.pool, schedule.id, &req.cron_expression).await?;
     } else {
-        db::set_next_run_at(&state.pool, schedule.id, chrono::Utc::now()).await?;
+        db::set_next_run_at(&state.pool, schedule.id, Timestamp::now()).await?;
     }
 
     config_assembler::push_config_to_all_schedule_targets(&state, schedule.id).await;
@@ -1556,9 +1557,9 @@ async fn refresh_next_run(
     schedule_id: i64,
     cron_expression: &str,
 ) -> Result<(), ApiError> {
-    let now = chrono::Utc::now();
+    let now = Timestamp::now();
     let tz = db::get_schedule_timezone(pool).await?;
-    let next = calculate_next_run(cron_expression, now, tz)
+    let next = calculate_next_run(cron_expression, now, &tz)
         .map_err(|e| ApiError::Internal(format!("failed to calculate next run: {e}")))?;
     db::set_next_run_at(pool, schedule_id, next).await
 }
@@ -1699,7 +1700,7 @@ pub async fn run_schedule_now(
     }
     let schedule_type = schedule.schedule_type;
     let run_id = Uuid::new_v4().to_string();
-    let now = chrono::Utc::now();
+    let now = Timestamp::now();
 
     for target in &targets {
         for repo_id in &repo_ids {
@@ -2134,8 +2135,8 @@ fn check_cron_expression(expression: &str) -> Result<(), ApiError> {
 /// included).
 fn cron_preview(
     cron_expression: &str,
-    now: chrono::DateTime<chrono::Utc>,
-    tz: chrono_tz::Tz,
+    now: Timestamp,
+    tz: &jiff::tz::TimeZone,
     count: u8,
 ) -> CronPreviewResponse {
     // The same cap saving the schedule applies, reported the same way.
@@ -2207,8 +2208,8 @@ pub async fn preview_cron(
     let tz = db::get_schedule_timezone(&state.pool).await?;
     Ok(Json(cron_preview(
         &query.cron_expression,
-        chrono::Utc::now(),
-        tz,
+        Timestamp::now(),
+        &tz,
         count,
     )))
 }
@@ -2268,14 +2269,18 @@ mod tests {
 
     use super::*;
 
-    fn utc(y: i32, mo: u32, d: u32, h: u32, m: u32) -> chrono::DateTime<chrono::Utc> {
-        use chrono::TimeZone;
-        chrono::Utc.with_ymd_and_hms(y, mo, d, h, m, 0).unwrap()
+    fn utc(y: i16, mo: i8, d: i8, h: i8, m: i8) -> Timestamp {
+        Timestamp::utc(y, mo, d, h, m, 0).unwrap()
     }
 
     #[test]
     fn cron_preview_lists_the_requested_number_of_runs() {
-        let preview = cron_preview("0 */6 * * *", utc(2026, 1, 1, 10, 0), chrono_tz::UTC, 3);
+        let preview = cron_preview(
+            "0 */6 * * *",
+            utc(2026, 1, 1, 10, 0),
+            &jiff::tz::TimeZone::UTC,
+            3,
+        );
         assert_eq!(
             preview,
             CronPreviewResponse::Valid {
@@ -2293,7 +2298,7 @@ mod tests {
         let preview = cron_preview(
             "30 2 * * *",
             utc(2026, 3, 28, 0, 0),
-            chrono_tz::Europe::Berlin,
+            &jiff::tz::TimeZone::get("Europe/Berlin").unwrap(),
             3,
         );
         assert_eq!(
@@ -2311,7 +2316,12 @@ mod tests {
     #[test]
     fn cron_preview_accepts_weekday_names() {
         // 2026-01-02 is a Friday, so the next weekday runs skip the weekend.
-        let preview = cron_preview("0 2 * * MON-FRI", utc(2026, 1, 2, 3, 0), chrono_tz::UTC, 2);
+        let preview = cron_preview(
+            "0 2 * * MON-FRI",
+            utc(2026, 1, 2, 3, 0),
+            &jiff::tz::TimeZone::UTC,
+            2,
+        );
         assert_eq!(
             preview,
             CronPreviewResponse::Valid {
@@ -2324,7 +2334,12 @@ mod tests {
     fn cron_preview_runs_when_either_day_field_matches() {
         // Both day fields restricted: standard cron fires on the 1st OR on a
         // Monday. 2026-06-01 is a Monday and 2026-06-08 the next one.
-        let preview = cron_preview("0 2 1 * MON", utc(2026, 5, 29, 0, 0), chrono_tz::UTC, 2);
+        let preview = cron_preview(
+            "0 2 1 * MON",
+            utc(2026, 5, 29, 0, 0),
+            &jiff::tz::TimeZone::UTC,
+            2,
+        );
         assert_eq!(
             preview,
             CronPreviewResponse::Valid {
@@ -2392,10 +2407,11 @@ mod tests {
         // February 30th parses, but no year has one: the scheduler finds no run.
         let (expression, from) = ("0 0 30 2 *", utc(2026, 1, 1, 0, 0));
         assert!(validate_cron(expression).is_ok());
-        let scheduler_error = calculate_next_run(expression, from, chrono_tz::UTC).unwrap_err();
+        let scheduler_error =
+            calculate_next_run(expression, from, &jiff::tz::TimeZone::UTC).unwrap_err();
         assert!(scheduler_error.contains("no next occurrence"));
         assert_eq!(
-            cron_preview(expression, from, chrono_tz::UTC, 3),
+            cron_preview(expression, from, &jiff::tz::TimeZone::UTC, 3),
             CronPreviewResponse::Invalid {
                 error: scheduler_error
             }
@@ -2412,14 +2428,19 @@ mod tests {
         let at_limit = format!("0 2 * * 1{}", ",1".repeat((limit - 9) / 2));
         assert_eq!(at_limit.chars().count(), limit);
         assert_ne!(
-            cron_preview(&at_limit, utc(2026, 1, 1, 0, 0), chrono_tz::UTC, 1),
+            cron_preview(
+                &at_limit,
+                utc(2026, 1, 1, 0, 0),
+                &jiff::tz::TimeZone::UTC,
+                1
+            ),
             too_long
         );
         assert_eq!(
             cron_preview(
                 &format!("{at_limit}1"),
                 utc(2026, 1, 1, 0, 0),
-                chrono_tz::UTC,
+                &jiff::tz::TimeZone::UTC,
                 1
             ),
             too_long
@@ -2428,7 +2449,12 @@ mod tests {
 
     #[test]
     fn cron_preview_reports_the_error_saving_would_report() {
-        let preview = cron_preview("60 2 * * *", utc(2026, 1, 1, 0, 0), chrono_tz::UTC, 3);
+        let preview = cron_preview(
+            "60 2 * * *",
+            utc(2026, 1, 1, 0, 0),
+            &jiff::tz::TimeZone::UTC,
+            3,
+        );
         assert_eq!(
             preview,
             CronPreviewResponse::Invalid {
@@ -2439,7 +2465,12 @@ mod tests {
 
     #[test]
     fn cron_preview_error_is_the_one_saving_returns() {
-        let preview = cron_preview("60 2 * * *", utc(2026, 1, 1, 0, 0), chrono_tz::UTC, 3);
+        let preview = cron_preview(
+            "60 2 * * *",
+            utc(2026, 1, 1, 0, 0),
+            &jiff::tz::TimeZone::UTC,
+            3,
+        );
         let saved = check_cron_expression("60 2 * * *");
         assert!(
             matches!(

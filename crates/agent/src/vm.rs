@@ -35,11 +35,11 @@ use std::{
     time::Duration,
 };
 
-use chrono::Utc;
 use shared::{
     borg::{GracefulChild, kill_escalation_delay},
     format::format_bytes,
     task_registry::TaskRegistry,
+    time::Timestamp,
     vm::{
         DiscoveredVm, VmBuildOutcome, VmBuildRequest, VmRunAction, VmSnapshotConfig,
         VmSnapshotMode, VmSnapshotOutcome, VmState,
@@ -1638,7 +1638,7 @@ impl VmStager {
 
         // Milliseconds, not seconds: two runs of a small domain can otherwise
         // land in the same second and collide on a checkpoint name.
-        let stamp = Utc::now().format("%Y%m%dT%H%M%S%3fZ").to_string();
+        let stamp = Timestamp::now().strftime("%Y%m%dT%H%M%S%3fZ");
         let checkpoint_name = format!("{OWNED_PREFIX}-{stamp}");
 
         // A forced full drops the checkpoints, which only costs the next run
@@ -2171,7 +2171,7 @@ impl VmStager {
         // copy at all.
         let snapshot = format!(
             "{OWNED_PREFIX}-tmp-{}",
-            Utc::now().format("%Y%m%dT%H%M%S%3fZ")
+            Timestamp::now().strftime("%Y%m%dT%H%M%S%3fZ")
         );
         let quiesced = self
             .virsh(&[

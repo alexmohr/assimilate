@@ -9,10 +9,10 @@ use axum::{
     Json,
     extract::{Path as AxumPath, Query, State},
 };
-use chrono::NaiveDate;
 use serde::Deserialize;
 use shared::{
     responses::{ArchiveTreeSearchResponse, ArchiveTreeTotalsResponse},
+    time::Date,
     types::IndexStatus,
 };
 use utoipa::{IntoParams, ToSchema};
@@ -48,9 +48,9 @@ pub struct TreeSearchQuery {
     /// Largest size kept, in bytes.
     pub max_size: Option<i64>,
     /// Earliest modification day kept (`YYYY-MM-DD`).
-    pub modified_from: Option<NaiveDate>,
+    pub modified_from: Option<Date>,
     /// Latest modification day kept (`YYYY-MM-DD`).
-    pub modified_to: Option<NaiveDate>,
+    pub modified_to: Option<Date>,
     /// Most matches to return (default 200, at most 1000).
     pub limit: Option<usize>,
 }
@@ -309,8 +309,8 @@ mod tests {
                 ..TreeSearchQuery::default()
             },
             TreeSearchQuery {
-                modified_from: NaiveDate::from_ymd_opt(2026, 2, 1),
-                modified_to: NaiveDate::from_ymd_opt(2026, 1, 1),
+                modified_from: Date::new(2026, 2, 1),
+                modified_to: Date::new(2026, 1, 1),
                 ..TreeSearchQuery::default()
             },
             TreeSearchQuery {
@@ -341,7 +341,7 @@ mod tests {
         .unwrap();
 
         assert_eq!(query.kind, Some(EntryKind::File));
-        assert_eq!(query.modified_from, NaiveDate::from_ymd_opt(2026, 1, 1));
+        assert_eq!(query.modified_from, Date::new(2026, 1, 1));
     }
     use crate::{
         archive_index::tree::tests::{demo_tree, index_archive, mark_indexed},

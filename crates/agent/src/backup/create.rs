@@ -3,9 +3,9 @@
 
 use std::{ffi::OsStr, path::Path};
 
-use chrono::Utc;
 use shared::{
     borg::log_json::{BorgDiagnostics, parse_diagnostics},
+    time::Timestamp,
     types::{BackupStatus, Compression, build_repo_url},
 };
 use tokio::sync::mpsc;
@@ -64,7 +64,7 @@ impl BackupEngine {
         read_from: ReadFrom<'_, E>,
     ) -> Result<CreateResult, BackupError> {
         let ReadFrom { dumps, snapshots } = read_from;
-        let now = Utc::now().format("%Y-%m-%dT%H:%M:%S");
+        let now = Timestamp::now().strftime("%Y-%m-%dT%H:%M:%S");
         let archive_name = target.archive_name(now);
 
         let mut sources = backup_sources.to_vec();
@@ -250,7 +250,7 @@ impl BackupEngine {
     /// placeholder for the transient exclude-from (and, when the target has
     /// include patterns, patterns-from) temp file path.
     pub fn preview_create_command(target: &BackupTarget) -> String {
-        let now = Utc::now().format("%Y-%m-%dT%H:%M:%S");
+        let now = Timestamp::now().strftime("%Y-%m-%dT%H:%M:%S");
         let archive_name = target.archive_name(now);
         let exclude_placeholder = std::path::Path::new("<exclude-file>");
         let include_placeholder = std::path::Path::new("<include-file>");

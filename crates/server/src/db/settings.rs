@@ -166,7 +166,7 @@ pub async fn get_database_storage(
 /// # Errors
 ///
 /// Returns [`ApiError::Internal`] if an internal error occurs.
-pub async fn get_schedule_timezone(pool: &PgPool) -> Result<chrono_tz::Tz, ApiError> {
+pub async fn get_schedule_timezone(pool: &PgPool) -> Result<jiff::tz::TimeZone, ApiError> {
     let tz_str = get_setting(pool, "timezone").await?.unwrap_or_default();
     shared::schedule::parse_timezone(&tz_str)
         .map_err(|e| ApiError::Internal(format!("invalid timezone setting: {e}")))

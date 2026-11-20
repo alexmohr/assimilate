@@ -323,6 +323,7 @@ async fn release_host_hold(state: &AppState, held: &HeldHost) {
 mod tests {
     use std::time::Duration;
 
+    use shared::time::Timestamp;
     use sqlx::PgPool;
 
     use super::*;
@@ -565,7 +566,7 @@ mod tests {
             .power_sessions
             .reserve(host, crate::power::TEST_HOLD)
             .await;
-        let now = chrono::Utc::now();
+        let now = Timestamp::now();
         let report = BackupReport {
             id: shared::types::ReportId(1),
             agent_id: shared::types::AgentId(999_991),

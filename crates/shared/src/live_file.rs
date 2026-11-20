@@ -3,9 +3,10 @@
 
 use std::fmt;
 
-use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
+
+use crate::time::Timestamp;
 
 /// The largest file, in bytes, an agent reads for a comparison: the same
 /// limit the server compares archived versions under.
@@ -35,7 +36,7 @@ pub enum LiveFile {
         /// Its size in bytes.
         size: u64,
         /// When it was last modified, if the platform reports it.
-        modified: Option<DateTime<Utc>>,
+        modified: Option<Timestamp>,
     },
     /// The file is not UTF-8 text.
     Binary,
@@ -105,7 +106,7 @@ mod tests {
             LiveFile::Text {
                 text: LiveText("a\nb\n".to_owned()),
                 size: 4,
-                modified: Some(DateTime::from_timestamp(1_700_000_000, 0).unwrap()),
+                modified: Some(Timestamp::from_unix_secs(1_700_000_000).unwrap()),
             },
             LiveFile::Binary,
             LiveFile::TooLarge { size: 5_000_000 },

@@ -9,10 +9,10 @@ use std::{
     },
 };
 
-use chrono::Utc;
 use shared::{
     protocol::{ActiveRepoOp, RepoOpKind},
     task_registry::TaskRegistry,
+    time::Timestamp,
 };
 use tokio::sync::RwLock;
 
@@ -82,7 +82,7 @@ impl RepoOpTracker {
         state.active = Some(ActiveRepoOp {
             kind,
             actor,
-            started_at: Utc::now(),
+            started_at: Timestamp::now(),
             queued: state.queued,
         });
         token

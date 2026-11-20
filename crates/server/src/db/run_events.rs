@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
-use chrono::{DateTime, Utc};
 use serde::Serialize;
-use shared::types::{RunEventTarget, RunEventType};
+use shared::{
+    time::Timestamp,
+    types::{RunEventTarget, RunEventType},
+};
 use sqlx::PgPool;
 
 use crate::error::ApiError;
@@ -34,7 +36,7 @@ pub struct RunEventRow {
     /// Human-readable description of the event.
     pub message: String,
     /// When the event occurred.
-    pub occurred_at: DateTime<Utc>,
+    pub occurred_at: Timestamp,
 }
 
 /// Records one step of a run's power-management timeline.
@@ -106,10 +108,7 @@ pub async fn list_run_events(
 /// # Errors
 ///
 /// Returns [`ApiError::Database`] if the database query fails.
-pub async fn delete_run_events_before(
-    pool: &PgPool,
-    before: DateTime<Utc>,
-) -> Result<u64, ApiError> {
+pub async fn delete_run_events_before(pool: &PgPool, before: Timestamp) -> Result<u64, ApiError> {
     let result = sqlx::query!(
         "DELETE FROM backup_run_events WHERE occurred_at < $1",
         before

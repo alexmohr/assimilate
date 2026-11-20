@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
-use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 use crate::{
     hooks::HookCommand,
     protocol::{RepoOpKind, TunnelStatus},
+    time::Timestamp,
     types::{
         BackupStatus, BorgEncryption, Compression, DeploymentMode, ExecutionMode, FindingKind,
         FindingSeverity, FindingStatus, IndexStatus, OnFailure, QuotaAction, ReportStatus,
@@ -74,7 +74,7 @@ pub struct LoginResponse {
     /// User details.
     pub user: UserResponse,
     /// Timestamp of when the session expires occurred.
-    pub session_expires_at: DateTime<Utc>,
+    pub session_expires_at: Timestamp,
     /// Whether the session should be remembered beyond the current browser session.
     pub remember_me: bool,
     #[serde(default)]
@@ -105,7 +105,7 @@ pub struct MeResponse {
     /// Whether the user must change their password on next login.
     pub must_change_password: bool,
     /// Timestamp of when the session expires occurred.
-    pub session_expires_at: Option<DateTime<Utc>>,
+    pub session_expires_at: Option<Timestamp>,
     /// Whether the session should be remembered beyond the current browser session.
     pub remember_me: bool,
     /// Whether the user has permission to upgrade agents.
@@ -124,7 +124,7 @@ pub struct MeResponse {
 /// Response containing refresh session.
 pub struct RefreshSessionResponse {
     /// Timestamp of when the session expires occurred.
-    pub session_expires_at: DateTime<Utc>,
+    pub session_expires_at: Timestamp,
 }
 
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
@@ -159,11 +159,11 @@ pub struct SessionResponse {
     /// User identifier associated with this session.
     pub user_id: i64,
     /// Timestamp of when the session was created.
-    pub created_at: DateTime<Utc>,
+    pub created_at: Timestamp,
     /// Timestamp of when the session expires.
-    pub expires_at: DateTime<Utc>,
+    pub expires_at: Timestamp,
     /// Timestamp of the last activity on this session.
-    pub last_seen_at: DateTime<Utc>,
+    pub last_seen_at: Timestamp,
     /// Whether the session should persist beyond the browser session.
     pub remember_me: bool,
     /// Whether this is the current active session.
@@ -190,9 +190,9 @@ pub struct UserResponse {
     /// Role assigned to the user.
     pub role: String,
     /// Timestamp of when the created occurred.
-    pub created_at: DateTime<Utc>,
+    pub created_at: Timestamp,
     /// Timestamp of when the last login occurred.
-    pub last_login_at: Option<DateTime<Utc>>,
+    pub last_login_at: Option<Timestamp>,
     /// Whether the user must change their password on next login.
     pub must_change_password: bool,
 }
@@ -231,9 +231,9 @@ pub struct AgentResponse {
     /// agent commit count.
     pub agent_commit_count: Option<i32>,
     /// Timestamp of when the created occurred.
-    pub created_at: DateTime<Utc>,
+    pub created_at: Timestamp,
     /// Timestamp of when the last seen occurred.
-    pub last_seen_at: Option<DateTime<Utc>>,
+    pub last_seen_at: Option<Timestamp>,
     /// Default paths to include in backups.
     pub default_backup_paths: Vec<String>,
     /// Default exclude patterns.
@@ -338,7 +338,7 @@ pub struct AgentDatabaseSourceResponse {
     /// find the source at all.
     pub last_error: Option<String>,
     /// When the agent last reported this source.
-    pub last_scanned_at: Option<DateTime<Utc>>,
+    pub last_scanned_at: Option<Timestamp>,
 }
 
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
@@ -406,9 +406,9 @@ pub struct AgentVmResponse {
     /// Why the last run failed for this domain, when it did.
     pub last_error: Option<String>,
     /// When the host last reported this domain.
-    pub last_scanned_at: Option<DateTime<Utc>>,
+    pub last_scanned_at: Option<Timestamp>,
     /// When a run last staged this domain.
-    pub last_staged_at: Option<DateTime<Utc>>,
+    pub last_staged_at: Option<Timestamp>,
 }
 
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
@@ -526,7 +526,7 @@ pub struct HostnamePatternResponse {
     /// Pattern string.
     pub pattern: String,
     /// Timestamp of when the created occurred.
-    pub created_at: DateTime<Utc>,
+    pub created_at: Timestamp,
 }
 
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
@@ -629,12 +629,12 @@ pub struct RepoWithStatsResponse {
     /// sync schedule.
     pub sync_schedule: Option<String>,
     /// Timestamp of when the last synced occurred.
-    pub last_synced_at: Option<DateTime<Utc>>,
+    pub last_synced_at: Option<Timestamp>,
     #[ts(type = "number")]
     /// Number of archives in the repository.
     pub archive_count: i64,
     /// Timestamp of when the last backup occurred.
-    pub last_backup_at: Option<DateTime<Utc>>,
+    pub last_backup_at: Option<Timestamp>,
     #[ts(type = "number")]
     /// Total original size across all archives.
     pub total_original_size: i64,
@@ -656,7 +656,7 @@ pub struct RepoWithStatsResponse {
     /// Kind of the last operation performed.
     pub last_op_kind: Option<RepoOpKind>,
     /// Timestamp of when the last op occurred.
-    pub last_op_at: Option<DateTime<Utc>>,
+    pub last_op_at: Option<Timestamp>,
     /// User who performed the last operation.
     pub last_op_by: Option<String>,
     /// Currently active operation, if any.
@@ -691,7 +691,7 @@ pub struct RepoHostRefResponse {
     /// it was ever checked.
     pub last_check_reachable: Option<bool>,
     /// When the host was last checked.
-    pub last_checked_at: Option<DateTime<Utc>>,
+    pub last_checked_at: Option<Timestamp>,
 }
 
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
@@ -737,7 +737,7 @@ pub struct RunEventResponse {
     /// Human-readable description of the event.
     pub message: String,
     /// When the event occurred.
-    pub occurred_at: DateTime<Utc>,
+    pub occurred_at: Timestamp,
 }
 
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
@@ -902,9 +902,9 @@ pub struct ScheduleResponse {
     #[serde(default = "default_true")]
     pub run_host_commands: bool,
     /// Timestamp of when the last run occurred.
-    pub last_run_at: Option<DateTime<Utc>>,
+    pub last_run_at: Option<Timestamp>,
     /// Timestamp of when the next run occurred.
-    pub next_run_at: Option<DateTime<Utc>>,
+    pub next_run_at: Option<Timestamp>,
     /// Raw exclude patterns.
     pub exclude_patterns_raw: String,
     /// Raw include patterns, rescuing paths from a broader exclude.
@@ -994,7 +994,7 @@ pub struct ScheduleTargetResponse {
     pub execution_order: i32,
     /// The occurrence this target missed while its host was unreachable, waiting
     /// to be caught up when that host reconnects. `None` when nothing is pending.
-    pub catch_up_pending_for: Option<DateTime<Utc>>,
+    pub catch_up_pending_for: Option<Timestamp>,
 }
 
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
@@ -1011,7 +1011,7 @@ pub struct ScheduleRepoResponse {
     pub required: bool,
     /// The occurrence this repository missed while its host was not answering,
     /// waiting to be caught up when it does. `None` when nothing is pending.
-    pub catch_up_pending_for: Option<DateTime<Utc>>,
+    pub catch_up_pending_for: Option<Timestamp>,
 }
 
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
@@ -1031,16 +1031,16 @@ pub struct CatchUpWaitResponse {
     /// That repository's display name.
     pub repo_name: Option<String>,
     /// The occurrence that was missed.
-    pub pending_for: DateTime<Utc>,
+    pub pending_for: Timestamp,
     /// When the host was last asked whether it is back. For an agent it is
     /// always `null`, since an agent announces its own return; for a repository
     /// it is `null` until the host is first asked after the miss was recorded.
-    pub last_probe_at: Option<DateTime<Utc>>,
+    pub last_probe_at: Option<Timestamp>,
     /// When a repository is next due to be asked. Always `null` for an agent.
-    pub next_probe_at: Option<DateTime<Utc>>,
+    pub next_probe_at: Option<Timestamp>,
     /// When the wait is abandoned and the run reported as failed, or `null`
     /// when the host is waited for indefinitely.
-    pub give_up_at: Option<DateTime<Utc>>,
+    pub give_up_at: Option<Timestamp>,
 }
 
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
@@ -1157,9 +1157,9 @@ pub struct ReportResponse {
     /// Identifier of the associated schedule.
     pub schedule_id: Option<i64>,
     /// Timestamp of when the started occurred.
-    pub started_at: DateTime<Utc>,
+    pub started_at: Timestamp,
     /// Timestamp of when the finished occurred.
-    pub finished_at: DateTime<Utc>,
+    pub finished_at: Timestamp,
     #[ts(type = "string")]
     /// Current status. `ReportStatus`, not `BackupStatus`: unlike an activity
     /// entry or a schedule's health summary, a report row can still be
@@ -1662,7 +1662,7 @@ pub struct ArchiveTagResponse {
     /// Identifier of the user who created this.
     pub created_by: Option<i64>,
     /// Timestamp of when the created occurred.
-    pub created_at: DateTime<Utc>,
+    pub created_at: Timestamp,
 }
 
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
@@ -1680,11 +1680,11 @@ pub struct ApiTokenResponse {
     /// What the token may be used for: every endpoint, or only `/metrics`.
     pub scope: crate::types::ApiTokenScope,
     /// Timestamp of when the last used occurred.
-    pub last_used_at: Option<DateTime<Utc>>,
+    pub last_used_at: Option<Timestamp>,
     /// When the token stops working; `None` for one that never expires.
-    pub expires_at: Option<DateTime<Utc>>,
+    pub expires_at: Option<Timestamp>,
     /// Timestamp of when the created occurred.
-    pub created_at: DateTime<Utc>,
+    pub created_at: Timestamp,
 }
 
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
@@ -1745,7 +1745,7 @@ pub struct TunnelResponse {
     /// Whether this entity is enabled.
     pub enabled: bool,
     /// Timestamp of when the created occurred.
-    pub created_at: DateTime<Utc>,
+    pub created_at: Timestamp,
     /// Current status.
     pub status: TunnelStatus,
 }
@@ -1762,7 +1762,7 @@ pub struct GroupResponse {
     /// Description of the entity.
     pub description: Option<String>,
     /// Timestamp of when the created occurred.
-    pub created_at: DateTime<Utc>,
+    pub created_at: Timestamp,
 }
 
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
@@ -1798,7 +1798,7 @@ pub struct RoleResponse {
     /// Display name.
     pub name: String,
     /// Timestamp of when the created occurred.
-    pub created_at: DateTime<Utc>,
+    pub created_at: Timestamp,
     /// Whether the role can create agents.
     pub can_create_agent: bool,
     /// Whether the role can delete any agent.
@@ -1999,7 +1999,7 @@ pub struct AuditEntryResponse {
     /// IP address of the user who performed the action.
     pub ip_address: Option<String>,
     /// Timestamp of when the created occurred.
-    pub created_at: DateTime<Utc>,
+    pub created_at: Timestamp,
 }
 
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
@@ -2044,7 +2044,7 @@ pub struct PushSubscriptionResponse {
     /// User agent string.
     pub user_agent: Option<String>,
     /// Timestamp of when the created occurred.
-    pub created_at: DateTime<Utc>,
+    pub created_at: Timestamp,
 }
 
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
@@ -2067,7 +2067,7 @@ pub struct RepoQuotaResponse {
     /// Whether this entity is enabled.
     pub enabled: bool,
     /// Timestamp of when the updated occurred.
-    pub updated_at: DateTime<Utc>,
+    pub updated_at: Timestamp,
 }
 
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
@@ -2097,7 +2097,7 @@ pub struct ServerQuotaResponse {
     /// Whether this entity is enabled.
     pub enabled: bool,
     /// Timestamp of when the updated occurred.
-    pub updated_at: Option<DateTime<Utc>>,
+    pub updated_at: Option<Timestamp>,
 }
 
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
@@ -2122,9 +2122,9 @@ pub struct DashboardSummaryResponse {
     /// Total number of repositories.
     pub total_repos: i64,
     /// Timestamp of when the last backup occurred.
-    pub last_backup_at: Option<DateTime<Utc>>,
+    pub last_backup_at: Option<Timestamp>,
     /// Timestamp of when the next backup occurred.
-    pub next_backup_at: Option<DateTime<Utc>>,
+    pub next_backup_at: Option<Timestamp>,
     #[ts(type = "number | null")]
     /// Identifier of the associated last backup schedule.
     pub last_backup_schedule_id: Option<i64>,
@@ -2157,9 +2157,9 @@ pub struct DashboardSummaryResponse {
     /// Storage usage broken down by repository.
     pub storage_by_repo: Vec<StorageRepoEntryResponse>,
     /// Timestamp of when the last failure occurred.
-    pub last_failure_at: Option<DateTime<Utc>>,
+    pub last_failure_at: Option<Timestamp>,
     /// Timestamp of when the last warning occurred.
-    pub last_warning_at: Option<DateTime<Utc>>,
+    pub last_warning_at: Option<Timestamp>,
     #[ts(type = "number | null")]
     /// Identifier of the associated last failure schedule.
     pub last_failure_schedule_id: Option<i64>,
@@ -2225,7 +2225,7 @@ pub struct HealthSummaryResponse {
     pub last_status: Option<BackupStatus>,
     /// Timestamp of the last *completed* backup - never an in-flight run's
     /// placeholder timestamp, even when one is currently running.
-    pub last_backup_at: Option<DateTime<Utc>>,
+    pub last_backup_at: Option<Timestamp>,
     #[ts(type = "string | null")]
     /// Outcome of the last *completed* backup (`last_backup_at`'s run),
     /// regardless of whether a newer run is currently in flight. Coverage/
@@ -2235,7 +2235,7 @@ pub struct HealthSummaryResponse {
     /// Timestamp of the most recent backup that produced an archive (success
     /// or warning). Unlike `last_backup_at`, a newer failed run does not
     /// displace it, so this is what "last backup" displays should show.
-    pub last_success_at: Option<DateTime<Utc>>,
+    pub last_success_at: Option<Timestamp>,
     /// Whether the schedule is overdue.
     pub is_overdue: bool,
     /// Last error message.
@@ -2295,9 +2295,9 @@ pub struct ActivityEntryResponse {
     /// Error message, if any.
     pub error_message: Option<String>,
     /// Timestamp of when the started occurred.
-    pub started_at: DateTime<Utc>,
+    pub started_at: Timestamp,
     /// Timestamp of when the finished occurred.
-    pub finished_at: DateTime<Utc>,
+    pub finished_at: Timestamp,
 }
 
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
@@ -2497,9 +2497,9 @@ pub struct DashboardFindingResponse {
     /// Reason for the finding.
     pub reason: String,
     /// Timestamp of when the occurred occurred.
-    pub occurred_at: Option<DateTime<Utc>>,
+    pub occurred_at: Option<Timestamp>,
     /// Deadline for addressing the finding.
-    pub deadline: Option<DateTime<Utc>>,
+    pub deadline: Option<Timestamp>,
     /// Destination details for navigation.
     pub destination: DashboardDestinationResponse,
 }
@@ -2517,7 +2517,7 @@ pub enum CronPreviewResponse {
     Valid {
         /// The next runs, earliest first, as the scheduler will fire them.
         #[ts(type = "Array<string>")]
-        next_runs: Vec<DateTime<Utc>>,
+        next_runs: Vec<Timestamp>,
     },
     /// The expression would be rejected when saving the schedule.
     Invalid {
@@ -2616,7 +2616,7 @@ pub struct DashboardOperationResponse {
     /// Name of the repository.
     pub repo_name: String,
     /// Timestamp of when the started occurred.
-    pub started_at: DateTime<Utc>,
+    pub started_at: Timestamp,
     /// Destination details for navigation.
     pub destination: DashboardDestinationResponse,
 }
@@ -2636,7 +2636,7 @@ pub struct DashboardUpcomingScheduleResponse {
     /// Name of the repository.
     pub repo_name: String,
     /// Timestamp of when the next run occurred.
-    pub next_run_at: DateTime<Utc>,
+    pub next_run_at: Timestamp,
     #[ts(type = "number")]
     /// Number of targets.
     pub target_count: i64,
@@ -2668,7 +2668,7 @@ pub struct DashboardRepositoryCapacityResponse {
     /// Storage change in bytes.
     pub storage_change_bytes: Option<i64>,
     /// Estimated time when the quota threshold will be reached.
-    pub threshold_estimate: Option<DateTime<Utc>>,
+    pub threshold_estimate: Option<Timestamp>,
 }
 
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
@@ -2676,7 +2676,7 @@ pub struct DashboardRepositoryCapacityResponse {
 /// Response containing log entry.
 pub struct LogEntryResponse {
     /// Timestamp of the log entry.
-    pub timestamp: DateTime<Utc>,
+    pub timestamp: Timestamp,
     /// Log level.
     pub level: String,
     /// Log target/module.
@@ -2737,7 +2737,7 @@ pub struct ConfigExportResponse {
     /// Version number.
     pub version: u32,
     /// Timestamp of when the exported occurred.
-    pub exported_at: DateTime<Utc>,
+    pub exported_at: Timestamp,
     /// Exported hosts.
     pub hosts: Vec<HostExportResponse>,
     /// List of schedules.
@@ -3104,7 +3104,7 @@ pub struct CrossSearchEntryResponse {
     /// Size in bytes.
     pub size: i64,
     /// Modification timestamp.
-    pub mtime: DateTime<Utc>,
+    pub mtime: Timestamp,
     #[serde(rename = "type")]
     #[ts(rename = "type")]
     /// Type of the entry (file or directory).
@@ -3141,7 +3141,7 @@ pub enum Theme {
 /// Response containing refresh.
 pub struct RefreshResponse {
     /// Timestamp of when the session expires occurred.
-    pub session_expires_at: DateTime<Utc>,
+    pub session_expires_at: Timestamp,
 }
 
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
@@ -3211,7 +3211,7 @@ pub struct AgentTagAssociationResponse {
     /// Identifier of the associated agent.
     pub agent_id: i64,
     /// Timestamp of when the created occurred.
-    pub created_at: DateTime<Utc>,
+    pub created_at: Timestamp,
 }
 
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
@@ -3225,7 +3225,7 @@ pub struct RepoTagAssociationResponse {
     /// Identifier of the associated repo.
     pub repo_id: i64,
     /// Timestamp of when the created occurred.
-    pub created_at: DateTime<Utc>,
+    pub created_at: Timestamp,
 }
 
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]

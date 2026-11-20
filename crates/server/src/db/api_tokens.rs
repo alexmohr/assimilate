@@ -3,9 +3,8 @@
 
 //! API tokens.
 
-use chrono::{DateTime, Utc};
 use serde::Serialize;
-use shared::types::ApiTokenScope;
+use shared::{time::Timestamp, types::ApiTokenScope};
 use sqlx::PgPool;
 
 use crate::error::ApiError;
@@ -22,11 +21,11 @@ pub struct ApiTokenRow {
     /// What the token may be used for.
     pub scope: ApiTokenScope,
     /// When the token was created.
-    pub created_at: DateTime<Utc>,
+    pub created_at: Timestamp,
     /// When the token was last used.
-    pub last_used_at: Option<DateTime<Utc>>,
+    pub last_used_at: Option<Timestamp>,
     /// When the token stops working; `None` for one that never expires.
-    pub expires_at: Option<DateTime<Utc>>,
+    pub expires_at: Option<Timestamp>,
 }
 
 /// Inserts a full-scope API token.
@@ -70,7 +69,7 @@ pub async fn insert_api_token_expiring(
     name: &str,
     token_hash: &str,
     scope: ApiTokenScope,
-    expires_at: Option<DateTime<Utc>>,
+    expires_at: Option<Timestamp>,
 ) -> Result<ApiTokenRow, ApiError> {
     sqlx::query_as!(
         ApiTokenRow,

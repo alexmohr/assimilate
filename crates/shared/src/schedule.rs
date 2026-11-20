@@ -213,6 +213,13 @@ mod tests {
     }
 
     #[test]
+    fn a_cron_that_never_comes_due_has_no_next_run() {
+        // February 31st does not exist, so the expression never matches.
+        let result = calculate_next_run("0 0 31 2 *", utc(2026, 1, 1, 0, 0), &TimeZone::UTC);
+        assert!(result.is_err());
+    }
+
+    #[test]
     fn validate_valid() {
         assert!(validate_cron("0 */6 * * *").is_ok());
         assert!(validate_cron("30 2 * * 1").is_ok());

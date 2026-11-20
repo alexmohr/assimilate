@@ -5,7 +5,7 @@
 //! [`PowerSessionTracker`](crate::power::PowerSessionTracker)'s in-memory
 //! holds, so a server restart mid-run does not forget a machine it woke.
 
-use chrono::{DateTime, Utc};
+use shared::time::Timestamp;
 use sqlx::PgPool;
 
 use crate::{
@@ -32,7 +32,7 @@ pub struct PowerHoldRow {
     /// Whether the host's session had started its agent, as of this hold.
     pub started_agent: bool,
     /// When the hold was taken.
-    pub created_at: DateTime<Utc>,
+    pub created_at: Timestamp,
 }
 
 impl PowerHoldRow {

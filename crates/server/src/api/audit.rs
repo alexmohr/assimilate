@@ -5,9 +5,8 @@ use axum::{
     Json,
     extract::{Query, State},
 };
-use chrono::{DateTime, NaiveDateTime, TimeZone, Utc};
 use serde::Deserialize;
-use shared::responses::AuditLogResponse;
+use shared::{responses::AuditLogResponse, time::Timestamp};
 
 use super::auth::RequireAdmin;
 use crate::{AppState, db, error::ApiError};
@@ -33,14 +32,16 @@ pub struct AuditLogQuery {
     pub to: Option<String>,
 }
 
-fn parse_iso_datetime(value: &str) -> Result<DateTime<Utc>, ApiError> {
-    if let Ok(parsed) = DateTime::parse_from_rfc3339(value) {
-        return Ok(parsed.with_timezone(&Utc));
+fn parse_iso_datetime(value: &str) -> Result<Timestamp, ApiError> {
+    if let Ok(parsed) = value.parse::<Timestamp>() {
+        return Ok(parsed);
     }
 
-    let parsed = NaiveDateTime::parse_from_str(value, "%Y-%m-%d %H:%M:%S")
-        .map_err(|_| ApiError::BadRequest(format!("invalid datetime: {value}")))?;
-    Ok(Utc.from_utc_datetime(&parsed))
+    jiff::fmt::strtime::parse("%Y-%m-%d %H:%M:%S", value)
+        .and_then(|parsed| parsed.to_datetime())
+        .and_then(|civil| civil.to_zoned(jiff::tz::TimeZone::UTC))
+        .map(|zoned| Timestamp::from(zoned.timestamp()))
+        .map_err(|_| ApiError::BadRequest(format!("invalid datetime: {value}")))
 }
 
 #[utoipa::path(

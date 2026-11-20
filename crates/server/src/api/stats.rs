@@ -8,7 +8,6 @@ use axum::{
     extract::{Path, Query, State},
     http::StatusCode,
 };
-use chrono::Utc;
 use serde::Deserialize;
 use shared::{
     responses::{
@@ -20,6 +19,7 @@ use shared::{
         StorageRepoEntryResponse, StorageTrendByRepoEntryResponse, StorageTrendEntryResponse,
         TrendEntryResponse,
     },
+    time::{Date, Timestamp},
     types::{AcknowledgedFilter, FindingKind, FindingSeverity, FindingStatus, ReportStatus},
 };
 
@@ -157,10 +157,8 @@ pub async fn dashboard_overview(
         .into_iter()
         .collect();
     let timezone = db::get_schedule_timezone(&state.pool).await?;
-    let now = Utc::now();
-    let due_soon = now
-        .checked_add_signed(chrono::Duration::hours(2))
-        .unwrap_or(now);
+    let now = Timestamp::now();
+    let due_soon = now.checked_add(shared::time::hours(2)).unwrap_or(now);
 
     let findings = dashboard_findings(
         &targets,
@@ -169,7 +167,7 @@ pub async fn dashboard_overview(
         &connected,
         now,
         due_soon,
-        timezone,
+        &timezone,
         &dismissed,
     );
     let running_operations = dashboard_running_operations(&targets);
@@ -205,9 +203,9 @@ fn dashboard_findings(
     hosts: &[db::dashboard::EligibleAgentRow],
     repositories: &[db::dashboard::RepositoryRow],
     connected: &HashSet<i64>,
-    now: chrono::DateTime<Utc>,
-    due_soon: chrono::DateTime<Utc>,
-    timezone: chrono_tz::Tz,
+    now: Timestamp,
+    due_soon: Timestamp,
+    timezone: &jiff::tz::TimeZone,
     dismissed: &HashSet<String>,
 ) -> Vec<DashboardFindingResponse> {
     let mut findings = targets
@@ -392,7 +390,7 @@ fn dashboard_upcoming_schedules(
 
 /// How long after a scheduled run may pass before the target counts as
 /// overdue - enough slack that a run merely starting late is not a finding.
-const RUN_GRACE: chrono::Duration = chrono::Duration::minutes(30);
+const RUN_GRACE: shared::time::SignedDuration = shared::time::minutes(30);
 
 /// When the run following `after` stops being merely late and leaves the
 /// target overdue, per `cron_expression`.
@@ -405,12 +403,12 @@ const RUN_GRACE: chrono::Duration = chrono::Duration::minutes(30);
 /// malformed schedule from being reported as overdue forever.
 pub(crate) fn run_deadline_after(
     cron_expression: &str,
-    after: chrono::DateTime<Utc>,
-    timezone: chrono_tz::Tz,
-) -> Option<chrono::DateTime<Utc>> {
+    after: Timestamp,
+    timezone: &jiff::tz::TimeZone,
+) -> Option<Timestamp> {
     shared::schedule::calculate_next_run(cron_expression, after, timezone)
         .ok()
-        .and_then(|expected| expected.checked_add_signed(RUN_GRACE))
+        .and_then(|expected| expected.checked_add(RUN_GRACE))
 }
 
 /// Whether an acknowledgment on the target's latest report still speaks for
@@ -429,8 +427,8 @@ pub(crate) fn run_deadline_after(
 /// to date from is therefore not covered either - the findings show.
 fn acknowledgment_covers_schedule(
     target: &db::dashboard::TargetRow,
-    now: chrono::DateTime<Utc>,
-    timezone: chrono_tz::Tz,
+    now: Timestamp,
+    timezone: &jiff::tz::TimeZone,
 ) -> bool {
     if target.latest_acknowledged != Some(true) {
         return false;
@@ -444,9 +442,9 @@ fn acknowledgment_covers_schedule(
 fn target_finding(
     target: &db::dashboard::TargetRow,
     connected: &HashSet<i64>,
-    now: chrono::DateTime<Utc>,
-    due_soon: chrono::DateTime<Utc>,
-    timezone: chrono_tz::Tz,
+    now: Timestamp,
+    due_soon: Timestamp,
+    timezone: &jiff::tz::TimeZone,
 ) -> Option<DashboardFindingResponse> {
     if target.latest_started == Some(true) {
         return None;
@@ -1273,7 +1271,7 @@ pub async fn health(
         .into_iter()
         .map(|row| {
             let overdue = !row.last_status.is_some_and(ReportStatus::is_in_flight)
-                && is_overdue(row.last_backup_at, row.cron_expression.as_deref(), tz);
+                && is_overdue(row.last_backup_at, row.cron_expression.as_deref(), &tz);
             HealthResponse {
                 repo_id: row.repo_id,
                 schedule_id: row.schedule_id,
@@ -1296,9 +1294,9 @@ pub async fn health(
 }
 
 fn is_overdue(
-    last_backup_at: Option<chrono::DateTime<Utc>>,
+    last_backup_at: Option<Timestamp>,
     cron_expression: Option<&str>,
-    tz: chrono_tz::Tz,
+    tz: &jiff::tz::TimeZone,
 ) -> bool {
     let Some(last) = last_backup_at else {
         return false;
@@ -1306,7 +1304,7 @@ fn is_overdue(
     let Some(cron_expr) = cron_expression else {
         return false;
     };
-    run_deadline_after(cron_expr, last, tz).is_some_and(|deadline| Utc::now() > deadline)
+    run_deadline_after(cron_expr, last, tz).is_some_and(|deadline| Timestamp::now() > deadline)
 }
 
 /// Query parameters for backup trends.
@@ -1534,10 +1532,10 @@ async fn project_upcoming_schedule_events(
     schedules: &[db::ScheduleRow],
     repos: &[db::RepoRow],
     filter_repo_id: Option<i64>,
-    tz: chrono_tz::Tz,
-    now: chrono::DateTime<Utc>,
-    month_start: chrono::NaiveDate,
-    month_end: chrono::NaiveDate,
+    tz: &jiff::tz::TimeZone,
+    now: Timestamp,
+    month_start: Date,
+    month_end: Date,
     day_map: &mut std::collections::BTreeMap<String, Vec<CalendarEventResponse>>,
 ) {
     // Batch-fetch target hostnames for every schedule up front instead of one query per
@@ -1569,12 +1567,12 @@ async fn project_upcoming_schedule_events(
             else {
                 break;
             };
-            let next_date = next.date_naive();
+            let next_date = next.utc_date();
             if next_date >= month_end {
                 break;
             }
             if next_date >= month_start && next > now {
-                let time_str = next.format("%H:%M").to_string();
+                let time_str = next.strftime("%H:%M");
                 day_map
                     .entry(next_date.to_string())
                     .or_default()
@@ -1634,22 +1632,13 @@ pub async fn calendar(
         .map_err(|_| ApiError::BadRequest("invalid month".to_string()))?;
 
     let tz = db::get_schedule_timezone(&state.pool).await?;
-    let rows = db::get_calendar_events(&state.pool, year, month, query.repo_id, tz).await?;
+    let rows = db::get_calendar_events(&state.pool, year, month, query.repo_id, &tz).await?;
 
     let schedules = db::get_enabled_schedules_for_calendar(&state.pool).await?;
-    let now = Utc::now();
+    let now = Timestamp::now();
 
-    let month_start = chrono::NaiveDate::from_ymd_opt(year, month, 1)
+    let (month_start, month_end) = Date::month_bounds(year, month)
         .ok_or_else(|| ApiError::BadRequest("invalid month".to_string()))?;
-    let month_end = if month == 12 {
-        year.checked_add(1)
-            .and_then(|y| chrono::NaiveDate::from_ymd_opt(y, 1, 1))
-    } else {
-        month
-            .checked_add(1)
-            .and_then(|m| chrono::NaiveDate::from_ymd_opt(year, m, 1))
-    }
-    .ok_or_else(|| ApiError::BadRequest("invalid month".to_string()))?;
 
     let mut day_map: std::collections::BTreeMap<String, Vec<CalendarEventResponse>> =
         std::collections::BTreeMap::new();
@@ -1685,7 +1674,7 @@ pub async fn calendar(
         &schedules,
         &repos,
         query.repo_id,
-        tz,
+        &tz,
         now,
         month_start,
         month_end,
@@ -1729,6 +1718,7 @@ pub async fn undismiss_finding(
 mod tests {
     use shared::{
         responses::HealthResponse,
+        time::Timestamp,
         types::{BackupStatus, FindingKind, FindingSeverity},
     };
 
@@ -1817,7 +1807,7 @@ mod tests {
             hostname: "host".into(),
             target_name: "target".into(),
             last_status: Some(shared::types::ReportStatus::Success),
-            last_backup_at: Some(chrono::Utc::now()),
+            last_backup_at: Some(Timestamp::now()),
             last_backup_status: Some(shared::types::ReportStatus::Success),
             last_success_at: None,
             last_error_message: None,
@@ -1842,7 +1832,7 @@ mod tests {
             is_overdue: super::is_overdue(
                 row.last_backup_at,
                 row.cron_expression.as_deref(),
-                chrono_tz::UTC,
+                &jiff::tz::TimeZone::UTC,
             ),
             last_error_message: row.last_error_message,
             cron_expression: row.cron_expression,
@@ -1899,7 +1889,7 @@ mod tests {
             is_overdue: super::is_overdue(
                 row.last_backup_at,
                 row.cron_expression.as_deref(),
-                chrono_tz::UTC,
+                &jiff::tz::TimeZone::UTC,
             ),
             last_error_message: row.last_error_message,
             cron_expression: row.cron_expression,
@@ -1926,7 +1916,7 @@ mod tests {
             hostname: "host".into(),
             target_name: "target".into(),
             last_status: Some(shared::types::ReportStatus::Pending),
-            last_backup_at: Some(chrono::Utc::now() - chrono::Duration::hours(5)),
+            last_backup_at: Some(Timestamp::now() - shared::time::hours(5)),
             last_backup_status: Some(shared::types::ReportStatus::Success),
             last_success_at: None,
             last_error_message: None,
@@ -1951,7 +1941,7 @@ mod tests {
             is_overdue: super::is_overdue(
                 row.last_backup_at,
                 row.cron_expression.as_deref(),
-                chrono_tz::UTC,
+                &jiff::tz::TimeZone::UTC,
             ),
             last_error_message: row.last_error_message,
             cron_expression: row.cron_expression,
@@ -1972,22 +1962,30 @@ mod tests {
 
     #[test]
     fn is_overdue_with_no_last_backup_returns_false() {
-        assert!(!super::is_overdue(None, Some("0 * * * *"), chrono_tz::UTC));
+        assert!(!super::is_overdue(
+            None,
+            Some("0 * * * *"),
+            &jiff::tz::TimeZone::UTC
+        ));
     }
 
     #[test]
     fn is_overdue_with_no_cron_returns_false() {
-        let now = chrono::Utc::now();
-        assert!(!super::is_overdue(Some(now), None, chrono_tz::UTC));
+        let now = Timestamp::now();
+        assert!(!super::is_overdue(
+            Some(now),
+            None,
+            &jiff::tz::TimeZone::UTC
+        ));
     }
 
     #[test]
     fn is_overdue_with_invalid_cron_returns_false() {
-        let now = chrono::Utc::now();
+        let now = Timestamp::now();
         assert!(!super::is_overdue(
             Some(now),
             Some("invalid cron"),
-            chrono_tz::UTC
+            &jiff::tz::TimeZone::UTC
         ));
     }
 
@@ -2022,21 +2020,19 @@ mod tests {
             latest_started_at: None,
             // `backup_reports.finished_at` is NOT NULL, so any target with a
             // latest report has one. Recent, as a just-filed report would be.
-            latest_finished_at: Some(chrono::Utc::now()),
+            latest_finished_at: Some(Timestamp::now()),
             latest_failed: Some(false),
             latest_warning: Some(false),
             latest_started: Some(false),
             latest_acknowledged: Some(false),
             latest_message: None,
-            last_success_at: Some(chrono::Utc::now()),
+            last_success_at: Some(Timestamp::now()),
         }
     }
 
-    fn now_and_due_soon() -> (chrono::DateTime<chrono::Utc>, chrono::DateTime<chrono::Utc>) {
-        let now = chrono::Utc::now();
-        let due_soon = now
-            .checked_add_signed(chrono::Duration::hours(2))
-            .unwrap_or(now);
+    fn now_and_due_soon() -> (Timestamp, Timestamp) {
+        let now = Timestamp::now();
+        let due_soon = now.checked_add(shared::time::hours(2)).unwrap_or(now);
         (now, due_soon)
     }
 
@@ -2051,7 +2047,7 @@ mod tests {
             &std::collections::HashSet::new(),
             now,
             due_soon,
-            chrono_tz::UTC,
+            &jiff::tz::TimeZone::UTC,
         );
 
         assert!(finding.is_none());
@@ -2082,7 +2078,7 @@ mod tests {
             &std::collections::HashSet::new(),
             now,
             due_soon,
-            chrono_tz::UTC,
+            &jiff::tz::TimeZone::UTC,
             &std::collections::HashSet::new(),
         );
 
@@ -2106,7 +2102,7 @@ mod tests {
             &std::collections::HashSet::new(),
             now,
             due_soon,
-            chrono_tz::UTC,
+            &jiff::tz::TimeZone::UTC,
         )
         .expect("expected a backup_failed finding");
 
@@ -2133,7 +2129,7 @@ mod tests {
                 &std::collections::HashSet::new(),
                 now,
                 due_soon,
-                chrono_tz::UTC,
+                &jiff::tz::TimeZone::UTC,
             )
             .is_none(),
             "an acknowledged failure must stop counting against Needs Attention"
@@ -2153,7 +2149,7 @@ mod tests {
                 &std::collections::HashSet::new(),
                 now,
                 due_soon,
-                chrono_tz::UTC,
+                &jiff::tz::TimeZone::UTC,
             )
             .is_none()
         );
@@ -2171,8 +2167,8 @@ mod tests {
         target.latest_failed = Some(true);
         target.latest_acknowledged = Some(true);
         // Reviewed a month ago; the daily schedule has missed ~30 runs since.
-        let reviewed = chrono::Utc::now()
-            .checked_sub_signed(chrono::Duration::days(30))
+        let reviewed = Timestamp::now()
+            .checked_sub(shared::time::days(30))
             .expect("timestamp in range");
         target.latest_finished_at = Some(reviewed);
         target.last_success_at = Some(reviewed);
@@ -2183,7 +2179,7 @@ mod tests {
             &std::collections::HashSet::new(),
             now,
             due_soon,
-            chrono_tz::UTC,
+            &jiff::tz::TimeZone::UTC,
         )
         .expect("a target that kept missing runs must come back to the panel");
         assert_eq!(finding.kind, FindingKind::ScheduleTargetOverdue);
@@ -2198,10 +2194,10 @@ mod tests {
         target.latest_failed = Some(true);
         target.latest_acknowledged = Some(true);
         // Reviewed moments ago, so the next daily run is still ahead.
-        target.latest_finished_at = Some(chrono::Utc::now());
+        target.latest_finished_at = Some(Timestamp::now());
         target.last_success_at = Some(
-            chrono::Utc::now()
-                .checked_sub_signed(chrono::Duration::days(30))
+            Timestamp::now()
+                .checked_sub(shared::time::days(30))
                 .expect("timestamp in range"),
         );
         let (now, due_soon) = now_and_due_soon();
@@ -2212,7 +2208,7 @@ mod tests {
                 &std::collections::HashSet::new(),
                 now,
                 due_soon,
-                chrono_tz::UTC,
+                &jiff::tz::TimeZone::UTC,
             )
             .is_none(),
             "a freshly acknowledged failure must not leave the overdue finding behind"
@@ -2227,8 +2223,8 @@ mod tests {
         let mut target = base_target_row();
         target.latest_failed = Some(true);
         target.last_success_at = Some(
-            chrono::Utc::now()
-                .checked_sub_signed(chrono::Duration::days(30))
+            Timestamp::now()
+                .checked_sub(shared::time::days(30))
                 .expect("timestamp in range"),
         );
         let (now, due_soon) = now_and_due_soon();
@@ -2238,7 +2234,7 @@ mod tests {
             &std::collections::HashSet::new(),
             now,
             due_soon,
-            chrono_tz::UTC,
+            &jiff::tz::TimeZone::UTC,
         )
         .expect("expected a finding while unacknowledged");
         assert_eq!(before.kind, FindingKind::BackupFailed);
@@ -2250,7 +2246,7 @@ mod tests {
                 &std::collections::HashSet::new(),
                 now,
                 due_soon,
-                chrono_tz::UTC,
+                &jiff::tz::TimeZone::UTC,
             )
             .is_none()
         );
@@ -2264,17 +2260,14 @@ mod tests {
         target.latest_failed = Some(true);
         target.latest_acknowledged = Some(true);
         let (now, due_soon) = now_and_due_soon();
-        target.next_run_at = Some(
-            now.checked_add_signed(chrono::Duration::minutes(30))
-                .unwrap(),
-        );
+        target.next_run_at = Some(now.checked_add(shared::time::minutes(30)).unwrap());
 
         let finding = super::target_finding(
             &target,
             &std::collections::HashSet::new(),
             now,
             due_soon,
-            chrono_tz::UTC,
+            &jiff::tz::TimeZone::UTC,
         )
         .expect("expected a host_offline_due_soon finding");
         assert_eq!(finding.kind, FindingKind::HostOfflineDueSoon);
@@ -2283,7 +2276,7 @@ mod tests {
     #[test]
     fn target_finding_reports_schedule_target_overdue() {
         let mut target = base_target_row();
-        target.last_success_at = Some(chrono::Utc::now() - chrono::Duration::days(3));
+        target.last_success_at = Some(Timestamp::now() - shared::time::days(3));
         let (now, due_soon) = now_and_due_soon();
 
         let finding = super::target_finding(
@@ -2291,7 +2284,7 @@ mod tests {
             &std::collections::HashSet::new(),
             now,
             due_soon,
-            chrono_tz::UTC,
+            &jiff::tz::TimeZone::UTC,
         )
         .expect("expected a schedule_target_overdue finding");
 
@@ -2314,7 +2307,7 @@ mod tests {
             &std::collections::HashSet::new(),
             now,
             due_soon,
-            chrono_tz::UTC,
+            &jiff::tz::TimeZone::UTC,
         )
         .expect("expected a backup_warning finding");
 
@@ -2384,7 +2377,7 @@ mod tests {
             &std::collections::HashSet::new(),
             now,
             due_soon,
-            chrono_tz::UTC,
+            &jiff::tz::TimeZone::UTC,
         )
         .expect("expected a backup_failed finding");
 
@@ -2400,7 +2393,7 @@ mod tests {
     fn target_finding_reports_schedule_target_never_succeeded() {
         let mut target = base_target_row();
         target.last_success_at = None;
-        target.schedule_last_run_at = Some(chrono::Utc::now());
+        target.schedule_last_run_at = Some(Timestamp::now());
         let (now, due_soon) = now_and_due_soon();
 
         let finding = super::target_finding(
@@ -2408,7 +2401,7 @@ mod tests {
             &std::collections::HashSet::new(),
             now,
             due_soon,
-            chrono_tz::UTC,
+            &jiff::tz::TimeZone::UTC,
         )
         .expect("expected a schedule_target_never_succeeded finding");
 
@@ -2419,19 +2412,21 @@ mod tests {
     /// the overdue one, so it needs the same three cases: muted right after a
     /// review, still muted while the next run is ahead, and back once that run
     /// has come and gone with nothing filed.
-    fn never_succeeded_target(reviewed_ago: chrono::Duration) -> crate::db::dashboard::TargetRow {
+    fn never_succeeded_target(
+        reviewed_ago: shared::time::SignedDuration,
+    ) -> crate::db::dashboard::TargetRow {
         let mut target = base_target_row();
         target.last_success_at = None;
-        target.schedule_last_run_at = Some(chrono::Utc::now());
+        target.schedule_last_run_at = Some(Timestamp::now());
         target.latest_failed = Some(true);
         target.latest_acknowledged = Some(true);
-        target.latest_finished_at = chrono::Utc::now().checked_sub_signed(reviewed_ago);
+        target.latest_finished_at = Timestamp::now().checked_sub(reviewed_ago);
         target
     }
 
     #[test]
     fn acknowledging_a_failure_also_mutes_the_never_succeeded_state_it_left_behind() {
-        let target = never_succeeded_target(chrono::Duration::minutes(1));
+        let target = never_succeeded_target(shared::time::minutes(1));
         let (now, due_soon) = now_and_due_soon();
 
         assert!(
@@ -2440,7 +2435,7 @@ mod tests {
                 &std::collections::HashSet::new(),
                 now,
                 due_soon,
-                chrono_tz::UTC,
+                &jiff::tz::TimeZone::UTC,
             )
             .is_none(),
             "a freshly acknowledged failure must not leave the never-succeeded finding behind"
@@ -2451,7 +2446,7 @@ mod tests {
     fn a_never_succeeded_target_comes_back_once_the_acknowledgment_stops_covering_it() {
         // Reviewed a month ago on a daily schedule, and still nothing has ever
         // succeeded - the target has to be visible again.
-        let target = never_succeeded_target(chrono::Duration::days(30));
+        let target = never_succeeded_target(shared::time::days(30));
         let (now, due_soon) = now_and_due_soon();
 
         let finding = super::target_finding(
@@ -2459,7 +2454,7 @@ mod tests {
             &std::collections::HashSet::new(),
             now,
             due_soon,
-            chrono_tz::UTC,
+            &jiff::tz::TimeZone::UTC,
         )
         .expect("a target that has still never succeeded must come back to the panel");
         assert_eq!(finding.kind, FindingKind::ScheduleTargetNeverSucceeded);
@@ -2469,14 +2464,14 @@ mod tests {
     fn target_finding_reports_host_offline_due_soon_when_host_disconnected() {
         let mut target = base_target_row();
         let (now, due_soon) = now_and_due_soon();
-        target.next_run_at = now.checked_add_signed(chrono::Duration::hours(1));
+        target.next_run_at = now.checked_add(shared::time::hours(1));
 
         let finding = super::target_finding(
             &target,
             &std::collections::HashSet::new(),
             now,
             due_soon,
-            chrono_tz::UTC,
+            &jiff::tz::TimeZone::UTC,
         )
         .expect("expected a host_offline_due_soon finding");
 
@@ -2491,11 +2486,12 @@ mod tests {
     fn target_finding_returns_none_when_host_due_soon_but_connected() {
         let mut target = base_target_row();
         let (now, due_soon) = now_and_due_soon();
-        target.next_run_at = now.checked_add_signed(chrono::Duration::hours(1));
+        target.next_run_at = now.checked_add(shared::time::hours(1));
         let mut connected = std::collections::HashSet::new();
         connected.insert(target.agent_id);
 
-        let finding = super::target_finding(&target, &connected, now, due_soon, chrono_tz::UTC);
+        let finding =
+            super::target_finding(&target, &connected, now, due_soon, &jiff::tz::TimeZone::UTC);
 
         assert!(finding.is_none());
     }
@@ -2510,7 +2506,7 @@ mod tests {
             &std::collections::HashSet::new(),
             now,
             due_soon,
-            chrono_tz::UTC,
+            &jiff::tz::TimeZone::UTC,
         );
 
         assert!(finding.is_none());

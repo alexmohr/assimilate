@@ -122,6 +122,7 @@ async fn stopped_event(
 
 #[cfg(test)]
 mod tests {
+    use shared::time::Timestamp;
     use sqlx::PgPool;
 
     use super::*;
@@ -170,7 +171,7 @@ mod tests {
             schedule_id: None,
             repo_id,
             progress_line: None,
-            started_at: chrono::Utc::now(),
+            started_at: Timestamp::now(),
         }
     }
 
@@ -179,17 +180,9 @@ mod tests {
     async fn cancel_settles_a_started_report_and_tells_everyone(pool: PgPool) {
         let state = build_test_state(pool.clone());
         let (agent_id, repo_id) = agent_and_repo(&pool).await;
-        db::insert_backup_started(
-            &pool,
-            agent_id,
-            repo_id,
-            None,
-            chrono::Utc::now(),
-            None,
-            None,
-        )
-        .await
-        .unwrap();
+        db::insert_backup_started(&pool, agent_id, repo_id, None, Timestamp::now(), None, None)
+            .await
+            .unwrap();
         state
             .repo_op_tracker
             .set(
@@ -273,17 +266,9 @@ mod tests {
     async fn cancel_or_log_announces_even_when_the_report_cannot_be_updated(pool: PgPool) {
         let state = build_test_state(pool.clone());
         let (agent_id, repo_id) = agent_and_repo(&pool).await;
-        db::insert_backup_started(
-            &pool,
-            agent_id,
-            repo_id,
-            None,
-            chrono::Utc::now(),
-            None,
-            None,
-        )
-        .await
-        .unwrap();
+        db::insert_backup_started(&pool, agent_id, repo_id, None, Timestamp::now(), None, None)
+            .await
+            .unwrap();
         sqlx::query!(
             "ALTER TABLE backup_reports ADD CONSTRAINT test_rejects_writes CHECK (false) NOT VALID"
         )

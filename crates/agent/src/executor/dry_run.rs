@@ -3,8 +3,7 @@
 
 use std::time::Duration;
 
-use chrono::Utc;
-use shared::{protocol::AgentToServer, types::DryRunFile};
+use shared::{protocol::AgentToServer, time::Timestamp, types::DryRunFile};
 use tokio::sync::mpsc;
 use tracing::{error, info};
 
@@ -104,7 +103,7 @@ pub(super) async fn run_dry_run_task(
         return;
     };
 
-    let timestamp = Utc::now().timestamp();
+    let timestamp = Timestamp::now().unix_secs();
     let archive_spec = format!("::{hostname}-dryrun-{timestamp}");
 
     let env_vars = crate::backup::borg_env(&target);

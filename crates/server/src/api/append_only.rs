@@ -984,8 +984,9 @@ mod tests {
         extract::{Path, State},
         http::StatusCode,
     };
-    use shared::append_only::{
-        ReapplyAppendOnlyRequest, SetAppendOnlyRequest, UpdateMaintenanceRequest,
+    use shared::{
+        append_only::{ReapplyAppendOnlyRequest, SetAppendOnlyRequest, UpdateMaintenanceRequest},
+        time::Timestamp,
     };
 
     use super::*;
@@ -1224,7 +1225,7 @@ mod tests {
         db::append_only::mark_vanished(&state.pool, repo.id, &["gone-1".to_owned()])
             .await
             .unwrap();
-        db::append_only::finish_maintenance(&state.pool, repo.id, chrono::Utc::now(), None, true)
+        db::append_only::finish_maintenance(&state.pool, repo.id, Timestamp::now(), None, true)
             .await
             .unwrap();
 

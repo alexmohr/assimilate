@@ -19,7 +19,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use chrono::{DateTime, Utc};
+use shared::time::Timestamp;
 use tokio::sync::Mutex;
 
 use crate::{AppState, db, error::ApiError};
@@ -47,17 +47,17 @@ pub struct MetricsState {
 
 impl MetricsState {
     /// Records that the scheduler finished a tick at `at`.
-    pub fn record_scheduler_tick(&self, at: DateTime<Utc>) {
+    pub fn record_scheduler_tick(&self, at: Timestamp) {
         self.scheduler_last_tick
-            .store(at.timestamp(), Ordering::Relaxed);
+            .store(at.unix_secs(), Ordering::Relaxed);
     }
 
     /// When the scheduler last finished a tick, if it has since start-up.
     #[must_use]
-    pub fn scheduler_last_tick(&self) -> Option<DateTime<Utc>> {
+    pub fn scheduler_last_tick(&self) -> Option<Timestamp> {
         match self.scheduler_last_tick.load(Ordering::Relaxed) {
             0 => None,
-            secs => DateTime::from_timestamp(secs, 0),
+            secs => Timestamp::from_unix_secs(secs),
         }
     }
 
@@ -106,7 +106,7 @@ async fn snapshot(state: &AppState) -> Result<collect::Snapshot, ApiError> {
     );
     let (targets, repositories, agents, timezone) = queries?;
     Ok(collect::Snapshot {
-        now: Utc::now(),
+        now: Timestamp::now(),
         timezone,
         targets,
         repositories,
@@ -200,7 +200,7 @@ mod tests {
         let metrics = MetricsState::default();
         assert_eq!(metrics.scheduler_last_tick(), None);
 
-        let at = DateTime::from_timestamp(1_760_000_000, 0).unwrap();
+        let at = Timestamp::from_unix_secs(1_760_000_000).unwrap();
         metrics.record_scheduler_tick(at);
 
         assert_eq!(metrics.scheduler_last_tick(), Some(at));

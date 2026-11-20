@@ -1,9 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
-use chrono::{DateTime, Utc};
 use serde::Serialize;
-use shared::types::Visibility;
+use shared::{time::Timestamp, types::Visibility};
 use sqlx::PgPool;
 
 use super::HookCommands;
@@ -21,7 +20,7 @@ pub struct HostnamePatternRow {
     /// unmatched/imported client hostnames.
     pub pattern: String,
     /// Timestamp at which the pattern was created.
-    pub created_at: DateTime<Utc>,
+    pub created_at: Timestamp,
 }
 
 /// Lists all hostname patterns registered for a given agent, ordered
@@ -99,8 +98,8 @@ struct PatternAgentJoinRow {
     pub agent_git_sha: Option<String>,
     pub agent_build_time: Option<String>,
     pub agent_commit_count: Option<i32>,
-    pub created_at: DateTime<Utc>,
-    pub last_seen_at: Option<DateTime<Utc>>,
+    pub created_at: Timestamp,
+    pub last_seen_at: Option<Timestamp>,
     pub owner_id: Option<i64>,
     pub visibility: Visibility,
     pub default_backup_paths: Vec<String>,

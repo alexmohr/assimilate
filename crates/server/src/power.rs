@@ -32,6 +32,7 @@ use std::{
 
 use shared::{
     protocol::ServerToUi,
+    time::Timestamp,
     types::{RunEventTarget, RunEventType, ScheduleWakeOverride},
 };
 use tokio::{
@@ -525,7 +526,7 @@ async fn record_event(
         Ok(row) => row.occurred_at,
         Err(e) => {
             warn!(error = %e, run_id, "failed to record run event");
-            chrono::Utc::now()
+            Timestamp::now()
         }
     };
     ctx.ui_broadcast.send(ServerToUi::RunEvent {

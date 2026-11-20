@@ -787,8 +787,7 @@ pub(crate) fn build_push_url(payload: &serde_json::Value) -> String {
 mod tests {
     use std::str::FromStr;
 
-    use chrono::Utc;
-    use shared::notifications::WebPushSettings;
+    use shared::{notifications::WebPushSettings, time::Timestamp};
 
     use super::*;
 
@@ -1044,7 +1043,7 @@ mod tests {
             repo_name: "test-repo".to_owned(),
             status: "success".to_owned(),
             error_message: None,
-            timestamp: Utc::now(),
+            timestamp: Timestamp::now(),
             repo_id: None,
             agent_id: None,
             schedule_id: None,
@@ -1308,7 +1307,7 @@ mod tests {
             repo_name: "test-repo".to_owned(),
             status: "success".to_owned(),
             error_message: None,
-            timestamp: Utc::now(),
+            timestamp: Timestamp::now(),
             repo_id: None,
             agent_id: None,
             schedule_id: None,
@@ -1390,7 +1389,7 @@ mod tests {
             repo_name: "test-repo".to_owned(),
             status: "success".to_owned(),
             error_message: None,
-            timestamp: Utc::now(),
+            timestamp: Timestamp::now(),
             repo_id: None,
             agent_id: None,
             schedule_id: None,
@@ -1476,7 +1475,7 @@ mod tests {
             repo_name: "test-repo".to_owned(),
             status: "success".to_owned(),
             error_message: None,
-            timestamp: Utc::now(),
+            timestamp: Timestamp::now(),
             repo_id: None,
             agent_id: None,
             schedule_id: None,
@@ -1555,7 +1554,7 @@ mod tests {
             repo_name: "test-repo".to_owned(),
             status: "failed".to_owned(),
             error_message: Some("repository is locked".to_owned()),
-            timestamp: Utc::now(),
+            timestamp: Timestamp::now(),
             repo_id: None,
             agent_id: None,
             schedule_id: None,
@@ -1628,7 +1627,7 @@ mod tests {
             repo_name: "test-repo".to_owned(),
             status: "failed".to_owned(),
             error_message: Some("repository is locked".to_owned()),
-            timestamp: Utc::now(),
+            timestamp: Timestamp::now(),
             repo_id: None,
             agent_id: None,
             schedule_id: None,

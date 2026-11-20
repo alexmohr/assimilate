@@ -4,6 +4,8 @@
 //! Backup-completion notifications and the shared background dispatch every
 //! notification goes out through.
 
+use shared::time::Timestamp;
+
 use super::failure::{
     classify_failed_backup, clear_repo_catch_up_on_success, settle_dependency_catch_up,
 };
@@ -94,7 +96,7 @@ pub(super) async fn dispatch_backup_completion_notification(
     // Captured before the task below, so the notification still carries the
     // moment the backup was reported rather than whenever its classification
     // happened to finish.
-    let timestamp = chrono::Utc::now();
+    let timestamp = Timestamp::now();
     let hostname = hostname.to_owned();
     let status_str = status_str.to_owned();
     let pool = state.pool.clone();

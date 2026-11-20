@@ -10,12 +10,12 @@ use axum::{
     Json,
     extract::{Path as AxumPath, Query, State},
 };
-use chrono::{DateTime, Utc};
 use serde::Deserialize;
 use shared::{
     responses::{
         FileHistoryArchive, FileHistoryEntry, FileHistoryIndexResponse, FileHistoryResponse,
     },
+    time::Timestamp,
     types::IndexStatus,
 };
 use sqlx::PgPool;
@@ -93,8 +93,8 @@ async fn host_archives(
         .collect())
 }
 
-fn rfc3339(at: DateTime<Utc>) -> String {
-    at.format("%Y-%m-%dT%H:%M:%S%.6fZ").to_string()
+fn rfc3339(at: Timestamp) -> String {
+    at.strftime("%Y-%m-%dT%H:%M:%S%.6fZ")
 }
 
 /// What borg calls a regular file in a listing's type column.

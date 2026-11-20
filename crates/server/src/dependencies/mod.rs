@@ -28,8 +28,10 @@ pub mod catch_up;
 
 use std::time::Duration;
 
-use chrono::Utc;
-use shared::types::{RunEventTarget, RunEventType, ScheduleWakeOverride};
+use shared::{
+    time::Timestamp,
+    types::{RunEventTarget, RunEventType, ScheduleWakeOverride},
+};
 
 use crate::{
     db::{self, dependency_hosts::RequiredDependency},
@@ -70,7 +72,8 @@ pub(crate) async fn probe(address: &str, port: i32) -> bool {
 pub(crate) async fn probe_and_record(pool: &sqlx::PgPool, dependency: &RequiredDependency) -> bool {
     let reachable = probe(&dependency.address, dependency.port).await;
     if let Err(e) =
-        db::machines::record_machine_check(pool, dependency.machine_id, reachable, Utc::now()).await
+        db::machines::record_machine_check(pool, dependency.machine_id, reachable, Timestamp::now())
+            .await
     {
         tracing::warn!(
             dependency = %dependency.name,
@@ -264,9 +267,13 @@ async fn wake_and_wait(
         || probe(&dependency.address, dependency.port),
     )
     .await;
-    if let Err(e) =
-        db::machines::record_machine_check(ctx.pool, dependency.machine_id, answered, Utc::now())
-            .await
+    if let Err(e) = db::machines::record_machine_check(
+        ctx.pool,
+        dependency.machine_id,
+        answered,
+        Timestamp::now(),
+    )
+    .await
     {
         tracing::warn!(dependency = %dependency.name, error = %e, "failed to record a dependency check");
     }
@@ -302,9 +309,9 @@ pub(crate) struct ScheduledDown<'a> {
     /// The run.
     pub run_id: &'a str,
     /// The occurrence the run stood for.
-    pub due_at: chrono::DateTime<Utc>,
+    pub due_at: Timestamp,
     /// When the run was decided on.
-    pub now: chrono::DateTime<Utc>,
+    pub now: Timestamp,
     /// Whether this is the first row of the target to report it. A target
     /// writing several repositories is one row per repository, but it skipped
     /// once: the report rows, the activity entry and the catch-up are written
@@ -514,7 +521,7 @@ pub(crate) struct DispatchedRun<'a> {
     /// The run.
     pub run_id: &'a str,
     /// When the run was decided on.
-    pub now: chrono::DateTime<Utc>,
+    pub now: Timestamp,
 }
 
 /// Puts a target back to waiting on a dependency after a catch-up run could
@@ -744,7 +751,7 @@ mod tests {
                 self.repo.id,
                 Some(self.schedule.id),
                 run_id,
-                Utc::now(),
+                Timestamp::now(),
             )
             .await
             .unwrap();
@@ -773,7 +780,7 @@ mod tests {
         pub(super) fn scheduled_down<'a>(
             &'a self,
             run_id: &'a str,
-            due_at: chrono::DateTime<Utc>,
+            due_at: Timestamp,
             first_for_target: bool,
         ) -> ScheduledDown<'a> {
             ScheduledDown {
@@ -787,7 +794,7 @@ mod tests {
                 repo_id: self.repo.id,
                 run_id,
                 due_at,
-                now: Utc::now(),
+                now: Timestamp::now(),
                 first_for_target,
             }
         }
@@ -797,7 +804,7 @@ mod tests {
                 schedule_id: self.schedule.id,
                 agent_id: self.agent.id,
                 run_id,
-                now: Utc::now(),
+                now: Timestamp::now(),
             }
         }
     }
@@ -1238,8 +1245,8 @@ mod tests {
         let dependency = fx.require("nas-away", CLOSED_PORT, true).await;
         let dependency = required(fx.pool(), dependency.id).await;
         fx.insert_pending_report("run-scheduled-skip").await;
-        let due_at = Utc::now()
-            .checked_sub_signed(chrono::TimeDelta::minutes(5))
+        let due_at = Timestamp::now()
+            .checked_sub(shared::time::minutes(5))
             .unwrap();
 
         report_scheduled_down(
@@ -1274,7 +1281,7 @@ mod tests {
         assert_eq!(markers.len(), 1);
         let marker = markers.first().unwrap();
         assert_eq!(marker.dependency_host_id, dependency.id);
-        assert_eq!(marker.pending_for.timestamp(), due_at.timestamp());
+        assert_eq!(marker.pending_for.unix_secs(), due_at.unix_secs());
         assert_eq!(marker.dispatched_run_id, None);
     }
 
@@ -1291,7 +1298,7 @@ mod tests {
         fx.insert_pending_report("run-scheduled-fail").await;
 
         report_scheduled_down(
-            &fx.scheduled_down("run-scheduled-fail", Utc::now(), true),
+            &fx.scheduled_down("run-scheduled-fail", Timestamp::now(), true),
             &dependency,
         )
         .await;
@@ -1360,8 +1367,8 @@ mod tests {
         let first = fx.require("nas-first", CLOSED_PORT, true).await;
         let again = fx.require("nas-again", CLOSED_PORT, true).await;
         let again = required(fx.pool(), again.id).await;
-        let pending_for = Utc::now()
-            .checked_sub_signed(chrono::TimeDelta::hours(3))
+        let pending_for = Timestamp::now()
+            .checked_sub(shared::time::hours(3))
             .unwrap();
         db::dependency_catch_ups::mark_dependency_catch_up(
             fx.pool(),
@@ -1401,7 +1408,7 @@ mod tests {
         let marker = markers.first().unwrap();
         assert_eq!(marker.dependency_host_id, again.id);
         assert_eq!(marker.dispatched_run_id, None);
-        assert_eq!(marker.pending_for.timestamp(), pending_for.timestamp());
+        assert_eq!(marker.pending_for.unix_secs(), pending_for.unix_secs());
     }
 
     /// A catch-up kept from starting by a dependency that should always be
@@ -1454,7 +1461,7 @@ mod tests {
         assert_eq!(markers.len(), 1);
         let marker = markers.first().unwrap();
         assert_eq!(marker.dependency_host_id, dependency.id);
-        assert_eq!(marker.pending_for.timestamp(), run.now.timestamp());
+        assert_eq!(marker.pending_for.unix_secs(), run.now.unix_secs());
     }
 
     #[tokio::test]

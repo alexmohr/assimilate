@@ -10,9 +10,9 @@
 //! (the API and an agent's reconnect, say) cannot both hand it over, and a
 //! late answer cannot reopen a restore that is already over.
 
-use chrono::{DateTime, Utc};
 use shared::{
     database::DatabaseRestore,
+    time::Timestamp,
     types::{RestoreRun, RestoreRunStatus},
 };
 use sqlx::{PgPool, types::Json};
@@ -129,9 +129,9 @@ struct RestoreRunRow {
     files_restored: Option<i64>,
     error_message: Option<String>,
     requested_by: String,
-    created_at: DateTime<Utc>,
-    started_at: Option<DateTime<Utc>>,
-    finished_at: Option<DateTime<Utc>>,
+    created_at: Timestamp,
+    started_at: Option<Timestamp>,
+    finished_at: Option<Timestamp>,
 }
 
 impl From<RestoreRunRow> for RestoreRun {
@@ -405,7 +405,7 @@ pub async fn cancel_restore_run(pool: &PgPool, id: Uuid) -> Result<bool, ApiErro
 /// Returns [`ApiError::Database`] if the query fails.
 pub async fn delete_finished_restore_runs_before(
     pool: &PgPool,
-    before: DateTime<Utc>,
+    before: Timestamp,
 ) -> Result<u64, ApiError> {
     let result = sqlx::query!(
         "DELETE FROM restore_runs WHERE status IN ('success', 'failed', 'cancelled') AND \

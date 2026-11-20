@@ -15,11 +15,11 @@ pub mod tree;
 
 use std::{collections::HashMap, time::Duration};
 
-use chrono::{DateTime, Utc};
 use serde::Deserialize;
 use shared::{
     archive_growth::{ArchiveGrowth, ArchiveGrowthResponse, ArchiveGrowthStatus},
     task_registry::TaskRegistry,
+    time::Timestamp,
 };
 use sqlx::PgPool;
 
@@ -53,7 +53,7 @@ struct GrowthRow {
     status: ArchiveGrowthStatus,
     result: Option<String>,
     error_message: Option<String>,
-    finished_at: Option<DateTime<Utc>>,
+    finished_at: Option<Timestamp>,
 }
 
 impl GrowthRow {
@@ -67,7 +67,7 @@ impl GrowthRow {
         Ok(ArchiveGrowthResponse {
             status: self.status,
             growth,
-            computed_at: self.finished_at.map(|at| at.to_rfc3339()),
+            computed_at: self.finished_at.map(Timestamp::to_rfc3339),
             error: self.error_message,
         })
     }

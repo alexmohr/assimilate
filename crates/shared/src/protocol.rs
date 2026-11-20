@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
-use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 use utoipa::ToSchema;
 
 use crate::{
+    time::Timestamp,
     types::{
         AgentConfig, AgentStatus, BackupReport, BackupWarningKind, BorgEncryption, DryRunFile,
         RepoId, RestoreRunStatus, RunEventTarget, RunEventType, SearchEntry,
@@ -60,7 +60,7 @@ pub struct ActiveRepoOp {
     /// The name of the actor (agent hostname) performing the operation.
     pub actor: String,
     /// Timestamp when the operation started.
-    pub started_at: DateTime<Utc>,
+    pub started_at: Timestamp,
     /// Number of further operations waiting behind this one for the repository.
     #[serde(default)]
     pub queued: u32,
@@ -316,7 +316,7 @@ pub enum AgentToServer {
         #[serde(default)]
         schedule_id: Option<i64>,
         /// Timestamp when the backup started.
-        started_at: DateTime<Utc>,
+        started_at: Timestamp,
         /// The borg command being executed.
         #[serde(default)]
         borg_command: Option<String>,
@@ -667,7 +667,7 @@ pub enum ServerToUi {
         /// When the backup actually started - carried so a UI reconnecting
         /// mid-backup (e.g. a page reload) can resume the elapsed-time
         /// display from the real start rather than the moment it reconnected.
-        started_at: DateTime<Utc>,
+        started_at: Timestamp,
     },
     /// Notification that a backup has completed.
     BackupCompleted {
@@ -805,7 +805,7 @@ pub enum ServerToUi {
         /// Human-readable description of the event.
         message: String,
         /// When the event occurred.
-        occurred_at: DateTime<Utc>,
+        occurred_at: Timestamp,
         /// The hostname of the agent this run's schedule targets, so a
         /// listener can tell whether an event -- including a `target:
         /// repository` one, still part of the same run -- belongs to the
@@ -837,8 +837,6 @@ pub enum ServerToUi {
 
 #[cfg(test)]
 mod tests {
-    use chrono::Utc;
-
     use super::*;
     use crate::types::{DryRunFile, SearchEntry};
 
@@ -1002,7 +1000,7 @@ mod tests {
             entries: vec![SearchEntry {
                 path: "/etc/hosts".into(),
                 size: 1024,
-                mtime: Utc::now(),
+                mtime: Timestamp::now(),
                 entry_type: "file".into(),
                 archive_name: Some("archive-1".into()),
             }],
@@ -1206,7 +1204,7 @@ mod tests {
             target_name: "server-daily".to_owned(),
             archive_name: Some("server-daily-2026-06-27T00:00:00".to_owned()),
             schedule_id: Some(3),
-            started_at: Utc::now(),
+            started_at: Timestamp::now(),
         };
         assert_round_trips(&msg);
     }
@@ -1238,7 +1236,7 @@ mod tests {
             target: RunEventTarget::Source,
             event_type: RunEventType::WakeSent,
             message: "Sent Wake-on-LAN packet".to_owned(),
-            occurred_at: Utc::now(),
+            occurred_at: Timestamp::now(),
             hostname: "web-01".to_owned(),
             agent_id: 5,
             repo_id: 10,

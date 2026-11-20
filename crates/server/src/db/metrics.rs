@@ -7,8 +7,10 @@
 //! into a zero, so the renderer can omit the sample and an `absent()` alert
 //! still fires on it.
 
-use chrono::{DateTime, Utc};
-use shared::types::{ReportStatus, ScheduleType};
+use shared::{
+    time::Timestamp,
+    types::{ReportStatus, ScheduleType},
+};
 use sqlx::PgPool;
 
 use crate::error::ApiError;
@@ -39,7 +41,7 @@ pub struct ScheduleTargetMetricsRow {
     /// The status of the target's latest finished run, if it ever finished one.
     pub latest_status: Option<ReportStatus>,
     /// When the target's latest successful run finished, if it ever had one.
-    pub last_success_at: Option<DateTime<Utc>>,
+    pub last_success_at: Option<Timestamp>,
 }
 
 /// One repository with its statistics and quota.
@@ -56,7 +58,7 @@ pub struct RepositoryMetricsRow {
     /// Number of archives.
     pub archive_count: Option<i32>,
     /// When the statistics were last read from borg, if they ever were.
-    pub stats_updated_at: Option<DateTime<Utc>>,
+    pub stats_updated_at: Option<Timestamp>,
     /// Quota warn threshold in bytes, when a quota is enabled and sets one.
     pub quota_warn_bytes: Option<i64>,
     /// Quota critical threshold in bytes, when a quota is enabled and sets one.
@@ -77,7 +79,7 @@ pub struct AgentMetricsRow {
     /// Borg version from its most recent report that carried one.
     pub borg_version: Option<String>,
     /// When the agent was last seen.
-    pub last_seen_at: Option<DateTime<Utc>>,
+    pub last_seen_at: Option<Timestamp>,
 }
 
 /// Every schedule target of an enabled repository on a visible, real host.

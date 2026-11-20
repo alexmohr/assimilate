@@ -4,9 +4,8 @@
 //! Agents: registration, lookup by hostname or pattern, defaults, tokens and
 //! merging imported placeholders.
 
-use chrono::{DateTime, Utc};
 use serde::Serialize;
-use shared::{hooks::HookCommand, types::Visibility};
+use shared::{hooks::HookCommand, time::Timestamp, types::Visibility};
 use sqlx::PgPool;
 
 use super::{HookCommands, lock_schedules_targeting_agent, patterns};
@@ -212,9 +211,9 @@ pub struct AgentRow {
     /// Git commit count at build time.
     pub agent_commit_count: Option<i32>,
     /// When the agent was first registered.
-    pub created_at: DateTime<Utc>,
+    pub created_at: Timestamp,
     /// When the agent last connected.
-    pub last_seen_at: Option<DateTime<Utc>>,
+    pub last_seen_at: Option<Timestamp>,
     /// Owning user ID, if any.
     pub owner_id: Option<i64>,
     /// Visibility scope.

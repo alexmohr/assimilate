@@ -1,9 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
-use chrono::{DateTime, Utc};
 use serde::Serialize;
-use shared::types::QuotaAction;
+use shared::{time::Timestamp, types::QuotaAction};
 use sqlx::PgPool;
 
 use super::quota::{QuotaStatus, action_for_status, evaluate_thresholds};
@@ -25,7 +24,7 @@ pub struct ServerQuota {
     /// Whether this quota is enforced.
     pub enabled: bool,
     /// When this quota was last updated.
-    pub updated_at: DateTime<Utc>,
+    pub updated_at: Timestamp,
 }
 
 impl ServerQuota {
@@ -155,7 +154,7 @@ pub async fn list_server_quotas_with_usage(
         warn_action: Option<QuotaAction>,
         critical_action: Option<QuotaAction>,
         enabled: Option<bool>,
-        updated_at: Option<DateTime<Utc>>,
+        updated_at: Option<Timestamp>,
     }
 
     let rows = sqlx::query_as!(
@@ -298,7 +297,7 @@ mod tests {
             warn_action,
             critical_action,
             enabled,
-            updated_at: Utc::now(),
+            updated_at: Timestamp::now(),
         }
     }
 

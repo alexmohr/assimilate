@@ -10,9 +10,9 @@
 
 use std::fmt;
 
-use chrono::{DateTime, Utc};
 use shared::{
     protocol::{ServerToAgent, ServerToUi},
+    time::Timestamp,
     types::{RepoId, ScheduleType},
 };
 
@@ -55,7 +55,7 @@ pub struct RunRequest {
     /// When this run was asked for, recorded as the schedule's `last_run_at`
     /// once dispatch reaches a target - the moment the request was made, not
     /// whenever that target's backup happens to finish.
-    pub now: DateTime<Utc>,
+    pub now: Timestamp,
     /// Correlates this run's `backup_reports` rows and run events.
     pub run_id: String,
     /// What asked for the run.
@@ -376,7 +376,7 @@ async fn record_schedule_triggered(state: &AppState, request: &RunRequest) -> bo
         &state.pool,
         schedule_id,
         &request.cron_expression,
-        tz,
+        &tz,
         request.now,
     )
     .await
@@ -547,7 +547,7 @@ async fn broadcast_backup_started(
     schedule_id: i64,
 ) {
     if let Ok(target_name) = db::get_repo_name(&state.pool, repo_id.0).await {
-        let started_at = chrono::Utc::now();
+        let started_at = Timestamp::now();
         state.ui_broadcast.set_active_backup(ActiveBackupSnapshot {
             hostname: target.hostname.clone(),
             target_name: target_name.clone(),
@@ -624,7 +624,7 @@ mod tests {
                 schedule_type: ScheduleType::Backup,
                 schedule_id: 1,
                 cron_expression: "0 2 * * *".to_owned(),
-                now: Utc::now(),
+                now: Timestamp::now(),
                 run_id: run_id.to_owned(),
                 origin: RunOrigin::Manual,
             },
@@ -771,7 +771,7 @@ mod tests {
         let (_agent, _repo, schedule) =
             insert_schedule_with_target(&pool, "record-triggered-host", "0 2 * * *").await;
         let state = test_app_state(pool.clone());
-        let now = Utc::now();
+        let now = Timestamp::now();
 
         record_schedule_triggered(
             &state,
@@ -789,8 +789,8 @@ mod tests {
 
         let updated = db::get_schedule_by_id(&pool, schedule.id).await.unwrap();
         assert_eq!(
-            updated.last_run_at.map(|t| t.timestamp()),
-            Some(now.timestamp()),
+            updated.last_run_at.map(Timestamp::unix_secs),
+            Some(now.unix_secs()),
             "last_run_at must advance to the moment the run was asked for"
         );
         assert!(
@@ -832,7 +832,7 @@ mod tests {
             schedule_type: ScheduleType::Backup,
             schedule_id: schedule.id,
             cron_expression: schedule.cron_expression.clone(),
-            now: Utc::now(),
+            now: Timestamp::now(),
             run_id: run_id.to_owned(),
             origin: RunOrigin::Manual,
         };
@@ -953,7 +953,7 @@ mod tests {
             schedule_type: ScheduleType::Backup,
             schedule_id: schedule.id,
             cron_expression: schedule.cron_expression.clone(),
-            now: Utc::now(),
+            now: Timestamp::now(),
             run_id: format!("manual-streak-{}", agent.hostname),
             origin: RunOrigin::Manual,
         };
@@ -1257,8 +1257,8 @@ mod tests {
             schedule.id,
             agent.id,
             dependency.id,
-            Utc::now()
-                .checked_sub_signed(chrono::TimeDelta::hours(1))
+            Timestamp::now()
+                .checked_sub(shared::time::hours(1))
                 .unwrap(),
         )
         .await
@@ -1279,7 +1279,7 @@ mod tests {
             repo.id,
             Some(schedule.id),
             run_id,
-            Utc::now(),
+            Timestamp::now(),
         )
         .await
         .unwrap();
@@ -1304,7 +1304,7 @@ mod tests {
                 schedule_type: ScheduleType::Backup,
                 schedule_id: schedule.id,
                 cron_expression: schedule.cron_expression.clone(),
-                now: Utc::now(),
+                now: Timestamp::now(),
                 run_id: run_id.to_owned(),
                 origin: RunOrigin::CatchUp,
             },
@@ -1420,7 +1420,7 @@ mod tests {
                 schedule_type: ScheduleType::Backup,
                 schedule_id: 1,
                 cron_expression: "0 2 * * *".to_owned(),
-                now: Utc::now(),
+                now: Timestamp::now(),
                 run_id: "run-unloadable-repo".to_owned(),
                 origin: RunOrigin::Manual,
             },
@@ -1492,7 +1492,7 @@ mod tests {
                 schedule_type: ScheduleType::Backup,
                 schedule_id: 1,
                 cron_expression: "0 2 * * *".to_owned(),
-                now: Utc::now(),
+                now: Timestamp::now(),
                 run_id: "run-manual-leak".to_owned(),
                 origin: RunOrigin::Manual,
             },
@@ -1561,7 +1561,7 @@ mod tests {
                 schedule_type: ScheduleType::Backup,
                 schedule_id: 777_777,
                 cron_expression: "0 2 * * *".to_owned(),
-                now: Utc::now(),
+                now: Timestamp::now(),
                 run_id: "run-manual-config-assembly-failure".to_owned(),
                 origin: RunOrigin::Manual,
             },

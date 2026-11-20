@@ -6,8 +6,7 @@ use std::{
     sync::{Arc, RwLock},
 };
 
-use chrono::{DateTime, Utc};
-use shared::protocol::ServerToUi;
+use shared::{protocol::ServerToUi, time::Timestamp};
 use tokio::sync::broadcast;
 
 const CHANNEL_CAPACITY: usize = 128;
@@ -39,7 +38,7 @@ pub struct ActiveBackupSnapshot {
     /// Most recent archive progress line from the agent.
     pub progress_line: Option<String>,
     /// When the backup actually started.
-    pub started_at: DateTime<Utc>,
+    pub started_at: Timestamp,
 }
 
 /// Broadcast channel for real-time UI events sent to all connected browser clients.
@@ -212,7 +211,7 @@ impl UiBroadcast {
                 schedule_id,
                 repo_id,
                 progress_line: None,
-                started_at: Utc::now(),
+                started_at: Timestamp::now(),
             });
             hostname.clone_into(&mut entry.hostname);
             entry.schedule_id = schedule_id;
@@ -238,7 +237,7 @@ mod tests {
             schedule_id: Some(8),
             repo_id: 20,
             progress_line: None,
-            started_at: Utc::now(),
+            started_at: Timestamp::now(),
         });
         broadcast.send(ServerToUi::BackupLog {
             hostname: "web-server-01".to_string(),
@@ -311,8 +310,8 @@ mod tests {
                 agent_id: shared::types::AgentId(10),
                 repo_id: shared::types::RepoId(20),
                 schedule_id: Some(8),
-                started_at: chrono::Utc::now(),
-                finished_at: chrono::Utc::now(),
+                started_at: Timestamp::now(),
+                finished_at: Timestamp::now(),
                 status: shared::types::BackupStatus::Success,
                 original_size: 0,
                 compressed_size: 0,

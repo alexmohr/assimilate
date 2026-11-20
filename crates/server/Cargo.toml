@@ -24,8 +24,7 @@ serde_json = { workspace = true }
 sqlx = { workspace = true }
 thiserror = { workspace = true }
 rand = { workspace = true }
-chrono = { workspace = true }
-chrono-tz = { workspace = true }
+jiff = { workspace = true }
 uuid = { workspace = true }
 bcrypt = { workspace = true }
 futures-util = { workspace = true }
@@ -49,7 +48,7 @@ hex = "0.4"
 totp-rs = { version = "5", features = ["gen_secret", "otpauth"] }
 qrcode = { version = "0.14" }
 image = { version = "0.25", default-features = false, features = ["png"] }
-utoipa = { version = "5", features = ["axum_extras", "chrono", "uuid"] }
+utoipa = { version = "5", features = ["axum_extras", "jiff_0_2", "uuid"] }
 utoipa-axum = "0.1"
 utoipa-scalar = { version = "0.3", features = ["axum"] }
 strum = { workspace = true }
@@ -64,4 +63,4 @@ http-body-util = "0.1"
 tempfile = { workspace = true }
 
 [build-dependencies]
-chrono = { workspace = true }
+jiff = { workspace = true }

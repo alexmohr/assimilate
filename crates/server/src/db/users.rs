@@ -3,9 +3,8 @@
 
 //! Users, sessions, TOTP, login attempts and lockout, and preferences.
 
-use chrono::{DateTime, Utc};
 use serde::Serialize;
-use shared::types::SystemEventType;
+use shared::{time::Timestamp, types::SystemEventType};
 use sqlx::PgPool;
 
 use super::insert_system_event;
@@ -24,11 +23,11 @@ pub struct UserRow {
     /// Whether the user must change their password on next login.
     pub must_change_password: bool,
     /// When the user was created.
-    pub created_at: DateTime<Utc>,
+    pub created_at: Timestamp,
     /// When the user last logged in.
-    pub last_login_at: Option<DateTime<Utc>>,
+    pub last_login_at: Option<Timestamp>,
     /// When the account is locked until (if applicable).
-    pub locked_until: Option<DateTime<Utc>>,
+    pub locked_until: Option<Timestamp>,
 }
 
 /// A row from the `sessions` table.
@@ -39,13 +38,13 @@ pub struct SessionRow {
     /// User ID this session belongs to.
     pub user_id: i64,
     /// When the session was created.
-    pub created_at: DateTime<Utc>,
+    pub created_at: Timestamp,
     /// When the session expires.
-    pub expires_at: DateTime<Utc>,
+    pub expires_at: Timestamp,
     /// Whether the "remember me" flag was set.
     pub remember_me: bool,
     /// When the session was last used.
-    pub last_seen_at: DateTime<Utc>,
+    pub last_seen_at: Timestamp,
     /// Whether this session is pending TOTP verification (pre-login temp session).
     pub pending_totp: bool,
 }
@@ -58,11 +57,11 @@ pub struct SessionForUser {
     /// User ID the session belongs to.
     pub user_id: i64,
     /// When the session was created.
-    pub created_at: DateTime<Utc>,
+    pub created_at: Timestamp,
     /// When the session expires.
-    pub expires_at: DateTime<Utc>,
+    pub expires_at: Timestamp,
     /// When the session was last used.
-    pub last_seen_at: DateTime<Utc>,
+    pub last_seen_at: Timestamp,
     /// Whether the "remember me" flag was set.
     pub remember_me: bool,
 }
@@ -122,9 +121,9 @@ pub async fn get_user_password_hash(
         username: String,
         password_hash: String,
         must_change_password: bool,
-        created_at: DateTime<Utc>,
-        last_login_at: Option<DateTime<Utc>>,
-        locked_until: Option<DateTime<Utc>>,
+        created_at: Timestamp,
+        last_login_at: Option<Timestamp>,
+        locked_until: Option<Timestamp>,
     }
 
     let row = sqlx::query_as!(
@@ -529,7 +528,7 @@ pub async fn insert_session(
     pool: &PgPool,
     session_id: &str,
     user_id: i64,
-    expires_at: DateTime<Utc>,
+    expires_at: Timestamp,
     remember_me: bool,
     pending_totp: bool,
 ) -> Result<(), ApiError> {
@@ -576,7 +575,7 @@ pub async fn get_session(pool: &PgPool, session_id: &str) -> Result<SessionRow, 
 pub async fn extend_session(
     pool: &PgPool,
     session_id: &str,
-    new_expires_at: DateTime<Utc>,
+    new_expires_at: Timestamp,
 ) -> Result<(), ApiError> {
     sqlx::query!(
         "UPDATE sessions SET expires_at = $1 WHERE id = $2",
@@ -826,7 +825,7 @@ where
 async fn count_failed_attempts_in_current_cycle<'e, E>(
     executor: E,
     username: &str,
-    locked_until: Option<DateTime<Utc>>,
+    locked_until: Option<Timestamp>,
 ) -> Result<i64, ApiError>
 where
     E: sqlx::Executor<'e, Database = sqlx::Postgres>,
@@ -889,7 +888,7 @@ pub async fn record_failed_login_and_check_lockout(
     // combined total already crossed the threshold. Also read back
     // `locked_until` while holding the lock, needed to scope the count
     // below to the current cycle.
-    let locked_until_before: Option<DateTime<Utc>> = sqlx::query_scalar!(
+    let locked_until_before: Option<Timestamp> = sqlx::query_scalar!(
         "SELECT locked_until FROM users WHERE username = $1 FOR UPDATE",
         username
     )
@@ -939,9 +938,9 @@ pub async fn record_failed_login_and_check_lockout(
             .get(usize::try_from(escalation_level).unwrap_or(0))
             .copied()
             .unwrap_or(*LOCKOUT_DURATIONS.last().unwrap_or(&1));
-        let locked_until = Utc::now()
-            .checked_add_signed(chrono::Duration::try_minutes(duration_minutes).unwrap_or_default())
-            .unwrap_or(Utc::now());
+        let locked_until = Timestamp::now()
+            .checked_add(shared::time::minutes(duration_minutes))
+            .unwrap_or(Timestamp::now());
 
         sqlx::query!(
             "UPDATE users SET locked_until = $1 WHERE username = $2",
@@ -1010,7 +1009,7 @@ pub async fn insert_totp_attempt(
 /// Returns [`ApiError::Database`] if the database query fails.
 pub async fn delete_login_attempts_before(
     pool: &PgPool,
-    before: DateTime<Utc>,
+    before: Timestamp,
 ) -> Result<u64, ApiError> {
     let result = sqlx::query!("DELETE FROM login_attempts WHERE attempted_at < $1", before)
         .execute(pool)

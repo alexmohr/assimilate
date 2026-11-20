@@ -4,7 +4,7 @@
 //! A finished backup run: persisting its report, its side effects and the
 //! final UI update.
 
-use shared::{protocol::ServerToUi, types::BackupStatus};
+use shared::{protocol::ServerToUi, time::Timestamp, types::BackupStatus};
 
 use super::{
     backup::spawn_post_backup_indexing,
@@ -29,7 +29,7 @@ async fn finalize_backup_completion(
         &state.pool,
         repo_id,
         shared::protocol::RepoOpKind::AgentBackup,
-        chrono::Utc::now(),
+        Timestamp::now(),
         hostname,
     )
     .await

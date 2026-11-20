@@ -12,6 +12,7 @@ use shared::{
     responses::{
         ApiTokenResponse, CreateApiTokenResponse, DeleteApiTokenResponse, ListApiTokensResponse,
     },
+    time::Timestamp,
     types::ApiTokenScope,
 };
 
@@ -39,7 +40,7 @@ pub struct CreateTokenRequest {
     /// When the token stops working. It must lie in the future; without it
     /// the token works until it is deleted.
     #[serde(default)]
-    pub expires_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub expires_at: Option<Timestamp>,
 }
 
 impl From<db::ApiTokenRow> for ApiTokenResponse {
@@ -114,7 +115,7 @@ pub async fn create_token(
     }
 
     if let Some(expires_at) = req.expires_at
-        && expires_at <= chrono::Utc::now()
+        && expires_at <= Timestamp::now()
     {
         return Err(ApiError::BadRequest(
             "a token's expiry must lie in the future".to_string(),
@@ -296,8 +297,8 @@ mod tests {
             })
         };
 
-        let past = chrono::Utc::now()
-            .checked_sub_signed(chrono::Duration::minutes(1))
+        let past = Timestamp::now()
+            .checked_sub(shared::time::minutes(1))
             .unwrap();
         let refused = create_token(
             State(state.clone()),
@@ -308,8 +309,8 @@ mod tests {
         .await;
         assert!(matches!(refused, Err(ApiError::BadRequest(_))));
 
-        let future = chrono::Utc::now()
-            .checked_add_signed(chrono::Duration::days(90))
+        let future = Timestamp::now()
+            .checked_add(shared::time::days(90))
             .unwrap();
         let Json(created) = create_token(
             State(state),
@@ -320,8 +321,8 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(
-            created.token.expires_at.map(|t| t.timestamp_micros()),
-            Some(future.timestamp_micros())
+            created.token.expires_at.map(Timestamp::unix_micros),
+            Some(future.unix_micros())
         );
     }
 

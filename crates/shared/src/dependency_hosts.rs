@@ -5,10 +5,11 @@
 //! and its repository, such as the server whose share a pre-backup command
 //! mounts.
 
-use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 use utoipa::ToSchema;
+
+use crate::time::Timestamp;
 
 /// The repository host a dependency is the same machine as.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, TS, ToSchema)]
@@ -48,7 +49,7 @@ pub struct DependencyHostResponse {
     pub wake_enabled: bool,
     /// When its machine was last checked, by a run, a poller, Check now or
     /// Test connection.
-    pub last_checked_at: Option<DateTime<Utc>>,
+    pub last_checked_at: Option<Timestamp>,
     /// What that check found; `null` when it has never been checked.
     pub last_check_reachable: Option<bool>,
     #[ts(type = "number")]
@@ -113,13 +114,13 @@ pub struct DependencyWaitResponse {
     /// Its name.
     pub dependency_name: String,
     /// The occurrence that was skipped.
-    pub pending_for: DateTime<Utc>,
+    pub pending_for: Timestamp,
     /// When the dependency was last asked whether it is back.
-    pub last_probe_at: Option<DateTime<Utc>>,
+    pub last_probe_at: Option<Timestamp>,
     /// When it is next due to be asked; `null` while a catch-up is running.
-    pub next_probe_at: Option<DateTime<Utc>>,
+    pub next_probe_at: Option<Timestamp>,
     /// When the wait is abandoned; `null` when it is waited for indefinitely.
-    pub give_up_at: Option<DateTime<Utc>>,
+    pub give_up_at: Option<Timestamp>,
     /// Whether the dependency answered and the catch-up run is under way.
     pub catching_up: bool,
 }

@@ -10,8 +10,7 @@
 //! dependency away again hands it back. Retries therefore keep the original
 //! occurrence, and the give-up window is never pushed forward.
 
-use chrono::{DateTime, Utc};
-use shared::types::ScheduleType;
+use shared::{time::Timestamp, types::ScheduleType};
 use sqlx::PgPool;
 
 use crate::error::ApiError;
@@ -37,13 +36,13 @@ pub struct DependencyCatchUpCandidate {
     /// Its name.
     pub dependency_name: String,
     /// The occurrence that was skipped.
-    pub pending_for: DateTime<Utc>,
+    pub pending_for: Timestamp,
     /// When the dependency was last asked whether it is back.
-    pub last_probe_at: Option<DateTime<Utc>>,
+    pub last_probe_at: Option<Timestamp>,
     /// The catch-up run this marker is handed to, while one is in flight.
     pub dispatched_run_id: Option<String>,
     /// The schedule's next regular run.
-    pub next_run_at: Option<DateTime<Utc>>,
+    pub next_run_at: Option<Timestamp>,
     /// The schedule's catch-up floor.
     pub min_lead_minutes: i32,
     /// How often the dependency is asked whether it is back.
@@ -107,7 +106,7 @@ pub async fn mark_dependency_catch_up(
     schedule_id: i64,
     agent_id: i64,
     dependency_host_id: i64,
-    due_at: DateTime<Utc>,
+    due_at: Timestamp,
 ) -> Result<(), ApiError> {
     sqlx::query!(
         "INSERT INTO dependency_catch_ups (schedule_id, agent_id, dependency_host_id, \
@@ -139,7 +138,7 @@ pub async fn mark_dependency_catch_up_if_absent(
     schedule_id: i64,
     agent_id: i64,
     dependency_host_id: i64,
-    at: DateTime<Utc>,
+    at: Timestamp,
 ) -> Result<(), ApiError> {
     sqlx::query!(
         "INSERT INTO dependency_catch_ups (schedule_id, agent_id, dependency_host_id, \
@@ -244,7 +243,7 @@ pub async fn clear_dependency_catch_up(
 pub async fn record_dependency_catch_up_probe(
     pool: &PgPool,
     dependency_host_id: i64,
-    at: DateTime<Utc>,
+    at: Timestamp,
 ) -> Result<(), ApiError> {
     sqlx::query!(
         "UPDATE dependency_catch_ups SET last_probe_at = $2 WHERE dependency_host_id = $1",

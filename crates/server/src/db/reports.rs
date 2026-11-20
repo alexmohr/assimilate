@@ -4,9 +4,11 @@
 //! Backup reports, from pending to finished, their archives, canary results
 //! and retention.
 
-use chrono::{DateTime, Utc};
 use serde::Serialize;
-use shared::types::{AcknowledgedFilter, BackupStatus, ReportStatus};
+use shared::{
+    time::Timestamp,
+    types::{AcknowledgedFilter, BackupStatus, ReportStatus},
+};
 use sqlx::PgPool;
 
 use crate::error::ApiError;
@@ -44,7 +46,7 @@ pub struct CanaryResultRow {
     /// Schedule ID this result belongs to.
     pub schedule_id: Option<i64>,
     /// When the canary was verified.
-    pub verified_at: DateTime<Utc>,
+    pub verified_at: Timestamp,
     /// Whether the canary check succeeded.
     pub success: bool,
     /// Name of the canary file that was checked.
@@ -110,9 +112,9 @@ pub struct ReportRow {
     /// Schedule display name, if any.
     pub schedule_name: Option<String>,
     /// When the backup started.
-    pub started_at: DateTime<Utc>,
+    pub started_at: Timestamp,
     /// When the backup finished.
-    pub finished_at: DateTime<Utc>,
+    pub finished_at: Timestamp,
     /// Backup status (e.g. "success", "failed", "warning").
     pub status: ReportStatus,
     /// Total original size in bytes.
@@ -167,9 +169,9 @@ pub struct ActivityRow {
     /// Repository display name.
     pub target_name: String,
     /// When the backup started.
-    pub started_at: DateTime<Utc>,
+    pub started_at: Timestamp,
     /// When the backup finished.
-    pub finished_at: DateTime<Utc>,
+    pub finished_at: Timestamp,
     /// Backup status.
     pub status: ReportStatus,
     /// Duration in seconds.
@@ -209,13 +211,13 @@ pub struct HealthRow {
     /// flight (in which case this is `None` - see `get_health_summary`).
     pub last_status: Option<ReportStatus>,
     /// When the last *completed* backup finished.
-    pub last_backup_at: Option<DateTime<Utc>>,
+    pub last_backup_at: Option<Timestamp>,
     /// Outcome of the last *completed* backup (`last_backup_at`'s run).
     pub last_backup_status: Option<ReportStatus>,
     /// When the most recent backup that produced an archive (success or
     /// warning) finished - older than `last_backup_at` when the latest
     /// completed run failed.
-    pub last_success_at: Option<DateTime<Utc>>,
+    pub last_success_at: Option<Timestamp>,
     /// Error message from the last failure.
     pub last_error_message: Option<String>,
     /// Schedule cron expression.
@@ -239,9 +241,9 @@ pub struct InsertReportParams {
     /// Schedule ID, if any.
     pub schedule_id: Option<i64>,
     /// When the backup started.
-    pub started_at: DateTime<Utc>,
+    pub started_at: Timestamp,
     /// When the backup finished.
-    pub finished_at: DateTime<Utc>,
+    pub finished_at: Timestamp,
     /// Backup status.
     pub status: BackupStatus,
     /// Total original size in bytes.
@@ -281,7 +283,7 @@ pub async fn insert_backup_pending(
     repo_id: i64,
     schedule_id: Option<i64>,
     run_id: &str,
-    triggered_at: DateTime<Utc>,
+    triggered_at: Timestamp,
 ) -> Result<(), ApiError> {
     sqlx::query!(
         "INSERT INTO backup_reports (agent_id, repo_id, schedule_id, started_at, finished_at, \
@@ -338,7 +340,7 @@ pub async fn insert_backup_started(
     agent_id: i64,
     repo_id: i64,
     schedule_id: Option<i64>,
-    started_at: DateTime<Utc>,
+    started_at: Timestamp,
     borg_command: Option<&str>,
     run_id: Option<&str>,
 ) -> Result<(), ApiError> {
@@ -1084,7 +1086,7 @@ pub async fn get_health_summary(
 /// Returns [`ApiError::Database`] if the database query fails.
 pub async fn delete_backup_reports_before(
     pool: &PgPool,
-    before: DateTime<Utc>,
+    before: Timestamp,
 ) -> Result<u64, ApiError> {
     let result = sqlx::query!(
         "DELETE FROM backup_reports WHERE started_at < $1 AND archive_name IS NULL",
@@ -1101,7 +1103,7 @@ pub async fn delete_backup_reports_before(
 /// Returns [`ApiError::Database`] if the database query fails.
 pub async fn delete_backup_reports_with_archive_before(
     pool: &PgPool,
-    before: DateTime<Utc>,
+    before: Timestamp,
 ) -> Result<u64, ApiError> {
     let result = sqlx::query!(
         "DELETE FROM backup_reports WHERE started_at < $1 AND archive_name IS NOT NULL",

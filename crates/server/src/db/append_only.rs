@@ -5,8 +5,7 @@
 //! maintenance schedule and runs, the archives that vanished and the
 //! deletions waiting for maintenance.
 
-use chrono::{DateTime, Utc};
-use shared::{append_only::MaintenanceOutcome, prune::Retention};
+use shared::{append_only::MaintenanceOutcome, prune::Retention, time::Timestamp};
 use sqlx::PgPool;
 
 use crate::error::ApiError;
@@ -22,9 +21,9 @@ pub struct AppendOnlyLoginRow {
     /// The SSH user.
     pub ssh_user: String,
     /// When the keys were installed.
-    pub installed_at: DateTime<Utc>,
+    pub installed_at: Timestamp,
     /// When both keys were last tried.
-    pub checked_at: Option<DateTime<Utc>>,
+    pub checked_at: Option<Timestamp>,
     /// Whether the agents' key was accepted.
     pub backup_key_ok: Option<bool>,
     /// Whether the maintenance key was accepted.
@@ -56,11 +55,11 @@ pub struct MaintenanceRow {
     /// Whether to check the repository before writing.
     pub check_before_prune: bool,
     /// When maintenance runs next.
-    pub next_run_at: Option<DateTime<Utc>>,
+    pub next_run_at: Option<Timestamp>,
     /// When maintenance last ran.
-    pub last_run_at: Option<DateTime<Utc>>,
+    pub last_run_at: Option<Timestamp>,
     /// Set while maintenance waits for an admin.
-    pub stopped_at: Option<DateTime<Utc>>,
+    pub stopped_at: Option<Timestamp>,
 }
 
 /// A maintenance run.
@@ -69,9 +68,9 @@ pub struct MaintenanceRunRow {
     /// Run ID.
     pub id: i64,
     /// When it started.
-    pub started_at: DateTime<Utc>,
+    pub started_at: Timestamp,
     /// When it ended.
-    pub finished_at: Option<DateTime<Utc>>,
+    pub finished_at: Option<Timestamp>,
     /// How it ended.
     pub outcome: MaintenanceOutcome,
     /// Archives removed.
@@ -88,7 +87,7 @@ pub struct PendingDeletionRow {
     /// Archive name.
     pub archive_name: String,
     /// When it was queued.
-    pub requested_at: DateTime<Utc>,
+    pub requested_at: Timestamp,
     /// Who queued it.
     pub requested_by: Option<String>,
 }
@@ -219,7 +218,7 @@ pub async fn record_check(
     repo_host_id: i64,
     ssh_user: &str,
     check: CheckRecord<'_>,
-) -> Result<DateTime<Utc>, ApiError> {
+) -> Result<Timestamp, ApiError> {
     sqlx::query_scalar!(
         r#"UPDATE append_only_logins
            SET checked_at = NOW(), backup_key_ok = $3, maintenance_key_ok = $4,
@@ -269,7 +268,7 @@ pub async fn list_login_repos(
 pub async fn ensure_maintenance(
     pool: &PgPool,
     repo_id: i64,
-    next_run_at: Option<DateTime<Utc>>,
+    next_run_at: Option<Timestamp>,
 ) -> Result<(), ApiError> {
     sqlx::query!(
         "INSERT INTO repo_maintenance (repo_id, cron_expression, next_run_at)
@@ -306,7 +305,7 @@ pub async fn delete_maintenance(pool: &PgPool, repo_id: i64) -> Result<(), ApiEr
 pub async fn resume_maintenance(
     pool: &PgPool,
     repo_id: i64,
-    next_run_at: Option<DateTime<Utc>>,
+    next_run_at: Option<Timestamp>,
 ) -> Result<(), ApiError> {
     sqlx::query!(
         "UPDATE repo_maintenance SET stopped_at = NULL, next_run_at = $2 WHERE repo_id = $1",
@@ -349,7 +348,7 @@ pub async fn update_maintenance_settings(
     repo_id: i64,
     cron_expression: &str,
     check_before_prune: bool,
-    next_run_at: Option<DateTime<Utc>>,
+    next_run_at: Option<Timestamp>,
 ) -> Result<(), ApiError> {
     sqlx::query!(
         "INSERT INTO repo_maintenance (repo_id, cron_expression, check_before_prune, next_run_at)
@@ -375,7 +374,7 @@ pub async fn update_maintenance_settings(
 /// Returns [`ApiError::Database`] if the query fails.
 pub async fn list_due_maintenance(
     pool: &PgPool,
-    now: DateTime<Utc>,
+    now: Timestamp,
 ) -> Result<Vec<MaintenanceRow>, ApiError> {
     sqlx::query_as!(
         MaintenanceRow,
@@ -403,8 +402,8 @@ pub async fn list_due_maintenance(
 pub async fn finish_maintenance(
     pool: &PgPool,
     repo_id: i64,
-    ran_at: DateTime<Utc>,
-    next_run_at: Option<DateTime<Utc>>,
+    ran_at: Timestamp,
+    next_run_at: Option<Timestamp>,
     stopped: bool,
 ) -> Result<(), ApiError> {
     sqlx::query!(
@@ -778,7 +777,7 @@ pub async fn list_retention(pool: &PgPool, repo_id: i64) -> Result<Vec<Retention
 pub async fn set_next_run(
     pool: &PgPool,
     repo_id: i64,
-    next_run_at: Option<DateTime<Utc>>,
+    next_run_at: Option<Timestamp>,
 ) -> Result<(), ApiError> {
     sqlx::query!(
         "UPDATE repo_maintenance SET next_run_at = $2 WHERE repo_id = $1",

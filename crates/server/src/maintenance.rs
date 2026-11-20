@@ -15,12 +15,12 @@
 
 use std::collections::{HashMap, HashSet};
 
-use chrono::{DateTime, Utc};
 use shared::{
     append_only::MaintenanceOutcome,
     archive_names::{legacy_glob, schedule_glob},
     protocol::RepoOpKind,
     prune::Retention,
+    time::Timestamp,
 };
 
 use crate::{
@@ -261,7 +261,7 @@ pub async fn run(state: &AppState, repo_id: i64, actor: &str) {
         .await;
     broadcast_op(state, repo_id).await;
 
-    let started_at = Utc::now();
+    let started_at = Timestamp::now();
     let run_id = match db::append_only::start_run(&state.pool, repo_id).await {
         Ok(id) => Some(id),
         Err(e) => {
@@ -284,7 +284,7 @@ pub async fn run(state: &AppState, repo_id: i64, actor: &str) {
         &state.pool,
         repo_id,
         RepoOpKind::Maintenance,
-        Utc::now(),
+        Timestamp::now(),
         actor,
     )
     .await
@@ -322,7 +322,7 @@ async fn alert_unless_ok(state: &AppState, repo_id: i64, finished: &Finished) {
             finished.outcome,
             finished.detail.as_deref().unwrap_or("no detail")
         )),
-        timestamp: Utc::now(),
+        timestamp: Timestamp::now(),
         repo_id: Some(repo_id),
         agent_id: None,
         schedule_id: None,
@@ -358,7 +358,7 @@ async fn record(
     state: &AppState,
     repo_id: i64,
     run_id: Option<i64>,
-    ran_at: DateTime<Utc>,
+    ran_at: Timestamp,
     finished: &Finished,
 ) {
     if let Some(run_id) = run_id
@@ -391,11 +391,7 @@ async fn record(
 
 /// When maintenance should run after `after`, from the repository's cron
 /// expression.
-pub async fn next_run(
-    state: &AppState,
-    repo_id: i64,
-    after: DateTime<Utc>,
-) -> Option<DateTime<Utc>> {
+pub async fn next_run(state: &AppState, repo_id: i64, after: Timestamp) -> Option<Timestamp> {
     let settings = db::append_only::get_maintenance(&state.pool, repo_id)
         .await
         .ok()
@@ -404,19 +400,19 @@ pub async fn next_run(
 }
 
 /// The next time `cron_expression` comes due, in the server's timezone.
-pub async fn next_cron_run(state: &AppState, cron_expression: &str) -> Option<DateTime<Utc>> {
-    next_cron_run_after(state, cron_expression, Utc::now()).await
+pub async fn next_cron_run(state: &AppState, cron_expression: &str) -> Option<Timestamp> {
+    next_cron_run_after(state, cron_expression, Timestamp::now()).await
 }
 
 async fn next_cron_run_after(
     state: &AppState,
     cron_expression: &str,
-    after: DateTime<Utc>,
-) -> Option<DateTime<Utc>> {
+    after: Timestamp,
+) -> Option<Timestamp> {
     let tz = db::get_schedule_timezone(&state.pool)
         .await
-        .unwrap_or(chrono_tz::Tz::UTC);
-    shared::schedule::calculate_next_run(cron_expression, after, tz)
+        .unwrap_or(jiff::tz::TimeZone::UTC);
+    shared::schedule::calculate_next_run(cron_expression, after, &tz)
         .inspect_err(|e| tracing::warn!(error = %e, "maintenance has no next run"))
         .ok()
 }
@@ -646,7 +642,7 @@ async fn forget_gone(
 
 /// Runs maintenance for every repository whose schedule has come due.
 pub async fn run_due(state: &AppState) {
-    let due = match db::append_only::list_due_maintenance(&state.pool, Utc::now()).await {
+    let due = match db::append_only::list_due_maintenance(&state.pool, Timestamp::now()).await {
         Ok(due) => due,
         Err(e) => {
             tracing::error!(error = %e, "failed to list repositories due for maintenance");
@@ -657,7 +653,7 @@ pub async fn run_due(state: &AppState) {
         let repo_id = row.repo_id;
         // Claim the run by moving the next one on, so the next tick does not
         // start a second run while this one is still waiting for the lock.
-        let next = next_run(state, repo_id, Utc::now()).await;
+        let next = next_run(state, repo_id, Timestamp::now()).await;
         if let Err(e) = db::append_only::set_next_run(&state.pool, repo_id, next).await {
             tracing::warn!(repo_id, error = %e, "failed to claim a maintenance run");
             continue;

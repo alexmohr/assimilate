@@ -17,6 +17,7 @@ use server::{
     api::tokens::hash_token,
     archive_index::codec::{self, DirEntry},
 };
+use shared::time::Timestamp;
 use sqlx::PgPool;
 use tempfile::TempDir;
 use tokio::sync::Mutex;
@@ -682,8 +683,8 @@ async fn create_test_user_and_session(pool: &PgPool) {
         .await
         .unwrap();
 
-    let expires = chrono::Utc::now()
-        .checked_add_signed(chrono::Duration::hours(24))
+    let expires = Timestamp::now()
+        .checked_add(shared::time::hours(24))
         .unwrap();
     let hashed_id = hash_token(TEST_SESSION_ID);
     sqlx::query(
@@ -1899,8 +1900,8 @@ async fn insert_session_with_role(pool: &PgPool, label: &str, can_view_all_repos
         .unwrap();
 
     let session_id = format!("{label}-session-0000000000000000000");
-    let expires = chrono::Utc::now()
-        .checked_add_signed(chrono::Duration::hours(24))
+    let expires = Timestamp::now()
+        .checked_add(shared::time::hours(24))
         .unwrap();
     sqlx::query("INSERT INTO sessions (id, user_id, expires_at) VALUES ($1, $2, $3)")
         .bind(hash_token(&session_id))
@@ -3324,8 +3325,8 @@ async fn test_list_archives_deduplicates_archive_names() {
         )
         .bind(agent_id)
         .bind(repo_id)
-        .bind(chrono::DateTime::parse_from_rfc3339(started_at).unwrap())
-        .bind(chrono::DateTime::parse_from_rfc3339(finished_at).unwrap())
+        .bind(started_at.parse::<Timestamp>().unwrap())
+        .bind(finished_at.parse::<Timestamp>().unwrap())
         .bind(original_size)
         .bind(original_size - 10)
         .bind(original_size - 20)
@@ -3389,7 +3390,7 @@ async fn test_list_archives_names_the_schedule_that_created_each() {
         )
         .bind(agent_id)
         .bind(repo_id)
-        .bind(chrono::DateTime::parse_from_rfc3339(started_at).unwrap())
+        .bind(started_at.parse::<Timestamp>().unwrap())
         .bind(archive_name)
         .bind(schedule)
         .execute(&pool)
@@ -4405,11 +4406,9 @@ async fn test_sync_repo_returns_409_when_already_importing() {
 /// files/paths for a stale archive that a sync should prune away.
 #[cfg(test)]
 async fn insert_stale_archive_with_index(pool: &PgPool, agent_id: i64, repo_id: i64) {
-    let stale_started_at = chrono::Utc::now()
-        .checked_sub_signed(chrono::Duration::days(1))
-        .unwrap();
+    let stale_started_at = Timestamp::now().checked_sub(shared::time::days(1)).unwrap();
     let stale_finished_at = stale_started_at
-        .checked_add_signed(chrono::Duration::minutes(5))
+        .checked_add(shared::time::minutes(5))
         .unwrap();
     sqlx::query(
         "INSERT INTO backup_reports (agent_id, repo_id, schedule_id, started_at, finished_at, \
@@ -4830,8 +4829,8 @@ async fn test_sessions_stored_as_hashes_not_plaintext(pool: sqlx::PgPool) {
         .await
         .unwrap();
 
-    let expires = chrono::Utc::now()
-        .checked_add_signed(chrono::Duration::hours(24))
+    let expires = Timestamp::now()
+        .checked_add(shared::time::hours(24))
         .unwrap();
     let hashed_id = server::api::tokens::hash_token(plaintext_id);
     sqlx::query("INSERT INTO sessions (id, user_id, expires_at) VALUES ($1, $2, $3)")
@@ -4998,7 +4997,7 @@ async fn test_account_lockout_rejects_correct_password_while_locked(pool: sqlx::
         }
     }
 
-    let user: (Option<chrono::DateTime<chrono::Utc>>,) =
+    let user: (Option<Timestamp>,) =
         sqlx::query_as("SELECT locked_until FROM users WHERE username = $1")
             .bind(username)
             .fetch_one(&pool)
@@ -5006,7 +5005,7 @@ async fn test_account_lockout_rejects_correct_password_while_locked(pool: sqlx::
             .unwrap();
     assert!(
         user.0
-            .is_some_and(|locked_until| locked_until > chrono::Utc::now()),
+            .is_some_and(|locked_until| locked_until > Timestamp::now()),
         "account should be locked after {} failed attempts",
         10
     );
@@ -5137,11 +5136,11 @@ async fn test_session_idle_timeout_revokes_inactive_session(pool: sqlx::PgPool) 
         .await
         .unwrap();
 
-    let expires = chrono::Utc::now()
-        .checked_add_signed(chrono::Duration::hours(24))
+    let expires = Timestamp::now()
+        .checked_add(shared::time::hours(24))
         .unwrap();
-    let idle_since = chrono::Utc::now()
-        .checked_sub_signed(chrono::Duration::minutes(2))
+    let idle_since = Timestamp::now()
+        .checked_sub(shared::time::minutes(2))
         .unwrap();
     let session_id = "idle-timeout-session-id-00000000000";
     let hashed_id = hash_token(session_id);
@@ -5207,11 +5206,9 @@ async fn test_session_idle_timeout_exempts_remember_me_session(pool: sqlx::PgPoo
 
     // Idle far beyond the configured 1-minute idle timeout, but still well
     // within the session's own (remember-me) absolute expiry.
-    let expires = chrono::Utc::now()
-        .checked_add_signed(chrono::Duration::days(7))
-        .unwrap();
-    let idle_since = chrono::Utc::now()
-        .checked_sub_signed(chrono::Duration::hours(9))
+    let expires = Timestamp::now().checked_add(shared::time::days(7)).unwrap();
+    let idle_since = Timestamp::now()
+        .checked_sub(shared::time::hours(9))
         .unwrap();
     let session_id = "remember-me-idle-session-id-000000000";
     let hashed_id = hash_token(session_id);
@@ -5278,8 +5275,8 @@ async fn test_session_idle_timeout_resets_on_activity(pool: sqlx::PgPool) {
         .await
         .unwrap();
 
-    let expires = chrono::Utc::now()
-        .checked_add_signed(chrono::Duration::hours(24))
+    let expires = Timestamp::now()
+        .checked_add(shared::time::hours(24))
         .unwrap();
     let session_id = "idle-active-session-id-000000000000";
     let hashed_id = hash_token(session_id);
@@ -5344,8 +5341,8 @@ async fn test_me_can_upgrade_agent_reflects_admin_bypass(pool: sqlx::PgPool) {
         .await
         .expect("assign role");
 
-    let expires = chrono::Utc::now()
-        .checked_add_signed(chrono::Duration::hours(24))
+    let expires = Timestamp::now()
+        .checked_add(shared::time::hours(24))
         .unwrap();
     let session_id = "admin-bypass-me-session-0000000000";
     let hashed_id = hash_token(session_id);
@@ -5667,8 +5664,8 @@ async fn test_totp_login_rejects_replayed_code_within_window(pool: sqlx::PgPool)
     .unwrap();
     let code = totp.generate_current().unwrap();
 
-    let expires = chrono::Utc::now()
-        .checked_add_signed(chrono::Duration::minutes(5))
+    let expires = Timestamp::now()
+        .checked_add(shared::time::minutes(5))
         .unwrap();
 
     // First login: a fresh pending_totp session verified with a fresh code succeeds.
@@ -5769,8 +5766,8 @@ async fn test_totp_login_accepts_different_code_from_next_step(pool: sqlx::PgPoo
         "test setup requires two distinct codes across adjacent steps"
     );
 
-    let expires = chrono::Utc::now()
-        .checked_add_signed(chrono::Duration::minutes(5))
+    let expires = Timestamp::now()
+        .checked_add(shared::time::minutes(5))
         .unwrap();
 
     // First device logs in with code_a.
@@ -5872,8 +5869,8 @@ async fn test_totp_login_locks_account_after_repeated_failed_codes(pool: sqlx::P
         .collect();
     assert_ne!(wrong_code, valid_code);
 
-    let expires = chrono::Utc::now()
-        .checked_add_signed(chrono::Duration::minutes(5))
+    let expires = Timestamp::now()
+        .checked_add(shared::time::minutes(5))
         .unwrap();
     let temp_token = "totp-lockout-temp-token-aaaaaaaaaaaaaaaaaaa";
     server::db::insert_session(
@@ -5942,8 +5939,8 @@ async fn test_totp_disable_locks_account_after_repeated_wrong_passwords(pool: sq
         .unwrap();
 
     let session_id = "totp-disable-lockout-session-0000000";
-    let expires = chrono::Utc::now()
-        .checked_add_signed(chrono::Duration::hours(24))
+    let expires = Timestamp::now()
+        .checked_add(shared::time::hours(24))
         .unwrap();
     server::db::insert_session(
         &pool,
@@ -6012,8 +6009,8 @@ async fn test_revoke_session_rejects_own_current_session(pool: sqlx::PgPool) {
     .await
     .unwrap();
 
-    let expires = chrono::Utc::now()
-        .checked_add_signed(chrono::Duration::hours(24))
+    let expires = Timestamp::now()
+        .checked_add(shared::time::hours(24))
         .unwrap();
     let session_id = "revoke-self-session-id-0000000000000";
     let hashed_id = hash_token(session_id);
@@ -6051,8 +6048,8 @@ async fn test_revoke_session_returns_404_for_unknown_session(pool: sqlx::PgPool)
     .await
     .unwrap();
 
-    let expires = chrono::Utc::now()
-        .checked_add_signed(chrono::Duration::hours(24))
+    let expires = Timestamp::now()
+        .checked_add(shared::time::hours(24))
         .unwrap();
     let session_id = "revoke-unknown-caller-session-id-000";
     let hashed_id = hash_token(session_id);
@@ -7152,7 +7149,7 @@ async fn test_schedule_update_clears_auto_disable_bookkeeping_for_dropped_agent(
     let reenabled = server::db::reenable_system_disabled_schedules_for_agent(
         &pool,
         old_agent_id,
-        chrono::Utc::now(),
+        Timestamp::now(),
     )
     .await
     .unwrap();
@@ -7403,16 +7400,17 @@ async fn test_calendar_upcoming_schedule_includes_target_hostname(pool: sqlx::Pg
     // only remaining occurrence rolls into next month. Check both months
     // rather than assuming "this month" always has an upcoming occurrence,
     // so the test doesn't flake once a month depending on when it runs.
-    let now = chrono::Utc::now();
-    let this_month = format!("{}-{:02}", now.format("%Y"), now.format("%m"));
+    let now = Timestamp::now();
+    let this_month = format!("{}-{:02}", now.strftime("%Y"), now.strftime("%m"));
     let next_month_date = now
-        .date_naive()
-        .checked_add_months(chrono::Months::new(1))
+        .to_zoned(jiff::tz::TimeZone::UTC)
+        .date()
+        .checked_add(jiff::Span::new().months(1))
         .unwrap();
     let next_month = format!(
         "{}-{:02}",
-        next_month_date.format("%Y"),
-        next_month_date.format("%m")
+        next_month_date.strftime("%Y"),
+        next_month_date.strftime("%m")
     );
 
     let mut scheduled_event = None;
@@ -9304,8 +9302,8 @@ async fn create_non_admin_user_and_session(pool: &PgPool) {
         .await
         .unwrap();
 
-    let expires = chrono::Utc::now()
-        .checked_add_signed(chrono::Duration::hours(24))
+    let expires = Timestamp::now()
+        .checked_add(shared::time::hours(24))
         .unwrap();
     let hashed_id = server::api::tokens::hash_token(NON_ADMIN_SESSION_ID);
     sqlx::query(
@@ -9512,8 +9510,8 @@ async fn create_must_change_password_user_and_session(pool: &PgPool) {
         .await
         .unwrap();
 
-    let expires = chrono::Utc::now()
-        .checked_add_signed(chrono::Duration::hours(24))
+    let expires = Timestamp::now()
+        .checked_add(shared::time::hours(24))
         .unwrap();
     let hashed_id = server::api::tokens::hash_token(MCP_SESSION_ID);
     sqlx::query(
@@ -13918,7 +13916,7 @@ async fn test_an_intermittent_agents_machine_lists_its_waits_until_marked_always
     };
     let resp = oneshot(&mut app, availability(true)).await;
     assert_eq!(resp.status(), StatusCode::OK);
-    let pending_for = chrono::Utc::now();
+    let pending_for = Timestamp::now();
     server::db::catch_up::mark_catch_up_pending(&pool, schedule_id, agent.id, pending_for)
         .await
         .unwrap();
@@ -14050,7 +14048,7 @@ async fn test_a_repo_hosts_machine_marked_always_online_drops_its_waits() {
         &pool,
         schedule_id,
         repo_id,
-        chrono::Utc::now(),
+        Timestamp::now(),
         None,
     )
     .await
@@ -15076,15 +15074,12 @@ async fn test_refresh_extends_a_remember_me_session(pool: sqlx::PgPool) {
     assert!(cookie.contains(&format!("={session_id}")), "{cookie}");
     assert!(cookie.contains("Secure"), "{cookie}");
 
-    let expires_at: chrono::DateTime<chrono::Utc> =
-        sqlx::query_scalar("SELECT expires_at FROM sessions WHERE id = $1")
-            .bind(hash_token(&session_id))
-            .fetch_one(&pool)
-            .await
-            .unwrap();
-    let six_days_out = chrono::Utc::now()
-        .checked_add_signed(chrono::Duration::days(6))
+    let expires_at: Timestamp = sqlx::query_scalar("SELECT expires_at FROM sessions WHERE id = $1")
+        .bind(hash_token(&session_id))
+        .fetch_one(&pool)
+        .await
         .unwrap();
+    let six_days_out = Timestamp::now().checked_add(shared::time::days(6)).unwrap();
     assert!(expires_at > six_days_out);
 }
 
@@ -15212,7 +15207,7 @@ async fn test_monitoring_token_created_through_the_api_scrapes_metrics() {
     assert!(text.contains("assimilate_agent_connected{host=\"metrics-host\"} 0\n"));
     assert!(text.contains("assimilate_jobs_running 0\n"));
 
-    let last_used: Option<chrono::DateTime<chrono::Utc>> =
+    let last_used: Option<Timestamp> =
         sqlx::query_scalar("SELECT last_used_at FROM api_tokens WHERE name = 'prometheus'")
             .fetch_one(&pool)
             .await
@@ -15269,7 +15264,7 @@ async fn insert_token_expiring(
     pool: &PgPool,
     plaintext: &str,
     scope: shared::types::ApiTokenScope,
-    expires_at: chrono::DateTime<chrono::Utc>,
+    expires_at: Timestamp,
 ) -> String {
     let user_id = integration_admin_id(pool).await;
     server::db::insert_api_token_expiring(
@@ -15303,11 +15298,11 @@ async fn test_an_expired_token_is_refused_over_http() {
             .status(),
         StatusCode::OK
     );
-    let past = chrono::Utc::now()
-        .checked_sub_signed(chrono::Duration::hours(1))
+    let past = Timestamp::now()
+        .checked_sub(shared::time::hours(1))
         .unwrap();
-    let future = chrono::Utc::now()
-        .checked_add_signed(chrono::Duration::days(30))
+    let future = Timestamp::now()
+        .checked_add(shared::time::days(30))
         .unwrap();
 
     let stale_full = insert_token_expiring(&pool, "stale-full", ApiTokenScope::Full, past).await;
@@ -15396,7 +15391,7 @@ async fn test_monitoring_token_is_refused_by_every_other_endpoint() {
     let resp = oneshot(&mut app, create).await;
     assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
 
-    let last_used: Option<chrono::DateTime<chrono::Utc>> =
+    let last_used: Option<Timestamp> =
         sqlx::query_scalar("SELECT last_used_at FROM api_tokens WHERE token_hash = $1")
             .bind(hash_token(&monitoring))
             .fetch_one(&pool)
@@ -16048,14 +16043,14 @@ esac
             "a run is the repository's last operation, whatever its outcome"
         );
 
-        let stopped: Option<chrono::DateTime<chrono::Utc>> =
+        let stopped: Option<Timestamp> =
             sqlx::query_scalar("SELECT stopped_at FROM repo_maintenance WHERE repo_id = $1")
                 .bind(repo_id)
                 .fetch_one(&pool)
                 .await
                 .unwrap();
         assert!(stopped.is_some());
-        let next: Option<chrono::DateTime<chrono::Utc>> =
+        let next: Option<Timestamp> =
             sqlx::query_scalar("SELECT next_run_at FROM repo_maintenance WHERE repo_id = $1")
                 .bind(repo_id)
                 .fetch_one(&pool)
@@ -16140,13 +16135,13 @@ esac
                 .await
                 .unwrap();
         assert_eq!(queued, 0);
-        let next: Option<chrono::DateTime<chrono::Utc>> =
+        let next: Option<Timestamp> =
             sqlx::query_scalar("SELECT next_run_at FROM repo_maintenance WHERE repo_id = $1")
                 .bind(repo_id)
                 .fetch_one(&pool)
                 .await
                 .unwrap();
-        assert!(next.is_some_and(|t| t > chrono::Utc::now()));
+        assert!(next.is_some_and(|t| t > Timestamp::now()));
     }
 
     #[tokio::test]
@@ -16232,7 +16227,7 @@ esac
 
         let calls = borg.calls().await;
         assert!(FakeRepo::ran(&calls, "compact"), "{calls:?}");
-        let next: Option<chrono::DateTime<chrono::Utc>> =
+        let next: Option<Timestamp> =
             sqlx::query_scalar("SELECT next_run_at FROM repo_maintenance WHERE repo_id = $1")
                 .bind(repo_id)
                 .fetch_one(&pool)
@@ -16338,13 +16333,13 @@ esac
                 .await
                 .unwrap();
         assert_eq!(runs, 0, "a repository that is not due is left alone");
-        let next: Option<chrono::DateTime<chrono::Utc>> =
+        let next: Option<Timestamp> =
             sqlx::query_scalar("SELECT next_run_at FROM repo_maintenance WHERE repo_id = $1")
                 .bind(due)
                 .fetch_one(&pool)
                 .await
                 .unwrap();
-        assert!(next.is_some_and(|t| t > chrono::Utc::now()));
+        assert!(next.is_some_and(|t| t > Timestamp::now()));
     }
 
     async fn queue_deletion(pool: &PgPool, repo_id: i64, archive: &str) {
@@ -16561,7 +16556,7 @@ esac
         let (outcome, _, _, detail) = latest_run(&pool, repo_id).await;
         assert_eq!(outcome, "check_failed");
         assert!(detail.unwrap().contains("fake check failure"));
-        let stopped: Option<chrono::DateTime<chrono::Utc>> =
+        let stopped: Option<Timestamp> =
             sqlx::query_scalar("SELECT stopped_at FROM repo_maintenance WHERE repo_id = $1")
                 .bind(repo_id)
                 .fetch_one(&pool)

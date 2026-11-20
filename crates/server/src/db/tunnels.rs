@@ -3,8 +3,8 @@
 
 //! SSH tunnels to repository hosts.
 
-use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use shared::time::Timestamp;
 use sqlx::PgPool;
 
 use crate::error::ApiError;
@@ -29,7 +29,7 @@ pub struct SshTunnel {
     /// Whether the tunnel is enabled.
     pub enabled: bool,
     /// When the tunnel was created.
-    pub created_at: DateTime<Utc>,
+    pub created_at: Timestamp,
 }
 
 /// Parameters for creating a new SSH tunnel.

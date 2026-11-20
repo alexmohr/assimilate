@@ -17,6 +17,7 @@ use shared::{
         MigrateEncryptionResponse, PassphraseResponse, RepoQuotaSummaryResponse, RepoResponse,
         RepoWithStatsResponse, RescanResponse, SyncResponse,
     },
+    time::Timestamp,
     types::{BORG_REPO_ENV_KEY, BorgEncryption, SystemEventType, build_repo_url},
 };
 use sqlx::PgPool;
@@ -1273,7 +1274,7 @@ pub async fn break_lock(
 
     let borg_output = result?;
 
-    let now = chrono::Utc::now();
+    let now = Timestamp::now();
     if let Err(e) = db::update_repo_last_op(
         &state.pool,
         repo_id,
@@ -1592,7 +1593,7 @@ async fn rename_and_reinit_repo(params: RenameAndReinitParams<'_>) -> Result<Str
         target_encryption,
     } = params;
 
-    let date_suffix = chrono::Utc::now().format("%Y-%m-%d").to_string();
+    let date_suffix = Timestamp::now().strftime("%Y-%m-%d");
     let migrated_path = format!("{}.migrated-{date_suffix}", repo.repo_path);
 
     run_ssh_command(

@@ -306,7 +306,9 @@ fn service_main(arguments: Vec<OsString>) {
 /// restarted after every failure, so a failure that keeps happening leaves
 /// one file a day rather than one a restart.
 fn startup_failure_log(at: std::time::SystemTime) -> PathBuf {
-    let day = chrono::DateTime::<chrono::Utc>::from(at).format("%Y-%m-%d");
+    let day = shared::time::Timestamp::try_from(at)
+        .unwrap_or(shared::time::Timestamp::UNIX_EPOCH)
+        .strftime("%Y-%m-%d");
     std::env::temp_dir().join(format!("assimilate-agent-service-error-{day}.log"))
 }
 

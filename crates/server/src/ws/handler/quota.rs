@@ -4,6 +4,8 @@
 //! Repository and server quota checks after a backup, and their breach
 //! notifications.
 
+use shared::time::Timestamp;
+
 use super::notify::spawn_notification_dispatch;
 use crate::{
     AppState, db,
@@ -46,7 +48,7 @@ fn dispatch_quota_breach_notification(
         repo_name: repo_name.to_owned(),
         status: quota_status_label(quota_status).to_owned(),
         error_message: Some(message),
-        timestamp: chrono::Utc::now(),
+        timestamp: Timestamp::now(),
         repo_id: Some(repo_id),
         agent_id: Some(agent_id),
         schedule_id: None,

@@ -9,7 +9,6 @@ use axum::{
     http::{HeaderMap, StatusCode, header, request::Parts},
     response::{IntoResponse, Response},
 };
-use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
 use shared::{
     audit::{AuditEvent, LoginMethod},
@@ -17,6 +16,7 @@ use shared::{
         LoginResponse, MeResponse, RefreshSessionResponse, SessionListResponse, SessionResponse,
         UserPreferences,
     },
+    time::Timestamp,
     types::ApiTokenScope,
 };
 use uuid::Uuid;
@@ -111,8 +111,8 @@ impl FromRequestParts<AppState> for AuthUser {
             .session_idle_timeout_minutes
             .load(std::sync::atomic::Ordering::Relaxed);
 
-        let idle_duration = Utc::now().signed_duration_since(session.last_seen_at);
-        if !session.remember_me && idle_duration.num_minutes() > idle_timeout_minutes {
+        let idle_duration = Timestamp::now().since(session.last_seen_at);
+        if !session.remember_me && idle_duration.as_mins() > idle_timeout_minutes {
             db::delete_session(&state.pool, &hashed_id).await?;
             return Err(ApiError::Unauthorized(
                 "session expired due to inactivity".to_string(),
@@ -141,7 +141,7 @@ impl FromRequestParts<AppState> for AuthUser {
         // `session_idle_timeout_minutes` has elapsed since login. Throttled
         // to avoid a DB write on every single request (see
         // LAST_SEEN_UPDATE_THROTTLE_SECONDS).
-        if idle_duration.num_seconds() >= LAST_SEEN_UPDATE_THROTTLE_SECONDS {
+        if idle_duration.as_secs() >= LAST_SEEN_UPDATE_THROTTLE_SECONDS {
             db::update_session_last_seen(&state.pool, &hashed_id).await?;
         }
 
@@ -227,7 +227,7 @@ pub struct LoginRequest {
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct RefreshResponse {
     /// New session expiration timestamp.
-    pub session_expires_at: DateTime<Utc>,
+    pub session_expires_at: Timestamp,
 }
 
 #[utoipa::path(
@@ -284,7 +284,7 @@ pub async fn login(
                 id: 0,
                 username: req.username.clone(),
                 must_change_password: false,
-                created_at: Utc::now(),
+                created_at: Timestamp::now(),
                 last_login_at: None,
                 locked_until: None,
             };
@@ -305,7 +305,7 @@ pub async fn login(
         .map_err(|_| ApiError::Unauthorized("invalid credentials".to_string()))?;
 
     if let Some(locked_until) = user.locked_until
-        && locked_until > Utc::now()
+        && locked_until > Timestamp::now()
     {
         // Record the attempt through the same DB path as the wrong-password
         // branch below (record_failed_login_and_check_lockout already no-ops
@@ -356,8 +356,8 @@ pub async fn login(
         // real success once the TOTP code is verified.
         let temp_token = Uuid::new_v4().to_string();
         let temp_hashed = hash_token(&temp_token);
-        let temp_expires = Utc::now()
-            .checked_add_signed(Duration::minutes(10))
+        let temp_expires = Timestamp::now()
+            .checked_add(shared::time::minutes(10))
             .ok_or_else(|| {
                 ApiError::Internal("failed to compute temp session expiry".to_string())
             })?;
@@ -424,9 +424,9 @@ pub(super) async fn create_session_response(
     } else {
         (24, 86400)
     };
-    let expires_at = Utc::now()
-        .checked_add_signed(Duration::hours(ttl_hours))
-        .unwrap_or_else(Utc::now);
+    let expires_at = Timestamp::now()
+        .checked_add(shared::time::hours(ttl_hours))
+        .unwrap_or_else(Timestamp::now);
 
     let hashed_id = hash_token(&session_id);
     db::insert_session(pool, &hashed_id, user.id, expires_at, remember_me, false).await?;
@@ -594,9 +594,9 @@ pub async fn refresh_session(
         ));
     }
 
-    let new_expires_at = Utc::now()
-        .checked_add_signed(Duration::days(7))
-        .unwrap_or_else(Utc::now);
+    let new_expires_at = Timestamp::now()
+        .checked_add(shared::time::days(7))
+        .unwrap_or_else(Timestamp::now);
     db::extend_session(&state.pool, &hashed_id, new_expires_at).await?;
     // Update last_seen_at to slide idle window
     db::update_session_last_seen(&state.pool, &hashed_id).await?;

@@ -251,10 +251,7 @@ pub(super) async fn build_import_reports(
             continue;
         };
         let finished_at = archive_finish_time(archive, started_at);
-        let duration_secs = finished_at
-            .signed_duration_since(started_at)
-            .num_seconds()
-            .max(0);
+        let duration_secs = finished_at.since(started_at).as_secs().max(0);
 
         let processed_count = i32::try_from(processed.saturating_add(1)).unwrap_or(i32::MAX);
         info!(repo_id, archive = %name, processed = processed_count, total, "archive imported");

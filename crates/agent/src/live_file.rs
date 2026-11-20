@@ -9,6 +9,7 @@ use std::path::{Component, Path, PathBuf};
 
 use shared::{
     live_file::{LIVE_FILE_MAX_BYTES, LiveFile, LiveReadRefusal, LiveText},
+    time::Timestamp,
     types::AgentConfig,
 };
 use tokio::io::AsyncReadExt as _;
@@ -120,12 +121,15 @@ async fn read_regular_file(path: &Path) -> Result<LiveFile, LiveReadRefusal> {
         .await?;
     Ok(contents(
         bytes,
-        metadata.modified().ok().map(chrono::DateTime::from),
+        metadata
+            .modified()
+            .ok()
+            .and_then(|modified| Timestamp::try_from(modified).ok()),
     ))
 }
 
 /// What a file holding `bytes` is to the comparison.
-fn contents(bytes: Vec<u8>, modified: Option<chrono::DateTime<chrono::Utc>>) -> LiveFile {
+fn contents(bytes: Vec<u8>, modified: Option<Timestamp>) -> LiveFile {
     let size = u64::try_from(bytes.len()).unwrap_or(u64::MAX);
     if size > LIVE_FILE_MAX_BYTES {
         return LiveFile::TooLarge { size };

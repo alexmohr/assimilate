@@ -4,11 +4,11 @@
 //! Schedules: their repositories and targets, due runs, failure tracking and
 //! auto-disable.
 
-use chrono::{DateTime, Utc};
 use serde::Serialize;
 use shared::{
     hooks::HookCommand,
     snapshot::FsSnapshotMode,
+    time::Timestamp,
     types::{
         ExecutionMode, OnFailure, ScheduleFilesMode, ScheduleType, ScheduleWakeOverride, Visibility,
     },
@@ -89,9 +89,9 @@ pub struct ScheduleRow {
     /// Whether a schedule taking each host's files runs the hosts' commands.
     pub run_host_commands: bool,
     /// When the schedule last ran.
-    pub last_run_at: Option<DateTime<Utc>>,
+    pub last_run_at: Option<Timestamp>,
     /// When the schedule is next due.
-    pub next_run_at: Option<DateTime<Utc>>,
+    pub next_run_at: Option<Timestamp>,
     /// Raw exclude pattern text.
     pub exclude_patterns_raw: String,
     /// Raw include pattern text, rescuing paths from a broader exclude.
@@ -174,7 +174,7 @@ pub struct ScheduleTargetRow {
     pub execution_order: i32,
     /// The occurrence this target missed while its host was unreachable, waiting to
     /// be caught up when that host reconnects. `None` when nothing is pending.
-    pub catch_up_pending_for: Option<DateTime<Utc>>,
+    pub catch_up_pending_for: Option<Timestamp>,
 }
 
 /// A row from the `schedule_repos` join table: one repository a schedule
@@ -188,7 +188,7 @@ pub struct ScheduleRepoRow {
     /// Whether a failure on this repository fails the whole run.
     pub required: bool,
     /// The occurrence this repository missed, waiting to be caught up.
-    pub catch_up_pending_for: Option<DateTime<Utc>>,
+    pub catch_up_pending_for: Option<Timestamp>,
 }
 
 /// # Errors
@@ -876,7 +876,7 @@ pub struct DueScheduleRow {
     pub wake_override: ScheduleWakeOverride,
     /// The occurrence this tick is running: the `next_run_at` that came due. Recorded
     /// as the target's pending catch-up when the host turns out to be unreachable.
-    pub due_at: DateTime<Utc>,
+    pub due_at: Timestamp,
 }
 
 /// # Errors
@@ -884,7 +884,7 @@ pub struct DueScheduleRow {
 /// Returns [`ApiError::Database`] if the database query fails.
 pub async fn list_due_schedules(
     pool: &PgPool,
-    now: DateTime<Utc>,
+    now: Timestamp,
 ) -> Result<Vec<DueScheduleRow>, ApiError> {
     sqlx::query_as!(
         DueScheduleRow,
@@ -911,8 +911,8 @@ pub async fn list_due_schedules(
 pub async fn mark_schedule_triggered(
     pool: &PgPool,
     schedule_id: i64,
-    now: DateTime<Utc>,
-    next_run_at: DateTime<Utc>,
+    now: Timestamp,
+    next_run_at: Timestamp,
 ) -> Result<(), ApiError> {
     sqlx::query!(
         "UPDATE schedules SET last_run_at = $2, next_run_at = $3 WHERE id = $1",
@@ -942,8 +942,8 @@ pub async fn advance_schedule_run(
     pool: &PgPool,
     schedule_id: i64,
     cron_expression: &str,
-    tz: chrono_tz::Tz,
-    now: DateTime<Utc>,
+    tz: &jiff::tz::TimeZone,
+    now: Timestamp,
 ) -> bool {
     let next = match shared::schedule::calculate_next_run(cron_expression, now, tz) {
         Ok(next) => next,
@@ -1043,7 +1043,7 @@ pub async fn record_schedule_failure(
     pool: &PgPool,
     schedule_id: i64,
     agent_id: i64,
-    next_run_at: DateTime<Utc>,
+    next_run_at: Timestamp,
     max_consecutive_failures: i32,
     agent_unreachable: bool,
 ) -> Result<ScheduleFailureOutcome, ApiError> {
@@ -1100,7 +1100,7 @@ pub async fn record_schedule_failure(
 pub async fn reenable_system_disabled_schedules_for_agent(
     pool: &PgPool,
     agent_id: i64,
-    now: DateTime<Utc>,
+    now: Timestamp,
 ) -> Result<Vec<i64>, ApiError> {
     sqlx::query_scalar!(
         "UPDATE schedules SET enabled = true, auto_disabled_agent_unreachable = false, \
@@ -1165,7 +1165,7 @@ pub async fn list_auto_disabled_schedule_ids_for_agent(
 pub async fn reenable_specific_schedules(
     pool: &PgPool,
     schedule_ids: &[i64],
-    now: DateTime<Utc>,
+    now: Timestamp,
 ) -> Result<Vec<i64>, ApiError> {
     sqlx::query_scalar!(
         "UPDATE schedules SET enabled = true, auto_disabled_agent_unreachable = false, \
@@ -1186,7 +1186,7 @@ pub async fn reenable_specific_schedules(
 pub async fn set_next_run_at(
     pool: &PgPool,
     schedule_id: i64,
-    next_run_at: DateTime<Utc>,
+    next_run_at: Timestamp,
 ) -> Result<(), ApiError> {
     sqlx::query!(
         "UPDATE schedules SET next_run_at = $2 WHERE id = $1",
@@ -1350,11 +1350,11 @@ pub async fn get_schedule_name_and_next_run_at(
     pool: &PgPool,
     schedule_id: i64,
     default_name: &str,
-) -> Result<(String, Option<DateTime<Utc>>), ApiError> {
+) -> Result<(String, Option<Timestamp>), ApiError> {
     #[derive(sqlx::FromRow)]
     struct Row {
         name: String,
-        next_run_at: Option<DateTime<Utc>>,
+        next_run_at: Option<Timestamp>,
     }
 
     let row = sqlx::query_as!(

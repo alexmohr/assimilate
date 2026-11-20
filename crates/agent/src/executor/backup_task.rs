@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
-use chrono::Utc;
 use shared::{
     protocol::AgentToServer,
+    time::Timestamp,
     types::{BackupWarningKind, RepoId},
 };
 use tokio::sync::mpsc;
@@ -21,12 +21,12 @@ use crate::{
 pub(super) fn make_failed_report(
     repo_id: RepoId,
     schedule_id: Option<i64>,
-    started_at: chrono::DateTime<Utc>,
+    started_at: Timestamp,
     error_message: String,
     run_id: Option<String>,
     borg_command: Option<String>,
 ) -> shared::types::BackupReport {
-    let finished_at = Utc::now();
+    let finished_at = Timestamp::now();
     shared::types::BackupReport {
         id: shared::types::ReportId(0),
         agent_id: shared::types::AgentId(0),
@@ -40,7 +40,7 @@ pub(super) fn make_failed_report(
         deduplicated_size: 0,
         repo_unique_csize: 0,
         files_processed: 0,
-        duration_secs: finished_at.signed_duration_since(started_at).num_seconds(),
+        duration_secs: finished_at.since(started_at).as_secs(),
         error_message: Some(error_message),
         warnings: Vec::new(),
         borg_version: None,
@@ -83,7 +83,7 @@ pub(super) async fn run_backup_task(
         server,
         run_id,
     } = ctx;
-    let started_at = Utc::now();
+    let started_at = Timestamp::now();
     let schedule_id = target.schedule_id;
     let borg_command = BackupEngine::preview_create_command(&target);
     let started_msg = AgentToServer::BackupStarted {
@@ -301,11 +301,11 @@ fn failed_with_setup_warnings(
 pub(super) fn build_backup_report(
     repo_id: RepoId,
     schedule_id: Option<i64>,
-    started_at: chrono::DateTime<Utc>,
+    started_at: Timestamp,
     run_id: Option<String>,
     result: BackupResult,
 ) -> CompletedBackup {
-    let finished_at = Utc::now();
+    let finished_at = Timestamp::now();
     let report = shared::types::BackupReport {
         id: shared::types::ReportId(0),
         agent_id: shared::types::AgentId(0),
@@ -392,7 +392,7 @@ mod tests {
         make_failed_report(
             RepoId(1),
             Some(2),
-            Utc::now(),
+            Timestamp::now(),
             reason.to_owned(),
             Some("run-1".to_owned()),
             None,

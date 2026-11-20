@@ -6,13 +6,13 @@
 //! role of one machine, and every one of them shows the same Power &
 //! dependencies pane for it.
 
-use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 use utoipa::ToSchema;
 
 use crate::{
     responses::HostWakeSettingsResponse,
+    time::Timestamp,
     types::{MachineWakeMode, ScheduleWakeOverride},
 };
 
@@ -115,15 +115,15 @@ pub struct MachineWaitResponse {
     /// The dependency it waits on, for a dependency.
     pub dependency_name: Option<String>,
     /// The occurrence that was skipped.
-    pub pending_for: DateTime<Utc>,
+    pub pending_for: Timestamp,
     /// When the machine was last asked whether it is back; always `null` for
     /// an agent, which announces its own return.
-    pub last_probe_at: Option<DateTime<Utc>>,
+    pub last_probe_at: Option<Timestamp>,
     /// When it is next due to be asked; `null` for an agent, or while a
     /// catch-up is running.
-    pub next_probe_at: Option<DateTime<Utc>>,
+    pub next_probe_at: Option<Timestamp>,
     /// When the wait is abandoned; `null` when it is waited for indefinitely.
-    pub give_up_at: Option<DateTime<Utc>>,
+    pub give_up_at: Option<Timestamp>,
 }
 
 /// A schedule that treats a machine differently from the machine's own
@@ -164,7 +164,7 @@ pub struct MachineResponse {
     /// Whether it is expected to be online.
     pub availability: MachineAvailabilityResponse,
     /// When it was last checked.
-    pub last_checked_at: Option<DateTime<Utc>>,
+    pub last_checked_at: Option<Timestamp>,
     /// What that check found; `null` when it never has been.
     pub last_check_reachable: Option<bool>,
     /// Runs waiting on it.

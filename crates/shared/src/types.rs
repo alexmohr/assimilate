@@ -3,13 +3,12 @@
 
 use std::{fmt, str::FromStr};
 
-use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use ts_rs::TS;
 use utoipa::ToSchema;
 
-use crate::hooks::HookCommand;
+use crate::{hooks::HookCommand, time::Timestamp};
 
 fn default_keep_hourly() -> u32 {
     24
@@ -91,7 +90,7 @@ pub struct SearchEntry {
     #[ts(type = "number")]
     pub size: i64,
     /// Last modification time of the entry recorded in the archive.
-    pub mtime: DateTime<Utc>,
+    pub mtime: Timestamp,
     /// Kind of filesystem entry (e.g. `"file"`, `"directory"`, `"symlink"`)
     /// as reported by borg.
     pub entry_type: String,
@@ -1020,11 +1019,11 @@ pub struct RestoreRun {
     /// Username of whoever started the restore.
     pub requested_by: String,
     /// When the restore was requested.
-    pub created_at: DateTime<Utc>,
+    pub created_at: Timestamp,
     /// When it was handed to the agent, if it has been.
-    pub started_at: Option<DateTime<Utc>>,
+    pub started_at: Option<Timestamp>,
     /// When it finished, if it has.
-    pub finished_at: Option<DateTime<Utc>>,
+    pub finished_at: Option<Timestamp>,
 }
 
 /// Visibility scope of a repository, agent, or schedule - controls whether
@@ -1563,9 +1562,9 @@ pub struct Agent {
     /// Bcrypt hash of the agent's authentication token; the plaintext token is never stored.
     pub agent_token_hash: String,
     /// When this agent was first registered with the server.
-    pub created_at: DateTime<Utc>,
+    pub created_at: Timestamp,
     /// When the agent last connected or sent a heartbeat, if ever.
-    pub last_seen_at: Option<DateTime<Utc>>,
+    pub last_seen_at: Option<Timestamp>,
 }
 
 /// A configured borg repository that agents back up into.
@@ -1612,9 +1611,9 @@ pub struct Schedule {
     /// Whether the schedule is currently active.
     pub enabled: bool,
     /// When this schedule last ran, if ever.
-    pub last_run_at: Option<DateTime<Utc>>,
+    pub last_run_at: Option<Timestamp>,
     /// When this schedule is next due to run, if known.
-    pub next_run_at: Option<DateTime<Utc>>,
+    pub next_run_at: Option<Timestamp>,
     /// Number of yearly archives to retain when pruning.
     pub keep_yearly: u32,
 }
@@ -1635,9 +1634,9 @@ pub struct BackupReport {
     #[ts(type = "number | null")]
     pub schedule_id: Option<i64>,
     /// When the backup began.
-    pub started_at: DateTime<Utc>,
+    pub started_at: Timestamp,
     /// When the backup finished (successfully or not).
-    pub finished_at: DateTime<Utc>,
+    pub finished_at: Timestamp,
     /// Overall outcome of the backup.
     pub status: BackupStatus,
     /// Total uncompressed size of the files borg processed, in bytes.
@@ -2143,9 +2142,7 @@ mod tests {
     /// change to it.
     #[test]
     fn a_failed_restore_run_serializes_its_outcome() {
-        let at = DateTime::parse_from_rfc3339("2026-10-08T12:00:00Z")
-            .unwrap()
-            .with_timezone(&Utc);
+        let at = "2026-10-08T12:00:00Z".parse::<Timestamp>().unwrap();
         let run = RestoreRun {
             id: "8d7f6a52-3c53-4bd4-9f4d-2f5e0d6b6a01".to_owned(),
             agent_id: 3,

@@ -4,7 +4,7 @@
 //! Backup runs starting, being rejected and being cancelled, and the content
 //! indexing that follows a finished run.
 
-use shared::protocol::ServerToUi;
+use shared::{protocol::ServerToUi, time::Timestamp};
 
 use super::validate_agent_repo;
 use crate::{
@@ -29,7 +29,7 @@ pub(super) struct BackupStartedArgs<'a> {
     pub(super) state: &'a AppState,
     pub(super) repo_id: shared::types::RepoId,
     pub(super) schedule_id: Option<i64>,
-    pub(super) started_at: chrono::DateTime<chrono::Utc>,
+    pub(super) started_at: Timestamp,
     pub(super) borg_command: Option<String>,
     pub(super) run_id: Option<String>,
 }

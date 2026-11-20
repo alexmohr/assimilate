@@ -117,7 +117,7 @@ impl BackupStatusSource {
 
 #[cfg(test)]
 mod tests {
-    use chrono::Utc;
+    use shared::time::Timestamp;
 
     use super::*;
 
@@ -132,7 +132,7 @@ mod tests {
             hostname: "laptop".to_owned(),
             target_name: "home".to_owned(),
             last_status: status,
-            last_backup_at: status.map(|_| Utc::now()),
+            last_backup_at: status.map(|_| Timestamp::now()),
             last_backup_status: status,
             last_success_at: None,
             is_overdue: overdue,

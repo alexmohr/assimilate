@@ -7,10 +7,12 @@
 //! backing up the same host would otherwise each claim it with their own
 //! limits.
 
-use chrono::{DateTime, Utc};
-use shared::vm::{
-    DiscoveredVm, VmDomainConfig, VmSelectionMode, VmSnapshotConfig, VmSnapshotMode,
-    VmSnapshotOutcome, VmState,
+use shared::{
+    time::Timestamp,
+    vm::{
+        DiscoveredVm, VmDomainConfig, VmSelectionMode, VmSnapshotConfig, VmSnapshotMode,
+        VmSnapshotOutcome, VmState,
+    },
 };
 use sqlx::PgPool;
 
@@ -81,9 +83,9 @@ pub struct AgentVmRow {
     /// Why the last run failed for this domain, when it did.
     pub last_error: Option<String>,
     /// When the host last reported this domain.
-    pub last_scanned_at: Option<DateTime<Utc>>,
+    pub last_scanned_at: Option<Timestamp>,
     /// When a run last staged this domain.
-    pub last_staged_at: Option<DateTime<Utc>>,
+    pub last_staged_at: Option<Timestamp>,
 }
 
 /// Saturating conversion for figures the agent reports as unsigned but

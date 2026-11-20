@@ -3,7 +3,7 @@
 
 use std::{collections::HashMap, time::Duration};
 
-use chrono::DateTime;
+use shared::time::Timestamp;
 use sqlx::PgPool;
 use tracing::warn;
 
@@ -15,16 +15,15 @@ use crate::{
     api::archives::LOCK_WAIT_SECS, borg::Borg, error::ApiError, ws::ui_broadcast::UiBroadcast,
 };
 
-pub(super) fn parse_borg_timestamp(s: &str) -> Option<chrono::DateTime<chrono::Utc>> {
-    DateTime::parse_from_rfc3339(s)
-        .or_else(|_| DateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S%.f"))
-        .map(|dt| dt.to_utc())
-        .or_else(|_| {
-            chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S%.f")
-                .or_else(|_| chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S"))
-                .map(|naive| naive.and_utc())
-        })
-        .ok()
+pub(super) fn parse_borg_timestamp(s: &str) -> Option<Timestamp> {
+    s.parse::<Timestamp>().ok().or_else(|| {
+        // Borg writes its own timestamps without an offset; they are UTC.
+        s.parse::<jiff::civil::DateTime>()
+            .ok()?
+            .to_zoned(jiff::tz::TimeZone::UTC)
+            .ok()
+            .map(|zoned| Timestamp::from(zoned.timestamp()))
+    })
 }
 
 pub(super) fn archive_hostname(archive: &serde_json::Value) -> Option<&str> {
@@ -33,16 +32,12 @@ pub(super) fn archive_hostname(archive: &serde_json::Value) -> Option<&str> {
         .filter(|hostname| !hostname.is_empty())
 }
 
-pub(super) fn archive_finish_time(
-    archive: &serde_json::Value,
-    started_at: chrono::DateTime<chrono::Utc>,
-) -> chrono::DateTime<chrono::Utc> {
+pub(super) fn archive_finish_time(archive: &serde_json::Value, started_at: Timestamp) -> Timestamp {
     parse_borg_timestamp(archive["end"].as_str().unwrap_or_default()).unwrap_or_else(|| {
         archive["duration"]
             .as_f64()
-            .and_then(|duration| std::time::Duration::try_from_secs_f64(duration).ok())
-            .and_then(|duration| chrono::Duration::from_std(duration).ok())
-            .and_then(|duration| started_at.checked_add_signed(duration))
+            .and_then(|duration| shared::time::SignedDuration::try_from_secs_f64(duration).ok())
+            .and_then(|duration| started_at.checked_add(duration))
             .unwrap_or(started_at)
     })
 }
@@ -259,8 +254,6 @@ pub(super) async fn hydrate_archives_with_metadata(
 
 #[cfg(test)]
 mod tests {
-    use chrono::Datelike as _;
-
     use super::*;
     use crate::api::repos::test_helpers::{
         REPO_URL, closed_pool, install_fake_script, locked_once_then, missing_borg,
@@ -270,7 +263,7 @@ mod tests {
     fn parse_borg_timestamp_rfc3339() {
         let ts = parse_borg_timestamp("2024-03-15T10:30:00+00:00");
         assert!(ts.is_some());
-        let dt = ts.unwrap();
+        let dt = ts.unwrap().to_zoned(jiff::tz::TimeZone::UTC);
         assert_eq!(dt.year(), 2024);
         assert_eq!(dt.month(), 3);
         assert_eq!(dt.day(), 15);
@@ -318,29 +311,23 @@ mod tests {
     #[test]
     fn archive_finish_time_uses_end_timestamp_when_present() {
         let archive = serde_json::json!({"end": "2024-06-01T08:00:00+00:00"});
-        let started_at = chrono::DateTime::parse_from_rfc3339("2024-06-01T07:00:00+00:00")
-            .unwrap()
-            .to_utc();
+        let started_at = "2024-06-01T07:00:00+00:00".parse::<Timestamp>().unwrap();
         let finished = archive_finish_time(&archive, started_at);
-        assert_eq!(finished, started_at + chrono::Duration::hours(1));
+        assert_eq!(finished, started_at + shared::time::hours(1));
     }
 
     #[test]
     fn archive_finish_time_falls_back_to_duration_when_end_missing() {
         let archive = serde_json::json!({"duration": 3600.0});
-        let started_at = chrono::DateTime::parse_from_rfc3339("2024-06-01T07:00:00+00:00")
-            .unwrap()
-            .to_utc();
+        let started_at = "2024-06-01T07:00:00+00:00".parse::<Timestamp>().unwrap();
         let finished = archive_finish_time(&archive, started_at);
-        assert_eq!(finished, started_at + chrono::Duration::hours(1));
+        assert_eq!(finished, started_at + shared::time::hours(1));
     }
 
     #[test]
     fn archive_finish_time_falls_back_to_started_at_when_no_end_or_duration() {
         let archive = serde_json::json!({});
-        let started_at = chrono::DateTime::parse_from_rfc3339("2024-06-01T07:00:00+00:00")
-            .unwrap()
-            .to_utc();
+        let started_at = "2024-06-01T07:00:00+00:00".parse::<Timestamp>().unwrap();
         let finished = archive_finish_time(&archive, started_at);
         assert_eq!(finished, started_at);
     }

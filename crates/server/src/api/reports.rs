@@ -19,6 +19,8 @@ use crate::{AppState, db, error::ApiError};
 
 #[cfg(test)]
 mod tests {
+    use shared::time::Timestamp;
+
     use super::*;
 
     fn make_row(status: shared::types::ReportStatus) -> db::ReportRow {
@@ -29,8 +31,8 @@ mod tests {
             repo_name: "test-repo".to_owned(),
             schedule_id: Some(1),
             schedule_name: None,
-            started_at: chrono::Utc::now(),
-            finished_at: chrono::Utc::now(),
+            started_at: Timestamp::now(),
+            finished_at: Timestamp::now(),
             status,
             original_size: 0,
             compressed_size: 0,

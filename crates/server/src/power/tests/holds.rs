@@ -4,7 +4,10 @@
 //! The persisted mirror of [`PowerSessionTracker`]'s holds, reading it back
 //! after a restart, and releasing what it read back once each run is done.
 
-use shared::types::{AcknowledgedFilter, ReportStatus, SystemEventType};
+use shared::{
+    time::Timestamp,
+    types::{AcknowledgedFilter, ReportStatus, SystemEventType},
+};
 
 use super::*;
 use crate::{
@@ -284,7 +287,7 @@ async fn a_failed_write_is_logged_and_the_counts_still_work(pool: sqlx::PgPool) 
 async fn an_orphan_whose_run_reported_back_is_torn_down(pool: sqlx::PgPool) {
     let agent = shutdown_agent(&pool).await;
     let repo = test_repo(&pool).await;
-    db::insert_backup_pending(&pool, agent.id, repo.id, None, RUN, chrono::Utc::now())
+    db::insert_backup_pending(&pool, agent.id, repo.id, None, RUN, Timestamp::now())
         .await
         .unwrap();
     let key = PowerHostKey::Agent(agent.id);
@@ -471,7 +474,7 @@ async fn an_orphan_whose_run_cannot_be_checked_is_kept(pool: sqlx::PgPool) {
 async fn an_orphan_whose_run_never_reports_back_is_abandoned_after_a_day(pool: sqlx::PgPool) {
     let agent = shutdown_agent(&pool).await;
     let repo = shutdown_repo(&pool).await;
-    db::insert_backup_pending(&pool, agent.id, repo.id, None, RUN, chrono::Utc::now())
+    db::insert_backup_pending(&pool, agent.id, repo.id, None, RUN, Timestamp::now())
         .await
         .unwrap();
     let owner = HoldOwner::target(RUN, agent.id, repo.id);
@@ -526,7 +529,7 @@ async fn an_orphan_whose_run_never_reports_back_is_abandoned_after_a_day(pool: s
 async fn abandoning_a_hold_that_woke_nothing_records_nothing(pool: sqlx::PgPool) {
     let agent = test_agent(&pool).await;
     let repo = test_repo(&pool).await;
-    db::insert_backup_pending(&pool, agent.id, repo.id, None, RUN, chrono::Utc::now())
+    db::insert_backup_pending(&pool, agent.id, repo.id, None, RUN, Timestamp::now())
         .await
         .unwrap();
     let key = PowerHostKey::Agent(agent.id);
@@ -549,7 +552,7 @@ async fn abandoning_a_hold_that_woke_nothing_records_nothing(pool: sqlx::PgPool)
 async fn an_abandoned_release_that_cannot_be_recorded_is_logged(pool: sqlx::PgPool) {
     let agent = test_agent(&pool).await;
     let repo = test_repo(&pool).await;
-    db::insert_backup_pending(&pool, agent.id, repo.id, None, RUN, chrono::Utc::now())
+    db::insert_backup_pending(&pool, agent.id, repo.id, None, RUN, Timestamp::now())
         .await
         .unwrap();
     drop(

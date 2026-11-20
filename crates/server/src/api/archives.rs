@@ -10,7 +10,6 @@ use axum::{
     http::{StatusCode, header},
     response::{IntoResponse, Response},
 };
-use chrono::{DateTime, Utc};
 use futures_util::{StreamExt as _, stream::BoxStream};
 use lz4_flex::frame::FrameEncoder;
 use serde::{Deserialize, Serialize};
@@ -21,6 +20,7 @@ use shared::{
         ArchiveEntryResponse, ArchiveIndexStatusResponse, ArchiveInfoResponse,
         DeleteArchiveResponse as SharedDeleteArchiveResponse,
     },
+    time::Timestamp,
     types::{IndexStatus, SystemEventType, build_repo_url},
 };
 use sqlx::PgPool;
@@ -719,7 +719,7 @@ pub struct DeleteArchiveResponse {
 #[derive(sqlx::FromRow)]
 struct ListArchivesRow {
     archive_name: Option<String>,
-    started_at: DateTime<Utc>,
+    started_at: Timestamp,
     original_size: i64,
     deduplicated_size: i64,
     matched: bool,
@@ -775,7 +775,7 @@ pub async fn list_archives(
         .into_iter()
         .map(|row| {
             let name = row.archive_name.unwrap_or_default();
-            let start = row.started_at.format("%Y-%m-%dT%H:%M:%S%.6fZ").to_string();
+            let start = row.started_at.strftime("%Y-%m-%dT%H:%M:%S%.6fZ");
             ArchiveEntryResponse {
                 name,
                 start,

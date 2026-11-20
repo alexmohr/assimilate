@@ -530,3 +530,174 @@ mod pg_date {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn at(y: i16, mo: i8, d: i8, h: i8, mi: i8, s: i8) -> Timestamp {
+        Timestamp::utc(y, mo, d, h, mi, s).unwrap()
+    }
+
+    #[test]
+    fn utc_builds_the_instant_and_rejects_impossible_dates() {
+        assert_eq!(at(1970, 1, 1, 0, 0, 0), Timestamp::UNIX_EPOCH);
+        assert_eq!(at(2026, 1, 1, 0, 0, 0).unix_secs(), 1_767_225_600);
+        assert_eq!(Timestamp::utc(2026, 2, 30, 0, 0, 0), None);
+    }
+
+    #[test]
+    fn unix_constructors_round_trip_and_reject_out_of_range() {
+        let stamp = Timestamp::from_unix_secs(1_700_000_000).unwrap();
+        assert_eq!(stamp.unix_secs(), 1_700_000_000);
+        assert_eq!(stamp.unix_millis(), 1_700_000_000_000);
+        assert_eq!(stamp.unix_micros(), 1_700_000_000_000_000);
+        assert_eq!(Timestamp::from_unix_millis(1_700_000_000_000), Some(stamp));
+        assert_eq!(
+            Timestamp::from_unix_micros(1_700_000_000_000_000),
+            Some(stamp)
+        );
+        assert_eq!(Timestamp::from_unix_secs(i64::MAX), None);
+        assert_eq!(Timestamp::from_unix_millis(i64::MAX), None);
+        assert_eq!(Timestamp::from_unix_micros(i64::MAX), None);
+    }
+
+    #[test]
+    fn now_is_after_the_epoch_and_default_is_the_epoch() {
+        assert!(Timestamp::now() > Timestamp::UNIX_EPOCH);
+        assert_eq!(Timestamp::default(), Timestamp::UNIX_EPOCH);
+    }
+
+    #[test]
+    fn arithmetic_moves_the_instant_and_measures_the_gap() {
+        let start = at(2026, 6, 1, 12, 0, 0);
+        assert_eq!(start + hours(2), at(2026, 6, 1, 14, 0, 0));
+        assert_eq!(start - days(1), at(2026, 5, 31, 12, 0, 0));
+        assert_eq!(at(2026, 6, 1, 12, 30, 0) - start, minutes(30));
+        assert_eq!(start.since(at(2026, 6, 1, 13, 0, 0)), hours(-1));
+
+        let mut moved = start;
+        moved += seconds(90);
+        assert_eq!(moved, at(2026, 6, 1, 12, 1, 30));
+        moved -= millis(1_500);
+        assert_eq!(moved.unix_secs(), at(2026, 6, 1, 12, 1, 28).unix_secs());
+    }
+
+    #[test]
+    fn checked_arithmetic_is_none_out_of_range_and_saturation_clamps() {
+        let start = at(2026, 6, 1, 0, 0, 0);
+        assert_eq!(start.checked_add(hours(1)), Some(at(2026, 6, 1, 1, 0, 0)));
+        assert_eq!(start.checked_sub(hours(1)), Some(at(2026, 5, 31, 23, 0, 0)));
+        assert_eq!(Timestamp::MAX.checked_add(hours(1)), None);
+        assert_eq!(Timestamp::MIN.checked_sub(hours(1)), None);
+        assert_eq!(Timestamp::MAX + hours(1), Timestamp::MAX);
+        assert_eq!(Timestamp::MIN - hours(1), Timestamp::MIN);
+        assert_eq!(Timestamp::MAX.saturating_sub(hours(-1)), Timestamp::MAX);
+        assert_eq!(Timestamp::MIN.saturating_add(hours(-1)), Timestamp::MIN);
+    }
+
+    #[test]
+    fn subsecond_digits_are_truncated_not_rounded() {
+        let stamp = Timestamp::from_unix_micros(1_700_000_000_123_456).unwrap();
+        assert_eq!(stamp.trunc_subsecs(6), stamp);
+        assert_eq!(stamp.trunc_subsecs(3).unix_micros(), 1_700_000_000_123_000);
+        assert_eq!(stamp.trunc_subsecs(0).unix_micros(), 1_700_000_000_000_000);
+        assert_eq!(stamp.trunc_subsecs(12), stamp);
+    }
+
+    #[test]
+    fn formatting_and_parsing_use_rfc3339_in_utc() {
+        let stamp = at(2026, 3, 4, 5, 6, 7);
+        assert_eq!(stamp.to_rfc3339(), "2026-03-04T05:06:07Z");
+        assert_eq!(stamp.to_string(), "2026-03-04T05:06:07Z");
+        assert_eq!(format!("{stamp:?}"), "2026-03-04T05:06:07Z");
+        assert_eq!(stamp.strftime("%Y%m%d-%H%M%S"), "20260304-050607");
+        assert_eq!("2026-03-04T05:06:07Z".parse::<Timestamp>().unwrap(), stamp);
+        assert_eq!(
+            "2026-03-04T06:06:07+01:00".parse::<Timestamp>().unwrap(),
+            stamp
+        );
+        assert!("yesterday".parse::<Timestamp>().is_err());
+    }
+
+    #[test]
+    fn serde_is_a_plain_rfc3339_string() {
+        let stamp = at(2026, 3, 4, 5, 6, 7);
+        let json = serde_json::to_string(&stamp).unwrap();
+        assert_eq!(json, "\"2026-03-04T05:06:07Z\"");
+        assert_eq!(serde_json::from_str::<Timestamp>(&json).unwrap(), stamp);
+    }
+
+    #[test]
+    fn conversions_with_jiff_and_system_time_agree() {
+        let stamp = at(2026, 3, 4, 5, 6, 7);
+        let inner: jiff::Timestamp = stamp.into();
+        assert_eq!(Timestamp::from(inner), stamp);
+        assert_eq!(stamp.into_inner(), inner);
+        let system = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_700_000_000);
+        assert_eq!(
+            Timestamp::try_from(system).unwrap().unix_secs(),
+            1_700_000_000
+        );
+    }
+
+    #[test]
+    fn a_timestamp_has_a_utc_day_and_a_zoned_view() {
+        let stamp = at(2026, 3, 4, 23, 30, 0);
+        assert_eq!(stamp.utc_date(), Date::new(2026, 3, 4).unwrap());
+        let berlin = stamp.to_zoned(jiff::tz::TimeZone::get("Europe/Berlin").unwrap());
+        assert_eq!(berlin.day(), 5);
+    }
+
+    #[test]
+    fn dates_parse_format_and_order() {
+        let day = Date::new(2026, 3, 4).unwrap();
+        assert_eq!(day.to_string(), "2026-03-04");
+        assert_eq!(format!("{day:?}"), "2026-03-04");
+        assert_eq!(day.strftime("%d.%m.%Y"), "04.03.2026");
+        assert_eq!("2026-03-04".parse::<Date>().unwrap(), day);
+        assert!("2026-13-01".parse::<Date>().is_err());
+        assert_eq!(Date::new(2026, 2, 30), None);
+        assert!(day < Date::new(2026, 3, 5).unwrap());
+        assert_eq!(Date::from(day.into_inner()), day);
+        assert_eq!(serde_json::to_string(&day).unwrap(), "\"2026-03-04\"");
+        assert_eq!(serde_json::from_str::<Date>("\"2026-03-04\"").unwrap(), day);
+    }
+
+    #[test]
+    fn month_bounds_span_the_month_and_reject_nonsense() {
+        let (first, next) = Date::month_bounds(2026, 2).unwrap();
+        assert_eq!(first, Date::new(2026, 2, 1).unwrap());
+        assert_eq!(next, Date::new(2026, 3, 1).unwrap());
+        let (first, next) = Date::month_bounds(2026, 12).unwrap();
+        assert_eq!(first, Date::new(2026, 12, 1).unwrap());
+        assert_eq!(next, Date::new(2027, 1, 1).unwrap());
+        assert_eq!(Date::month_bounds(2026, 13), None);
+        assert_eq!(Date::month_bounds(2026, 0), None);
+        assert_eq!(Date::month_bounds(i32::MAX, 1), None);
+        assert_eq!(Date::month_bounds(2026, u32::MAX), None);
+    }
+
+    #[test]
+    fn duration_helpers_and_whole_unit_views_agree() {
+        assert_eq!(days(2), hours(48));
+        assert_eq!(hours(1), minutes(60));
+        assert_eq!(minutes(1), seconds(60));
+        assert_eq!(seconds(1), millis(1_000));
+        let span = days(2) + hours(3) + minutes(4);
+        assert_eq!(span.as_days(), 2);
+        assert_eq!(span.as_hours(), 51);
+        assert_eq!(span.as_mins(), 51 * 60 + 4);
+        assert_eq!(days(i64::MAX), hours(i64::MAX));
+    }
+
+    #[test]
+    fn typescript_sees_a_plain_string() {
+        use ts_rs::TS as _;
+        let cfg = ts_rs::Config::default();
+        assert_eq!(Timestamp::name(&cfg), "string");
+        assert_eq!(Timestamp::inline(&cfg), "string");
+        assert_eq!(Date::name(&cfg), "string");
+        assert_eq!(Date::inline(&cfg), "string");
+    }
+}

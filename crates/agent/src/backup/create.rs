@@ -103,10 +103,14 @@ impl BackupEngine {
                 borg.run(&args, &env_vars).await
             }
         };
+        let borg_io = |source| BackupError::BorgIo {
+            command: borg_command.clone(),
+            source,
+        };
         let (output, unread) = match dumps {
-            None => (run.await?, Vec::new()),
+            None => (run.await.map_err(borg_io)?, Vec::new()),
             Some(dumps) => match dumps.stream(run, self.dump_abort_hold).await {
-                Ok(outcome) => (outcome.borg?, outcome.unread),
+                Ok(outcome) => (outcome.borg.map_err(borg_io)?, outcome.unread),
                 Err(failure) => {
                     self.delete_checkpoint(target, &archive_name).await;
                     return Err(BackupError::DumpFailed(format!(

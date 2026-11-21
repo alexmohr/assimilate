@@ -1,0 +1,8 @@
+{
+  "name": "jscpd-runner",
+  "private": true,
+  "description": "Trusted, lockfile-pinned jscpd install used by duplicate-code-check.yml",
+  "dependencies": {
+    "jscpd": "4.3.0"
+  }
+}

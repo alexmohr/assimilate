@@ -17,7 +17,13 @@
       {
         "ordinal": 1,
         "name": "hostname",
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "agents",
+            "name": "hostname"
+          }
+        }
       },
       {
         "ordinal": 2,

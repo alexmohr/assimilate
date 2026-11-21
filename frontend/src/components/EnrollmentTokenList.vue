@@ -62,7 +62,7 @@ const LABEL: Record<EnrollmentTokenStatus, string> = {
         :key="row.id"
         class="token-row"
       >
-        <span class="mono">{{ row.prefix }}…</span>
+        <span class="mono">{{ row.prefix }}...</span>
         <span class="token-row-detail cell-muted">
           {{ row.hostname ?? 'Any host' }} · {{ row.detail }}
         </span>

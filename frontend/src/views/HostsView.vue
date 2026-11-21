@@ -278,7 +278,7 @@ const filteredAgents = computed(() => {
 
 const showAddDialog = ref(false)
 type AddMode = 'install' | 'manual'
-const addMode = ref<AddMode>('install')
+const addMode = ref<AddMode>('manual')
 const installGenerated = ref(false)
 const addModes: readonly TabOption<AddMode>[] = [
   { id: 'install', label: 'Install command' },
@@ -887,7 +887,7 @@ function openAddDialog(): void {
   addError.value = null
   newToken.value = null
   tokenCopied.value = false
-  addMode.value = 'install'
+  addMode.value = 'manual'
   installGenerated.value = false
   showAddDialog.value = true
 }
@@ -1358,7 +1358,7 @@ useQueryOverride(() => route.query.coverage, isCoverageFilter, filterCoverage)
          then reveal the generated token once. -->
     <BaseModal
       :open="showAddDialog"
-      :title="newToken ? 'Agent created' : 'Add agent'"
+      :title="newToken ? 'Agent Created' : 'Add Agent'"
       :size="addMode === 'install' && installGenerated ? 'lg' : 'md'"
       @close="closeAddDialog"
     >

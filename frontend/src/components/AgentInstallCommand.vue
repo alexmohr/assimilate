@@ -21,6 +21,7 @@ const tags = ref('')
 
 const targets: readonly SegmentedOption<InstallTarget>[] = [
   { value: 'linux', label: 'Linux' },
+  { value: 'macos', label: 'macOS' },
   { value: 'windows', label: 'Windows' },
 ]
 
@@ -28,11 +29,15 @@ const SERVER = 'https://backup.example.com'
 const TOKEN = 'enr_Zk3qT0mV9xLw2bYhN6cD8sAeJ4uPfR9w'
 const SERVER_KEY = '7Qm1xB0tV3kLhYw8N2dCzEoPaU5sRjGf4HiMnXpTcA0='
 
-const command = computed(() =>
-  target.value === 'linux'
-    ? `curl -fsSL ${SERVER}/install.sh | sudo sh -s -- \\\n  --token ${TOKEN} \\\n  --server-key ${SERVER_KEY}`
-    : `& ([scriptblock]::Create((irm ${SERVER}/install.ps1))) \`\n  -Token ${TOKEN} \`\n  -ServerKey ${SERVER_KEY}`,
-)
+const SHELL_COMMAND = `curl -fsSL ${SERVER}/install.sh | sudo sh -s -- \\\n  --token ${TOKEN} \\\n  --server-key ${SERVER_KEY}`
+
+const COMMANDS: Record<InstallTarget, string> = {
+  linux: SHELL_COMMAND,
+  macos: SHELL_COMMAND,
+  windows: `& ([scriptblock]::Create((irm ${SERVER}/install.ps1))) \`\n  -Token ${TOKEN} \`\n  -ServerKey ${SERVER_KEY}`,
+}
+
+const command = computed(() => COMMANDS[target.value])
 
 interface ManualStep {
   label: string
@@ -40,41 +45,62 @@ interface ManualStep {
 }
 
 const SHA256 = '9f2c41d7b0a35e6c8d1f7a94e0b3c5d268a7f1e4b9c0d3a5e7f2b8c4d6a10e93'
+const MAC_DIR = '/Library/Assimilate'
 
 // MOCK: the download endpoint and checksum are placeholders.
-const manualSteps = computed<ManualStep[]>(() =>
-  target.value === 'linux'
-    ? [
-        {
-          label: '1. Download and verify',
-          text: `sudo curl -fsSL -o /usr/local/bin/assimilate-agent \\\n  "${SERVER}/download/agent?os=linux&arch=$(uname -m)"\necho "${SHA256}  /usr/local/bin/assimilate-agent" | sha256sum -c -\nsudo chmod 755 /usr/local/bin/assimilate-agent`,
-        },
-        {
-          label: '2. Store the token where only root can read it',
-          text: `sudo install -m 600 /dev/null /etc/assimilate-agent.env\necho 'BORG_ENROLLMENT_TOKEN=${TOKEN}' | sudo tee /etc/assimilate-agent.env >/dev/null`,
-        },
-        {
-          label: '3. Start on boot with systemd',
-          text: `sudo tee /etc/systemd/system/assimilate-agent.service >/dev/null <<'EOF'\n[Unit]\nDescription=Assimilate backup agent\nAfter=network.target\n\n[Service]\nEnvironment=BORG_SERVER_URL=${SERVER}\nEnvironment=BORG_SERVER_KEY=${SERVER_KEY}\nEnvironmentFile=/etc/assimilate-agent.env\nExecStart=/usr/local/bin/assimilate-agent\nRestart=on-failure\nRestartSec=10\n\n[Install]\nWantedBy=multi-user.target\nEOF\nsudo systemctl daemon-reload\nsudo systemctl enable --now assimilate-agent`,
-        },
-      ]
-    : [
-        {
-          label: '1. Download and verify',
-          text: `Invoke-WebRequest "${SERVER}/download/agent?os=windows&arch=x86_64" -OutFile agent.zip\nif ((Get-FileHash agent.zip).Hash -ne "${SHA256.toUpperCase()}") { throw "Checksum mismatch" }\nExpand-Archive agent.zip "C:\\Program Files\\Assimilate"`,
-        },
-        {
-          label: '2. Install the service, which starts at boot',
-          text: `$env:BORG_SERVER_URL = "${SERVER}"\n$env:BORG_ENROLLMENT_TOKEN = "${TOKEN}"\n$env:BORG_SERVER_KEY = "${SERVER_KEY}"\n& "C:\\Program Files\\Assimilate\\assimilate-agent\\assimilate-agent.exe" service install`,
-        },
-      ],
-)
+const MANUAL_STEPS: Record<InstallTarget, ManualStep[]> = {
+  linux: [
+    {
+      label: '1. Download and verify',
+      text: `sudo curl -fsSL -o /usr/local/bin/assimilate-agent \\\n  "${SERVER}/download/agent?os=linux&arch=$(uname -m)"\necho "${SHA256}  /usr/local/bin/assimilate-agent" | sha256sum -c -\nsudo chmod 755 /usr/local/bin/assimilate-agent`,
+    },
+    {
+      label: '2. Store the token where only root can read it',
+      text: `sudo install -m 600 /dev/null /etc/assimilate-agent.env\necho 'BORG_ENROLLMENT_TOKEN=${TOKEN}' | sudo tee /etc/assimilate-agent.env >/dev/null`,
+    },
+    {
+      label: '3. Start on boot with systemd',
+      text: `sudo tee /etc/systemd/system/assimilate-agent.service >/dev/null <<'EOF'\n[Unit]\nDescription=Assimilate backup agent\nAfter=network.target\n\n[Service]\nEnvironment=BORG_SERVER_URL=${SERVER}\nEnvironment=BORG_SERVER_KEY=${SERVER_KEY}\nEnvironmentFile=/etc/assimilate-agent.env\nExecStart=/usr/local/bin/assimilate-agent\nRestart=on-failure\nRestartSec=10\n\n[Install]\nWantedBy=multi-user.target\nEOF\nsudo systemctl daemon-reload\nsudo systemctl enable --now assimilate-agent`,
+    },
+  ],
+  macos: [
+    {
+      label: '1. Download and verify',
+      text: `curl -fsSL -o assimilate-agent.tar.gz \\\n  "${SERVER}/download/agent?os=macos&arch=$(uname -m)"\necho "${SHA256}  assimilate-agent.tar.gz" | shasum -a 256 -c -`,
+    },
+    {
+      label: '2. Extract into a folder only root can write',
+      text: `sudo mkdir -p ${MAC_DIR}\nsudo tar -xzf assimilate-agent.tar.gz --no-same-owner -C ${MAC_DIR}\nsudo xattr -dr com.apple.quarantine ${MAC_DIR}/assimilate-agent`,
+    },
+    {
+      label: '3. Install the daemon, which starts at boot',
+      text: `sudo BORG_SERVER_URL=${SERVER} \\\n  BORG_ENROLLMENT_TOKEN=${TOKEN} \\\n  BORG_SERVER_KEY=${SERVER_KEY} \\\n  ${MAC_DIR}/assimilate-agent/assimilate-agent service install`,
+    },
+  ],
+  windows: [
+    {
+      label: '1. Download and verify',
+      text: `Invoke-WebRequest "${SERVER}/download/agent?os=windows&arch=x86_64" -OutFile agent.zip\nif ((Get-FileHash agent.zip).Hash -ne "${SHA256.toUpperCase()}") { throw "Checksum mismatch" }\nExpand-Archive agent.zip "C:\\Program Files\\Assimilate"`,
+    },
+    {
+      label: '2. Install the service, which starts at boot',
+      text: `$env:BORG_SERVER_URL = "${SERVER}"\n$env:BORG_ENROLLMENT_TOKEN = "${TOKEN}"\n$env:BORG_SERVER_KEY = "${SERVER_KEY}"\n& "C:\\Program Files\\Assimilate\\assimilate-agent\\assimilate-agent.exe" service install`,
+    },
+  ],
+}
 
-const autostartNote = computed(() =>
-  target.value === 'linux'
-    ? 'systemd starts the agent at boot and restarts it if it stops. Check it with systemctl status assimilate-agent.'
-    : 'service install registers the assimilate-agent Windows service to start automatically at boot as LocalSystem. Manage it in Services (services.msc).',
-)
+const manualSteps = computed(() => MANUAL_STEPS[target.value])
+
+const AUTOSTART_NOTES: Record<InstallTarget, string> = {
+  linux:
+    'systemd starts the agent at boot and restarts it if it stops. Check it with systemctl status assimilate-agent.',
+  macos:
+    'service install writes /Library/LaunchDaemons/com.assimilate.agent.plist, so launchd starts the agent at boot and again after every exit. Backing up folders such as ~/Library needs Full Disk Access for the agent and its borg (System Settings > Privacy & Security).',
+  windows:
+    'service install registers the assimilate-agent Windows service to start automatically at boot as LocalSystem. Manage it in Services (services.msc).',
+}
+
+const autostartNote = computed(() => AUTOSTART_NOTES[target.value])
 
 const steps = [
   'Detects the OS and architecture, downloads the agent and verifies its SHA-256.',

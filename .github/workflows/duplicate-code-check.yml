@@ -21,8 +21,11 @@ jobs:
         uses: actions/checkout@v4
         with:
           ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
           sparse-checkout: |
             .github/scripts
+            .github/jscpd
+            .jscpd.json
 
       - name: Checkout PR head
         uses: actions/checkout@v4
@@ -37,17 +40,25 @@ jobs:
         with:
           node-version: "20"
 
+      # Install jscpd from the default branch's lockfile, outside the PR tree and
+      # with lifecycle scripts disabled. npm never runs with the PR checkout as
+      # its working directory, so a PR cannot influence which packages or
+      # registry are used (.npmrc, node_modules, ...).
+      - name: Install jscpd (trusted, lockfile-pinned)
+        working-directory: .github/jscpd
+        run: npm ci --ignore-scripts
+
       - name: Run jscpd
+        # The PR tree is only scanned as data: jscpd is executed directly from
+        # the trusted install and uses the default branch's .jscpd.json. No
+        # package manager runs inside pr-src. jscpd exits non-zero when it finds
+        # duplicates - that's not a workflow failure here, analyze-duplication.js
+        # decides pass/fail from the JSON report, filtered to this PR's changed
+        # files. Extend the ignore list in .jscpd.json, no workflow change needed.
         working-directory: pr-src
-        # jscpd exits non-zero when it finds duplicates by default - that's not
-        # a workflow failure here, analyze-duplication.js decides pass/fail from
-        # the JSON report content, filtered to this PR's changed files. What
-        # counts as ignorable (generated code, lockfiles, ...) lives in the
-        # repo's own .jscpd.json rather than here - edit that file to extend
-        # the ignore list, no workflow change needed.
         run: |
-          npx --yes jscpd@4 . \
-            --config .jscpd.json \
+          node "$GITHUB_WORKSPACE/.github/jscpd/node_modules/jscpd/bin/jscpd" . \
+            --config "$GITHUB_WORKSPACE/.jscpd.json" \
             --reporters json \
             --output ../jscpd-report \
             --silent || true

@@ -198,6 +198,7 @@ async fn build_agent_response(state: &AppState, agent: AgentRow) -> AgentRespons
     let (supports_restart, restart_unavailable_reason) =
         state.registry.restart_capability(agent.id).await;
     let snapshot_tools = state.registry.snapshot_tools(agent.id).await;
+    let borg = state.registry.borg(agent.id).await;
     AgentResponse {
         id: agent.id,
         hostname: agent.hostname,
@@ -220,6 +221,7 @@ async fn build_agent_response(state: &AppState, agent: AgentRow) -> AgentRespons
         is_hidden: agent.is_hidden,
         supports_restart,
         snapshot_tools,
+        borg,
         owner_id: agent.owner_id,
         visibility: agent.visibility,
         restart_unavailable_reason,
@@ -679,6 +681,45 @@ pub async fn restart_agent(
         .await
         .map_err(|e| ApiError::Internal(format!("agent not connected: {e}")))?;
 
+    Ok(StatusCode::ACCEPTED)
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/agents/{hostname}/check-borg",
+    tag = "Agents",
+    operation_id = "checkAgentBorg",
+    params(
+        ("hostname" = String, Path, description = "Agent hostname"),
+        ("domain" = Option<String>, Query, description = "Required if the hostname is ambiguous"),
+    ),
+    responses(
+        (status = 202, description = "The agent was asked to look for borg again"),
+        (status = 401, description = "Unauthorized"),
+        (status = 404, description = "Not found"),
+        (status = 409, description = "Hostname is ambiguous, or the agent is not connected"),
+    )
+)]
+/// Ask the agent to look for borg again. It answers over its connection and
+/// the new status shows on the agent once it has.
+///
+/// # Errors
+///
+/// Returns an error if:
+/// - [`ApiError::NotFound`]: the agent does not exist
+/// - [`ApiError::Conflict`]: the agent is not connected
+pub async fn check_agent_borg(
+    State(state): State<AppState>,
+    RequireAdmin(_admin): RequireAdmin,
+    Path(hostname): Path<String>,
+    Query(query): Query<DomainQuery>,
+) -> Result<StatusCode, ApiError> {
+    let agent = db::get_agent_by_hostname(&state.pool, &hostname, query.domain.as_deref()).await?;
+    state
+        .registry
+        .send_to(agent.id, ServerToAgent::CheckBorg)
+        .await
+        .map_err(|e| ApiError::Conflict(format!("agent not connected: {e}")))?;
     Ok(StatusCode::ACCEPTED)
 }
 

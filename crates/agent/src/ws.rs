@@ -8,6 +8,7 @@ use shared::{
     agent_channel::ws::{
         DecryptedStream, EncryptedSink, TungsteniteCodec, WsChannelError, initiate,
     },
+    borg::BorgStatus,
     protocol::{AgentToServer, ServerToAgent},
     snapshot::FsSnapshotKind,
 };
@@ -109,6 +110,7 @@ async fn connect_and_run(
         restart_capability,
         instance_id,
         crate::snapshot::Tools::from_env().available().await,
+        crate::borg::probe().await,
     );
     let hello_json = serde_json::to_string(&hello).map_err(WsError::Serialize)?;
     sink.send(Message::Text(hello_json.into()))
@@ -199,6 +201,7 @@ fn hello_message(
     restart_capability: &RestartCapability,
     instance_id: &str,
     snapshot_tools: Vec<FsSnapshotKind>,
+    borg: BorgStatus,
 ) -> AgentToServer {
     let hostname = std::env::var("BORG_HOSTNAME")
         .unwrap_or_else(|_| gethostname::gethostname().to_string_lossy().into_owned());
@@ -220,6 +223,7 @@ fn hello_message(
         restart_unavailable_reason: restart_capability.unavailable_reason.clone(),
         instance_id: Some(instance_id.to_owned()),
         snapshot_tools,
+        borg: Some(borg),
     }
 }
 
@@ -388,6 +392,15 @@ where
         ServerToAgent::Ping => {
             let pong = serde_json::to_string(&AgentToServer::Pong).map_err(WsError::Serialize)?;
             sink.send(Message::Text(pong.into()))
+                .await
+                .map_err(|e| WsError::Send(Box::new(e)))?;
+        }
+        ServerToAgent::CheckBorg => {
+            let status = AgentToServer::BorgStatus {
+                status: crate::borg::probe().await,
+            };
+            let json = serde_json::to_string(&status).map_err(WsError::Serialize)?;
+            sink.send(Message::Text(json.into()))
                 .await
                 .map_err(|e| WsError::Send(Box::new(e)))?;
         }
@@ -725,7 +738,16 @@ mod tests {
             supported: true,
             unavailable_reason: None,
         };
-        hello_message("token", build, &capability, "instance-1", Vec::new())
+        hello_message(
+            "token",
+            build,
+            &capability,
+            "instance-1",
+            Vec::new(),
+            BorgStatus::Available {
+                version: "1.4.1".to_owned(),
+            },
+        )
     }
 
     #[test]
@@ -803,6 +825,22 @@ mod tests {
         assert!(matches!(result, Err(WsError::RestartRequested)));
         assert!(!is_fatal(&WsError::RestartRequested));
         assert_eq!(sent, Vec::<Message>::new());
+    }
+
+    #[tokio::test]
+    async fn a_borg_check_is_answered_with_the_borg_status() {
+        let (result, sent) = handle(r#"{"type":"CheckBorg"}"#).await;
+        assert!(result.is_ok());
+        let [Message::Text(answer)] = sent.as_slice() else {
+            panic!("expected one text frame, got {sent:?}");
+        };
+        assert!(
+            matches!(
+                serde_json::from_str(answer.as_str()),
+                Ok(AgentToServer::BorgStatus { .. })
+            ),
+            "{answer}"
+        );
     }
 
     #[tokio::test]

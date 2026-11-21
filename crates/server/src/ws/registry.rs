@@ -3,7 +3,7 @@
 
 use std::{collections::HashMap, sync::Arc};
 
-use shared::{protocol::ServerToAgent, snapshot::FsSnapshotKind};
+use shared::{borg::BorgStatus, protocol::ServerToAgent, snapshot::FsSnapshotKind};
 use tokio::sync::{RwLock, mpsc};
 
 /// A connected agent's outbound channel and capability flags.
@@ -20,6 +20,9 @@ pub struct AgentConnection {
     pub instance_id: Option<String>,
     /// The filesystem snapshots the agent's host can take, from its Hello.
     pub snapshot_tools: Vec<FsSnapshotKind>,
+    /// Whether the agent's host can run borg, from its Hello or its latest
+    /// answer to a check; `None` for an agent too old to say.
+    pub borg: Option<BorgStatus>,
 }
 
 /// Registry of all currently connected agents, keyed by agent ID.
@@ -67,6 +70,7 @@ impl AgentRegistry {
             restart_unavailable_reason,
             instance_id,
             snapshot_tools: Vec::new(),
+            borg: None,
         };
         self.connections
             .write()
@@ -187,6 +191,23 @@ impl AgentRegistry {
         }
     }
 
+    /// Records whether a connected agent's host can run borg.
+    pub async fn set_borg(&self, agent_id: i64, status: Option<BorgStatus>) {
+        if let Some(conn) = self.connections.write().await.get_mut(&agent_id) {
+            conn.borg = status;
+        }
+    }
+
+    /// Whether a connected agent's host can run borg; `None` for an agent
+    /// that is not connected or too old to say.
+    pub async fn borg(&self, agent_id: i64) -> Option<BorgStatus> {
+        self.connections
+            .read()
+            .await
+            .get(&agent_id)
+            .and_then(|conn| conn.borg.clone())
+    }
+
     /// The filesystem snapshots a connected agent's host can take; empty for
     /// an agent that is not connected or too old to say.
     pub async fn snapshot_tools(&self, agent_id: i64) -> Vec<FsSnapshotKind> {
@@ -215,7 +236,7 @@ impl AgentRegistry {
 
 #[cfg(test)]
 mod tests {
-    use shared::{protocol::ServerToAgent, snapshot::FsSnapshotKind};
+    use shared::{borg::BorgStatus, protocol::ServerToAgent, snapshot::FsSnapshotKind};
     use tokio::sync::mpsc;
 
     use super::AgentRegistry;
@@ -311,6 +332,29 @@ mod tests {
             [FsSnapshotKind::Zfs, FsSnapshotKind::Lvm]
         );
         assert_eq!(registry.snapshot_tools(2).await.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn the_borg_status_of_a_connected_agent_is_kept_and_replaced() {
+        let registry = AgentRegistry::new();
+        let (tx, _rx) = mpsc::channel(4);
+        registry.register(1, tx, false, None, None).await;
+        assert_eq!(registry.borg(1).await, None);
+
+        let missing = BorgStatus::Missing {
+            binary: "borg".into(),
+        };
+        registry.set_borg(1, Some(missing.clone())).await;
+        // One that is not connected has nothing to record it on.
+        registry.set_borg(2, Some(missing.clone())).await;
+        assert_eq!(registry.borg(1).await, Some(missing));
+        assert_eq!(registry.borg(2).await, None);
+
+        let found = BorgStatus::Available {
+            version: "1.4.1".into(),
+        };
+        registry.set_borg(1, Some(found.clone())).await;
+        assert_eq!(registry.borg(1).await, Some(found));
     }
 
     #[tokio::test]

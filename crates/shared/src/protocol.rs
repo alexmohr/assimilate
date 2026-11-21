@@ -267,6 +267,9 @@ pub enum ServerToAgent {
     },
     /// Heartbeat ping to check agent connectivity.
     Ping,
+    /// Ask the agent to look for borg again and answer with
+    /// [`AgentToServer::BorgStatus`].
+    CheckBorg,
     /// Notification that the server is shutting down.
     ShuttingDown,
 }
@@ -307,6 +310,14 @@ pub enum AgentToServer {
         /// tools the agent found. Empty for an agent too old to say.
         #[serde(default)]
         snapshot_tools: Vec<crate::snapshot::FsSnapshotKind>,
+        /// Whether the agent can run borg. `None` for an agent too old to say.
+        #[serde(default)]
+        borg: Option<crate::borg::BorgStatus>,
+    },
+    /// The answer to [`ServerToAgent::CheckBorg`].
+    BorgStatus {
+        /// Whether the agent can run borg now.
+        status: crate::borg::BorgStatus,
     },
     /// Notification that a backup has started.
     BackupStarted {
@@ -1146,8 +1157,30 @@ mod tests {
                 crate::snapshot::FsSnapshotKind::Zfs,
                 crate::snapshot::FsSnapshotKind::Lvm,
             ],
+            borg: Some(crate::borg::BorgStatus::Available {
+                version: "1.4.1".into(),
+            }),
         };
         assert_round_trips(&msg);
+    }
+
+    #[test]
+    fn a_hello_from_an_agent_that_predates_the_borg_check_has_no_borg_status() {
+        let json = r#"{"type":"Hello","payload":{"hostname":"h","token":"t","agent_version":"1"}}"#;
+        let AgentToServer::Hello { borg, .. } = serde_json::from_str(json).unwrap() else {
+            panic!("not a Hello");
+        };
+        assert_eq!(borg, None);
+    }
+
+    #[test]
+    fn the_borg_check_and_its_answer_round_trip() {
+        assert_round_trips(&ServerToAgent::CheckBorg);
+        assert_round_trips(&AgentToServer::BorgStatus {
+            status: crate::borg::BorgStatus::Missing {
+                binary: "borg".into(),
+            },
+        });
     }
 
     #[test]

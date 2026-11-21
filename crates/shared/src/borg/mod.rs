@@ -12,6 +12,10 @@
 pub mod env;
 /// Typed parsing for borg's `--log-json` stderr format.
 pub mod log_json;
+/// Whether a host can run borg, as its agent reports it.
+pub mod status;
+
+pub use status::BorgStatus;
 
 use std::{
     ffi::OsStr,

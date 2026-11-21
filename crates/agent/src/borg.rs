@@ -9,7 +9,7 @@ use std::{
 };
 
 use shared::{
-    borg::{GracefulChild, log_run_result, run_command},
+    borg::{BorgStatus, GracefulChild, log_run_result, run_command},
     task_registry::TaskRegistry,
 };
 use tokio::{
@@ -51,6 +51,49 @@ fn default_binary() -> PathBuf {
         .map(PathBuf::from)
         .or_else(|| BUNDLED.get().cloned().flatten())
         .unwrap_or_else(|| PathBuf::from("borg"))
+}
+
+/// Asks the borg the agent would run for its version, to tell whether the host
+/// can run backups at all.
+pub async fn probe() -> BorgStatus {
+    probe_binary(&default_binary()).await
+}
+
+async fn probe_binary(binary: &Path) -> BorgStatus {
+    let binary_name = binary.display().to_string();
+    let output = tokio::process::Command::new(binary)
+        .arg("--version")
+        .stdin(std::process::Stdio::null())
+        .kill_on_drop(true)
+        .output()
+        .await;
+    match output {
+        Ok(output) if output.status.success() => {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            BorgStatus::version_from_output(&stdout).map_or_else(
+                || BorgStatus::Broken {
+                    binary: binary_name,
+                    reason: format!("unexpected version output: {}", stdout.trim()),
+                },
+                |version| BorgStatus::Available { version },
+            )
+        }
+        Ok(output) => BorgStatus::Broken {
+            binary: binary_name,
+            reason: format!(
+                "`--version` exited with {}: {}",
+                output.status,
+                String::from_utf8_lossy(&output.stderr).trim()
+            ),
+        },
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => BorgStatus::Missing {
+            binary: binary_name,
+        },
+        Err(error) => BorgStatus::Broken {
+            binary: binary_name,
+            reason: error.to_string(),
+        },
+    }
 }
 
 /// Wrapper around the borg binary that provides structured logging for every invocation.
@@ -297,6 +340,60 @@ async fn wait_with_stderr_stream(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn a_missing_executable_is_reported_as_missing() {
+        let binary = Path::new("/nonexistent/borg");
+        assert_eq!(
+            probe_binary(binary).await,
+            BorgStatus::Missing {
+                binary: "/nonexistent/borg".to_owned()
+            }
+        );
+    }
+
+    #[cfg(unix)]
+    async fn script(dir: &Path, body: &str) -> PathBuf {
+        use std::os::unix::fs::PermissionsExt as _;
+        let path = dir.join("borg");
+        tokio::fs::write(&path, format!("#!/bin/sh\n{body}\n"))
+            .await
+            .unwrap();
+        tokio::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755))
+            .await
+            .unwrap();
+        path
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_borg_that_prints_its_version_is_available() {
+        let dir = tempfile::tempdir().unwrap();
+        let binary = script(dir.path(), "echo 'borg 1.4.1'").await;
+        assert_eq!(
+            probe_binary(&binary).await,
+            BorgStatus::Available {
+                version: "1.4.1".to_owned()
+            }
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_borg_that_fails_or_prints_nonsense_is_broken() {
+        let dir = tempfile::tempdir().unwrap();
+        let failing = script(dir.path(), "echo 'boom' >&2; exit 3").await;
+        let BorgStatus::Broken { reason, .. } = probe_binary(&failing).await else {
+            panic!("expected a broken borg");
+        };
+        assert!(reason.contains("boom"), "{reason}");
+
+        let nonsense = script(dir.path(), "echo 'hello'").await;
+        assert!(matches!(
+            probe_binary(&nonsense).await,
+            BorgStatus::Broken { .. }
+        ));
+    }
 
     #[tokio::test]
     async fn the_bundled_borg_is_found_next_to_the_executable() {

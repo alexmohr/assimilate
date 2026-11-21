@@ -171,6 +171,11 @@ export async function restartAgent(hostname: string, domain?: string | null): Pr
   await apiClient.post(`/agents/${hostname}/restart`, {}, { params: domainParams(domain) })
 }
 
+/** Asks the agent to look for borg again; the answer arrives as a `DataChanged` push. */
+export async function checkAgentBorg(hostname: string, domain?: string | null): Promise<void> {
+  await apiClient.post(`/agents/${hostname}/check-borg`, {}, { params: domainParams(domain) })
+}
+
 export async function deleteAgentArchives(hostname: string, domain?: string | null): Promise<void> {
   await apiClient.post(`/agents/${hostname}/delete-archives`, {}, { params: domainParams(domain) })
 }

@@ -49,6 +49,7 @@ import { domainParams } from '../utils/agent'
 import type { Repo } from '../types/repo'
 import BaseModal from '../components/BaseModal.vue'
 import BaseTabs, { type TabOption } from '../components/BaseTabs.vue'
+import AgentBorgNotice from '../components/AgentBorgNotice.vue'
 import AgentHeader from '../components/AgentHeader.vue'
 import AgentOverviewTab, { type LiveBackup } from '../components/AgentOverviewTab.vue'
 import AgentSchedulesTab from '../components/AgentSchedulesTab.vue'
@@ -882,6 +883,11 @@ watch(wsStatus, (newStatus, oldStatus) => {
         @hide-agent="removalDialogs?.hide()"
         @unhide-agent="unhideAgent"
         @delete-archives="removalDialogs?.requestDeleteArchives()"
+      />
+
+      <AgentBorgNotice
+        :agent="agent"
+        :can-check="isAdmin"
       />
 
       <AgentRemovalDialogs

@@ -24,6 +24,7 @@ import {
 } from '../composables/usePersistedRef'
 import { extractError } from '../utils/error'
 import { logger } from '../utils/logger'
+import { borgProblem } from '../utils/borgStatus'
 import { normalizeBackupStatus } from '../utils/backupStatus'
 import { domainParams } from '../utils/agent'
 import { ChevronRight, Plus, SlidersHorizontal, Server } from '@lucide/vue'
@@ -596,6 +597,16 @@ const ISSUE_QUERY: Record<'overdue' | 'unprotected', Record<string, string>> = {
 
 function agentIssues(agent: AgentRow): EntityIssue[] {
   const issues: EntityIssue[] = []
+  const borg = borgProblem(agent.borg)
+  if (borg) {
+    issues.push({
+      key: 'no-borg',
+      label: borg.chip,
+      severity: 'warning',
+      title: borg.detail,
+      onClick: () => navigateToAgentIssue(agent, 'no-borg'),
+    })
+  }
   // A host nothing is scheduled against is the coverage gap the dashboard
   // already reports; on the card it was a grey `0` that read like a quiet,
   // healthy machine.
@@ -629,8 +640,11 @@ function agentIssues(agent: AgentRow): EntityIssue[] {
   return issues
 }
 
-/** The one issue a row shows: a failure first, then a host with no schedules, then overdue. */
-const ISSUE_ORDER: readonly EntityIssueKey[] = ['failed', 'unprotected', 'overdue']
+/**
+ * The one issue a row shows: a host that cannot run borg first, as it is why
+ * its backups fail, then a failure, a host with no schedules, then overdue.
+ */
+const ISSUE_ORDER: readonly EntityIssueKey[] = ['no-borg', 'failed', 'unprotected', 'overdue']
 
 function primaryIssue(agent: AgentRow): EntityIssue | null {
   const issues = agentIssues(agent)
@@ -692,12 +706,15 @@ function rowTone(agent: AgentRow): DotTone {
   return isOnline(agent) ? 'success' : 'muted'
 }
 
-function navigateToAgentIssue(agent: AgentRow, kind: 'failed' | 'overdue' | 'unprotected'): void {
+function navigateToAgentIssue(
+  agent: AgentRow,
+  kind: 'failed' | 'overdue' | 'unprotected' | 'no-borg',
+): void {
   if (kind === 'failed') {
     router.push(runLogLink({ hostname: agent.hostname, status: 'failed' }))
     return
   }
-  const query = ISSUE_QUERY[kind]
+  const query = kind === 'no-borg' ? {} : ISSUE_QUERY[kind]
   router.push({
     path: `/agents/${agent.hostname}`,
     query: { ...query, ...domainParams(agent.domain) },

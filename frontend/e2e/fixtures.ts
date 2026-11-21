@@ -134,6 +134,26 @@ export async function loginAsViewer(page: Page): Promise<void> {
   await login(page, 'viewer1', 'viewer1')
 }
 
+// Makes the server report that `hostname`'s agent cannot find borg, in the
+// agent list and on the agent itself, so a host shows the missing-borg warning
+// without the demo running an agent that really lacks it.
+export async function mockMissingBorg(page: Page, hostname: string): Promise<void> {
+  const missing = { state: 'missing', binary: 'borg' }
+  await page.route(
+    (url) => url.pathname === '/api/agents' || url.pathname === `/api/agents/${hostname}`,
+    async (route) => {
+      const response = await route.fetch()
+      const body = (await response.json()) as
+        | Record<string, unknown>
+        | Array<Record<string, unknown>>
+      const patched = Array.isArray(body)
+        ? body.map((agent) => (agent.hostname === hostname ? { ...agent, borg: missing } : agent))
+        : { ...body, borg: missing }
+      await route.fulfill({ response, json: patched })
+    },
+  )
+}
+
 // Overrides the web-server-01 / server-daily health entry (schedule 1, seeded
 // by the demo) for /api/stats/health so tests can force a specific chip
 // (Overdue/Failed) to render without relying on the demo's seeded health

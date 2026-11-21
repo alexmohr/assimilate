@@ -344,6 +344,12 @@ async fn handle_agent_message_impl(text: &str, hostname: &str, agent_id: i64, st
         } => {
             handle_vm_stage_result(hostname, agent_id, state, request_id, outcome).await;
         }
+        AgentToServer::BorgStatus { status } => {
+            state.registry.set_borg(agent_id, Some(status)).await;
+            state
+                .ui_broadcast
+                .send(shared::protocol::ServerToUi::DataChanged);
+        }
         AgentToServer::Hello { .. } => {
             tracing::warn!(hostname = %hostname, "unexpected Hello after handshake");
         }
@@ -1634,6 +1640,7 @@ exit 0
             restart_unavailable_reason: None,
             instance_id: None,
             snapshot_tools: Vec::new(),
+            borg: None,
         };
 
         record_agent_seen(&pool, agent.id, &hello).await;
@@ -1752,6 +1759,7 @@ exit 0
             restart_unavailable_reason: None,
             instance_id: Some("instance-a".into()),
             snapshot_tools: Vec::new(),
+            borg: None,
         };
         sink.send(WsMessage::Text(
             serde_json::to_string(&hello).expect("serialize").into(),
@@ -4343,6 +4351,42 @@ exit 0
         }
     }
 
+    /// The answer to a borg check replaces what the agent last reported and
+    /// tells the open UIs to refresh.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_borg_status_answer_is_kept_and_pushed_to_the_ui(pool: PgPool) {
+        let agent = crate::db::insert_agent(&pool, "borg-status-host", None, "hash", None, None)
+            .await
+            .expect("insert agent");
+        let state = build_test_state(pool.clone());
+        let (tx, _rx) = tokio::sync::mpsc::channel(4);
+        state
+            .registry
+            .register(agent.id, tx, false, None, None)
+            .await;
+        let mut ui = state.ui_broadcast.subscribe();
+        let status = shared::borg::BorgStatus::Available {
+            version: "1.4.1".into(),
+        };
+
+        handle_agent_message(
+            &wire(&AgentToServer::BorgStatus {
+                status: status.clone(),
+            }),
+            &agent.hostname,
+            agent.id,
+            &state,
+        )
+        .await;
+
+        assert_eq!(state.registry.borg(agent.id).await, Some(status));
+        assert!(matches!(
+            ui.try_recv(),
+            Ok(shared::protocol::ServerToUi::DataChanged)
+        ));
+    }
+
     /// A VM snapshot report from a backup run records every outcome.
     #[ignore = "requires DATABASE_URL"]
     #[sqlx::test(migrations = "./migrations")]
@@ -4562,6 +4606,7 @@ exit 0
                 restart_unavailable_reason: None,
                 instance_id: None,
                 snapshot_tools: Vec::new(),
+                borg: None,
             }),
             wire(&AgentToServer::RestartFailed {
                 error_message: "systemd refused".into(),
@@ -4668,6 +4713,7 @@ exit 0
                 restart_unavailable_reason: None,
                 instance_id: Some("instance-1".into()),
                 snapshot_tools: Vec::new(),
+                borg: None,
             })
             .into(),
         )

@@ -397,6 +397,19 @@ Before a schedule reaches its threshold, each miss shows as `N/threshold missed`
 
 While a backup is running for an agent, its row on the Agents list shows a blue status dot and names the target repository (*Backing up: ...*) in its Status column. This reflects persisted running-operation state, so it appears immediately on page load rather than only after a live event.
 
+### Borg not installed
+
+Backups need the `borg` executable on the agent's machine. The agent runs `borg --version` when it connects, and again when asked, and reports the result to the server. A host where that fails shows a **Borg not installed** chip in the Agents list, in place of its other issue chips, and a warning banner on the host's detail page, above the tabs.
+
+![A host's page with the borg warning above its tabs](assets/screenshots/agent-borg-missing.png)
+
+The banner names the executable the agent looked for, which is `borg` on `PATH` unless [`BORG_BINARY`](configuration.md#agent-environment-variables) or a [bundled borg](#windows) is in use. To clear it:
+
+1. Install borg on the host, for example `apt install borgbackup`, or set `BORG_BINARY` in the agent's environment to the full path of the executable.
+2. Select **Check again** in the banner. The agent looks once more and the banner goes away when it reports a version.
+
+A borg that is present but exits with an error when asked for its version shows **Borg not working** instead, with the reason the agent saw. An agent older than this check reports nothing and shows no banner. Runs started on a host without borg fail at once with the same explanation and the command that was attempted, rather than with an operating system error.
+
 ## Agent Detail View
 
 The agent detail page opens on a persistent header — hostname, connection status, and a meta strip carrying the agent version, revision, build time, registration date and last-seen time — followed by five tabs: **Overview**, **Schedules** (with a count), **Backups**, **Sources** (admins only) and **Settings**. Admins also see and edit the agent's [tags](#agent-tags) in the header.

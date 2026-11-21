@@ -717,6 +717,10 @@ fn agent_routes() -> Router<AppState> {
             post(api::agents::restart_agent),
         )
         .route(
+            "/api/agents/{hostname}/check-borg",
+            post(api::agents::check_agent_borg),
+        )
+        .route(
             "/api/agents/{hostname}/process",
             put(api::agents::update_agent_process),
         )

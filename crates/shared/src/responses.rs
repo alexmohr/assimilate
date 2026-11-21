@@ -259,6 +259,10 @@ pub struct AgentResponse {
     /// when it connected; empty while it is not connected.
     #[serde(default)]
     pub snapshot_tools: Vec<crate::snapshot::FsSnapshotKind>,
+    /// Whether the agent's host can run borg, as it last reported; `None`
+    /// while it is not connected or too old to say.
+    #[serde(default)]
+    pub borg: Option<crate::borg::BorgStatus>,
     #[ts(type = "number | null")]
     /// Identifier of the associated owner.
     pub owner_id: Option<i64>,

@@ -87,6 +87,7 @@ use crate::{
         crate::api::agents::delete_agent,
         crate::api::agents::regenerate_token,
         crate::api::agents::restart_agent,
+        crate::api::agents::check_agent_borg,
         crate::api::agents::update_agent_process,
         crate::api::databases::get_agent_databases,
         crate::api::databases::update_agent_database_backup,

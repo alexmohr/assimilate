@@ -9,7 +9,13 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
  * keeps missing runs; a host has nothing scheduled against it. Callers sort
  * and match on it, so it is this union rather than any string.
  */
-export type EntityIssueKey = 'failed' | 'warning' | 'overdue' | 'missed-backups' | 'unprotected'
+export type EntityIssueKey =
+  | 'failed'
+  | 'warning'
+  | 'overdue'
+  | 'missed-backups'
+  | 'unprotected'
+  | 'no-borg'
 
 export interface EntityIssue {
   key: EntityIssueKey

@@ -24,6 +24,7 @@ import {
   previewAgentServiceUnit,
   regenerateAgentToken,
   restartAgent,
+  checkAgentBorg,
   unhideAgent,
   updateAgent,
 } from './agents'
@@ -135,6 +136,18 @@ describe('agents api', () => {
     await restartAgent('web-01')
 
     expect(apiClient.post).toHaveBeenCalledWith('/agents/web-01/restart', {}, { params: {} })
+  })
+
+  it('asks an agent to look for borg again', async () => {
+    vi.mocked(apiClient.post).mockResolvedValue({})
+
+    await checkAgentBorg('web-01', 'dc1.example.com')
+
+    expect(apiClient.post).toHaveBeenCalledWith(
+      '/agents/web-01/check-borg',
+      {},
+      { params: { domain: 'dc1.example.com' } },
+    )
   })
 
   it('deletes agent archives', async () => {

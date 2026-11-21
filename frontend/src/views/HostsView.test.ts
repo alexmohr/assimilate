@@ -1113,6 +1113,30 @@ describe('HostsView issue rows', () => {
     expect(chip.text()).toBe('No schedules')
   })
 
+  it('flags a host whose agent cannot run borg, ahead of any other issue', async () => {
+    const wrapper = await mountSingleAgent(
+      { is_connected: true, borg: { state: 'missing', binary: 'borg' } },
+      [{ agent_id: 42, count: 0 }],
+    )
+
+    const chips = wrapper.findAll('.entity-issue-chip')
+    expect(chips.map((chip) => chip.text())).toEqual(['Borg not installed'])
+    expect(chips[0]?.classes()).toContain('sev-warning')
+  })
+
+  it('opens the host when the borg chip is clicked', async () => {
+    const { wrapper, router } = await mountAgentsList(
+      [{ ...issueAgent, borg: { state: 'missing', binary: 'borg' } }],
+      [],
+      [{ agent_id: 42, count: 1 }],
+    )
+    const push = vi.spyOn(router, 'push')
+
+    await wrapper.find('.entity-issue-chip').trigger('click')
+
+    expect(push).toHaveBeenCalledWith(expect.objectContaining({ path: '/agents/flaky-host' }))
+  })
+
   it('opens the schedules tab when the no-schedules chip is clicked', async () => {
     const { wrapper, router } = await mountAgentsList(
       [issueAgent],

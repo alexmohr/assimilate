@@ -61,7 +61,13 @@
       {
         "ordinal": 5,
         "name": "provider: HostProvider",
-        "type_info": "Text"
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "repo_hosts",
+            "name": "provider"
+          }
+        }
       },
       {
         "ordinal": 6,

@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "UPDATE repo_hosts SET ssh_host = $2, ssh_port = $3 WHERE id = $1 RETURNING id, ssh_host, ssh_port, ssh_host_key, machine_id",
+  "query": "UPDATE repo_hosts SET ssh_host = $2, ssh_port = $3 WHERE id = $1 RETURNING id, ssh_host, ssh_port, ssh_host_key, machine_id, provider AS \"provider: HostProvider\"",
   "describe": {
     "columns": [
       {
@@ -57,6 +57,17 @@
             "name": "machine_id"
           }
         }
+      },
+      {
+        "ordinal": 5,
+        "name": "provider: HostProvider",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "repo_hosts",
+            "name": "provider"
+          }
+        }
       }
     ],
     "parameters": {
@@ -71,8 +82,9 @@
       false,
       false,
       true,
+      false,
       false
     ]
   },
-  "hash": "2b99447d9d110a8b2fb4814f11aac2aec5ae29f8a62291f4491ccc5047e39ed9"
+  "hash": "9eb63d503a460574f40875966352a4a7840829f57cee08cc58f5fd339c13fba6"
 }

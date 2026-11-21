@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT id, ssh_host, ssh_port, ssh_host_key, machine_id FROM repo_hosts WHERE ssh_host = $1",
+  "query": "SELECT id, ssh_host, ssh_port, ssh_host_key, machine_id, provider AS \"provider: HostProvider\" FROM repo_hosts WHERE ssh_host = $1",
   "describe": {
     "columns": [
       {
@@ -57,6 +57,17 @@
             "name": "machine_id"
           }
         }
+      },
+      {
+        "ordinal": 5,
+        "name": "provider: HostProvider",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "repo_hosts",
+            "name": "provider"
+          }
+        }
       }
     ],
     "parameters": {
@@ -69,8 +80,9 @@
       false,
       false,
       true,
+      false,
       false
     ]
   },
-  "hash": "7422f82ec0197c19c18aa986fccbd688e631b2b8b4c36833d27d6ec47c1c77f6"
+  "hash": "6b3df893c15c83e5052b4c732861b749c9132373830b9876e388cec940bb3837"
 }

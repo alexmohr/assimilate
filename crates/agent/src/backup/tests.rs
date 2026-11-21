@@ -238,6 +238,26 @@ fn borg_env_uses_pinned_known_hosts_file() {
 
 #[cfg(unix)]
 #[tokio::test]
+async fn a_borg_that_cannot_be_started_reports_the_command_it_attempted() {
+    let missing = std::path::PathBuf::from("/nonexistent/borg-binary");
+    let engine = BackupEngine::with_config(missing, Vec::new());
+
+    let err = engine
+        .run_backup(&test_target(), None, None)
+        .await
+        .unwrap_err();
+
+    assert!(matches!(err, BackupError::BorgIo { .. }), "got {err:?}");
+    assert!(err.to_string().starts_with("could not run borg: "));
+    let command = err.borg_command().expect("the attempted command");
+    assert!(command.contains("--exclude-from "));
+    assert!(
+        !command.contains("<exclude-file>"),
+        "the real temp file path, not the preview placeholder: {command}"
+    );
+}
+
+#[tokio::test]
 async fn test_successful_backup() {
     let engine = BackupEngine::with_config(mock_borg_path(), vec![]);
     let target = test_target();

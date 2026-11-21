@@ -45,6 +45,13 @@ pub enum BackupError {
     BorgFailed(String),
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
+    /// Borg could not be started, or its output could not be read. Carries the
+    /// exact command, so the report shows what was attempted.
+    #[error("could not run borg: {source}")]
+    BorgIo {
+        command: String,
+        source: std::io::Error,
+    },
     #[error("stats parse error: {0}")]
     StatsParse(String),
     #[error("borg command timed out after {seconds} seconds: {command}")]
@@ -58,7 +65,7 @@ pub enum BackupError {
 impl BackupError {
     pub fn borg_command(&self) -> Option<&str> {
         match self {
-            Self::Timeout { command, .. } => Some(command.as_str()),
+            Self::Timeout { command, .. } | Self::BorgIo { command, .. } => Some(command.as_str()),
             Self::Skipped(_)
             | Self::BorgFailed(_)
             | Self::Io(_)
@@ -89,6 +96,10 @@ impl BackupError {
             Self::Io(error) => {
                 Self::Io(std::io::Error::new(error.kind(), noted(error.to_string())))
             }
+            Self::BorgIo { command, source } => Self::BorgIo {
+                command,
+                source: std::io::Error::new(source.kind(), noted(source.to_string())),
+            },
             timeout @ Self::Timeout { .. } => timeout,
         }
     }

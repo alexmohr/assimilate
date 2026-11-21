@@ -248,7 +248,10 @@ async fn a_borg_that_cannot_be_started_reports_the_command_it_attempted() {
         .unwrap_err();
 
     assert!(matches!(err, BackupError::BorgIo { .. }), "got {err:?}");
-    assert!(err.to_string().starts_with("could not run borg: "));
+    let message = err.to_string();
+    assert!(message.starts_with("could not run borg: "), "{message}");
+    assert!(message.contains("/nonexistent/borg-binary"), "{message}");
+    assert!(message.contains("install borg"), "{message}");
     let command = err.borg_command().expect("the attempted command");
     assert!(command.contains("--exclude-from "));
     assert!(

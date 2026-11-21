@@ -582,7 +582,7 @@ pub fn spawn_guarded(
     env: &[(String, String)],
     task_registry: &TaskRegistry,
 ) -> std::io::Result<GracefulChild> {
-    let child = cmd.spawn()?;
+    let child = cmd.spawn().map_err(|error| spawn_error(binary, error))?;
     let repo = env
         .iter()
         .find(|(k, _)| k == BORG_REPO_ENV_KEY)
@@ -594,6 +594,24 @@ pub fn spawn_guarded(
         env.to_vec(),
         task_registry.clone(),
     ))
+}
+
+/// `error` from starting `binary`, with a missing executable said in words: the
+/// bare "No such file or directory" does not tell an operator that borg is not
+/// installed on the machine.
+fn spawn_error(binary: &Path, error: std::io::Error) -> std::io::Error {
+    if error.kind() == std::io::ErrorKind::NotFound {
+        std::io::Error::new(
+            error.kind(),
+            format!(
+                "the borg executable `{}` was not found; install borg on this machine, or set \
+                 BORG_BINARY to its path",
+                binary.display()
+            ),
+        )
+    } else {
+        error
+    }
 }
 
 /// Runs `cmd`, made by [`command`] from `binary`, `args` and `env`, waits for it to

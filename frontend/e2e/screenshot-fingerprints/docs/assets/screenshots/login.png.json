@@ -1,5 +1,5 @@
 {
   "test": "login",
   "pages": ["frontend/src/views/LoginView.vue"],
-  "fingerprint": "349519353f9921a137fd9229a45264e64209c214de56c40b452b40c35c4fa985"
+  "fingerprint": "c5a93c8447233c12d5f3e52cbeec05d273df6bd718ebabb9c73cf40da15bdbb5"
 }

@@ -1530,6 +1530,14 @@ fn a_failed_backup_still_names_the_snapshots_it_left_behind() {
         named(BackupError::Io(std::io::Error::other("disk full"))),
         "io error: disk full; could not remove the snapshot of ZFS snapshot tank@x: busy"
     );
+    let borg_io = named(BackupError::BorgIo {
+        command: "borg create".to_owned(),
+        source: std::io::Error::other("no borg"),
+    });
+    assert_eq!(
+        borg_io,
+        "could not run borg: no borg; could not remove the snapshot of ZFS snapshot tank@x: busy"
+    );
     for error in [
         BackupError::Skipped("off".to_owned()),
         BackupError::StatsParse("bad json".to_owned()),

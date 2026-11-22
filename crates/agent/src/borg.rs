@@ -339,6 +339,9 @@ async fn wait_with_stderr_stream(
 
 #[cfg(test)]
 mod tests {
+    #[cfg(unix)]
+    use std::os::unix::fs::PermissionsExt as _;
+
     use super::*;
 
     #[tokio::test]
@@ -354,7 +357,6 @@ mod tests {
 
     #[cfg(unix)]
     async fn script(dir: &Path, body: &str) -> PathBuf {
-        use std::os::unix::fs::PermissionsExt as _;
         let path = dir.join("borg");
         tokio::fs::write(&path, format!("#!/bin/sh\n{body}\n"))
             .await
@@ -380,13 +382,32 @@ mod tests {
 
     #[cfg(unix)]
     #[tokio::test]
+    async fn a_borg_that_cannot_be_executed_is_broken_with_the_os_reason() {
+        let dir = tempfile::tempdir().unwrap();
+        let binary = dir.path().join("borg");
+        tokio::fs::write(&binary, b"#!/bin/sh\n").await.unwrap();
+        tokio::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o644))
+            .await
+            .unwrap();
+
+        let status = probe_binary(&binary).await;
+
+        assert!(
+            matches!(&status, BorgStatus::Broken { reason, .. } if reason.contains("ermission")),
+            "{status:?}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
     async fn a_borg_that_fails_or_prints_nonsense_is_broken() {
         let dir = tempfile::tempdir().unwrap();
         let failing = script(dir.path(), "echo 'boom' >&2; exit 3").await;
-        let BorgStatus::Broken { reason, .. } = probe_binary(&failing).await else {
-            panic!("expected a broken borg");
-        };
-        assert!(reason.contains("boom"), "{reason}");
+        let status = probe_binary(&failing).await;
+        assert!(
+            matches!(&status, BorgStatus::Broken { reason, .. } if reason.contains("boom")),
+            "{status:?}"
+        );
 
         let nonsense = script(dir.path(), "echo 'hello'").await;
         assert!(matches!(

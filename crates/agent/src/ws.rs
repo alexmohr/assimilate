@@ -831,15 +831,16 @@ mod tests {
     async fn a_borg_check_is_answered_with_the_borg_status() {
         let (result, sent) = handle(r#"{"type":"CheckBorg"}"#).await;
         assert!(result.is_ok());
-        let [Message::Text(answer)] = sent.as_slice() else {
-            panic!("expected one text frame, got {sent:?}");
-        };
         assert!(
             matches!(
-                serde_json::from_str(answer.as_str()),
-                Ok(AgentToServer::BorgStatus { .. })
+                sent.as_slice(),
+                [Message::Text(answer)]
+                    if matches!(
+                        serde_json::from_str(answer.as_str()),
+                        Ok(AgentToServer::BorgStatus { .. })
+                    )
             ),
-            "{answer}"
+            "{sent:?}"
         );
     }
 

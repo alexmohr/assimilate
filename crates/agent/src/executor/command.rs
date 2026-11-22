@@ -13,6 +13,7 @@ pub enum ExecutorCommand {
     CancelBackup {
         repo_id: RepoId,
     },
+    CheckBorg,
     ScanVms {
         request_id: Option<String>,
     },

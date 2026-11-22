@@ -23,6 +23,7 @@ use crate::{
 mod archives;
 mod backup_handlers;
 mod backup_task;
+mod borg_check;
 mod command;
 mod database_restore;
 mod databases;
@@ -96,7 +97,7 @@ impl Executor {
         *self.current_config.lock().await = Some(config);
     }
 
-    async fn dispatch(&self, cmd: ExecutorCommand, outbound_tx: &mpsc::Sender<AgentToServer>) {
+    async fn dispatch(&self, cmd: ExecutorCommand, tx: &mpsc::Sender<AgentToServer>) {
         match cmd {
             ExecutorCommand::UpdateConfig(config) => self.update_config(*config).await,
             ExecutorCommand::RunNow {
@@ -104,34 +105,26 @@ impl Executor {
                 schedule_id,
                 run_id,
             } => {
-                self.handle_run_now(repo_id, schedule_id, run_id, outbound_tx)
-                    .await;
+                self.handle_run_now(repo_id, schedule_id, run_id, tx).await;
             }
-            ExecutorCommand::ScanVms { request_id } => {
-                self.handle_scan_vms(request_id, outbound_tx).await;
-            }
-            ExecutorCommand::ReadLiveFile(req) => {
-                self.handle_read_live_file(req, outbound_tx).await;
-            }
-            ExecutorCommand::ScanDatabases(request) => {
-                self.handle_scan_databases(request, outbound_tx).await;
-            }
+            ExecutorCommand::ScanVms { request_id } => self.handle_scan_vms(request_id, tx).await,
+            ExecutorCommand::ReadLiveFile(req) => self.handle_read_live_file(req, tx).await,
+            ExecutorCommand::ScanDatabases(req) => self.handle_scan_databases(req, tx).await,
             ExecutorCommand::BuildVm {
                 request_id,
                 request,
             } => {
-                self.handle_build_vm(request_id, &request, outbound_tx)
-                    .await;
+                self.handle_build_vm(request_id, &request, tx).await;
             }
             ExecutorCommand::StageVm { request_id, domain } => {
-                self.handle_stage_vm(request_id, domain, outbound_tx).await;
+                self.handle_stage_vm(request_id, domain, tx).await;
             }
             ExecutorCommand::RunCheckNow { repo_id } => {
-                self.handle_maintenance(MaintenanceKind::Check, repo_id, outbound_tx)
+                self.handle_maintenance(MaintenanceKind::Check, repo_id, tx)
                     .await;
             }
             ExecutorCommand::RunVerifyNow { repo_id } => {
-                self.handle_maintenance(MaintenanceKind::Verify, repo_id, outbound_tx)
+                self.handle_maintenance(MaintenanceKind::Verify, repo_id, tx)
                     .await;
             }
             ExecutorCommand::InitRepo {
@@ -151,7 +144,7 @@ impl Executor {
                         passphrase: &passphrase,
                         encryption,
                     },
-                    outbound_tx,
+                    tx,
                 )
                 .await;
             }
@@ -160,7 +153,7 @@ impl Executor {
                 schedule_id,
                 request_id,
             } => {
-                self.handle_dry_run(repo_id, schedule_id, request_id, outbound_tx)
+                self.handle_dry_run(repo_id, schedule_id, request_id, tx)
                     .await;
             }
             ExecutorCommand::RestoreFiles {
@@ -178,22 +171,23 @@ impl Executor {
                         target_path,
                         request_id,
                     },
-                    outbound_tx,
+                    tx,
                 )
                 .await;
             }
-            ExecutorCommand::RestoreDatabase(req) => self.restore_database(req, outbound_tx).await,
+            ExecutorCommand::RestoreDatabase(req) => self.restore_database(req, tx).await,
             ExecutorCommand::DeleteArchives {
                 repo_id,
                 archive_names,
                 request_id,
             } => {
-                self.handle_delete_archives(repo_id, archive_names, request_id, outbound_tx)
+                self.handle_delete_archives(repo_id, archive_names, request_id, tx)
                     .await;
             }
             ExecutorCommand::CancelBackup { repo_id } => {
-                self.handle_cancel_backup(repo_id, outbound_tx).await;
+                self.handle_cancel_backup(repo_id, tx).await;
             }
+            ExecutorCommand::CheckBorg => self.handle_check_borg(tx),
         }
     }
 }

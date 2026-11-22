@@ -396,13 +396,9 @@ where
                 .map_err(|e| WsError::Send(Box::new(e)))?;
         }
         ServerToAgent::CheckBorg => {
-            let status = AgentToServer::BorgStatus {
-                status: crate::borg::probe().await,
-            };
-            let json = serde_json::to_string(&status).map_err(WsError::Serialize)?;
-            sink.send(Message::Text(json.into()))
-                .await
-                .map_err(|e| WsError::Send(Box::new(e)))?;
+            if exec_cmd_tx.send(ExecutorCommand::CheckBorg).await.is_err() {
+                warn!("Executor command channel closed");
+            }
         }
         ServerToAgent::ShuttingDown => {
             info!("Server shutting down, disconnecting");
@@ -828,20 +824,18 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_borg_check_is_answered_with_the_borg_status() {
-        let (result, sent) = handle(r#"{"type":"CheckBorg"}"#).await;
+    async fn a_borg_check_is_handed_to_the_executor_not_run_on_the_connection() {
+        let (exec_cmd_tx, mut exec_cmd_rx) = mpsc::channel(4);
+        let mut sink = RecordingSink::default();
+
+        let result = handle_text_message(r#"{"type":"CheckBorg"}"#, &exec_cmd_tx, &mut sink).await;
+
         assert!(result.is_ok());
-        assert!(
-            matches!(
-                sent.as_slice(),
-                [Message::Text(answer)]
-                    if matches!(
-                        serde_json::from_str(answer.as_str()),
-                        Ok(AgentToServer::BorgStatus { .. })
-                    )
-            ),
-            "{sent:?}"
-        );
+        assert!(matches!(
+            exec_cmd_rx.recv().await,
+            Some(ExecutorCommand::CheckBorg)
+        ));
+        assert!(sink.0.is_empty());
     }
 
     #[tokio::test]

@@ -981,6 +981,22 @@ mod database_dumps {
     }
 
     #[tokio::test]
+    async fn a_borg_check_answers_with_the_borg_status_on_its_own_task() {
+        let executor = Executor::new(
+            crate::endpoint::test_support::endpoint("ws://localhost"),
+            TaskRegistry::default(),
+        );
+        let (tx, mut rx) = mpsc::channel(4);
+
+        executor.dispatch(ExecutorCommand::CheckBorg, &tx).await;
+
+        assert!(
+            matches!(rx.recv().await, Some(AgentToServer::BorgStatus { .. })),
+            "a check answers with the status"
+        );
+    }
+
+    #[tokio::test]
     async fn a_scan_command_is_answered_by_the_scan() {
         let executor = Executor::new(
             crate::endpoint::test_support::endpoint("ws://localhost"),

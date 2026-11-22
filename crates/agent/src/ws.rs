@@ -824,6 +824,23 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_borg_check_with_the_executor_gone_is_logged() {
+        let (exec_cmd_tx, exec_cmd_rx) = mpsc::channel(1);
+        drop(exec_cmd_rx);
+        let mut sink = RecordingSink::default();
+
+        let (result, logs) = crate::tests::logs::logs_while(handle_text_message(
+            r#"{"type":"CheckBorg"}"#,
+            &exec_cmd_tx,
+            &mut sink,
+        ))
+        .await;
+
+        assert!(result.is_ok());
+        assert!(logs.contains("Executor command channel closed"), "{logs}");
+    }
+
+    #[tokio::test]
     async fn a_borg_check_is_handed_to_the_executor_not_run_on_the_connection() {
         let (exec_cmd_tx, mut exec_cmd_rx) = mpsc::channel(4);
         let mut sink = RecordingSink::default();

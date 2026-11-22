@@ -1215,6 +1215,28 @@ async fn a_live_read_follows_the_current_sources() {
 }
 
 #[tokio::test]
+async fn a_borg_status_whose_answer_cannot_be_sent_is_logged() {
+    let task_registry = TaskRegistry::default();
+    let executor = Executor::new(
+        crate::endpoint::test_support::endpoint("ws://localhost"),
+        task_registry.clone(),
+    );
+    let (tx, rx) = mpsc::channel(1);
+    drop(rx);
+
+    let ((), logs) = crate::tests::logs::logs_while(async {
+        executor.handle_check_borg(&tx);
+        task_registry.shutdown(Duration::from_secs(10)).await;
+    })
+    .await;
+
+    assert!(
+        logs.contains("Outbound channel closed; borg status answer dropped"),
+        "{logs}"
+    );
+}
+
+#[tokio::test]
 async fn a_live_read_whose_answer_cannot_be_sent_is_logged() {
     let task_registry = TaskRegistry::default();
     let executor = Executor::new(

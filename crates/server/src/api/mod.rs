@@ -35,6 +35,8 @@ pub mod deploy;
 pub mod diff;
 /// Backup dry-run endpoints.
 pub mod dryrun;
+/// Enrollment token endpoints.
+pub mod enrollment;
 /// Global exclude pattern endpoints.
 pub mod excludes;
 /// Archive export endpoints.
@@ -46,6 +48,8 @@ pub mod file_history;
 pub mod health;
 /// Shared helper functions for API handlers.
 pub mod helpers;
+/// The install scripts and agent download a new host fetches.
+pub mod install;
 /// Repository key management endpoints.
 pub mod keys;
 /// Server log endpoints.

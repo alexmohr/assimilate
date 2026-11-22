@@ -61,6 +61,8 @@ pub enum AuditTarget {
     ApiToken(i64),
     /// An agent, by ID.
     Agent(i64),
+    /// An enrollment token, by ID.
+    EnrollmentToken(i64),
     /// A notification channel, by ID.
     NotificationChannel(i64),
     /// A notification rule, by ID.
@@ -78,6 +80,7 @@ impl AuditTarget {
             Self::Repo(_) => "repo",
             Self::ApiToken(_) => "api_token",
             Self::Agent(_) => "agent",
+            Self::EnrollmentToken(_) => "enrollment_token",
             Self::NotificationChannel(_) => "notification_channel",
             Self::NotificationRule(_) => "notification_rule",
         }
@@ -93,6 +96,7 @@ impl AuditTarget {
             | Self::Repo(id)
             | Self::ApiToken(id)
             | Self::Agent(id)
+            | Self::EnrollmentToken(id)
             | Self::NotificationChannel(id)
             | Self::NotificationRule(id) => id,
         }
@@ -143,6 +147,22 @@ pub async fn record(
     };
     if let Err(e) = insert_audit_entry(pool, &entry).await {
         tracing::warn!(user_id = actor.user_id, error = %e, "failed to write audit log entry");
+    }
+}
+
+/// Records `event` for an action no signed-in user took, such as a host
+/// enrolling itself with a token. The entry is attributed to `system`.
+pub async fn record_system(pool: &PgPool, target: Option<AuditTarget>, event: AuditEvent) {
+    let entry = NewAuditEntry {
+        user_id: None,
+        username: "system",
+        event,
+        target_type: target.map(AuditTarget::kind),
+        target_id: target.map(AuditTarget::id),
+        ip_address: None,
+    };
+    if let Err(e) = insert_audit_entry(pool, &entry).await {
+        tracing::warn!(error = %e, "failed to write audit log entry");
     }
 }
 

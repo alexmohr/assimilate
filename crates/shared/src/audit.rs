@@ -213,6 +213,25 @@ pub enum AuditEvent {
         /// The user the token belonged to.
         owner: String,
     },
+    /// A user created an enrollment token. The token is never recorded.
+    CreateEnrollmentToken {
+        /// The hostname the token is restricted to, if any.
+        hostname: Option<String>,
+        /// When the token stops working.
+        expires_at: crate::time::Timestamp,
+    },
+    /// A host enrolled itself as an agent with an enrollment token.
+    UseEnrollmentToken {
+        /// The new agent's hostname.
+        hostname: String,
+        /// The new agent's domain, if it has one.
+        domain: Option<String>,
+    },
+    /// An enrollment token was revoked before a host used it.
+    RevokeEnrollmentToken {
+        /// The hostname the token was restricted to, if any.
+        hostname: Option<String>,
+    },
     /// An agent's token was replaced with a new one. Neither token is recorded.
     RegenerateAgentToken {
         /// The agent's hostname.

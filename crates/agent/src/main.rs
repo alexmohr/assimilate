@@ -8,6 +8,7 @@ mod backup;
 mod borg;
 mod database;
 mod endpoint;
+mod enroll;
 mod executor;
 mod live_file;
 mod pipe;
@@ -110,6 +111,10 @@ pub fn agent_version_string() -> &'static str {
 /// flag: other local users can read a process's command line.
 const TOKEN_VAR: &str = "BORG_AGENT_TOKEN";
 
+/// Where `--enroll` reads its single-use enrollment token. A secret like the
+/// agent token, so it has no command-line flag either.
+const ENROLLMENT_TOKEN_VAR: &str = "BORG_ENROLLMENT_TOKEN";
+
 /// The command line. Without a subcommand the agent connects and runs in the
 /// foreground; on Windows and macOS, `service` installs, removes or runs it
 /// as a Windows service or launchd daemon instead.
@@ -129,6 +134,12 @@ struct Cli {
     #[arg(long, env = "BORG_SERVER_KEY", required = true)]
     server_key: Option<ChannelPublicKey>,
 
+    /// Trade the single-use enrollment token in `BORG_ENROLLMENT_TOKEN` for this
+    /// host's agent token, print that token on standard output and exit,
+    /// instead of connecting as an agent.
+    #[arg(long)]
+    enroll: bool,
+
     #[cfg(any(windows, target_os = "macos"))]
     #[command(subcommand)]
     command: Option<service_config::Command>,
@@ -142,6 +153,12 @@ enum StartupError {
     Runtime(std::io::Error),
     #[error("--server-url and --server-key are required, and BORG_AGENT_TOKEN must be set")]
     MissingArgs,
+    #[error("--server-url and --server-key are required, and BORG_ENROLLMENT_TOKEN must be set")]
+    MissingEnrollArgs,
+    #[error("enrollment failed: {0}")]
+    Enroll(#[from] enroll::EnrollError),
+    #[error("could not write the agent token to standard output: {0}")]
+    Output(std::io::Error),
     #[cfg(any(windows, target_os = "macos"))]
     #[error(transparent)]
     Service(#[from] service::ServiceError),
@@ -166,6 +183,10 @@ fn main() -> Result<ExitCode, StartupError> {
         )
         .init();
 
+    if cli.enroll {
+        return run_enroll(cli);
+    }
+
     let args = cli
         .connect_args(env_token())
         .ok_or(StartupError::MissingArgs)?;
@@ -175,6 +196,33 @@ fn main() -> Result<ExitCode, StartupError> {
     });
     // Exit status 1 after a fatal error (one retrying won't fix).
     Ok(ExitCode::from(u8::from(fatal)))
+}
+
+/// Trades the enrollment token for an agent token and prints the agent token,
+/// and nothing else, on standard output so a script can capture it.
+fn run_enroll(cli: Cli) -> Result<ExitCode, StartupError> {
+    use std::io::Write as _;
+
+    let enrollment_token = std::env::var(ENROLLMENT_TOKEN_VAR)
+        .ok()
+        .filter(|token| !token.is_empty());
+    let (Some(url), Some(key), Some(enrollment_token)) =
+        (cli.server_url, cli.server_key, enrollment_token)
+    else {
+        return Err(StartupError::MissingEnrollArgs);
+    };
+    let url = normalize_ws_url(&url);
+    let token = runtime()?.block_on(enroll::enroll(&enroll::EnrollRequest {
+        url: &url,
+        key: &key,
+        enrollment_token: &enrollment_token,
+        hostname: ws::local_hostname(),
+    }))?;
+    let mut stdout = std::io::stdout().lock();
+    writeln!(stdout, "{token}")
+        .and_then(|()| stdout.flush())
+        .map_err(StartupError::Output)?;
+    Ok(ExitCode::SUCCESS)
 }
 
 /// The agent token from the environment, if it is set and not empty.
@@ -363,6 +411,7 @@ mod cli_tests {
         let cli = |server_url: Option<&str>, server_key| Cli {
             server_url: server_url.map(str::to_owned),
             server_key,
+            enroll: false,
             #[cfg(any(windows, target_os = "macos"))]
             command: None,
         };

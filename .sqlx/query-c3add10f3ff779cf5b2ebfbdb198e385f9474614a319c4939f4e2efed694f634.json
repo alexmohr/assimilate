@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE enrollment_tokens SET revoked_at = NOW() WHERE id = $1 AND used_at IS NULL AND revoked_at IS NULL AND expires_at > NOW()",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "c3add10f3ff779cf5b2ebfbdb198e385f9474614a319c4939f4e2efed694f634"
+}

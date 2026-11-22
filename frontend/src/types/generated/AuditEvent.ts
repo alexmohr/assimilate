@@ -315,6 +315,41 @@ export type AuditEvent =
     };
   }
   | {
+    "action": "create_enrollment_token";
+    "details": {
+      /**
+       * The hostname the token is restricted to, if any.
+       */
+      hostname: string | null;
+      /**
+       * When the token stops working.
+       */
+      expires_at: string;
+    };
+  }
+  | {
+    "action": "use_enrollment_token";
+    "details": {
+      /**
+       * The new agent's hostname.
+       */
+      hostname: string;
+      /**
+       * The new agent's domain, if it has one.
+       */
+      domain: string | null;
+    };
+  }
+  | {
+    "action": "revoke_enrollment_token";
+    "details": {
+      /**
+       * The hostname the token was restricted to, if any.
+       */
+      hostname: string | null;
+    };
+  }
+  | {
     "action": "regenerate_agent_token";
     "details": {
       /**

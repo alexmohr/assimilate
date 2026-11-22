@@ -54,7 +54,15 @@ pub(super) struct HelloFields {
     pub(super) borg: Option<shared::borg::BorgStatus>,
 }
 
-pub(super) async fn read_hello_message<St, E>(ws_stream: &mut St) -> Option<HelloFields>
+/// What an agent opens a connection with.
+pub(super) enum FirstMessage {
+    /// An agent with a token.
+    Hello(HelloFields),
+    /// A host trading an enrollment token for one.
+    Enroll(super::enroll::EnrollRequest),
+}
+
+pub(super) async fn read_first_message<St, E>(ws_stream: &mut St) -> Option<FirstMessage>
 where
     St: Stream<Item = Result<Message, E>> + Unpin,
 {
@@ -73,7 +81,7 @@ where
                 instance_id,
                 snapshot_tools,
                 borg,
-            }) => Some(HelloFields {
+            }) => Some(FirstMessage::Hello(HelloFields {
                 hostname,
                 token,
                 agent_version,
@@ -85,7 +93,16 @@ where
                 instance_id,
                 snapshot_tools,
                 borg,
-            }),
+            })),
+            Ok(AgentToServer::Enroll {
+                hostname,
+                domain,
+                enrollment_token,
+            }) => Some(FirstMessage::Enroll(super::enroll::EnrollRequest {
+                hostname,
+                domain,
+                enrollment_token,
+            })),
             Ok(_) | Err(_) => None,
         },
         Some(
@@ -220,9 +237,16 @@ where
     St: Stream<Item = Result<Message, E>> + Unpin,
     E: std::fmt::Display,
 {
-    let Some(hello) = read_hello_message(&mut ws_stream).await else {
-        send_close(&mut ws_sink, "expected Hello message").await;
-        return;
+    let hello = match read_first_message(&mut ws_stream).await {
+        Some(FirstMessage::Hello(hello)) => hello,
+        Some(FirstMessage::Enroll(request)) => {
+            super::enroll::handle_enroll(&mut ws_sink, &state, request).await;
+            return;
+        }
+        None => {
+            send_close(&mut ws_sink, "expected Hello message").await;
+            return;
+        }
     };
     tracing::info!(
         hostname = %hello.hostname,

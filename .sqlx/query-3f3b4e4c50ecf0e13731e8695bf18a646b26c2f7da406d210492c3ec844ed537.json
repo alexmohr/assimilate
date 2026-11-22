@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO agent_tags (agent_id, tag_id) SELECT $1, id FROM tags WHERE id = ANY($2)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8Array"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "3f3b4e4c50ecf0e13731e8695bf18a646b26c2f7da406d210492c3ec844ed537"
+}

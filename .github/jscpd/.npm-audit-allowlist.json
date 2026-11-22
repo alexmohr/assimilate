@@ -1,0 +1,5 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Allowlisted npm audit advisories for the pinned jscpd install. Only humans may add entries. Every entry needs a tracking issue (CI rejects entries without one) so it can be removed once fixed.",
+  "audit": []
+}

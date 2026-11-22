@@ -835,7 +835,7 @@ mod tests {
             exec_cmd_rx.recv().await,
             Some(ExecutorCommand::CheckBorg)
         ));
-        assert!(sink.0.is_empty());
+        assert_eq!(sink.0, Vec::<Message>::new());
     }
 
     #[tokio::test]

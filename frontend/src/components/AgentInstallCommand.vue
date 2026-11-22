@@ -4,20 +4,47 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 -->
 
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { getAgentChannelKey } from '../api/system'
+import { listTags } from '../api/tags'
+import { LIFETIMES } from '../composables/useInstallCommand'
+import { extractError } from '../utils/error'
+import {
+  AUTOSTART_NOTES,
+  installCommand,
+  manualSteps,
+  type InstallParams,
+} from '../utils/installCommand'
 import BaseDisclosure from './BaseDisclosure.vue'
+import BaseSegmented, { type SegmentedOption } from './BaseSegmented.vue'
 import CommandBlock from './CommandBlock.vue'
 import EnrollmentTokenList from './EnrollmentTokenList.vue'
-import BaseSegmented, { type SegmentedOption } from './BaseSegmented.vue'
+import type { CreateEnrollmentTokenResponse } from '../types/generated'
 import type { InstallTarget } from '../types/enrollment'
+import type { TagRow } from '../types/tag'
 
-// MOCK: the token, key and expiry are placeholders until the enrollment API exists.
-defineProps<{ generated: boolean }>()
+/**
+ * The Add agent dialog's Install command tab: the form for a new enrollment
+ * token, then the command that installs and enrolls an agent with it.
+ */
+const props = defineProps<{
+  /** The token just created, once there is one. */
+  created: CreateEnrollmentTokenResponse | null
+  /** Why creating or revoking a token failed. */
+  error: string | null
+  /** Read the token list again whenever this changes. */
+  version: number
+}>()
+
+const lifetime = defineModel<number>('lifetime', { required: true })
+const hostname = defineModel<string>('hostname', { required: true })
+const tagIds = defineModel<number[]>('tagIds', { required: true })
 
 const target = ref<InstallTarget>('linux')
-const expiry = ref('3600')
-const hostname = ref('')
-const tags = ref('')
+const serverKey = ref('')
+const agentTags = ref<TagRow[]>([])
+const loadError = ref<string | null>(null)
+const now = ref(Date.now())
 
 const targets: readonly SegmentedOption<InstallTarget>[] = [
   { value: 'linux', label: 'Linux' },
@@ -25,93 +52,65 @@ const targets: readonly SegmentedOption<InstallTarget>[] = [
   { value: 'windows', label: 'Windows' },
 ]
 
-const SERVER = 'https://backup.example.com'
-const TOKEN = 'enr_Zk3qT0mV9xLw2bYhN6cD8sAeJ4uPfR9w'
-const SERVER_KEY = '7Qm1xB0tV3kLhYw8N2dCzEoPaU5sRjGf4HiMnXpTcA0='
-
-const SHELL_COMMAND = `curl -fsSL ${SERVER}/install.sh | sudo sh -s -- \\\n  --token ${TOKEN} \\\n  --server-key ${SERVER_KEY}`
-
-const COMMANDS: Record<InstallTarget, string> = {
-  linux: SHELL_COMMAND,
-  macos: SHELL_COMMAND,
-  windows: `& ([scriptblock]::Create((irm ${SERVER}/install.ps1))) \`\n  -Token ${TOKEN} \`\n  -ServerKey ${SERVER_KEY}`,
-}
-
-const command = computed(() => COMMANDS[target.value])
-
-interface ManualStep {
-  label: string
-  text: string
-}
-
-const SHA256 = '9f2c41d7b0a35e6c8d1f7a94e0b3c5d268a7f1e4b9c0d3a5e7f2b8c4d6a10e93'
-const MAC_DIR = '/Library/Assimilate'
-
-// MOCK: the download endpoint and checksum are placeholders.
-const MANUAL_STEPS: Record<InstallTarget, ManualStep[]> = {
-  linux: [
-    {
-      label: '1. Download and verify',
-      text: `sudo curl -fsSL -o /usr/local/bin/assimilate-agent \\\n  "${SERVER}/download/agent?os=linux&arch=$(uname -m)"\necho "${SHA256}  /usr/local/bin/assimilate-agent" | sha256sum -c -\nsudo chmod 755 /usr/local/bin/assimilate-agent`,
-    },
-    {
-      label: '2. Store the token where only root can read it',
-      text: `sudo install -m 600 /dev/null /etc/assimilate-agent.env\necho 'BORG_ENROLLMENT_TOKEN=${TOKEN}' | sudo tee /etc/assimilate-agent.env >/dev/null`,
-    },
-    {
-      label: '3. Start on boot with systemd',
-      text: `sudo tee /etc/systemd/system/assimilate-agent.service >/dev/null <<'EOF'\n[Unit]\nDescription=Assimilate backup agent\nAfter=network.target\n\n[Service]\nEnvironment=BORG_SERVER_URL=${SERVER}\nEnvironment=BORG_SERVER_KEY=${SERVER_KEY}\nEnvironmentFile=/etc/assimilate-agent.env\nExecStart=/usr/local/bin/assimilate-agent\nRestart=on-failure\nRestartSec=10\n\n[Install]\nWantedBy=multi-user.target\nEOF\nsudo systemctl daemon-reload\nsudo systemctl enable --now assimilate-agent`,
-    },
-  ],
-  macos: [
-    {
-      label: '1. Download and verify',
-      text: `curl -fsSL -o assimilate-agent.tar.gz \\\n  "${SERVER}/download/agent?os=macos&arch=$(uname -m)"\necho "${SHA256}  assimilate-agent.tar.gz" | shasum -a 256 -c -`,
-    },
-    {
-      label: '2. Extract into a folder only root can write',
-      text: `sudo mkdir -p ${MAC_DIR}\nsudo tar -xzf assimilate-agent.tar.gz --no-same-owner -C ${MAC_DIR}\nsudo xattr -dr com.apple.quarantine ${MAC_DIR}/assimilate-agent`,
-    },
-    {
-      label: '3. Install the daemon, which starts at boot',
-      text: `sudo BORG_SERVER_URL=${SERVER} \\\n  BORG_ENROLLMENT_TOKEN=${TOKEN} \\\n  BORG_SERVER_KEY=${SERVER_KEY} \\\n  ${MAC_DIR}/assimilate-agent/assimilate-agent service install`,
-    },
-  ],
-  windows: [
-    {
-      label: '1. Download and verify',
-      text: `Invoke-WebRequest "${SERVER}/download/agent?os=windows&arch=x86_64" -OutFile agent.zip\nif ((Get-FileHash agent.zip).Hash -ne "${SHA256.toUpperCase()}") { throw "Checksum mismatch" }\nExpand-Archive agent.zip "C:\\Program Files\\Assimilate"`,
-    },
-    {
-      label: '2. Install the service, which starts at boot',
-      text: `$env:BORG_SERVER_URL = "${SERVER}"\n$env:BORG_ENROLLMENT_TOKEN = "${TOKEN}"\n$env:BORG_SERVER_KEY = "${SERVER_KEY}"\n& "C:\\Program Files\\Assimilate\\assimilate-agent\\assimilate-agent.exe" service install`,
-    },
-  ],
-}
-
-const manualSteps = computed(() => MANUAL_STEPS[target.value])
-
-const AUTOSTART_NOTES: Record<InstallTarget, string> = {
-  linux:
-    'systemd starts the agent at boot and restarts it if it stops. Check it with systemctl status assimilate-agent.',
-  macos:
-    'service install writes /Library/LaunchDaemons/com.assimilate.agent.plist, so launchd starts the agent at boot and again after every exit. Backing up folders such as ~/Library needs Full Disk Access for the agent and its borg (System Settings > Privacy & Security).',
-  windows:
-    'service install registers the assimilate-agent Windows service to start automatically at boot as LocalSystem. Manage it in Services (services.msc).',
-}
-
-const autostartNote = computed(() => AUTOSTART_NOTES[target.value])
-
 const steps = [
   'Detects the OS and architecture, downloads the agent and verifies its SHA-256.',
-  'Installs the service and writes the config with 0600 permissions.',
-  'Pins the server key from the command, then enrolls and starts the agent.',
+  'Trades the single-use token for the agent token, which only root can read.',
+  'Pins the server key from the command, then installs the service and starts the agent.',
 ]
+
+const params = computed<InstallParams | null>(() =>
+  props.created && serverKey.value
+    ? {
+        server: window.location.origin,
+        token: props.created.plaintext,
+        serverKey: serverKey.value,
+      }
+    : null,
+)
+
+const command = computed(() => (params.value ? installCommand(target.value, params.value) : ''))
+const manual = computed(() => (params.value ? manualSteps(target.value, params.value) : []))
+
+const MS_PER_SECOND = 1000
+const SECONDS_PER_MINUTE = 60
+
+/** Time left on the token as `m:ss`, or null once it has run out. */
+const remaining = computed<string | null>(() => {
+  const expiresAt = props.created?.token.expires_at
+  if (!expiresAt) return null
+  const seconds = Math.floor((Date.parse(expiresAt) - now.value) / MS_PER_SECOND)
+  if (seconds <= 0) return null
+  const rest = String(seconds % SECONDS_PER_MINUTE).padStart(2, '0')
+  return `${Math.floor(seconds / SECONDS_PER_MINUTE)}:${rest}`
+})
+
+function toggleTag(id: number): void {
+  tagIds.value = tagIds.value.includes(id)
+    ? tagIds.value.filter((t) => t !== id)
+    : [...tagIds.value, id]
+}
+
+let timer: ReturnType<typeof setInterval> | undefined
+
+onMounted(async () => {
+  timer = setInterval(() => {
+    now.value = Date.now()
+  }, MS_PER_SECOND)
+  try {
+    const [key, tags] = await Promise.all([getAgentChannelKey(), listTags('agent')])
+    serverKey.value = key.public_key
+    agentTags.value = tags
+  } catch (e: unknown) {
+    loadError.value = extractError(e, 'Failed to load the server key')
+  }
+})
+
+onUnmounted(() => clearInterval(timer))
 </script>
 
 <template>
   <div
-    v-if="!generated"
+    v-if="!created"
     class="form-stack"
   >
     <p class="field-hint install-intro">
@@ -126,12 +125,16 @@ const steps = [
       >
       <select
         id="enroll-expiry"
-        v-model="expiry"
+        v-model.number="lifetime"
         class="input"
       >
-        <option value="900">15 minutes</option>
-        <option value="3600">1 hour</option>
-        <option value="86400">24 hours</option>
+        <option
+          v-for="option in LIFETIMES"
+          :key="option.value"
+          :value="option.value"
+        >
+          {{ option.label }}
+        </option>
       </select>
     </div>
     <div class="field">
@@ -148,20 +151,33 @@ const steps = [
       />
       <span class="field-hint">Only a host with this exact hostname can use the token.</span>
     </div>
-    <div class="field">
-      <label
-        class="field-label"
-        for="enroll-tags"
-        >Tags applied on enrollment</label
-      >
-      <input
-        id="enroll-tags"
-        v-model="tags"
-        class="input"
-        placeholder="Optional, e.g. servers, eu"
-      />
+    <div
+      v-if="agentTags.length > 0"
+      class="field"
+    >
+      <span class="field-label">Tags applied on enrollment</span>
+      <div class="install-tags">
+        <label
+          v-for="tag in agentTags"
+          :key="tag.id"
+          class="toggle-row-label"
+        >
+          <input
+            type="checkbox"
+            :checked="tagIds.includes(tag.id)"
+            @change="toggleTag(tag.id)"
+          />
+          {{ tag.name }}
+        </label>
+      </div>
     </div>
-    <EnrollmentTokenList />
+    <div
+      v-if="error || loadError"
+      class="form-error"
+    >
+      {{ error ?? loadError }}
+    </div>
+    <EnrollmentTokenList :version="version" />
   </div>
 
   <div
@@ -183,13 +199,18 @@ const steps = [
       test-id="install-command"
     />
     <div class="install-meta">
-      <span class="badge badge--warning">Expires in 59:41</span>
-      <span class="badge badge--neutral">{{ hostname.trim() || 'Any hostname' }}</span>
       <span
-        v-if="tags.trim()"
-        class="badge badge--neutral"
-        >Tags: {{ tags.trim() }}</span
+        v-if="remaining"
+        class="badge badge--warning"
+        data-testid="install-expiry"
+        >Expires in {{ remaining }}</span
       >
+      <span
+        v-else
+        class="badge badge--danger"
+        >Expired</span
+      >
+      <span class="badge badge--neutral">{{ created.token.hostname ?? 'Any hostname' }}</span>
     </div>
     <ol class="field-hint install-steps">
       <li
@@ -199,6 +220,12 @@ const steps = [
         {{ step }}
       </li>
     </ol>
+    <div
+      v-if="error"
+      class="form-error"
+    >
+      {{ error }}
+    </div>
     <BaseDisclosure title="Install manually">
       <div class="install-manual">
         <p class="field-hint">
@@ -206,27 +233,27 @@ const steps = [
           script into a shell.
         </p>
         <CommandBlock
-          v-for="step in manualSteps"
+          v-for="step in manual"
           :key="step.label"
           :label="step.label"
           :text="step.text"
         />
-        <p class="field-hint">{{ autostartNote }}</p>
+        <p class="field-hint">{{ AUTOSTART_NOTES[target] }}</p>
       </div>
     </BaseDisclosure>
+    <EnrollmentTokenList :version="version" />
   </div>
 </template>
 
 <style scoped>
-.install-meta {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-4);
-  margin-block: var(--space-5);
-}
-
 .install-intro {
   margin-top: var(--space-5);
+}
+
+.install-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-5);
 }
 
 .install-manual {
@@ -237,6 +264,13 @@ const steps = [
 }
 
 .install-os {
+  margin-block: var(--space-5);
+}
+
+.install-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-4);
   margin-block: var(--space-5);
 }
 

@@ -135,6 +135,10 @@ DB01_TOKEN=$(api POST "/api/agents" '{"hostname":"db-server-01","display_name":"
 # in docker-compose.demo.yml): hostnames are compared without regard to case,
 # so it still connects as this agent.
 MEDIA_TOKEN=$(api POST "/api/agents" '{"hostname":"media-store-01","display_name":"Media Storage NAS"}' | jq -r '.token')
+# The agent on this host cannot find borg (docs/agents.md#borg-not-installed):
+# its container sets BORG_BINARY to a path that does not exist, so it connects
+# and reports a missing borg. It has no schedules and no archives.
+BUILD_TOKEN=$(api POST "/api/agents" '{"hostname":"build-runner-01","display_name":"Build Runner"}' | jq -r '.token')
 api POST "/api/agents" '{"hostname":"unassigned-01","display_name":"Unassigned Demo Agent"}' > /dev/null
 api POST "/api/agents" '{"hostname":"offline-due-01","display_name":"Offline Due Soon"}' > /dev/null
 api POST "/api/agents" '{"hostname":"disabled-only-01","display_name":"Disabled Schedule Agent"}' > /dev/null
@@ -156,6 +160,7 @@ api POST "/api/agents" '{"hostname":"laptop-01","display_name":"This computer"}'
 export AGENT_TOKEN_1="$WEB01_TOKEN"
 export AGENT_TOKEN_2="$DB01_TOKEN"
 export AGENT_TOKEN_3="$MEDIA_TOKEN"
+export AGENT_TOKEN_4="$BUILD_TOKEN"
 
 # db-server-01's own files (Sources -> Files): every field set, so a schedule
 # that takes each host's files, like "Everything on db-server-01" below, reads
@@ -274,6 +279,7 @@ mkdir -p /seeds
 echo "AGENT_TOKEN_1='$WEB01_TOKEN'" > /seeds/tokens.env
 echo "AGENT_TOKEN_2='$DB01_TOKEN'" >> /seeds/tokens.env
 echo "AGENT_TOKEN_3='$MEDIA_TOKEN'" >> /seeds/tokens.env
+echo "AGENT_TOKEN_4='$BUILD_TOKEN'" >> /seeds/tokens.env
 # Agents only connect to a server holding the key they pin; the demo's agents
 # learn it from the server itself, as the demo trusts its own network.
 SERVER_KEY=$(api GET "/api/system/agent-channel-key" | jq -r '.public_key')

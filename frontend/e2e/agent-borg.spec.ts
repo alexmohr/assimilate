@@ -1,21 +1,23 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
-import { expect, loginAsAdmin, mockMissingBorg, test } from './fixtures'
+import { expect, loginAsAdmin, test } from './fixtures'
 
 /**
  * A host whose agent cannot find borg (docs/agents.md#borg-not-installed).
- * The demo's agents all have borg, so the server's report for web-server-01
- * is faked; the "Check again" request goes to the real server and agent.
+ * The demo's build-runner-01 container sets BORG_BINARY to a path that does
+ * not exist, so its agent reports a missing borg when it connects; the other
+ * demo agents have borg.
  */
 test.describe('Agent without borg', () => {
   test('the hosts list flags the host and its page explains the fix', async ({ page }) => {
-    await mockMissingBorg(page, 'web-server-01')
     await loginAsAdmin(page)
 
     await page.goto('/agents')
-    const row = page.locator('.list-row').filter({ hasText: 'web-server-01' }).first()
-    await expect(row.locator('.entity-issue-chip')).toHaveText('Borg not installed')
+    const row = page.locator('.list-row').filter({ hasText: 'build-runner-01' }).first()
+    await expect(row.locator('.entity-issue-chip')).toHaveText('Borg not installed', {
+      timeout: 30_000,
+    })
 
     await row.locator('.entity-issue-chip').click()
     const notice = page.getByTestId('borg-notice')
@@ -23,19 +25,23 @@ test.describe('Agent without borg', () => {
     await expect(notice).toContainText('BORG_BINARY')
   })
 
-  test('Check again asks the agent to look for borg', async ({ page }) => {
-    await mockMissingBorg(page, 'web-server-01')
+  test('Check again asks the agent to look for borg again', async ({ page }) => {
     await loginAsAdmin(page)
-    await page.goto('/agents/web-server-01')
+    await page.goto('/agents/build-runner-01')
 
     const request = page.waitForResponse(
       (response) =>
-        response.url().endsWith('/api/agents/web-server-01/check-borg') &&
+        response.url().endsWith('/api/agents/build-runner-01/check-borg') &&
         response.request().method() === 'POST',
     )
-    await page.getByTestId('borg-notice').getByRole('button', { name: 'Check again' }).click()
+    await page
+      .getByTestId('borg-notice')
+      .getByRole('button', { name: 'Check again' })
+      .click({ timeout: 30_000 })
 
     expect((await request).status()).toBe(202)
+    // The agent answers the same: still missing.
+    await expect(page.getByTestId('borg-notice')).toBeVisible()
   })
 
   test('a host whose agent has borg shows no warning', async ({ page }) => {

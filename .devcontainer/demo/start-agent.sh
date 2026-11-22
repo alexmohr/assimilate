@@ -27,6 +27,9 @@ case "$AGENT_HOST" in
     web-server-01)  BORG_AGENT_TOKEN="$AGENT_TOKEN_1" ;;
     db-server-01)   BORG_AGENT_TOKEN="$AGENT_TOKEN_2" ;;
     media-store-01) BORG_AGENT_TOKEN="$AGENT_TOKEN_3" ;;
+    # No archives and no borg: the compose service points BORG_BINARY at a
+    # path that does not exist, so the host shows the missing-borg warning.
+    build-runner-01) BORG_AGENT_TOKEN="$AGENT_TOKEN_4" ;;
     *)
         echo "ERROR: Unknown agent hostname: $AGENT_HOST" >&2
         exit 1

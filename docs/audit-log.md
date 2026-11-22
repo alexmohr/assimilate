@@ -78,6 +78,9 @@ A login is recorded only once it completes, so an account with two-factor authen
 | `create_api_token` | `api_token` | the token's `name` |
 | `delete_api_token` | `api_token` | the token's `name` and its `owner` |
 | `regenerate_agent_token` | `agent` | the agent's `hostname` and `domain` |
+| `create_enrollment_token` | `enrollment_token` | the `hostname` the token is restricted to, if any, and when it expires `expires_at`. Never the token |
+| `use_enrollment_token` | `enrollment_token` | the `hostname` and `domain` of the host that enrolled with it. Recorded for `system`, since no signed-in user acts. Neither token is recorded |
+| `revoke_enrollment_token` | `enrollment_token` | the `hostname` the token was restricted to, if any |
 
 ### Notifications
 

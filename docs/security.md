@@ -71,6 +71,8 @@ Each agent registered in Assimilate has a unique agent token.
 
 Agent tokens are scoped to a single agent. Revoking an agent removes its token.
 
+A host without a token can [enroll itself](agents.md#install-with-one-command) with a single-use enrollment token. The token carries 32 random bytes, is stored only as a SHA-256 hash, expires after at most 24 hours, and is traded for the agent's own token inside the encrypted agent channel, so only a server holding the key the host pinned receives it. The server answers every refused token the same way.
+
 ## Agent Channel Encryption
 
 Every connection between an agent and the server, the agent's main connection and each [SSH agent forwarding](ssh-agent-forwarding.md) relay, is encrypted end to end inside the WebSocket with the Noise protocol framework (`Noise_NK_25519_ChaChaPoly_BLAKE2s`). It does not depend on TLS: the encryption reaches the server process even where a reverse proxy ends TLS, and on a plain `ws://` connection.

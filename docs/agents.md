@@ -113,6 +113,90 @@ The domain isn't detected automatically: it's a DNS-level fact about where a hos
 
 Leave the domain unset for the common case — a single host with that hostname. Two agents are only required to have different domains when they share a hostname; uniqueness is enforced on the *(hostname, domain)* pair, not on hostname alone.
 
+## Install with one command
+
+Use **New > Install command** when the server cannot reach the host over SSH, so **Deploy agent** is not an option. The dialog creates an *enrollment token* and shows a command to run on the host. The command downloads the agent, verifies it, registers the host with the server, and starts the agent at boot.
+
+![Install command](assets/screenshots/agent-install-command.png)
+
+1. Navigate to **Agents** and click **New**, then open the **Install command** tab.
+2. Choose how long the token works: 15 minutes, 1 hour (the default), or 24 hours.
+3. Optionally restrict the token to one hostname, and pick the agent tags the host receives when it enrolls.
+4. Click **Generate command**, pick the host's operating system, and copy the command. It is shown once.
+5. Run it on the host as root (Linux and macOS) or from an administrator PowerShell (Windows).
+
+On Linux and macOS the command looks like this:
+
+```bash
+curl -fsSL https://your-server/install.sh | sudo sh -s -- \
+  --server https://your-server \
+  --token <enrollment token> \
+  --server-key <server key>
+```
+
+On Windows, run it from an administrator PowerShell:
+
+```powershell
+& ([scriptblock]::Create((irm https://your-server/install.ps1))) `
+  -Server https://your-server -Token <enrollment token> -ServerKey <server key>
+```
+
+The new agent appears in the **Agents** list as soon as it enrolls and connects.
+
+### What the script does
+
+1. Detects the operating system and CPU architecture.
+2. Downloads the agent and checks its SHA-256. Linux hosts download it from the server, which publishes the checksum next to it at `/download/agent.sha256`. macOS and Windows hosts download the release archive from GitHub for the version the server was built from, and check it against the release's `SHA256SUMS`. A server built from an unreleased commit has no such release: use the manual steps below with an archive you downloaded yourself.
+3. Pins the server key from the command and connects over the [encrypted connection](#encrypted-connection). Only a server that holds the matching private key completes the handshake, so the first connection is authenticated before the token leaves the host.
+4. Trades the enrollment token for the agent's own token (`assimilate-agent --enroll`) and stores it where only root can read it.
+5. Installs the service and starts it.
+
+| Platform | Where the agent and its token live | Started at boot by |
+|---|---|---|
+| Linux | `/usr/local/bin/assimilate-agent`, token in `/etc/assimilate-agent.env` (mode `0600`) | A systemd unit, `/etc/systemd/system/assimilate-agent.service`, restarted if it stops |
+| macOS | `/Library/Assimilate/assimilate-agent`, token in `/var/db/assimilate-agent/agent.json` | A launchd daemon, `/Library/LaunchDaemons/com.assimilate.agent.plist`, with `KeepAlive` |
+| Windows | `C:\Program Files\Assimilate\assimilate-agent`, token in `C:\ProgramData\Assimilate\agent\agent.json` | The `assimilate-agent` Windows service, running as `LocalSystem` |
+
+The script refuses to run on a host that already has an agent token. Pass `--force` (`-Force` on Windows) to install again, and `--skip-service` (`-SkipService`) to install and enroll without starting the agent at boot.
+
+macOS needs **Full Disk Access** for the agent and its borg, as [described below](#full-disk-access).
+
+### Install manually
+
+The dialog's **Install manually** section lists the same steps as separate commands: download and verify the agent, enroll, and register the service. Use it on a host that cannot pipe a script into a shell. `--enroll` reads the token from the `BORG_ENROLLMENT_TOKEN` environment variable, never from a command line, and prints the agent's own token on standard output:
+
+```bash
+BORG_ENROLLMENT_TOKEN=<enrollment token> assimilate-agent --enroll \
+  --server-url https://your-server --server-key <server key>
+```
+
+### Enrollment tokens
+
+An enrollment token is 32 random bytes with an `enr_` prefix. The server keeps only its SHA-256, so it cannot show a token again.
+
+- **Single-use.** The first host that presents a valid token uses it up. A second host with the same token is refused, even when both connect at the same moment.
+- **Short-lived.** It stops working after the lifetime you chose, at most 24 hours.
+- **Revocable.** Revoke a pending token from the **Enrollment tokens** list in the dialog, or with **Revoke token** while its command is still on screen.
+- **Bound on request.** A token restricted to a hostname only works for a host with exactly that name. Tags are applied to the new agent.
+- **Never reused.** The token is traded for the agent's own token and is worth nothing afterwards.
+
+The server gives the same answer for an unknown, expired, revoked or used token, so a refusal does not reveal which tokens exist. A failed attempt for a hostname that is already registered does not use the token up.
+
+Creating, using and revoking a token each write an entry to the [audit log](audit-log.md#tokens). None of them records the token.
+
+!!! note
+    The enrollment token appears on the command line of `sudo sh` while the script runs, where other local users can read it. It is single-use and short-lived, so a token read that way is worth nothing once the host has enrolled. Use the manual steps, which pass it through the environment, to avoid even that.
+
+### Enrollment API
+
+| Method | Path | Description |
+|---|---|---|
+| `POST` | `/api/enrollment-tokens` | Create a token. Body: `lifetime_secs`, `hostname`, `tag_ids`, all optional. Returns the token once, as `plaintext`. |
+| `GET` | `/api/enrollment-tokens` | List tokens with their status: `pending`, `used`, `expired` or `revoked`. |
+| `DELETE` | `/api/enrollment-tokens/{id}` | Revoke a pending token. |
+
+The calls need an admin. `GET /install.sh`, `GET /install.ps1` and `GET /download/agent` need no login: they hold no secrets, and a host proves itself with its token.
+
 ## Agent Deployment
 
 ### Manual

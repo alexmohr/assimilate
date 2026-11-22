@@ -1320,6 +1320,17 @@ api POST "/api/tags" '{"name":"staging","color":"#f59e0b","scope":"agent"}' > /d
 api POST "/api/tags" '{"name":"critical","color":"#dc2626","scope":"repo"}' > /dev/null 2>&1 || true
 api POST "/api/tags" '{"name":"archival","color":"#6366f1","scope":"repo"}' > /dev/null 2>&1 || true
 
+# Enrollment tokens for the Install command tab of the Add agent dialog: two
+# still pending, one restricted to a hostname, and one revoked, so the token
+# list shows more than one state.
+echo "==> Creating enrollment tokens..."
+PRODUCTION_TAG_ID=$(api GET "/api/tags?scope=agent" | jq -r '.[] | select(.name == "production") | .id')
+api POST "/api/enrollment-tokens" '{"lifetime_secs":86400}' > /dev/null
+api POST "/api/enrollment-tokens" "$(jq -n --argjson tag "${PRODUCTION_TAG_ID:-0}" \
+    '{lifetime_secs: 86400, hostname: "build-agent-07", tag_ids: [$tag]}')" > /dev/null
+REVOKED_TOKEN_ID=$(api POST "/api/enrollment-tokens" '{"lifetime_secs":3600,"hostname":"old-laptop"}' | jq -r '.token.id')
+api DELETE "/api/enrollment-tokens/$REVOKED_TOKEN_ID" > /dev/null
+
 echo "==> Associating repo tags (for config-export coverage)..."
 PGPASSWORD=borg_demo psql -h postgres -U borg -d borg <<SQL
 INSERT INTO repo_tags (repo_id, tag_id)

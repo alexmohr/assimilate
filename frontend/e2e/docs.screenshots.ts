@@ -297,6 +297,15 @@ test.describe('signed in', () => {
     await visit(page, '/agents')
     await shot(page, 'hosts')
 
+    // The Add agent dialog's Install command tab, with a token just created.
+    await page.getByRole('button', { name: 'New', exact: true }).click()
+    await page.getByRole('tab', { name: 'Install command' }).click()
+    await page.getByLabel('Restrict to hostname').fill('build-agent-07')
+    await page.getByRole('button', { name: 'Generate command' }).click()
+    await expect(page.getByTestId('install-command')).toBeVisible()
+    await shot(page, 'agent-install-command')
+    await page.keyboard.press('Escape')
+
     await visit(page, '/agents/web-server-01')
     await shot(page, 'host-detail')
 

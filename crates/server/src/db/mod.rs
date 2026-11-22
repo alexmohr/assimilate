@@ -18,6 +18,8 @@ pub mod databases;
 pub mod dependency_catch_ups;
 /// Dependency hosts: machines a backup needs besides its agent and repository.
 pub mod dependency_hosts;
+/// Enrollment tokens: single-use tokens a new host trades for an agent token.
+pub mod enrollment_tokens;
 /// Machines: the wake, shutdown and availability settings agents,
 /// repository hosts and dependency hosts share.
 pub mod machines;

@@ -195,6 +195,13 @@ fn non_empty(value: &str) -> Option<String> {
 
 /// The `Hello` the agent opens every connection with, inside the encrypted
 /// channel.
+/// This host's name as the server knows the agent: `BORG_HOSTNAME`, else the
+/// machine's own.
+pub(crate) fn local_hostname() -> String {
+    std::env::var("BORG_HOSTNAME")
+        .unwrap_or_else(|_| gethostname::gethostname().to_string_lossy().into_owned())
+}
+
 fn hello_message(
     token: &str,
     build: &BuildInfo,
@@ -203,8 +210,7 @@ fn hello_message(
     snapshot_tools: Vec<FsSnapshotKind>,
     borg: BorgStatus,
 ) -> AgentToServer {
-    let hostname = std::env::var("BORG_HOSTNAME")
-        .unwrap_or_else(|_| gethostname::gethostname().to_string_lossy().into_owned());
+    let hostname = local_hostname();
 
     let agent_git_sha = non_empty(build.git_sha);
     let agent_version = agent_git_sha.as_ref().map_or_else(
@@ -404,6 +410,9 @@ where
             info!("Server shutting down, disconnecting");
             return Err(WsError::ServerShutdown);
         }
+        ServerToAgent::Enrolled { .. } | ServerToAgent::EnrollRefused { .. } => {
+            warn!("Ignoring an enrollment answer: this agent did not ask to enroll");
+        }
         ServerToAgent::RestartAgent => {
             info!("Received RestartAgent command, shutting down to be restarted");
             return Err(WsError::RestartRequested);
@@ -582,7 +591,7 @@ pub(crate) fn is_fatal(err: &WsError) -> bool {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use std::{
         pin::Pin,
         task::{Context, Poll},
@@ -950,7 +959,7 @@ mod tests {
     /// runs.
     /// Accepts one connection on `listener`, completes the server side of
     /// the encrypted handshake, and returns the decrypted channel halves.
-    async fn accept_encrypted(
+    pub(crate) async fn accept_encrypted(
         listener: &tokio::net::TcpListener,
     ) -> (
         EncryptedSink<

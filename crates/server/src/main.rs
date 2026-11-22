@@ -1313,6 +1313,15 @@ fn access_control_routes() -> Router<AppState> {
         )
         .route("/api/tokens/{id}", delete(api::tokens::delete_token))
         .route(
+            "/api/enrollment-tokens",
+            get(api::enrollment::list_enrollment_tokens)
+                .post(api::enrollment::create_enrollment_token),
+        )
+        .route(
+            "/api/enrollment-tokens/{id}",
+            delete(api::enrollment::revoke_enrollment_token),
+        )
+        .route(
             "/api/server-quotas",
             get(api::server_quotas::list_server_quotas),
         )
@@ -1453,6 +1462,21 @@ fn misc_routes() -> Router<AppState> {
     Router::new()
         .route("/api/health", get(api::health::health))
         .route("/api/system/mode", get(api::health::system_mode))
+        // What a new host fetches before it has any credentials: the install
+        // scripts and the agent binary the server carries.
+        .route(
+            "/install.sh",
+            get(|| std::future::ready(api::install::install_sh())),
+        )
+        .route(
+            "/install.ps1",
+            get(|| std::future::ready(api::install::install_ps1())),
+        )
+        .route("/download/agent", get(api::install::download_agent))
+        .route(
+            "/download/agent.sha256",
+            get(api::install::download_agent_sha256),
+        )
         // Authenticates its own way - a monitoring token or an allowed
         // network - so it stays outside `auth_tracking_middleware`.
         .route("/metrics", get(api::metrics::scrape))

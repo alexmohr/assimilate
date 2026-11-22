@@ -43,6 +43,7 @@ use crate::{AppState, db};
 mod backup;
 mod completion;
 mod connection;
+mod enroll;
 mod failure;
 mod maintenance;
 mod notify;
@@ -352,6 +353,9 @@ async fn handle_agent_message_impl(text: &str, hostname: &str, agent_id: i64, st
         }
         AgentToServer::Hello { .. } => {
             tracing::warn!(hostname = %hostname, "unexpected Hello after handshake");
+        }
+        AgentToServer::Enroll { .. } => {
+            tracing::warn!(hostname = %hostname, "unexpected Enroll after handshake");
         }
         AgentToServer::RestartFailed { error_message } => {
             tracing::error!(
@@ -4727,6 +4731,276 @@ exit 0
         crate::db::insert_agent(pool, hostname, None, &hash, None, None)
             .await
             .expect("insert agent")
+    }
+
+    fn enroll_frame(hostname: &str, token: &str) -> Message {
+        Message::Text(
+            wire(&AgentToServer::Enroll {
+                hostname: hostname.into(),
+                domain: None,
+                enrollment_token: token.into(),
+            })
+            .into(),
+        )
+    }
+
+    const ENROLLMENT_TOKEN: &str = "enr_test-enrollment-token";
+
+    /// A token created by an admin, with `lifetime` left (negative: already
+    /// past) and optionally restricted to `hostname`.
+    async fn enrollment_token(
+        pool: &PgPool,
+        plaintext: &str,
+        lifetime: shared::time::SignedDuration,
+        hostname: Option<&str>,
+    ) -> i64 {
+        let admin =
+            crate::test_support::insert_auth_user(pool, &format!("admin-{plaintext}")).await;
+        crate::db::enrollment_tokens::insert_enrollment_token(
+            pool,
+            &crate::db::enrollment_tokens::NewEnrollmentToken {
+                token_hash: &crate::api::tokens::hash_token(plaintext),
+                hint: "enr_test",
+                created_by: admin.user_id,
+                expires_at: shared::time::Timestamp::now().saturating_add(lifetime),
+                hostname,
+                tag_ids: &[],
+            },
+        )
+        .await
+        .expect("insert enrollment token")
+        .id
+    }
+
+    /// What the server answered an enrollment with.
+    async fn enroll_answer(state: &AppState, hostname: &str, token: &str) -> ServerToAgent {
+        let (sink, sent) = recording_sink();
+        Box::pin(serve_agent(
+            sink,
+            frames(vec![enroll_frame(hostname, token)]),
+            state.clone(),
+        ))
+        .await;
+        sent_messages(&sent)
+            .into_iter()
+            .next()
+            .expect("the server answers an enrollment")
+    }
+
+    fn assert_refused(answer: &ServerToAgent) {
+        let ServerToAgent::EnrollRefused { reason } = answer else {
+            panic!("the enrollment was not refused: {answer:?}");
+        };
+        assert_eq!(reason, shared::enrollment::ENROLLMENT_REFUSED);
+    }
+
+    /// A host with a valid token gets an agent token it can connect with, and
+    /// the use is audited without either token.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_host_enrolls_with_a_token_and_then_authenticates(pool: PgPool) {
+        enrollment_token(
+            &pool,
+            ENROLLMENT_TOKEN,
+            shared::time::SignedDuration::from_secs(3600),
+            None,
+        )
+        .await;
+        let state = build_test_state(pool.clone());
+
+        let ServerToAgent::Enrolled { token } =
+            enroll_answer(&state, "enrolled-host", ENROLLMENT_TOKEN).await
+        else {
+            panic!("the host was not enrolled");
+        };
+
+        assert!(token.len() >= 64, "an agent token carries 32 random bytes");
+        assert!(
+            verify_agent_token(&pool, "enrolled-host", &token)
+                .await
+                .is_some(),
+            "the agent connects with the token it was given"
+        );
+        let events = crate::test_support::audit_events(&pool).await;
+        let enrolled: Vec<&str> = events
+            .iter()
+            .filter_map(|event| match event {
+                shared::audit::AuditEvent::UseEnrollmentToken { hostname, .. } => {
+                    Some(hostname.as_str())
+                }
+                _ => None,
+            })
+            .collect();
+        assert_eq!(enrolled, ["enrolled-host"]);
+        let logged = format!("{events:?}");
+        assert!(!logged.contains(&token) && !logged.contains(ENROLLMENT_TOKEN));
+    }
+
+    /// The tags a token carries land on the agent that uses it.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn an_enrolled_agent_gets_the_tags_of_its_token(pool: PgPool) {
+        let tag = crate::db::insert_tag(&pool, "enrolled-tag", "#336699", "agent")
+            .await
+            .unwrap();
+        let admin = crate::test_support::insert_auth_user(&pool, "tagging-admin").await;
+        crate::db::enrollment_tokens::insert_enrollment_token(
+            &pool,
+            &crate::db::enrollment_tokens::NewEnrollmentToken {
+                token_hash: &crate::api::tokens::hash_token(ENROLLMENT_TOKEN),
+                hint: "enr_test",
+                created_by: admin.user_id,
+                expires_at: shared::time::Timestamp::now()
+                    .saturating_add(shared::time::SignedDuration::from_secs(3600)),
+                hostname: None,
+                tag_ids: &[tag.id],
+            },
+        )
+        .await
+        .unwrap();
+        let state = build_test_state(pool.clone());
+
+        assert!(matches!(
+            enroll_answer(&state, "tagged-host", ENROLLMENT_TOKEN).await,
+            ServerToAgent::Enrolled { .. }
+        ));
+
+        let agents = crate::db::list_all_agent_tags(&pool).await.unwrap();
+        let names: Vec<&str> = agents.iter().map(|t| t.tag_name.as_str()).collect();
+        assert_eq!(names, ["enrolled-tag"]);
+    }
+
+    /// A token is spent by the first host that uses it.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_token_cannot_be_used_twice(pool: PgPool) {
+        enrollment_token(
+            &pool,
+            ENROLLMENT_TOKEN,
+            shared::time::SignedDuration::from_secs(3600),
+            None,
+        )
+        .await;
+        let state = build_test_state(pool.clone());
+
+        let first = enroll_answer(&state, "first-host", ENROLLMENT_TOKEN).await;
+        let second = enroll_answer(&state, "second-host", ENROLLMENT_TOKEN).await;
+
+        assert!(matches!(first, ServerToAgent::Enrolled { .. }));
+        assert_refused(&second);
+        assert!(
+            matches!(
+                crate::db::get_agent_token_hashes(&pool, "second-host").await,
+                Err(crate::error::ApiError::NotFound(_))
+            ),
+            "the second host was not registered"
+        );
+    }
+
+    /// Two hosts racing for one token: exactly one gets it.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn only_one_of_two_simultaneous_hosts_gets_the_token(pool: PgPool) {
+        enrollment_token(
+            &pool,
+            ENROLLMENT_TOKEN,
+            shared::time::SignedDuration::from_secs(3600),
+            None,
+        )
+        .await;
+        let state = build_test_state(pool.clone());
+
+        let (a, b) = tokio::join!(
+            enroll_answer(&state, "racer-a", ENROLLMENT_TOKEN),
+            enroll_answer(&state, "racer-b", ENROLLMENT_TOKEN),
+        );
+
+        let enrolled = [a, b]
+            .iter()
+            .filter(|answer| matches!(answer, ServerToAgent::Enrolled { .. }))
+            .count();
+        assert_eq!(enrolled, 1);
+    }
+
+    /// A token past its lifetime is refused, as is one that never existed.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn an_expired_or_unknown_token_is_refused(pool: PgPool) {
+        enrollment_token(
+            &pool,
+            ENROLLMENT_TOKEN,
+            shared::time::SignedDuration::from_secs(-1),
+            None,
+        )
+        .await;
+        let state = build_test_state(pool.clone());
+
+        assert_refused(&enroll_answer(&state, "late-host", ENROLLMENT_TOKEN).await);
+        assert_refused(&enroll_answer(&state, "late-host", "enr_never-issued").await);
+    }
+
+    /// A revoked token is refused.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_revoked_token_is_refused(pool: PgPool) {
+        let id = enrollment_token(
+            &pool,
+            ENROLLMENT_TOKEN,
+            shared::time::SignedDuration::from_secs(3600),
+            None,
+        )
+        .await;
+        assert!(
+            crate::db::enrollment_tokens::revoke_enrollment_token(&pool, id)
+                .await
+                .unwrap()
+        );
+        let state = build_test_state(pool);
+
+        assert_refused(&enroll_answer(&state, "revoked-host", ENROLLMENT_TOKEN).await);
+    }
+
+    /// A token restricted to one hostname is refused for any other, and stays
+    /// usable for the right one.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_token_bound_to_a_hostname_only_works_for_it(pool: PgPool) {
+        enrollment_token(
+            &pool,
+            ENROLLMENT_TOKEN,
+            shared::time::SignedDuration::from_secs(3600),
+            Some("db-02"),
+        )
+        .await;
+        let state = build_test_state(pool);
+
+        assert_refused(&enroll_answer(&state, "web-01", ENROLLMENT_TOKEN).await);
+        assert!(matches!(
+            enroll_answer(&state, "db-02", ENROLLMENT_TOKEN).await,
+            ServerToAgent::Enrolled { .. }
+        ));
+    }
+
+    /// A hostname that is already registered cannot be enrolled again, and the
+    /// failed attempt does not spend the token.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_taken_hostname_does_not_spend_the_token(pool: PgPool) {
+        socket_agent(&pool, "taken-host").await;
+        enrollment_token(
+            &pool,
+            ENROLLMENT_TOKEN,
+            shared::time::SignedDuration::from_secs(3600),
+            None,
+        )
+        .await;
+        let state = build_test_state(pool);
+
+        let taken = enroll_answer(&state, "taken-host", ENROLLMENT_TOKEN).await;
+        let free = enroll_answer(&state, "free-host", ENROLLMENT_TOKEN).await;
+
+        assert!(matches!(taken, ServerToAgent::EnrollRefused { .. }));
+        assert!(matches!(free, ServerToAgent::Enrolled { .. }));
     }
 
     /// A connection whose first frame is not a Hello - another message, a

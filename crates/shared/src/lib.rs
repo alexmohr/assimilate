@@ -45,6 +45,8 @@ pub mod db_text;
 pub mod dependency_hosts;
 /// Human-readable formatting shared by the agent's VM staging output and the
 /// server's notification content.
+/// Single-use tokens that let a new host enroll itself as an agent.
+pub mod enrollment;
 pub mod format;
 /// Pre- and post-backup hook commands and their per-command timeouts.
 pub mod hooks;

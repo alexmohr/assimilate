@@ -272,12 +272,33 @@ pub enum ServerToAgent {
     CheckBorg,
     /// Notification that the server is shutting down.
     ShuttingDown,
+    /// The answer to an [`AgentToServer::Enroll`] the server accepted.
+    Enrolled {
+        /// The agent's long-lived token. The server keeps only its hash.
+        token: String,
+    },
+    /// The answer to an [`AgentToServer::Enroll`] the server refused.
+    EnrollRefused {
+        /// Why, without saying which part of the token was wrong.
+        reason: String,
+    },
 }
 
 /// Messages sent from an agent to the server.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", content = "payload")]
 pub enum AgentToServer {
+    /// Sent instead of [`AgentToServer::Hello`] by a host that has no agent
+    /// token yet: it trades a single-use enrollment token for one.
+    Enroll {
+        /// Hostname of the agent machine.
+        hostname: String,
+        /// The machine's DNS domain, if it has one.
+        #[serde(default)]
+        domain: Option<String>,
+        /// The single-use enrollment token.
+        enrollment_token: String,
+    },
     /// Initial handshake sent by the agent upon connecting.
     Hello {
         /// Hostname of the agent machine.

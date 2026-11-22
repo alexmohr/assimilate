@@ -1,0 +1,53 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE enrollment_tokens SET used_at = NOW() WHERE token_hash = $1 AND used_at IS NULL AND revoked_at IS NULL AND expires_at > NOW() AND (hostname IS NULL OR hostname = $2) RETURNING id, created_by, tag_ids",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "enrollment_tokens",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "created_by",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "enrollment_tokens",
+            "name": "created_by"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "tag_ids",
+        "type_info": "Int8Array",
+        "origin": {
+          "Table": {
+            "table": "enrollment_tokens",
+            "name": "tag_ids"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      true,
+      false
+    ]
+  },
+  "hash": "154cfe0a9795b8c96cd301d6dac7ec3bd6f46a4c7a6d3867916bde36cc524a8e"
+}

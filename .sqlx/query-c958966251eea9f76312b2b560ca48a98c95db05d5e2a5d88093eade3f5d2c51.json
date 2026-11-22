@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE enrollment_tokens SET expires_at = NOW() - INTERVAL '1 minute' WHERE id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "c958966251eea9f76312b2b560ca48a98c95db05d5e2a5d88093eade3f5d2c51"
+}

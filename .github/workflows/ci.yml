@@ -80,22 +80,16 @@ jobs:
       - name: Unit tests
         run: npm run test
         working-directory: frontend
+      # Allowlisted advisories live in frontend/.npm-audit-allowlist.json; each
+      # needs a tracking issue (enforced by check-npm-audit.js, shared with the
+      # jscpd audit job). npm audit exits non-zero when it finds anything, so
+      # its report is captured and the script decides - a failed or unusable
+      # report still fails the job.
       - name: Check for security vulnerabilities
         run: |
-          ALLOWLIST=$(node -e "const a=require('./.npm-audit-allowlist.json').audit;console.log(a.join(','))")
-          if [ -n "$ALLOWLIST" ]; then
-            npm audit --audit-level=moderate --omit=dev || {
-              FOUND=$(npm audit --json --omit=dev | node -e "
-                const allowed='${ALLOWLIST}'.split(',').filter(Boolean);
-                const data=require('fs').readFileSync('/dev/stdin','utf8');
-                const json=JSON.parse(data);
-                const vulns=Object.keys(json.vulnerabilities||{}).filter(v=>!allowed.includes(v));
-                if(vulns.length){console.error('Unallowed vulnerabilities: '+vulns.join(', '));process.exit(1);}
-              ")
-            }
-          else
-            npm audit --audit-level=moderate --omit=dev
-          fi
+          npm audit --json --omit=dev > "$RUNNER_TEMP/frontend-audit.json" || true
+          node ../.github/scripts/check-npm-audit.js \
+            "$RUNNER_TEMP/frontend-audit.json" .npm-audit-allowlist.json
         working-directory: frontend
       - name: Check for deprecated packages
         run: |

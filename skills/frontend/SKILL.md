@@ -19,7 +19,7 @@ Use when:
 * No `debugger` statements.
 * Vue templates must use single attribute per line for elements with multiple attributes.
 * Never compare a wide `string`-typed value to a literal for control flow (`===`, `!==`, `switch`) — see the `local/no-string-literal-control-flow` ESLint rule below.
-* Never add an entry to `frontend/.npm-audit-allowlist.json` without explicit human approval. If CI fails due to a new advisory or a deprecated package, report it to the user and suggest a fix (upgrade or replacement) — do not suppress it.
+* Never add an entry to `frontend/.npm-audit-allowlist.json` without explicit human approval. If CI fails due to a new advisory or a deprecated package, report it to the user and suggest a fix (upgrade or replacement) — do not suppress it. Every `audit` entry is `{ "package", "issue" }` and must link an open issue in this repo that tracks removing it; CI (`.github/scripts/check-npm-audit.js`) rejects entries without one.
 * **Build verification is MANDATORY.** After ANY change to frontend code, run `npm run build` in `frontend/` and confirm it exits successfully before considering the task complete. A broken production build is never acceptable.
 * **Never submit template expressions that contain syntax errors.** Common mistakes: unbalanced quotes in attribute bindings, invalid JavaScript in `v-if`/`v-for`/`:prop` expressions, missing commas in object literals inside templates. If unsure, run `npm run build` to verify.
 * Write or update unit/component tests for any non-trivial frontend logic change.

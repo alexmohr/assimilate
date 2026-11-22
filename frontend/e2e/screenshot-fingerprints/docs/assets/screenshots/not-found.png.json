@@ -1,5 +1,5 @@
 {
   "test": "settings pages",
   "pages": ["frontend/src/views/NotFoundView.vue"],
-  "fingerprint": "358429f4017fb512b88498d028ae009eb5f9b9d6500969750d022ce6d9b7ca85"
+  "fingerprint": "f734c2a24706ddc45cf7cf3c75927ce862a56186f8f082eee9a543f81be6c91a"
 }

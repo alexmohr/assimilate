@@ -1,5 +1,5 @@
 {
   "test": "notifications",
   "pages": ["frontend/src/views/NotificationsView.vue"],
-  "fingerprint": "f5c9bf43c7a848ea1ba7ba47e20462d31b968170f451a12b0887aa4f04196245"
+  "fingerprint": "518a58dc551a74540084c2e5ac8504285d60bfd11d544bd8fe511610f5524dfa"
 }

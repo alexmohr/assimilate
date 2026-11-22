@@ -664,15 +664,16 @@ function agentSub(agent: AgentRow): string {
     .join(' · ')
 }
 
-type IssueKind = 'failed' | 'overdue' | 'unprotected'
+type IssueKind = 'failed' | 'overdue' | 'unprotected' | 'no-borg'
 
 /**
- * The issues an agent's chips report, by kind - the same three checks
+ * The issues an agent's chips report, by kind - the same checks
  * `agentIssues` makes, without the chip wiring, for the grouping, the pills
  * and the tiles to count on.
  */
 function issueKinds(agent: AgentRow): IssueKind[] {
   const kinds: IssueKind[] = []
+  if (borgProblem(agent.borg)) kinds.push('no-borg')
   if (isUnprotected(agent)) kinds.push('unprotected')
   const h = agentHealthStatus(agent)
   if (h && h.failed > 0) kinds.push('failed')
@@ -685,10 +686,10 @@ function needsAttention(agent: AgentRow): boolean {
   return issueKinds(agent).length > 0
 }
 
-/** Failing first, then nothing scheduled, then only late. */
+/** No borg or failing first, then nothing scheduled, then only late. */
 function attentionRank(agent: AgentRow): number {
   const kinds = issueKinds(agent)
-  if (kinds.includes('failed')) return 0
+  if (kinds.includes('no-borg') || kinds.includes('failed')) return 0
   if (kinds.includes('unprotected')) return 1
   return 2
 }

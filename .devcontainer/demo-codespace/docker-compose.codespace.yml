@@ -16,6 +16,7 @@ services:
   web-server-01: *demo-image
   db-server-01: *demo-image
   media-store-01: *demo-image
+  build-runner-01: *demo-image
   old-webserver: *demo-image
   legacy-db-prod: *demo-image
 

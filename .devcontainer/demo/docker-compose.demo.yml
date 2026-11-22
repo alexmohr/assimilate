@@ -81,6 +81,23 @@ services:
       - demo
     entrypoint: ["/app/start-agent.sh"]
 
+  build-runner-01:
+    image: assimilate-demo:local
+    build:
+      context: ../..
+      dockerfile: .devcontainer/demo/Dockerfile.demo
+    hostname: build-runner-01
+    volumes:
+      - demo-ssh-keys:/ssh-keys
+      - demo-seeds:/seeds
+    environment:
+      BORG_SERVER_URL: http://demo:8080
+      # A host where borg is not installed: the agent cannot find this.
+      BORG_BINARY: /nonexistent/borg
+    depends_on:
+      - demo
+    entrypoint: ["/app/start-agent.sh"]
+
   old-webserver:
     image: assimilate-demo:local
     build:

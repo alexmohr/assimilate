@@ -19,6 +19,7 @@
     "web-server-01",
     "db-server-01",
     "media-store-01",
+    "build-runner-01",
     "old-webserver",
     "legacy-db-prod",
     "postgres"

@@ -19,7 +19,6 @@ import { expect, test, type Locator, type Page } from '@playwright/test'
 import {
   expandAllArchiveGroups,
   loginAsAdmin,
-  mockMissingBorg,
   seededGrowthArchive,
   seededIdByName,
   seededNginxComparison,
@@ -181,7 +180,7 @@ interface AgentStatus {
 }
 
 /** The demo agents that run as real containers; the rest are offline by design. */
-const LIVE_AGENTS = ['web-server-01', 'db-server-01', 'media-store-01']
+const LIVE_AGENTS = ['web-server-01', 'db-server-01', 'media-store-01', 'build-runner-01']
 
 /**
  * The seed restarts the server once, and agents wait a minute before they
@@ -286,11 +285,10 @@ test.describe('signed in', () => {
     await shot(page, 'desktop-mode')
   })
 
-  // The demo's agents all have borg, so the server's report for web-server-01
-  // is faked to show the warning a host without it gets.
+  // build-runner-01's container has no borg (BORG_BINARY names a path that does
+  // not exist), so its agent reports a missing borg when it connects.
   test('agent without borg', async ({ page }) => {
-    await mockMissingBorg(page, 'web-server-01')
-    await visit(page, '/agents/web-server-01')
+    await visit(page, '/agents/build-runner-01')
     await expect(page.getByTestId('borg-notice')).toBeVisible()
     await shot(page, 'agent-borg-missing')
   })

@@ -7,6 +7,7 @@ import { apiClient } from './client'
 vi.mock('./client')
 
 import {
+  checkAgentBorg,
   createAgent,
   createAgentHostnamePattern,
   deleteAgent,
@@ -24,7 +25,6 @@ import {
   previewAgentServiceUnit,
   regenerateAgentToken,
   restartAgent,
-  checkAgentBorg,
   unhideAgent,
   updateAgent,
 } from './agents'

@@ -1167,10 +1167,11 @@ mod tests {
     #[test]
     fn a_hello_from_an_agent_that_predates_the_borg_check_has_no_borg_status() {
         let json = r#"{"type":"Hello","payload":{"hostname":"h","token":"t","agent_version":"1"}}"#;
-        let AgentToServer::Hello { borg, .. } = serde_json::from_str(json).unwrap() else {
-            panic!("not a Hello");
-        };
-        assert_eq!(borg, None);
+        let hello: AgentToServer = serde_json::from_str(json).unwrap();
+        assert!(
+            matches!(hello, AgentToServer::Hello { borg: None, .. }),
+            "{hello:?}"
+        );
     }
 
     #[test]

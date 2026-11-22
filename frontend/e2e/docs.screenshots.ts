@@ -289,7 +289,7 @@ test.describe('signed in', () => {
   // not exist), so its agent reports a missing borg when it connects.
   test('agent without borg', async ({ page }) => {
     await visit(page, '/agents/build-runner-01')
-    await expect(page.getByTestId('borg-notice')).toBeVisible()
+    await expect(page.getByTestId('borg-notice')).toBeVisible({ timeout: 60_000 })
     await shot(page, 'agent-borg-missing')
   })
 

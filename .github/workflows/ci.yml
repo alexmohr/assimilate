@@ -958,6 +958,49 @@ jobs:
       - name: Show logs on failure
         if: failure()
         run: docker compose logs
+  # Runs the server's install.sh the way a user does: against a live server,
+  # on a Debian 13 host (a container on the host network). The release agent
+  # build is the one the script downloads, so this also runs it on Debian 13's
+  # glibc. The test creates an enrollment token through the API, checks what
+  # the script leaves behind, that a spent token is refused, and that the agent
+  # connects with the token the script stored.
+  install-script:
+    name: Install script (Debian 13)
+    runs-on: ubuntu-26.04
+    needs: [build-agent]
+    services:
+      postgres: *postgres_service
+    env:
+      DATABASE_URL: postgres://borg:borg_secret@localhost:5432/borg
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust stable
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: ${{ env.RUST_STABLE_TOOLCHAIN }}
+      - name: Build the server
+        run: cargo "+${RUST_STABLE_TOOLCHAIN}" build --locked -p server
+        env:
+          SQLX_OFFLINE: "true"
+      - name: Download the release agent
+        uses: actions/download-artifact@v4
+        with:
+          name: agent-x86_64
+          path: ${{ runner.temp }}/agents/
+      - name: Start the server
+        run: |
+          mv "$RUNNER_TEMP/agents/agent" "$RUNNER_TEMP/agents/agent-x86_64"
+          chmod +x "$RUNNER_TEMP/agents/agent-x86_64"
+          ASSIMILATE_SECRET_KEY=ci_test_key_not_real \
+          ASSIMILATE_BIND_ADDR=0.0.0.0:8080 \
+          AGENT_BINARY_DIR="$RUNNER_TEMP/agents" \
+            nohup target/debug/server > "$RUNNER_TEMP/server.log" 2>&1 &
+          curl --retry 30 --retry-delay 2 --retry-all-errors -fsS http://127.0.0.1:8080/api/health
+      - name: Install the agent with install.sh in Debian 13
+        run: scripts/test-install-script.sh http://127.0.0.1:8080 debian:13
+      - name: Show the server log on failure
+        if: failure()
+        run: cat "$RUNNER_TEMP/server.log"
   nightly-version:
     name: Nightly Version
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'

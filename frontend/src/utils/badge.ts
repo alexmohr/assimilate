@@ -97,6 +97,7 @@ export function auditActionTone(action: AuditEvent['action']): BadgeTone {
     case 'update_role':
     case 'set_repo_permission':
     case 'regenerate_agent_token':
+    case 'revoke_enrollment_token':
     case 'update_notification_channel':
     case 'set_vapid_keys':
     case 'set_borgbase_token':
@@ -105,6 +106,8 @@ export function auditActionTone(action: AuditEvent['action']): BadgeTone {
     case 'create_group':
     case 'create_role':
     case 'create_api_token':
+    case 'create_enrollment_token':
+    case 'use_enrollment_token':
     case 'create_notification_channel':
     case 'create_notification_rule':
     case 'create_borgbase_repo':

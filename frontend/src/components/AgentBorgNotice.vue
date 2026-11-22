@@ -4,7 +4,7 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 -->
 
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { AlertTriangle } from '@lucide/vue'
 import { checkAgentBorg } from '../api/agents'
 import { borgProblem } from '../utils/borgStatus'
@@ -27,22 +27,29 @@ const problem = computed(() => borgProblem(props.agent.borg))
 const checking = ref(false)
 const error = ref<string | null>(null)
 
-// A new answer ends the wait, whether or not it changed anything.
-watch(
-  () => props.agent.borg,
-  () => {
-    checking.value = false
-  },
-)
+// The wait ends on a different answer, or after a few seconds when the agent
+// answers the same again: the page refetches the agent for unrelated pushes,
+// and a refetch with an unchanged status is not the answer.
+const ANSWER_WAIT_MS = 5000
+let giveUp: ReturnType<typeof setTimeout> | undefined
+
+function stopWaiting(): void {
+  clearTimeout(giveUp)
+  checking.value = false
+}
+
+watch(() => JSON.stringify(props.agent.borg), stopWaiting)
+onBeforeUnmount(() => clearTimeout(giveUp))
 
 async function checkAgain(): Promise<void> {
   checking.value = true
   error.value = null
   try {
     await checkAgentBorg(props.agent.hostname, props.agent.domain)
+    giveUp = setTimeout(stopWaiting, ANSWER_WAIT_MS)
   } catch (e: unknown) {
     error.value = extractError(e)
-    checking.value = false
+    stopWaiting()
   }
 }
 </script>

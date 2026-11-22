@@ -1124,6 +1124,18 @@ describe('HostsView issue rows', () => {
     expect(chips[0]?.classes()).toContain('sev-warning')
   })
 
+  it('counts a host without borg as needing attention, with a warning dot', async () => {
+    const wrapper = await mountSingleAgent({
+      is_connected: true,
+      borg: { state: 'missing', binary: 'borg' },
+    })
+
+    expect(wrapper.findAll('.list-group-title').map((t) => t.text())).toEqual(['Needs attention'])
+    expect(wrapper.get('.list-row-main .status-dot').classes()).toContain('status-dot--warning')
+    const attention = wrapper.findAll('.stat-label').find((l) => l.text() === 'Needs attention')
+    expect(attention?.element.parentElement?.textContent).toContain('1')
+  })
+
   it('opens the host when the borg chip is clicked', async () => {
     const { wrapper, router } = await mountAgentsList(
       [{ ...issueAgent, borg: { state: 'missing', binary: 'borg' } }],

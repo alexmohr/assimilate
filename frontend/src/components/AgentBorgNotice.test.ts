@@ -60,6 +60,24 @@ describe('AgentBorgNotice', () => {
     expect(wrapper.get('button').text()).toBe('Check again')
   })
 
+  it('keeps waiting through a refetch that brings the same status, then gives up', async () => {
+    vi.useFakeTimers()
+    try {
+      vi.mocked(apiClient.post).mockResolvedValue({})
+      const wrapper = mount(agent(MISSING))
+
+      await wrapper.get('button').trigger('click')
+      await flushPromises()
+      await wrapper.setProps({ agent: agent({ ...MISSING }) })
+      expect(wrapper.get('button').text()).toBe('Checking...')
+
+      await vi.advanceTimersByTimeAsync(5000)
+      expect(wrapper.get('button').text()).toBe('Check again')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('shows why the check could not be asked for', async () => {
     vi.mocked(apiClient.post).mockRejectedValue(new Error('agent not connected'))
     const wrapper = mount(agent(MISSING))

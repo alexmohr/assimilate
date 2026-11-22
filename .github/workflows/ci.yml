@@ -131,8 +131,15 @@ jobs:
       - name: Install dependencies
         run: npm ci --ignore-scripts
         working-directory: .github/jscpd
+      # Allowlisted advisories live in .github/jscpd/.npm-audit-allowlist.json;
+      # each needs a tracking issue (enforced by check-npm-audit.js). npm audit
+      # exits non-zero when it finds anything, so its report is captured and
+      # the script decides - a failed or unusable report still fails the job.
       - name: Check for security vulnerabilities
-        run: npm audit --audit-level=moderate
+        run: |
+          npm audit --json > "$RUNNER_TEMP/jscpd-audit.json" || true
+          node ../scripts/check-npm-audit.js \
+            "$RUNNER_TEMP/jscpd-audit.json" .npm-audit-allowlist.json
         working-directory: .github/jscpd
   db-integration:
     name: Database Integration Tests

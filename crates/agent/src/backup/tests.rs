@@ -287,6 +287,7 @@ async fn a_borg_that_cannot_be_started_reports_the_command_it_attempted() {
     );
 }
 
+#[cfg(unix)]
 #[tokio::test]
 async fn test_successful_backup() {
     let engine = BackupEngine::with_config(mock_borg_path(), vec![]);

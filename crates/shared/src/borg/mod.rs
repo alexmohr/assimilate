@@ -15,8 +15,6 @@ pub mod log_json;
 /// Whether a host can run borg, as its agent reports it.
 pub mod status;
 
-pub use status::BorgStatus;
-
 use std::{
     ffi::OsStr,
     path::{Path, PathBuf},
@@ -24,6 +22,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+pub use status::BorgStatus;
 use tokio::{
     io::AsyncReadExt as _,
     process::{Child, ChildStderr, ChildStdin, ChildStdout, Command},

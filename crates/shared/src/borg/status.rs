@@ -41,12 +41,6 @@ impl BorgStatus {
             .map(ToOwned::to_owned)
             .filter(|version| version.starts_with(|c: char| c.is_ascii_digit()))
     }
-
-    /// Whether backups can run on the host.
-    #[must_use]
-    pub const fn is_usable(&self) -> bool {
-        matches!(self, Self::Available { .. })
-    }
 }
 
 #[cfg(test)]
@@ -66,29 +60,6 @@ mod tests {
         for output in ["", "borg", "borg unknown", "command not found: borg"] {
             assert_eq!(BorgStatus::version_from_output(output), None, "{output}");
         }
-    }
-
-    #[test]
-    fn only_an_available_borg_is_usable() {
-        assert!(
-            BorgStatus::Available {
-                version: "1.2.8".into()
-            }
-            .is_usable()
-        );
-        assert!(
-            !BorgStatus::Missing {
-                binary: "borg".into()
-            }
-            .is_usable()
-        );
-        assert!(
-            !BorgStatus::Broken {
-                binary: "borg".into(),
-                reason: "permission denied".into()
-            }
-            .is_usable()
-        );
     }
 
     #[test]

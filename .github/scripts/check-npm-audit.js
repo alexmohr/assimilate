@@ -10,14 +10,19 @@
 // the check fail.
 //
 // Usage: node check-npm-audit.js <audit.json> <allowlist.json>
+// Issue links must belong to $GITHUB_REPOSITORY when it is set (it is in CI).
 
 const fs = require("node:fs");
 
 const BLOCKING_SEVERITIES = new Set(["moderate", "high", "critical"]);
 const ISSUE_URL = /^https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/issues\/[1-9]\d*$/;
 
-/** Validate the allowlist and return its problems (empty when well-formed). */
-function validateAllowlist(allowlist) {
+/**
+ * Validate the allowlist and return its problems (empty when well-formed).
+ * When `repo` ("owner/name") is given, issue links must point into that repo,
+ * so the "tracked" guarantee can't be met with a link to somewhere else.
+ */
+function validateAllowlist(allowlist, repo) {
   const entries = allowlist && allowlist.audit;
   if (!Array.isArray(entries)) return ['allowlist must have an "audit" array'];
   const problems = [];
@@ -39,6 +44,11 @@ function validateAllowlist(allowlist) {
       problems.push(
         `${where} (${entry.package}): "issue" must be a GitHub issue URL tracking its removal`,
       );
+    } else if (repo) {
+      const prefix = `https://github.com/${repo}/issues/`.toLowerCase();
+      if (!entry.issue.toLowerCase().startsWith(prefix)) {
+        problems.push(`${where} (${entry.package}): "issue" must be an issue in ${repo}`);
+      }
     }
   });
   return problems;
@@ -48,8 +58,8 @@ function validateAllowlist(allowlist) {
  * Decide the outcome. Returns { ok, errors, warnings } so callers (and tests)
  * never need to parse console output.
  */
-function evaluate(audit, allowlist) {
-  const errors = validateAllowlist(allowlist);
+function evaluate(audit, allowlist, repo) {
+  const errors = validateAllowlist(allowlist, repo);
   const warnings = [];
 
   // `npm audit --json` reports its own failures (registry unreachable, ...) as
@@ -96,7 +106,7 @@ function main(argv) {
     return 1;
   }
   const allowlist = JSON.parse(fs.readFileSync(allowlistPath, "utf-8"));
-  const { ok, errors, warnings } = evaluate(audit, allowlist);
+  const { ok, errors, warnings } = evaluate(audit, allowlist, process.env.GITHUB_REPOSITORY);
   for (const w of warnings) console.warn(`::warning::${w}`);
   for (const e of errors) console.error(`::error::${e}`);
   if (ok) console.log("npm audit: no unallowed moderate+ vulnerabilities.");

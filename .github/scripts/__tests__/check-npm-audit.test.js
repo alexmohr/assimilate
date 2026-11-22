@@ -81,8 +81,36 @@ test("an npm audit failure is never read as a clean result", () => {
   }
 });
 
-test("the committed jscpd allowlist is well-formed", () => {
-  const file = path.join(__dirname, "..", "..", "jscpd", ".npm-audit-allowlist.json");
-  const allowlist = JSON.parse(fs.readFileSync(file, "utf-8"));
-  assert.deepEqual(validateAllowlist(allowlist), []);
+test("issue links must point into the given repo when one is known", () => {
+  const own = { audit: [entry("pug", "https://github.com/alexmohr/assimilate/issues/7")] };
+  const other = { audit: [entry("pug", "https://github.com/someone/else/issues/7")] };
+  assert.deepEqual(validateAllowlist(own, "alexmohr/assimilate"), []);
+  assert.deepEqual(validateAllowlist(own, "AlexMohr/Assimilate"), [], "repo match ignores case");
+  assert.equal(validateAllowlist(other, "alexmohr/assimilate").length, 1);
+  // Without a repo (local runs) any well-formed GitHub issue URL is accepted.
+  assert.deepEqual(validateAllowlist(other), []);
+  assert.equal(evaluate(clean, other, "alexmohr/assimilate").ok, false);
+});
+
+test("the issue link cannot be a prefix trick on another repo", () => {
+  const sneaky = { audit: [entry("pug", "https://github.com/alexmohr/assimilate-fork/issues/7")] };
+  assert.equal(validateAllowlist(sneaky, "alexmohr/assimilate").length, 1);
+});
+
+for (const [name, rel] of [
+  ["jscpd", ["..", "..", "jscpd", ".npm-audit-allowlist.json"]],
+  ["frontend", ["..", "..", "..", "frontend", ".npm-audit-allowlist.json"]],
+]) {
+  test(`the committed ${name} allowlist is well-formed and tracks this repo's issues`, () => {
+    const allowlist = JSON.parse(fs.readFileSync(path.join(__dirname, ...rel), "utf-8"));
+    assert.deepEqual(validateAllowlist(allowlist, "alexmohr/assimilate"), []);
+  });
+}
+
+test("the frontend and jscpd audit steps both go through this script", () => {
+  const ci = fs.readFileSync(path.join(__dirname, "..", "..", "workflows", "ci.yml"), "utf-8");
+  const uses = ci.match(/check-npm-audit\.js/g) || [];
+  assert.ok(uses.length >= 2, "expected both audit steps to call check-npm-audit.js");
+  // The old inline gate must not creep back in next to it.
+  assert.doesNotMatch(ci, /ALLOWLIST=\$\(node -e/);
 });

@@ -117,6 +117,23 @@ jobs:
       - name: Build
         run: npm run build
         working-directory: frontend
+  ci-tooling-audit:
+    name: CI tooling audit (jscpd)
+    runs-on: ubuntu-26.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      # .github/jscpd is the lockfile-pinned install used by
+      # duplicate-code-check.yml under pull_request_target; keep it audited.
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+        working-directory: .github/jscpd
+      - name: Check for security vulnerabilities
+        run: npm audit --audit-level=moderate
+        working-directory: .github/jscpd
   db-integration:
     name: Database Integration Tests
     runs-on: ubuntu-26.04

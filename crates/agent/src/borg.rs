@@ -5,7 +5,7 @@ use std::{
     ffi::OsStr,
     path::{Path, PathBuf},
     sync::OnceLock,
-    time::Instant,
+    time::{Duration, Instant},
 };
 
 use shared::{
@@ -53,20 +53,37 @@ fn default_binary() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("borg"))
 }
 
+/// How long a borg gets to print its version. The probe sits in front of the
+/// agent's `Hello`, so a borg that hangs (a broken mount, a stuck wrapper
+/// script) must not keep the agent from connecting.
+const PROBE_TIMEOUT: Duration = Duration::from_secs(10);
+
 /// Asks the borg the agent would run for its version, to tell whether the host
 /// can run backups at all.
 pub async fn probe() -> BorgStatus {
-    probe_binary(&default_binary()).await
+    probe_binary(&default_binary(), PROBE_TIMEOUT).await
 }
 
-async fn probe_binary(binary: &Path) -> BorgStatus {
+async fn probe_binary(binary: &Path, timeout: Duration) -> BorgStatus {
     let binary_name = binary.display().to_string();
-    let output = tokio::process::Command::new(binary)
-        .arg("--version")
-        .stdin(std::process::Stdio::null())
-        .kill_on_drop(true)
-        .output()
-        .await;
+    let output = tokio::time::timeout(
+        timeout,
+        tokio::process::Command::new(binary)
+            .arg("--version")
+            .stdin(std::process::Stdio::null())
+            .kill_on_drop(true)
+            .output(),
+    )
+    .await;
+    let Ok(output) = output else {
+        return BorgStatus::Broken {
+            binary: binary_name,
+            reason: format!(
+                "`--version` did not answer within {} seconds",
+                timeout.as_secs()
+            ),
+        };
+    };
     match output {
         Ok(output) if output.status.success() => {
             let stdout = String::from_utf8_lossy(&output.stdout);
@@ -348,7 +365,7 @@ mod tests {
     async fn a_missing_executable_is_reported_as_missing() {
         let binary = Path::new("/nonexistent/borg");
         assert_eq!(
-            probe_binary(binary).await,
+            probe_binary(binary, PROBE_TIMEOUT).await,
             BorgStatus::Missing {
                 binary: "/nonexistent/borg".to_owned()
             }
@@ -373,10 +390,24 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let binary = script(dir.path(), "echo 'borg 1.4.1'").await;
         assert_eq!(
-            probe_binary(&binary).await,
+            probe_binary(&binary, PROBE_TIMEOUT).await,
             BorgStatus::Available {
                 version: "1.4.1".to_owned()
             }
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_borg_that_hangs_is_broken_not_waited_for() {
+        let dir = tempfile::tempdir().unwrap();
+        let binary = script(dir.path(), "sleep 30").await;
+
+        let status = probe_binary(&binary, Duration::from_millis(200)).await;
+
+        assert!(
+            matches!(&status, BorgStatus::Broken { reason, .. } if reason.contains("did not answer")),
+            "{status:?}"
         );
     }
 
@@ -390,7 +421,7 @@ mod tests {
             .await
             .unwrap();
 
-        let status = probe_binary(&binary).await;
+        let status = probe_binary(&binary, PROBE_TIMEOUT).await;
 
         assert!(
             matches!(&status, BorgStatus::Broken { reason, .. } if reason.contains("ermission")),
@@ -403,7 +434,7 @@ mod tests {
     async fn a_borg_that_fails_or_prints_nonsense_is_broken() {
         let dir = tempfile::tempdir().unwrap();
         let failing = script(dir.path(), "echo 'boom' >&2; exit 3").await;
-        let status = probe_binary(&failing).await;
+        let status = probe_binary(&failing, PROBE_TIMEOUT).await;
         assert!(
             matches!(&status, BorgStatus::Broken { reason, .. } if reason.contains("boom")),
             "{status:?}"
@@ -411,7 +442,7 @@ mod tests {
 
         let nonsense = script(dir.path(), "echo 'hello'").await;
         assert!(matches!(
-            probe_binary(&nonsense).await,
+            probe_binary(&nonsense, PROBE_TIMEOUT).await,
             BorgStatus::Broken { .. }
         ));
     }

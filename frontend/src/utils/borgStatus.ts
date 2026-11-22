@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
-import type { AgentResponse, BorgStatus } from '../types/generated'
+import type { BorgStatus } from '../types/generated'
 
 /** What is wrong with a host's borg, in the words the UI shows. */
 export interface BorgProblem {
@@ -35,9 +35,4 @@ export function borgProblem(status: BorgStatus | null | undefined): BorgProblem 
         detail: `The agent could not get a version from ${status.binary}: ${status.reason}. Backups for this host will fail until that is fixed.`,
       }
   }
-}
-
-/** The borg version a host reported, if it has a working borg. */
-export function borgVersion(agent: Pick<AgentResponse, 'borg'>): string | null {
-  return agent.borg?.state === 'available' ? agent.borg.version : null
 }

@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 import { describe, expect, it } from 'vitest'
-import { borgProblem, borgVersion } from './borgStatus'
+import { borgProblem } from './borgStatus'
 
 describe('borgProblem', () => {
   it('has nothing to say about a host that has not reported or has borg', () => {
@@ -21,13 +21,5 @@ describe('borgProblem', () => {
     const problem = borgProblem({ state: 'broken', binary: 'borg', reason: 'permission denied' })
     expect(problem?.chip).toBe('Borg not working')
     expect(problem?.detail).toContain('permission denied')
-  })
-})
-
-describe('borgVersion', () => {
-  it('is the version of a working borg only', () => {
-    expect(borgVersion({ borg: { state: 'available', version: '1.2.8' } })).toBe('1.2.8')
-    expect(borgVersion({ borg: { state: 'missing', binary: 'borg' } })).toBeNull()
-    expect(borgVersion({ borg: null })).toBeNull()
   })
 })

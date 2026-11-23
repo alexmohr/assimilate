@@ -38,7 +38,13 @@
     "vue-router": "^4.6.4"
   },
   "overrides": {
-    "glob": "^13.0.0"
+    "glob": "^14.0.6",
+    "test-exclude": {
+      "minimatch": "^11.0.9"
+    },
+    "editorconfig": {
+      "minimatch": "^11.0.9"
+    }
   },
   "devDependencies": {
     "@eslint/js": "^9.28.0",
@@ -46,7 +52,7 @@
     "@types/node": "^24.12.3",
     "@typescript-eslint/utils": "^8.62.1",
     "@vitejs/plugin-vue": "^6.0.6",
-    "@vitest/coverage-v8": "^5.0.0",
+    "@vitest/coverage-v8": "^5.1.1",
     "@vue/test-utils": "^2.4.10",
     "@vue/tsconfig": "^0.9.1",
     "esbuild": "^0.28.1",
@@ -62,7 +68,7 @@
     "typescript-eslint": "^8.33.0",
     "vite": "^8.0.12",
     "vite-plugin-istanbul": "^9.0.1",
-    "vitest": "^5.0.0",
+    "vitest": "^5.1.1",
     "vue-tsc": "^3.2.8"
   }
 }

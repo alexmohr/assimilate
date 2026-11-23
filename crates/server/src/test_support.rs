@@ -3,9 +3,19 @@
 
 //! Test-only helpers shared across this crate's unit test modules.
 
-use std::str::FromStr;
+use std::{
+    str::FromStr,
+    sync::{Arc, Mutex},
+};
 
+use axum::{
+    Json, Router,
+    extract::State,
+    http::{HeaderMap, StatusCode},
+    routing::post,
+};
 use base64::Engine as _;
+use serde_json::Value;
 use tokio::{
     io::{AsyncBufReadExt as _, AsyncWriteExt as _, BufReader},
     net::TcpListener,
@@ -585,4 +595,48 @@ pub(crate) async fn formatted_logs_while<F: std::future::Future>(run: F) -> (F::
     drop(guard);
     let text = String::from_utf8_lossy(&logs.lock().expect("log buffer lock")).into_owned();
     (output, text)
+}
+
+/// The requests the stand-in has received: the `Authorization` header and the JSON body.
+pub(crate) type Seen = Arc<Mutex<Vec<(Option<String>, Value)>>>;
+
+type Responder = Arc<dyn Fn(&Value) -> (StatusCode, Value) + Send + Sync>;
+
+#[derive(Clone)]
+struct Mock {
+    seen: Seen,
+    respond: Responder,
+}
+
+async fn handle(
+    State(mock): State<Mock>,
+    headers: HeaderMap,
+    Json(body): Json<Value>,
+) -> (StatusCode, Json<Value>) {
+    let auth = headers
+        .get("authorization")
+        .and_then(|v| v.to_str().ok())
+        .map(str::to_owned);
+    let answer = (mock.respond)(&body);
+    mock.seen.lock().unwrap().push((auth, body));
+    (answer.0, Json(answer.1))
+}
+
+/// Starts a local stand-in for the `BorgBase` GraphQL API and returns its URL and the log of
+/// requests it receives.
+pub(crate) async fn start_graphql_stand_in(
+    respond: impl Fn(&Value) -> (StatusCode, Value) + Send + Sync + 'static,
+) -> (String, Seen) {
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let mock = Mock {
+        seen: Arc::clone(&seen),
+        respond: Arc::new(respond),
+    };
+    let app = Router::new()
+        .route("/graphql", post(handle))
+        .with_state(mock);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    (format!("http://{addr}/graphql"), seen)
 }

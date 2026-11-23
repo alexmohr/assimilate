@@ -408,4 +408,15 @@ export type AuditEvent =
       agent_id: number | null;
     };
   }
-  | { "action": "set_vapid_keys"; "details": Record<symbol, never> };
+  | { "action": "set_vapid_keys"; "details": Record<symbol, never> }
+  | { "action": "set_borgbase_token"; "details": Record<symbol, never> }
+  | { "action": "delete_borgbase_token"; "details": Record<symbol, never> }
+  | {
+    "action": "create_borgbase_repo";
+    "details": {
+      /**
+       * The repository's name on `BorgBase`.
+       */
+      name: string;
+    };
+  };

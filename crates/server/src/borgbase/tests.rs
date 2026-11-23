@@ -4,63 +4,18 @@
 //! The client against a stand-in `BorgBase`: a local HTTP server that records what it is sent and
 //! answers from a script.
 
-use std::sync::{Arc, Mutex};
-
-use axum::{
-    Json, Router,
-    extract::State,
-    http::{HeaderMap, StatusCode},
-    routing::post,
-};
+use axum::http::StatusCode;
 use serde_json::{Value, json};
 
 use super::*;
+use crate::test_support::{Seen, start_graphql_stand_in};
 
-/// The requests the stand-in has received: the `Authorization` header and the JSON body.
-type Seen = Arc<Mutex<Vec<(Option<String>, Value)>>>;
-
-type Responder = Arc<dyn Fn(&Value) -> (StatusCode, Value) + Send + Sync>;
-
-#[derive(Clone)]
-struct Mock {
-    seen: Seen,
-    respond: Responder,
-}
-
-async fn handle(
-    State(mock): State<Mock>,
-    headers: HeaderMap,
-    Json(body): Json<Value>,
-) -> (StatusCode, Json<Value>) {
-    let auth = headers
-        .get("authorization")
-        .and_then(|v| v.to_str().ok())
-        .map(str::to_owned);
-    let answer = (mock.respond)(&body);
-    mock.seen.lock().unwrap().push((auth, body));
-    (answer.0, Json(answer.1))
-}
-
-/// Starts the stand-in and returns a client for it and the log of requests it receives.
+/// A client for a stand-in that answers with `respond`, and the log of what it receives.
 async fn start(
     respond: impl Fn(&Value) -> (StatusCode, Value) + Send + Sync + 'static,
 ) -> (BorgbaseClient, Seen) {
-    let seen = Arc::new(Mutex::new(Vec::new()));
-    let mock = Mock {
-        seen: Arc::clone(&seen),
-        respond: Arc::new(respond),
-    };
-    let app = Router::new()
-        .route("/graphql", post(handle))
-        .with_state(mock);
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let addr = listener.local_addr().unwrap();
-    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
-    let client = BorgbaseClient::new(
-        format!("http://{addr}/graphql"),
-        ApiToken::parse("secret-token").unwrap(),
-    )
-    .unwrap();
+    let (url, seen) = start_graphql_stand_in(respond).await;
+    let client = BorgbaseClient::new(url, ApiToken::parse("secret-token").unwrap()).unwrap();
     (client, seen)
 }
 

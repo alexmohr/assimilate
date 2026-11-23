@@ -23,6 +23,7 @@ import { extractError } from '../utils/error'
 import { badgeClass } from '../utils/badge'
 import AgentChannelKey from '../components/AgentChannelKey.vue'
 import BaseSpinner from '../components/BaseSpinner.vue'
+import BorgbaseAccountPanel from '../components/BorgbaseAccountPanel.vue'
 import MetricsSettingsPanel from '../components/MetricsSettingsPanel.vue'
 import SettingsRail, { type SettingsSections } from '../components/SettingsRail.vue'
 import TimezoneSelect from '../components/TimezoneSelect.vue'
@@ -286,6 +287,7 @@ type SystemSection =
   | 'settings'
   | 'deployment'
   | 'metrics'
+  | 'borgbase'
   | 'config'
   | 'danger'
 
@@ -297,6 +299,7 @@ const sections = computed<SettingsSections<SystemSection>>(() => [
   { id: 'settings', label: 'Settings' },
   ...(secureCookies.value !== null ? [{ id: 'deployment', label: 'Deployment' } as const] : []),
   { id: 'metrics', label: 'Prometheus metrics' },
+  { id: 'borgbase', label: 'BorgBase' },
   { id: 'config', label: 'Configuration export / import' },
   { id: 'danger', label: 'Danger zone', danger: true },
 ])
@@ -598,6 +601,11 @@ const section = ref<SystemSection>('version')
 
       <MetricsSettingsPanel
         v-else-if="current === 'metrics'"
+        embedded
+      />
+
+      <BorgbaseAccountPanel
+        v-else-if="current === 'borgbase'"
         embedded
       />
 

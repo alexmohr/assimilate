@@ -201,11 +201,13 @@ describe('SystemView', () => {
       'Settings',
       'Deployment',
       'Prometheus metrics',
+      'BorgBase',
       'Configuration export / import',
       'Danger zone',
     ])
     expect(heads.map((h) => h.attributes('aria-expanded'))).toEqual([
       'true',
+      'false',
       'false',
       'false',
       'false',

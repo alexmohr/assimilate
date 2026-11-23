@@ -40,6 +40,11 @@ dd if=/dev/urandom of=/mnt/media/photos/demo.jpg bs=1024 count=512 2>/dev/null
 dd if=/dev/urandom of=/mnt/media/videos/demo.mp4 bs=1024 count=1024 2>/dev/null
 chown -R borg:borg /var/www /etc/nginx /var/log/nginx /var/lib/postgresql /mnt/media 2>/dev/null || true
 
+# The demo has no BorgBase account, so the server talks to a stand-in that
+# answers the few operations it sends.
+python3 /app/borgbase-stand-in.py 8099 &
+export ASSIMILATE_BORGBASE_API_URL=http://127.0.0.1:8099/graphql
+
 echo "==> Waiting for PostgreSQL..."
 until PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -c "SELECT 1" > /dev/null 2>&1; do
     sleep 1

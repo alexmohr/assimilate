@@ -678,6 +678,13 @@ test.describe('signed in', () => {
     )
     await expect(page.locator('#metrics-networks')).toHaveValue(/192\.0\.2\.0\/24/)
     await shotOf(metricsPanel, 'system-metrics')
+
+    // The BorgBase section, with the demo stand-in's repositories listed.
+    const borgbasePanel = page
+      .locator('.accordion-list > section')
+      .filter({ has: page.locator('#acc-body-borgbase') })
+    await expect(borgbasePanel.getByTestId('borgbase-repo').first()).toBeVisible()
+    await shotOf(borgbasePanel, 'system-borgbase')
   })
 
   // The Browser logs tab with what this tab logged: the Server Logs tab's

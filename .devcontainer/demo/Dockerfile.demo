@@ -79,6 +79,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         postgresql-client \
         curl \
         jq \
+        python3-minimal \
         && rm -rf /var/lib/apt/lists/* \
     && mkdir -p /run/sshd \
     && useradd -m -s /bin/bash borg \
@@ -95,6 +96,7 @@ COPY --from=builder /src/target/release/agent /app/agent
 COPY --from=frontend /app/dist /app/static
 COPY --from=docs /docs-build/docs_html /app/docs_html
 COPY .devcontainer/demo/start-demo.sh /app/start-demo.sh
+COPY .devcontainer/demo/borgbase-stand-in.py /app/borgbase-stand-in.py
 COPY .devcontainer/demo/seed-demo.sh /app/seed-demo.sh
 COPY .devcontainer/demo/start-agent.sh /app/start-agent.sh
 COPY .devcontainer/demo/start-placeholder.sh /app/start-placeholder.sh

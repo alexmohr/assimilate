@@ -1,0 +1,12 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM borgbase_account",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": []
+  },
+  "hash": "e753addfcfe9bb739688757dd9e1afdd793d1a8337b6d6b5f179249bf1ab3d2d"
+}

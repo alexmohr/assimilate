@@ -29,6 +29,9 @@ pub enum StoredSecretKind {
     /// `notification_channel_headers.value_encrypted`.
     #[strum(to_string = "webhook header value")]
     WebhookHeaderValue,
+    /// `borgbase_account.api_token_encrypted`.
+    #[strum(to_string = "BorgBase API token")]
+    BorgbaseApiToken,
 }
 
 /// Why a rotation failed. Nothing is changed in any of these cases.
@@ -104,6 +107,8 @@ pub struct RotatedSecrets {
     pub smtp_passwords: u64,
     /// Webhook header values.
     pub webhook_header_values: u64,
+    /// `BorgBase` API tokens.
+    pub borgbase_api_tokens: u64,
 }
 
 impl RotatedSecrets {
@@ -115,6 +120,7 @@ impl RotatedSecrets {
             self.totp_secrets,
             self.smtp_passwords,
             self.webhook_header_values,
+            self.borgbase_api_tokens,
         ]
         .iter()
         .sum()
@@ -139,6 +145,7 @@ pub async fn rotate_stored_secrets(
         totp_secrets: rotate_totp_secrets(&mut tx, keys).await?,
         smtp_passwords: rotate_smtp_passwords(&mut tx, keys).await?,
         webhook_header_values: rotate_webhook_header_values(&mut tx, keys).await?,
+        borgbase_api_tokens: rotate_borgbase_api_tokens(&mut tx, keys).await?,
     };
     tx.commit().await?;
     Ok(rotated)
@@ -282,6 +289,32 @@ async fn rotate_webhook_header_values(
         rotated = rotated.saturating_add(1);
     }
     Ok(rotated)
+}
+
+async fn rotate_borgbase_api_tokens(
+    tx: &mut Tx<'_>,
+    keys: &RotationKeys,
+) -> Result<u64, SecretRotationError> {
+    let Some(stored) =
+        sqlx::query_scalar!("SELECT api_token_encrypted FROM borgbase_account FOR UPDATE")
+            .fetch_optional(&mut **tx)
+            .await?
+    else {
+        return Ok(0);
+    };
+    let Some(encrypted) = keys.rekey(&stored, StoredSecretKind::BorgbaseApiToken, || {
+        "the BorgBase account".to_owned()
+    })?
+    else {
+        return Ok(0);
+    };
+    sqlx::query!(
+        "UPDATE borgbase_account SET api_token_encrypted = $1",
+        encrypted,
+    )
+    .execute(&mut **tx)
+    .await?;
+    Ok(1)
 }
 
 #[cfg(test)]

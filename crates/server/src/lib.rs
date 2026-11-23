@@ -13,6 +13,8 @@ pub mod archive_index;
 pub mod background_tasks;
 /// Borg subprocess management.
 pub mod borg;
+/// The BorgBase GraphQL API client.
+pub mod borgbase;
 /// Catching up runs missed while a host was unreachable.
 pub mod catch_up;
 /// Client IP resolution from request headers.

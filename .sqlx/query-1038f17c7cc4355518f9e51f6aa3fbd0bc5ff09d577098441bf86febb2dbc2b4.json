@@ -1,0 +1,26 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT api_token_encrypted FROM borgbase_account",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "api_token_encrypted",
+        "type_info": "Bytea",
+        "origin": {
+          "Table": {
+            "table": "borgbase_account",
+            "name": "api_token_encrypted"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "1038f17c7cc4355518f9e51f6aa3fbd0bc5ff09d577098441bf86febb2dbc2b4"
+}

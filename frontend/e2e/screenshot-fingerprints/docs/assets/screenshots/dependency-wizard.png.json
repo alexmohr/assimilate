@@ -1,5 +1,5 @@
 {
   "test": "agents",
   "pages": ["frontend/src/views/DependencyCreateView.vue"],
-  "fingerprint": "f3c56eda6abbb4662c988688790ba15bd7f74cf4a1165ba4efb3947e7ad00882"
+  "fingerprint": "222a5bca1c8f167966909a2aa1872d990ec7d86562a776e195da37d0ea043539"
 }

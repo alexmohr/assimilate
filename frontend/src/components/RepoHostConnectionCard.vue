@@ -6,7 +6,13 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import { RefreshCw } from '@lucide/vue'
-import { acceptRepoHostKey, scanRepoHostKey, updateRepoHost, type RepoHost } from '../api/repoHosts'
+import {
+  acceptRepoHostKey,
+  listHostProviders,
+  scanRepoHostKey,
+  updateRepoHost,
+  type RepoHost,
+} from '../api/repoHosts'
 import { extractError } from '../utils/error'
 import { PROVIDER_LABELS } from '../utils/hostProvider'
 import { useHostKeyCheck } from '../composables/useHostKeyCheck'
@@ -39,6 +45,8 @@ const saving = ref(false)
 const error = ref<string | null>(null)
 const sshHost = ref('')
 const sshPort = ref(22)
+/** The port the host's provider fixes, if it fixes one; the server refuses any other. */
+const lockedPort = ref<number | null>(null)
 
 const repoCount = computed(() => props.host.repositories.length)
 
@@ -52,7 +60,22 @@ function startEdit(): void {
   sshHost.value = props.host.ssh_host
   sshPort.value = props.host.ssh_port
   error.value = null
+  lockedPort.value = null
   editing.value = true
+  if (props.host.provider !== 'generic') {
+    void loadLockedPort()
+  }
+}
+
+async function loadLockedPort(): Promise<void> {
+  try {
+    const presets = await listHostProviders()
+    lockedPort.value =
+      presets.find((p) => p.provider === props.host.provider)?.defaults.ssh_port ?? null
+  } catch {
+    // The server still refuses a wrong port; the field just stays editable.
+    lockedPort.value = null
+  }
 }
 
 async function save(): Promise<void> {
@@ -172,11 +195,13 @@ async function acceptKey(): Promise<void> {
           <PaneRow
             title="SSH port"
             label-for="repo-host-port"
+            :hint="lockedPort !== null ? 'Fixed by the provider.' : undefined"
           >
             <input
               id="repo-host-port"
               v-model.number="sshPort"
               class="input field-narrow"
+              :disabled="lockedPort !== null"
               type="number"
               min="1"
               max="65535"

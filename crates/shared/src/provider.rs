@@ -7,7 +7,7 @@
 //! the borg binary the remote side runs. A [`HostProvider`] names the hosting
 //! service so the right defaults can be filled in and locked, instead of the
 //! user having to know that a Hetzner Storage Box listens on port 23 or that
-//! rsync.net runs borg 1.x as `borg1`.
+//! rsync.net runs borg 1.4 as `borg14`.
 
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;

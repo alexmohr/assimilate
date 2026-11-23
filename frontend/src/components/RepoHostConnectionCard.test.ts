@@ -97,6 +97,14 @@ describe('RepoHostConnectionCard', () => {
     expect(wrapper.text()).toContain('Fixed by the provider')
   })
 
+  it('keeps the port editable when the presets cannot be loaded', async () => {
+    vi.mocked(apiClient.get).mockRejectedValue(new Error('network down'))
+    const wrapper = mount({ host: host({ provider: 'hetzner', ssh_port: 23 }) })
+    await startEditingSection(wrapper)
+    await flushPromises()
+    expect(wrapper.get('#repo-host-port').attributes('disabled')).toBeUndefined()
+  })
+
   it('leaves the port of a generic host editable', async () => {
     const wrapper = mount()
     await startEditingSection(wrapper)

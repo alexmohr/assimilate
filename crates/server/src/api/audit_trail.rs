@@ -221,6 +221,49 @@ mod tests {
 
     #[ignore = "requires DATABASE_URL"]
     #[sqlx::test(migrations = "./migrations")]
+    async fn a_system_entry_has_no_user_and_a_failed_write_is_logged(pool: PgPool) {
+        static LOGS: std::sync::Mutex<Vec<u8>> = std::sync::Mutex::new(Vec::new());
+        record_system(
+            &pool,
+            Some(AuditTarget::EnrollmentToken(3)),
+            AuditEvent::RevokeEnrollmentToken { hostname: None },
+        )
+        .await;
+        let entries = crate::test_support::audit_entries(&pool).await;
+        let [entry] = entries.as_slice() else {
+            panic!("expected exactly one audit entry, got {entries:?}");
+        };
+        assert_eq!(entry.user_id, None);
+        assert_eq!(entry.username, "system");
+        assert_eq!(entry.target_type.as_deref(), Some("enrollment_token"));
+        assert_eq!(entry.target_id, Some(3));
+
+        sqlx::query!(
+            "ALTER TABLE audit_log ADD CONSTRAINT reject_system_entries CHECK (false) NOT VALID"
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        let subscriber = tracing_subscriber::fmt()
+            .with_writer(|| tracing_subscriber::fmt::MakeWriter::make_writer(&LOGS))
+            .with_ansi(false)
+            .finish();
+        let guard = tracing::subscriber::set_default(subscriber);
+        record_system(
+            &pool,
+            None,
+            AuditEvent::RevokeEnrollmentToken { hostname: None },
+        )
+        .await;
+        drop(guard);
+
+        let logs = String::from_utf8(LOGS.lock().unwrap().clone()).unwrap();
+        assert!(logs.contains("failed to write audit log entry"), "{logs}");
+        assert!(logs.contains("reject_system_entries"), "{logs}");
+    }
+
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
     async fn a_failed_write_is_logged_instead_of_failing_the_action(pool: PgPool) {
         // tracing-subscriber's own `MakeWriter` for `Mutex<W>` collects the
         // formatted output, including the event's fields, for asserting on.

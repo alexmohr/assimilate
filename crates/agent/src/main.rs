@@ -198,30 +198,45 @@ fn main() -> Result<ExitCode, StartupError> {
     Ok(ExitCode::from(u8::from(fatal)))
 }
 
-/// Trades the enrollment token for an agent token and prints the agent token,
-/// and nothing else, on standard output so a script can capture it.
-fn run_enroll(cli: Cli) -> Result<ExitCode, StartupError> {
-    use std::io::Write as _;
+/// What `--enroll` connects with: the server, the key it pins and the single-use token.
+struct EnrollInputs {
+    url: String,
+    key: ChannelPublicKey,
+    enrollment_token: String,
+}
 
-    let enrollment_token = std::env::var(ENROLLMENT_TOKEN_VAR)
+impl Cli {
+    /// The inputs of `--enroll`, with the enrollment token from `token`.
+    fn enroll_inputs(self, token: Option<String>) -> Option<EnrollInputs> {
+        Some(EnrollInputs {
+            url: normalize_ws_url(&self.server_url?),
+            key: self.server_key?,
+            enrollment_token: token?,
+        })
+    }
+}
+
+/// Writes the agent token, and nothing else, so a script can capture it.
+fn write_agent_token(out: &mut impl std::io::Write, token: &str) -> std::io::Result<()> {
+    writeln!(out, "{token}").and_then(|()| out.flush())
+}
+
+/// Trades the enrollment token for an agent token and prints the agent token
+/// on standard output.
+fn run_enroll(cli: Cli) -> Result<ExitCode, StartupError> {
+    let token = std::env::var(ENROLLMENT_TOKEN_VAR)
         .ok()
         .filter(|token| !token.is_empty());
-    let (Some(url), Some(key), Some(enrollment_token)) =
-        (cli.server_url, cli.server_key, enrollment_token)
-    else {
-        return Err(StartupError::MissingEnrollArgs);
-    };
-    let url = normalize_ws_url(&url);
+    let inputs = cli
+        .enroll_inputs(token)
+        .ok_or(StartupError::MissingEnrollArgs)?;
     let token = runtime()?.block_on(enroll::enroll(&enroll::EnrollRequest {
-        url: &url,
-        key: &key,
-        enrollment_token: &enrollment_token,
+        url: &inputs.url,
+        key: &inputs.key,
+        enrollment_token: &inputs.enrollment_token,
         hostname: ws::local_hostname(),
     }))?;
-    let mut stdout = std::io::stdout().lock();
-    writeln!(stdout, "{token}")
-        .and_then(|()| stdout.flush())
-        .map_err(StartupError::Output)?;
+    write_agent_token(&mut std::io::stdout().lock(), &token).map_err(StartupError::Output)?;
     Ok(ExitCode::SUCCESS)
 }
 
@@ -358,6 +373,40 @@ mod cli_tests {
     }
 
     const KEY: &str = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
+
+    #[test]
+    fn enrolling_needs_the_server_the_key_and_the_enrollment_token() {
+        let parse = || {
+            Cli::try_parse_from([
+                "agent",
+                "--server-url",
+                "https://backup.example",
+                "--server-key",
+                KEY,
+                "--enroll",
+            ])
+            .unwrap()
+        };
+
+        let inputs = parse()
+            .enroll_inputs(Some("enr_secret".to_owned()))
+            .unwrap();
+
+        assert!(parse().enroll);
+        assert!(parse().enroll_inputs(None).is_none());
+        assert_eq!(inputs.url, "wss://backup.example");
+        assert_eq!(inputs.enrollment_token, "enr_secret");
+        assert_eq!(inputs.key.to_string(), KEY);
+    }
+
+    #[test]
+    fn the_agent_token_is_the_only_output_of_enrolling() {
+        let mut out = Vec::new();
+
+        write_agent_token(&mut out, "agent-token").unwrap();
+
+        assert_eq!(String::from_utf8(out).unwrap(), "agent-token\n");
+    }
 
     #[test]
     fn a_command_line_with_server_token_and_key_connects_with_them() {

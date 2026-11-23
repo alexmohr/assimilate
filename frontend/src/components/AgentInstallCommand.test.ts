@@ -143,6 +143,34 @@ describe('AgentInstallCommand', () => {
     expect(wrapper.text()).toContain('services.msc')
   })
 
+  it('removes a tag that is ticked again', async () => {
+    const wrapper = await mountInstall()
+    const box = wrapper.get('input[type="checkbox"]')
+
+    await box.setValue(true)
+    await box.setValue(false)
+
+    expect(wrapper.emitted('update:tagIds')).toEqual([[[3]], [[]]])
+  })
+
+  it('counts the time left down every second', async () => {
+    vi.useFakeTimers()
+    try {
+      const wrapper = await mountInstall({
+        ...CREATED,
+        token: { ...CREATED.token, expires_at: new Date(Date.now() + 90_000).toISOString() },
+      })
+      const left = (): string => wrapper.get('[data-testid="install-expiry"]').text()
+      expect(left()).toBe('Expires in 1:30')
+
+      await vi.advanceTimersByTimeAsync(10_000)
+
+      expect(left()).toBe('Expires in 1:20')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('copies the command from its copy button', async () => {
     const wrapper = await mountInstall(CREATED)
 

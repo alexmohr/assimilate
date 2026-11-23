@@ -2138,3 +2138,116 @@ describe('HostsView list rows', () => {
     expect(wrapper.text()).toContain('No agents match the current filter.')
   })
 })
+
+describe('HostsView install command tab', () => {
+  /** The dialog teleports, so its controls are queried off the document. */
+  function dialogButton(label: string): HTMLButtonElement {
+    const match = [...document.querySelectorAll<HTMLButtonElement>('button')].find(
+      (b) => b.textContent?.trim() === label,
+    )
+    if (!match) throw new Error(`no button labelled "${label}"`)
+    return match
+  }
+
+  async function openInstallTab(): Promise<void> {
+    vi.clearAllMocks()
+    const wrapper = await mountWithAgent({}, {})
+    const base = vi.mocked(apiClient.get).getMockImplementation()
+    vi.mocked(apiClient.get).mockImplementation((url: string) => {
+      if (url === '/system/agent-channel-key')
+        return Promise.resolve({ data: { public_key: 'SERVERKEY=', fingerprint: 'fp' } })
+      if (url === '/tags')
+        return Promise.resolve({
+          data: [{ id: 3, name: 'production', color: '#f00', scope: 'agent' }],
+        })
+      if (url === '/enrollment-tokens') return Promise.resolve({ data: { tokens: [] } })
+      return base ? base(url) : Promise.resolve({ data: [] })
+    })
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text().trim() === 'New')!
+      .trigger('click')
+    await flushPromises()
+    const tab = [...document.querySelectorAll<HTMLButtonElement>('[role="tab"]')].find((t) =>
+      t.textContent?.includes('Install command'),
+    )
+    tab?.click()
+    await flushPromises()
+  }
+
+  async function generate(): Promise<void> {
+    vi.mocked(apiClient.post).mockResolvedValue({
+      data: {
+        plaintext: 'enr_secret',
+        token: {
+          id: 9,
+          hint: 'enr_secr',
+          created_by: 'u',
+          hostname: 'db-02',
+          tag_ids: [3],
+          status: 'pending',
+          created_at: '2026-11-22T10:00:00Z',
+          expires_at: new Date(Date.now() + 3_600_000).toISOString(),
+          used_by: null,
+        },
+      },
+    })
+    dialogButton('Generate command').click()
+    await flushPromises()
+  }
+
+  it('creates a token from the form and shows the install command', async () => {
+    await openInstallTab()
+    const hostname = document.querySelector<HTMLInputElement>('#enroll-hostname')!
+    hostname.value = 'db-02'
+    hostname.dispatchEvent(new Event('input'))
+    const lifetime = document.querySelector<HTMLSelectElement>('#enroll-expiry')!
+    lifetime.value = '900'
+    lifetime.dispatchEvent(new Event('change'))
+    document.querySelector<HTMLInputElement>('input[type="checkbox"]')!.click()
+    await flushPromises()
+
+    await generate()
+
+    expect(apiClient.post).toHaveBeenCalledWith('/enrollment-tokens', {
+      lifetime_secs: 900,
+      hostname: 'db-02',
+      tag_ids: [3],
+    })
+    const command = document.querySelector('[data-testid="install-command"]')
+    expect(command?.textContent).toContain('--token enr_secret')
+    expect(command?.textContent).toContain('--server-key SERVERKEY=')
+  })
+
+  it('revokes the token when the dialog is closed with Revoke token', async () => {
+    await openInstallTab()
+    await generate()
+    vi.mocked(apiClient.delete).mockResolvedValue({ data: { revoked: true } })
+
+    dialogButton('Revoke token').click()
+    await flushPromises()
+
+    expect(apiClient.delete).toHaveBeenCalledWith('/enrollment-tokens/9')
+    expect(document.querySelector('[data-testid="install-command"]')).toBeNull()
+  })
+
+  it('keeps the token when the dialog is closed with Done', async () => {
+    await openInstallTab()
+    await generate()
+
+    dialogButton('Done').click()
+    await flushPromises()
+
+    expect(apiClient.delete).not.toHaveBeenCalled()
+    expect(document.querySelector('[data-testid="install-command"]')).toBeNull()
+  })
+
+  it('cancels without creating a token', async () => {
+    await openInstallTab()
+
+    dialogButton('Cancel').click()
+    await flushPromises()
+
+    expect(apiClient.post).not.toHaveBeenCalled()
+  })
+})

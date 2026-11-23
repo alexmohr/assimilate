@@ -186,10 +186,10 @@ mod tests {
         let request = request(&url, &key);
         let (_, result) = tokio::join!(server, enroll(&request));
 
-        let Err(EnrollError::Refused(reason)) = result else {
-            panic!("the enrollment was not refused: {result:?}");
-        };
-        assert_eq!(reason, "expired");
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "the server refused to enroll this host: expired"
+        );
     }
 
     #[tokio::test]
@@ -232,5 +232,28 @@ mod tests {
         let ((), result) = tokio::join!(server, enroll(&request));
 
         assert!(matches!(result, Err(EnrollError::Handshake(_))));
+    }
+
+    #[tokio::test]
+    async fn a_connection_dropped_without_closing_is_a_receive_error() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("ws://{}", listener.local_addr().unwrap());
+        let key = crate::endpoint::test_support::server_key()
+            .public_key()
+            .unwrap();
+
+        let server = async {
+            let (sink, mut stream) = accept_encrypted(&listener).await;
+            let _enroll = stream.next().await.unwrap().unwrap();
+            drop(sink);
+            drop(stream);
+        };
+        let request = request(&url, &key);
+        let ((), result) = tokio::join!(server, enroll(&request));
+
+        assert!(matches!(
+            result,
+            Err(EnrollError::Receive(_) | EnrollError::NoAnswer)
+        ));
     }
 }

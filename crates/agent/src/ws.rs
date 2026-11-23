@@ -825,6 +825,24 @@ pub(crate) mod tests {
     }
 
     #[tokio::test]
+    async fn an_enrollment_answer_nobody_asked_for_is_ignored() {
+        let (exec_cmd_tx, _exec_cmd_rx) = mpsc::channel(1);
+        let mut sink = RecordingSink::default();
+        let answer = serde_json::to_string(&ServerToAgent::Enrolled {
+            token: "unasked".to_owned(),
+        })
+        .unwrap();
+
+        let (result, logs) =
+            crate::tests::logs::logs_while(handle_text_message(&answer, &exec_cmd_tx, &mut sink))
+                .await;
+
+        assert!(result.is_ok());
+        assert!(logs.contains("did not ask to enroll"), "{logs}");
+        assert_eq!(sink.0.len(), 0);
+    }
+
+    #[tokio::test]
     async fn a_restart_request_ends_the_connection_to_restart() {
         let (result, sent) = handle(r#"{"type":"RestartAgent"}"#).await;
         assert!(matches!(result, Err(WsError::RestartRequested)));

@@ -272,6 +272,15 @@ pub enum AuditEvent {
     },
     /// The server's web push (VAPID) key pair was replaced. Neither key is recorded.
     SetVapidKeys {},
+    /// The `BorgBase` API token was stored or replaced. The token is not recorded.
+    SetBorgbaseToken {},
+    /// The `BorgBase` API token was removed.
+    DeleteBorgbaseToken {},
+    /// A repository was created on `BorgBase`.
+    CreateBorgbaseRepo {
+        /// The repository's name on `BorgBase`.
+        name: String,
+    },
 }
 
 impl AuditEvent {

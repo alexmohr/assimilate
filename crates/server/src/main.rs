@@ -13,7 +13,7 @@ use axum::{
     routing::{delete, get, post, put},
 };
 use server::{
-    AppState, api,
+    AppState, api, borgbase,
     client_ip::ClientIpResolver,
     db,
     log_buffer::{LogBuffer, LogBufferLayer},
@@ -934,6 +934,15 @@ fn repo_routes() -> Router<AppState> {
             "/api/repos/{repo_id}/passphrase",
             get(api::repos::get_passphrase).put(api::keys::set_passphrase),
         )
+        .route("/api/borgbase", get(api::borgbase::get_status))
+        .route(
+            "/api/borgbase/token",
+            put(api::borgbase::set_token).delete(api::borgbase::delete_token),
+        )
+        .route(
+            "/api/borgbase/repos",
+            get(api::borgbase::list_repos).post(api::borgbase::create_repo),
+        )
         .route("/api/repo-hosts", get(api::repo_hosts::list_repo_hosts))
         .route(
             "/api/repo-hosts/providers",
@@ -1476,6 +1485,9 @@ fn build_router(state: &AppState, login_router: Router<AppState>) -> Router<AppS
         .merge(access_control_routes())
         .merge(tunnel_routes())
         .merge(notification_routes())
+        .layer(axum::Extension(api::borgbase::BorgbaseApiUrl(
+            borgbase::api_url(),
+        )))
         .layer(axum_middleware::from_fn_with_state(
             state.clone(),
             auth_tracking_middleware,

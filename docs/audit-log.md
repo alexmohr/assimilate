@@ -90,6 +90,14 @@ A login is recorded only once it completes, so an account with two-factor authen
 | `delete_notification_rule` | `notification_rule` | the same fields as `create_notification_rule` |
 | `set_vapid_keys` | none | none |
 
+### BorgBase
+
+| Action | Resource | Details |
+|--------|----------|---------|
+| `set_borgbase_token` | none | none |
+| `delete_borgbase_token` | none | none |
+| `create_borgbase_repo` | none | the repository's `name` on BorgBase |
+
 !!! note
     No entry ever records a secret: not a password, an API or agent token, a VAPID key, or a notification channel's configuration, which can hold a webhook header or an SMTP password. An entry records that the change happened, who made it and what it applied to.
 

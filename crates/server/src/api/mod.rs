@@ -21,6 +21,8 @@ pub mod audit_trail;
 pub mod auth;
 /// The bounds of a machine's "when the host is offline" settings.
 pub mod availability;
+/// The `BorgBase` account: its API token, repositories and quota.
+pub mod borgbase;
 /// Configuration import/export endpoints.
 pub mod config_io;
 /// Database dump settings and the database workloads an agent found.

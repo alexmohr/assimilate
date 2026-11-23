@@ -82,6 +82,7 @@ export function auditActionTone(action: AuditEvent['action']): BadgeTone {
     case 'delete_api_token':
     case 'delete_notification_channel':
     case 'delete_notification_rule':
+    case 'delete_borgbase_token':
       return 'danger'
     case 'restore_files':
     case 'restore_database':
@@ -98,6 +99,7 @@ export function auditActionTone(action: AuditEvent['action']): BadgeTone {
     case 'regenerate_agent_token':
     case 'update_notification_channel':
     case 'set_vapid_keys':
+    case 'set_borgbase_token':
       return 'warning'
     case 'create_user':
     case 'create_group':
@@ -105,6 +107,7 @@ export function auditActionTone(action: AuditEvent['action']): BadgeTone {
     case 'create_api_token':
     case 'create_notification_channel':
     case 'create_notification_rule':
+    case 'create_borgbase_repo':
       return 'accent'
     case 'download_files':
     case 'read_live_file':

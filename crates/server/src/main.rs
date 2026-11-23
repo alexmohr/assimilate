@@ -1583,6 +1583,16 @@ async fn shutdown_signal(
 
     tracing::info!("shutdown signal received, notifying agents");
 
+    announce_shutdown(&registry, &shutdown_token).await;
+}
+
+/// Tells every connected agent the server is going away, gives them a moment
+/// to hear it, then lets the rest of the server shut down. Separate from the
+/// signal wait so it can be run without a real signal.
+async fn announce_shutdown(
+    registry: &ws::registry::AgentRegistry,
+    shutdown_token: &tokio_util::sync::CancellationToken,
+) {
     let agents = registry.connected_agents().await;
     for agent_id in &agents {
         if let Err(e) = registry
@@ -1649,6 +1659,55 @@ mod tests {
     use std::time::Duration;
 
     use super::*;
+
+    fn token() -> tokio_util::sync::CancellationToken {
+        tokio_util::sync::CancellationToken::new()
+    }
+
+    /// A connected agent is told the server is shutting down, given half a
+    /// second to hear it, and only then is shutdown released.
+    #[tokio::test(start_paused = true)]
+    async fn announcing_shutdown_tells_each_agent_and_waits_before_cancelling() {
+        let registry = ws::registry::AgentRegistry::new();
+        let (tx, mut rx) = tokio::sync::mpsc::channel(4);
+        registry.register(1, tx, false, None, None).await;
+        let shutdown_token = token();
+        let started = tokio::time::Instant::now();
+
+        announce_shutdown(&registry, &shutdown_token).await;
+
+        assert!(matches!(rx.recv().await, Some(ServerToAgent::ShuttingDown)));
+        assert!(shutdown_token.is_cancelled());
+        assert_eq!(started.elapsed(), Duration::from_millis(500));
+    }
+
+    /// With nobody connected there is no one to wait for.
+    #[tokio::test(start_paused = true)]
+    async fn announcing_shutdown_with_no_agents_cancels_at_once() {
+        let registry = ws::registry::AgentRegistry::new();
+        let shutdown_token = token();
+        let started = tokio::time::Instant::now();
+
+        announce_shutdown(&registry, &shutdown_token).await;
+
+        assert!(shutdown_token.is_cancelled());
+        assert_eq!(started.elapsed(), Duration::ZERO);
+    }
+
+    /// An agent that has gone away cannot hear it, and that does not hold
+    /// the shutdown up.
+    #[tokio::test(start_paused = true)]
+    async fn announcing_shutdown_goes_on_when_an_agent_cannot_be_reached() {
+        let registry = ws::registry::AgentRegistry::new();
+        let (tx, rx) = tokio::sync::mpsc::channel(4);
+        registry.register(1, tx, false, None, None).await;
+        drop(rx);
+        let shutdown_token = token();
+
+        announce_shutdown(&registry, &shutdown_token).await;
+
+        assert!(shutdown_token.is_cancelled());
+    }
 
     #[tokio::test]
     async fn serve_until_shutdown_returns_graceful_when_server_finishes() {

@@ -213,4 +213,17 @@ describe('BorgbaseAccountPanel', () => {
 
     expect(hasButton(wrapper, 'Remove token')).toBe(true)
   })
+
+  it('keeps the token when removing it is cancelled', async () => {
+    serverState(true)
+    const wrapper = await mountPanel()
+
+    await findButton(wrapper, /^Remove token$/).trigger('click')
+    dialogButton('Cancel').click()
+    await flushPromises()
+
+    expect(apiClient.delete).not.toHaveBeenCalled()
+    expect(hasButton(wrapper, 'Remove token')).toBe(true)
+    expect(document.body.querySelector('.modal-dialog')).toBeNull()
+  })
 })

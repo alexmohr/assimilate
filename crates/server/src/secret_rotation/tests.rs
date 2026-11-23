@@ -349,3 +349,46 @@ fn the_error_names_the_secret_without_its_value() {
     let shown = error.to_string();
     assert!(shown.starts_with("the webhook header value of header \"Authorization\""));
 }
+
+#[ignore = "requires DATABASE_URL"]
+#[sqlx::test(migrations = "./migrations")]
+async fn a_borgbase_token_already_under_the_current_key_is_left_untouched(pool: PgPool) {
+    let token = encrypt("saved-after-rotation", &current());
+    crate::db::borgbase_account::set_api_token(&pool, &token)
+        .await
+        .unwrap();
+
+    let rotated = rotate_stored_secrets(&pool, &keys()).await.unwrap();
+
+    assert_eq!(rotated, RotatedSecrets::default());
+    assert_eq!(
+        crate::db::borgbase_account::get_api_token(&pool)
+            .await
+            .unwrap(),
+        Some(token)
+    );
+}
+
+#[ignore = "requires DATABASE_URL"]
+#[sqlx::test(migrations = "./migrations")]
+async fn an_undecryptable_borgbase_token_names_the_account(pool: PgPool) {
+    crate::db::borgbase_account::set_api_token(
+        &pool,
+        &encrypt("token", &key(b"some other server")),
+    )
+    .await
+    .unwrap();
+
+    let error = rotate_stored_secrets(&pool, &keys()).await.unwrap_err();
+
+    assert!(
+        matches!(
+            &error,
+            SecretRotationError::Undecryptable {
+                kind: StoredSecretKind::BorgbaseApiToken,
+                owner,
+            } if owner.contains("BorgBase")
+        ),
+        "{error}"
+    );
+}

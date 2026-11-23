@@ -15,10 +15,22 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 ACCEPTED_TOKEN = "demo-token"
 
 repos = [
-    {"id": "ab12cd34", "name": "laptop", "quota": 500, "quotaEnabled": True,
-     "currentUsage": 12.5, "lastModified": "2026-11-20T10:00:00Z"},
-    {"id": "ef56ab78", "name": "nas", "quota": None, "quotaEnabled": False,
-     "currentUsage": 140.25, "lastModified": "2026-11-21T08:30:00Z"},
+    {
+        "id": "ab12cd34",
+        "name": "laptop",
+        "quota": 500,
+        "quotaEnabled": True,
+        "currentUsage": 12.5,
+        "lastModified": "2026-11-20T10:00:00Z",
+    },
+    {
+        "id": "ef56ab78",
+        "name": "nas",
+        "quota": None,
+        "quotaEnabled": False,
+        "currentUsage": 140.25,
+        "lastModified": "2026-11-21T08:30:00Z",
+    },
 ]
 keys = []
 
@@ -31,8 +43,14 @@ def answer(query, variables):
     if "sshList" in query:
         return {"sshList": keys}
     if "repoAdd" in query:
-        repo = {"id": "%08x" % (0x10000000 + len(repos)), "name": variables["name"], "quota": None,
-                "quotaEnabled": False, "currentUsage": 0, "lastModified": None}
+        repo = {
+            "id": "%08x" % (0x10000000 + len(repos)),
+            "name": variables["name"],
+            "quota": None,
+            "quotaEnabled": False,
+            "currentUsage": 0,
+            "lastModified": None,
+        }
         repos.append(repo)
         return {"repoAdd": {"repoAdded": {"id": repo["id"], "name": repo["name"]}}}
     return {"repoList": repos}
@@ -60,4 +78,6 @@ class Handler(BaseHTTPRequestHandler):
 
 
 if __name__ == "__main__":
-    HTTPServer(("127.0.0.1", int(sys.argv[1]) if len(sys.argv) > 1 else 8099), Handler).serve_forever()
+    HTTPServer(
+        ("127.0.0.1", int(sys.argv[1]) if len(sys.argv) > 1 else 8099), Handler
+    ).serve_forever()

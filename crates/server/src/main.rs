@@ -230,6 +230,7 @@ async fn rotate_secret_key(
         totp_secrets = rotated.totp_secrets,
         smtp_passwords = rotated.smtp_passwords,
         webhook_header_values = rotated.webhook_header_values,
+        borgbase_api_tokens = rotated.borgbase_api_tokens,
         "re-encrypted {total} stored secrets under ASSIMILATE_SECRET_KEY"
     );
     let previous_fingerprint = previous.channel_key.public_key()?.fingerprint();

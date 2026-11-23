@@ -6,6 +6,8 @@
 pub mod append_only;
 /// Audit log database queries.
 pub mod audit;
+/// The BorgBase account's encrypted API token.
+pub mod borgbase_account;
 /// Missed-run catch-up queries.
 pub mod catch_up;
 /// Dashboard summary queries.

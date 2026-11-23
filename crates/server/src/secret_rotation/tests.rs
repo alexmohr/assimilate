@@ -147,6 +147,9 @@ async fn every_kind_of_secret_moves_to_the_current_key(pool: PgPool) {
         Some(&encrypt("Bearer abc", &previous())),
     )
     .await;
+    crate::db::borgbase_account::set_api_token(&pool, &encrypt("bb-token", &previous()))
+        .await
+        .unwrap();
 
     let rotated = rotate_stored_secrets(&pool, &keys()).await.unwrap();
 
@@ -157,9 +160,10 @@ async fn every_kind_of_secret_moves_to_the_current_key(pool: PgPool) {
             totp_secrets: 1,
             smtp_passwords: 1,
             webhook_header_values: 1,
+            borgbase_api_tokens: 1,
         }
     );
-    assert_eq!(rotated.total(), 4);
+    assert_eq!(rotated.total(), 5);
     let repo = repo_passphrase(&pool, repo).await;
     assert_eq!(decrypts_to(&repo, &current()).as_deref(), Some("repo-pass"));
     assert_eq!(decrypts_to(&repo, &previous()), None);
@@ -172,6 +176,11 @@ async fn every_kind_of_secret_moves_to_the_current_key(pool: PgPool) {
         decrypts_to(&header, &current()).as_deref(),
         Some("Bearer abc")
     );
+    let token = crate::db::borgbase_account::get_api_token(&pool)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(decrypts_to(&token, &current()).as_deref(), Some("bb-token"));
 }
 
 #[ignore = "requires DATABASE_URL"]

@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO borgbase_account (singleton, api_token_encrypted) VALUES (TRUE, $1) ON CONFLICT (singleton) DO UPDATE SET api_token_encrypted = EXCLUDED.api_token_encrypted, updated_at = NOW()",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Bytea"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "dab8443771a74d134f36cbf4264576d1bacc0e5c9859fed6fb72f92526ec0bd9"
+}

@@ -22,6 +22,8 @@ pub mod audit;
 /// pattern-file building (`borg::env`), and typed `--log-json` parsing
 /// (`borg::log_json`).
 pub mod borg;
+/// BorgBase account management types shared by the server API and the frontend.
+pub mod borgbase;
 /// Stopping a console child the way Ctrl+C would, including on Windows,
 /// where that needs the child on a console of its own.
 pub mod console;

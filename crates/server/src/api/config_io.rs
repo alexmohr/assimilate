@@ -110,6 +110,12 @@ pub async fn export_config(
     // Export repositories with quotas, and tags (passphrases are NOT exported
     // for security - they are encrypted at rest with a server-specific key
     // and must be re-set on the target server after import).
+    let host_providers: HashMap<String, HostProvider> =
+        db::repo_hosts::list_repo_hosts(&state.pool)
+            .await?
+            .into_iter()
+            .map(|summary| (summary.host.ssh_host, summary.host.provider))
+            .collect();
     let mut repo_exports = Vec::new();
     for repo in &repos {
         let quota = db::quota::get_quota(&state.pool, repo.id)
@@ -121,9 +127,10 @@ pub async fn export_config(
             .map(|t| t.name)
             .collect();
 
-        let provider = db::repo_hosts::find_repo_host_by_name(&state.pool, &repo.ssh_host)
-            .await?
-            .map_or_else(Default::default, |host| host.provider);
+        let provider = host_providers
+            .get(&repo.ssh_host)
+            .copied()
+            .unwrap_or_default();
         repo_exports.push(RepoExport {
             name: repo.name.clone(),
             repo_path: repo.repo_path.clone(),

@@ -60,6 +60,7 @@ export interface InitRepoRequest {
   passphrase: string
   encryption: string
   compression: string
+  provider?: HostProvider
 }
 
 export async function initRepo(data: InitRepoRequest): Promise<void> {

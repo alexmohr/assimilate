@@ -52,7 +52,6 @@ macro_rules! text_column {
 
 text_column!(
     ApiTokenScope,
-    HostProvider,
     ArchiveGrowthStatus,
     BorgEncryption,
     Compression,
@@ -62,6 +61,7 @@ text_column!(
     DatabaseSourceKind,
     ExecutionMode,
     FsSnapshotMode,
+    HostProvider,
     MachineWakeMode,
     MysqlEngine,
     OnFailure,

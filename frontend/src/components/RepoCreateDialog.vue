@@ -702,7 +702,7 @@ defineExpose({ reset })
           :ssh-host="form.ssh_host"
           :ssh-user="form.ssh_user"
           :ssh-port="form.ssh_port"
-          :sftp="preset?.key_deploy"
+          :key-deploy="preset?.key_deploy"
         />
       </div>
     </div>

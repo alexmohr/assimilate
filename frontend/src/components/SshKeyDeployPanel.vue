@@ -18,13 +18,13 @@ const props = withDefaults(
     sshPort?: number
     showCredentials?: boolean
     /** The provider's key deploy method; omitted, SFTP is offered first as it always was. */
-    sftp?: KeyDeployMethod
+    keyDeploy?: KeyDeployMethod
   }>(),
   {
     sshUser: 'root',
     sshPort: 22,
     showCredentials: false,
-    sftp: 'sftp',
+    keyDeploy: 'sftp',
   },
 )
 
@@ -32,12 +32,12 @@ const localHost = ref(props.sshHost)
 const localUser = ref(props.sshUser)
 const localPort = ref(props.sshPort)
 const password = ref('')
-const useSftp = ref(props.sftp === 'sftp')
+const useSftp = ref(props.keyDeploy === 'sftp')
 
 // The panel stays open while the provider above it changes, so the method
 // the provider calls for has to follow, not only seed the first value.
 watch(
-  () => props.sftp,
+  () => props.keyDeploy,
   (method) => {
     useSftp.value = method === 'sftp'
   },

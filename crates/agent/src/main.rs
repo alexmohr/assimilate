@@ -221,6 +221,22 @@ fn write_agent_token(out: &mut impl std::io::Write, token: &str) -> std::io::Res
     writeln!(out, "{token}").and_then(|()| out.flush())
 }
 
+/// Trades the inputs' enrollment token for an agent token as `hostname` and writes
+/// the agent token to `out`.
+fn enroll_to(
+    inputs: &EnrollInputs,
+    hostname: String,
+    out: &mut impl std::io::Write,
+) -> Result<(), StartupError> {
+    let token = runtime()?.block_on(enroll::enroll(&enroll::EnrollRequest {
+        url: &inputs.url,
+        key: &inputs.key,
+        enrollment_token: &inputs.enrollment_token,
+        hostname,
+    }))?;
+    write_agent_token(out, &token).map_err(StartupError::Output)
+}
+
 /// Trades the enrollment token for an agent token and prints the agent token
 /// on standard output.
 fn run_enroll(cli: Cli) -> Result<ExitCode, StartupError> {
@@ -230,13 +246,7 @@ fn run_enroll(cli: Cli) -> Result<ExitCode, StartupError> {
     let inputs = cli
         .enroll_inputs(token)
         .ok_or(StartupError::MissingEnrollArgs)?;
-    let token = runtime()?.block_on(enroll::enroll(&enroll::EnrollRequest {
-        url: &inputs.url,
-        key: &inputs.key,
-        enrollment_token: &inputs.enrollment_token,
-        hostname: ws::local_hostname(),
-    }))?;
-    write_agent_token(&mut std::io::stdout().lock(), &token).map_err(StartupError::Output)?;
+    enroll_to(&inputs, ws::local_hostname(), &mut std::io::stdout().lock())?;
     Ok(ExitCode::SUCCESS)
 }
 
@@ -397,6 +407,65 @@ mod cli_tests {
         assert_eq!(inputs.url, "wss://backup.example");
         assert_eq!(inputs.enrollment_token, "enr_secret");
         assert_eq!(inputs.key.to_string(), KEY);
+    }
+
+    /// A server on its own runtime and thread, so `enroll_to` can build its own.
+    fn fake_enrollment_server(answer: shared::protocol::ServerToAgent) -> String {
+        use futures_util::{SinkExt as _, StreamExt as _};
+        use tokio_tungstenite::tungstenite::Message;
+
+        let (url_tx, url_rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let runtime = tokio::runtime::Runtime::new().unwrap();
+            runtime.block_on(async {
+                let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+                url_tx
+                    .send(format!("ws://{}", listener.local_addr().unwrap()))
+                    .unwrap();
+                let (mut sink, mut stream) = crate::ws::tests::accept_encrypted(&listener).await;
+                let _enroll = stream.next().await.unwrap().unwrap();
+                let json = serde_json::to_string(&answer).unwrap();
+                sink.send(Message::Text(json.into())).await.unwrap();
+                // Keep the connection until the agent has read the answer.
+                let _closed = stream.next().await;
+            });
+        });
+        url_rx.recv().unwrap()
+    }
+
+    fn inputs_for(url: String) -> EnrollInputs {
+        EnrollInputs {
+            url,
+            key: crate::endpoint::test_support::server_key()
+                .public_key()
+                .unwrap(),
+            enrollment_token: "enr_secret".to_owned(),
+        }
+    }
+
+    #[test]
+    fn enrolling_writes_the_agent_token_the_server_hands_out() {
+        let url = fake_enrollment_server(shared::protocol::ServerToAgent::Enrolled {
+            token: "agent-token".to_owned(),
+        });
+        let mut out = Vec::new();
+
+        enroll_to(&inputs_for(url), "new-host".to_owned(), &mut out).unwrap();
+
+        assert_eq!(String::from_utf8(out).unwrap(), "agent-token\n");
+    }
+
+    #[test]
+    fn a_refused_enrollment_writes_nothing_and_fails() {
+        let url = fake_enrollment_server(shared::protocol::ServerToAgent::EnrollRefused {
+            reason: "used".to_owned(),
+        });
+        let mut out = Vec::new();
+
+        let result = enroll_to(&inputs_for(url), "new-host".to_owned(), &mut out);
+
+        assert!(matches!(result, Err(StartupError::Enroll(_))));
+        assert_eq!(out, Vec::<u8>::new());
     }
 
     #[test]

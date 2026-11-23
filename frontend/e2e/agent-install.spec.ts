@@ -91,6 +91,18 @@ test.describe('Install command', () => {
     expect(await ps1.text()).toContain('-ServerKey')
   })
 
+  test('the agent download answers without a login', async ({ request }) => {
+    // A server image carries the Linux agent; one run without it says so.
+    const download = await request.get('/download/agent?os=linux&arch=x86_64')
+    const checksum = await request.get('/download/agent.sha256?os=linux&arch=x86_64')
+    expect([200, 404]).toContain(download.status())
+    expect(checksum.status()).toBe(download.status())
+    if (checksum.ok()) expect(await checksum.text()).toMatch(/^[0-9a-f]{64} {2}assimilate-agent\n$/)
+
+    const unknown = await request.get('/download/agent?os=linux&arch=riscv64')
+    expect(unknown.status()).toBe(400)
+  })
+
   test('the enrollment API needs an admin', async ({ request }) => {
     const response = await request.get('/api/enrollment-tokens')
     expect(response.status()).toBe(401)

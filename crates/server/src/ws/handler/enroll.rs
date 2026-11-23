@@ -60,10 +60,8 @@ where
     Si: Sink<Message> + Unpin,
     Si::Error: std::fmt::Display,
 {
-    let Ok(json) = serde_json::to_string(message) else {
-        tracing::error!("failed to serialize the enrollment answer");
-        return;
-    };
+    // The answers are plain data, so they always serialize; only the send can fail.
+    let json = serde_json::to_string(message).unwrap_or_default();
     if let Err(e) = ws_sink.send(Message::Text(json.into())).await {
         tracing::debug!(error = %e, "ws send failed");
     }
@@ -139,4 +137,65 @@ where
         }
     };
     send(ws_sink, &answer).await;
+}
+
+#[cfg(test)]
+mod tests {
+    use futures_util::sink;
+
+    use super::*;
+
+    fn request(hostname: &str, domain: Option<&str>) -> EnrollRequest {
+        EnrollRequest {
+            hostname: hostname.to_owned(),
+            domain: domain.map(str::to_owned),
+            enrollment_token: "enr_unused".to_owned(),
+        }
+    }
+
+    #[test]
+    fn an_ordinary_hostname_and_domain_are_accepted() {
+        assert!(validate(&request("web-01", Some("lab.example.com"))).is_ok());
+        assert!(validate(&request("web-01", None)).is_ok());
+    }
+
+    #[test]
+    fn a_blank_or_oversized_hostname_or_domain_is_turned_down_with_a_reason() {
+        let too_long = "h".repeat(300);
+
+        for bad in [
+            request("", None),
+            request(&too_long, None),
+            request("web-01", Some(&too_long)),
+        ] {
+            let reason = validate(&bad).err().map(Refusal::reason);
+            assert!(reason.is_some_and(|reason| !reason.is_empty()));
+        }
+    }
+
+    #[test]
+    fn a_refused_token_gets_the_same_words_whatever_the_cause() {
+        assert_eq!(Refusal::Token.reason(), ENROLLMENT_REFUSED);
+        assert_eq!(
+            Refusal::Other("enrollment failed").reason(),
+            "enrollment failed"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_answer_that_cannot_be_sent_is_only_logged() {
+        let mut broken = Box::pin(sink::unfold((), |(), _message: Message| async {
+            Err::<(), String>("connection gone".to_owned())
+        }));
+
+        let ((), logs) = crate::test_support::formatted_logs_while(send(
+            &mut broken,
+            &ServerToAgent::EnrollRefused {
+                reason: "no".to_owned(),
+            },
+        ))
+        .await;
+
+        assert!(logs.contains("ws send failed"), "{logs}");
+    }
 }

@@ -47,6 +47,14 @@ fn generate_enrollment_token() -> String {
     )
 }
 
+/// The first of `requested` that is not among the agent tags in `known`.
+fn first_unknown_tag(requested: &[i64], known: &[db::TagRow]) -> Option<i64> {
+    requested
+        .iter()
+        .copied()
+        .find(|id| !known.iter().any(|tag| tag.id == *id))
+}
+
 /// Checks a create request, returning the lifetime to give the token.
 async fn validate_request(
     state: &AppState,
@@ -67,11 +75,7 @@ async fn validate_request(
     }
     if !req.tag_ids.is_empty() {
         let known = db::list_tags(&state.pool, AGENT_TAG_SCOPE).await?;
-        if let Some(unknown) = req
-            .tag_ids
-            .iter()
-            .find(|id| !known.iter().any(|tag| tag.id == **id))
-        {
+        if let Some(unknown) = first_unknown_tag(&req.tag_ids, &known) {
             return Err(ApiError::BadRequest(format!(
                 "tag {unknown} is not an agent tag"
             )));
@@ -253,6 +257,24 @@ mod tests {
         )
         .await
         .map(|(_, Json(created))| created)
+    }
+
+    fn tag(id: i64) -> db::TagRow {
+        db::TagRow {
+            id,
+            name: format!("tag-{id}"),
+            color: "#336699".to_owned(),
+            scope: AGENT_TAG_SCOPE.to_owned(),
+        }
+    }
+
+    #[test]
+    fn a_requested_tag_that_is_not_an_agent_tag_is_found() {
+        let known = [tag(1), tag(2)];
+
+        assert_eq!(first_unknown_tag(&[2, 1], &known), None);
+        assert_eq!(first_unknown_tag(&[], &known), None);
+        assert_eq!(first_unknown_tag(&[2, 9, 7], &known), Some(9));
     }
 
     #[test]

@@ -222,6 +222,18 @@ pub struct EnrolledAgent {
     pub token_id: i64,
 }
 
+/// Why inserting the agent failed: a taken hostname, or the database itself.
+fn insert_error(error: sqlx::Error) -> EnrollError {
+    if error
+        .as_database_error()
+        .is_some_and(sqlx::error::DatabaseError::is_unique_violation)
+    {
+        EnrollError::AgentExists
+    } else {
+        EnrollError::Database(error)
+    }
+}
+
 /// Trades the token with `token_hash` for a new agent called `hostname`.
 ///
 /// Claiming the token and creating the agent happen in one transaction, so a
@@ -265,10 +277,7 @@ pub async fn enroll_agent(
     )
     .fetch_one(&mut *tx)
     .await
-    .map_err(|e| match e {
-        sqlx::Error::Database(ref db) if db.is_unique_violation() => EnrollError::AgentExists,
-        other => EnrollError::Database(other),
-    })?;
+    .map_err(insert_error)?;
 
     sqlx::query!(
         "INSERT INTO agent_tags (agent_id, tag_id) SELECT $1, id FROM tags WHERE id = ANY($2)",
@@ -290,4 +299,17 @@ pub async fn enroll_agent(
         agent_id,
         token_id: claimed.id,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_failure_that_is_not_a_taken_hostname_is_a_database_error() {
+        assert!(matches!(
+            insert_error(sqlx::Error::PoolTimedOut),
+            EnrollError::Database(sqlx::Error::PoolTimedOut)
+        ));
+    }
 }

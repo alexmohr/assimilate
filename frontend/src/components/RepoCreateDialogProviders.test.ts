@@ -59,9 +59,9 @@ const HOSTS = [
   { id: 4, ssh_host: 'u9.your-storagebox.de', ssh_port: 23, provider: 'hetzner' },
 ] as unknown as RepoHostResponse[]
 
-async function open(): Promise<void> {
+async function open(mode: 'import' | 'create' = 'import'): Promise<void> {
   const wrapper = renderWithPlugins(RepoCreateDialog, {
-    props: { open: true, mode: 'import', repos: [] },
+    props: { open: true, mode, repos: [] },
   })
   // The view calls reset() each time it opens the dialog, which loads the presets.
   ;(wrapper.vm as unknown as { reset: () => void }).reset()
@@ -277,6 +277,51 @@ describe('RepoCreateDialog provider presets', () => {
       '/repos',
       expect.objectContaining({ provider: 'rsync_net', ssh_port: 22 }),
     )
+  })
+
+  it('sends the chosen provider with a repository it initialises', async () => {
+    await open('create')
+    await pick('hetzner')
+    await type(byLabel('Name'), 'fresh-box')
+    await type(byLabel('SSH host'), 'u777777')
+    byLabel('SSH host').dispatchEvent(new Event('blur'))
+    await flushPromises()
+    await type(byLabel('Passphrase'), 'secret')
+
+    const submit = [...document.body.querySelectorAll<HTMLButtonElement>('button')].find(
+      (b) => b.textContent?.trim() === 'Create Repo',
+    )
+    submit?.click()
+    await flushPromises()
+
+    expect(apiClient.post).toHaveBeenCalledWith(
+      '/repos/init',
+      expect.objectContaining({
+        provider: 'hetzner',
+        ssh_host: 'u777777.your-storagebox.de',
+        ssh_port: 23,
+        repo_path: './backups/',
+      }),
+    )
+    expect(apiClient.post).not.toHaveBeenCalledWith('/repos', expect.anything())
+  })
+
+  it('sends no provider for a generic repository it initialises', async () => {
+    await open('create')
+    await type(byLabel('Name'), 'plain')
+    await type(byLabel('SSH host'), 'nas.lan')
+    await type(byLabel('Repo path'), '/srv/b')
+    await type(byLabel('Passphrase'), 'secret')
+
+    const submit = [...document.body.querySelectorAll<HTMLButtonElement>('button')].find(
+      (b) => b.textContent?.trim() === 'Create Repo',
+    )
+    submit?.click()
+    await flushPromises()
+
+    const call = vi.mocked(apiClient.post).mock.calls.find(([url]) => url === '/repos/init')
+    expect(call).toBeDefined()
+    expect('provider' in (call?.[1] as Record<string, unknown>)).toBe(false)
   })
 
   it('sends no provider for a generic host', async () => {

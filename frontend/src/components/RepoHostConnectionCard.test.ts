@@ -83,6 +83,27 @@ describe('RepoHostConnectionCard', () => {
     expect(wrapper.get('[data-testid="host-provider"]').text()).toBe('Hetzner Storage Box')
   })
 
+  it('locks the port of a provider host while its address is edited', async () => {
+    vi.mocked(apiClient.get).mockResolvedValue({
+      data: [
+        { provider: 'generic', defaults: { ssh_port: null } },
+        { provider: 'hetzner', defaults: { ssh_port: 23 } },
+      ],
+    } as never)
+    const wrapper = mount({ host: host({ provider: 'hetzner', ssh_port: 23 }) })
+    await startEditingSection(wrapper)
+    await flushPromises()
+    expect(wrapper.get('#repo-host-port').attributes('disabled')).toBeDefined()
+    expect(wrapper.text()).toContain('Fixed by the provider')
+  })
+
+  it('leaves the port of a generic host editable', async () => {
+    const wrapper = mount()
+    await startEditingSection(wrapper)
+    await flushPromises()
+    expect(wrapper.get('#repo-host-port').attributes('disabled')).toBeUndefined()
+  })
+
   it('says so when no key is pinned yet', () => {
     expect(mount({ host: host({ ssh_host_key: null }) }).text()).toContain('Not pinned yet')
   })

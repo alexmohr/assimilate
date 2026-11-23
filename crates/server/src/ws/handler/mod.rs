@@ -4788,10 +4788,16 @@ exit 0
     }
 
     fn assert_refused(answer: &ServerToAgent) {
-        let ServerToAgent::EnrollRefused { reason } = answer else {
-            panic!("the enrollment was not refused: {answer:?}");
-        };
-        assert_eq!(reason, shared::enrollment::ENROLLMENT_REFUSED);
+        let json = serde_json::to_value(answer).expect("serialize");
+        assert_eq!(
+            json.pointer("/type"),
+            Some(&serde_json::json!("EnrollRefused")),
+            "{answer:?}"
+        );
+        assert_eq!(
+            json.pointer("/payload/reason"),
+            Some(&serde_json::json!(shared::enrollment::ENROLLMENT_REFUSED))
+        );
     }
 
     /// A host with a valid token gets an agent token it can connect with, and
@@ -4822,18 +4828,129 @@ exit 0
             "the agent connects with the token it was given"
         );
         let events = crate::test_support::audit_events(&pool).await;
-        let enrolled: Vec<&str> = events
-            .iter()
-            .filter_map(|event| match event {
-                shared::audit::AuditEvent::UseEnrollmentToken { hostname, .. } => {
-                    Some(hostname.as_str())
-                }
-                _ => None,
-            })
-            .collect();
-        assert_eq!(enrolled, ["enrolled-host"]);
+        assert_eq!(
+            serde_json::to_value(&events).expect("serialize"),
+            serde_json::json!([{
+                "action": "use_enrollment_token",
+                "details": { "hostname": "enrolled-host", "domain": null },
+            }])
+        );
         let logged = format!("{events:?}");
         assert!(!logged.contains(&token) && !logged.contains(ENROLLMENT_TOKEN));
+
+        let tokens = crate::db::enrollment_tokens::list_enrollment_tokens(&pool)
+            .await
+            .unwrap();
+        let listed: Vec<(shared::enrollment::EnrollmentTokenStatus, Option<&str>)> = tokens
+            .iter()
+            .map(|t| {
+                (
+                    t.status(shared::time::Timestamp::now()),
+                    t.used_by.as_deref(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            listed,
+            [(
+                shared::enrollment::EnrollmentTokenStatus::Used,
+                Some("enrolled-host")
+            )]
+        );
+    }
+
+    /// A hostname or domain the server cannot register is refused with the reason, and
+    /// the token is not spent.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn an_unacceptable_hostname_or_domain_is_refused_and_keeps_the_token(pool: PgPool) {
+        enrollment_token(
+            &pool,
+            ENROLLMENT_TOKEN,
+            shared::time::SignedDuration::from_secs(3600),
+            None,
+        )
+        .await;
+        let state = build_test_state(pool);
+        let too_long = "h".repeat(300);
+
+        let blank = enroll_answer(&state, "", ENROLLMENT_TOKEN).await;
+        let long_name = enroll_answer(&state, &too_long, ENROLLMENT_TOKEN).await;
+        let (sink, sent) = recording_sink();
+        let long_domain = Message::Text(
+            wire(&AgentToServer::Enroll {
+                hostname: "fine-host".into(),
+                domain: Some(too_long.clone()),
+                enrollment_token: ENROLLMENT_TOKEN.into(),
+            })
+            .into(),
+        );
+        Box::pin(serve_agent(sink, frames(vec![long_domain]), state.clone())).await;
+
+        for answer in [blank, long_name] {
+            assert!(matches!(answer, ServerToAgent::EnrollRefused { .. }));
+        }
+        assert!(matches!(
+            sent_messages(&sent).as_slice(),
+            [ServerToAgent::EnrollRefused { .. }]
+        ));
+        assert!(matches!(
+            enroll_answer(&state, "fine-host", ENROLLMENT_TOKEN).await,
+            ServerToAgent::Enrolled { .. }
+        ));
+    }
+
+    /// A database that rejects the write refuses the enrollment without telling
+    /// the host why, and does not spend the token.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_database_failure_refuses_the_enrollment(pool: PgPool) {
+        enrollment_token(
+            &pool,
+            ENROLLMENT_TOKEN,
+            shared::time::SignedDuration::from_secs(3600),
+            None,
+        )
+        .await;
+        reject_writes(&pool, WriteRejecting::EnrollmentTokens).await;
+        let state = build_test_state(pool);
+
+        let answer = enroll_answer(&state, "db-down-host", ENROLLMENT_TOKEN).await;
+
+        assert_eq!(
+            serde_json::to_value(&answer).expect("serialize"),
+            serde_json::json!({
+                "type": "EnrollRefused",
+                "payload": { "reason": "enrollment failed" },
+            })
+        );
+    }
+
+    /// An Enroll after the handshake is not a second way in: it is logged and
+    /// ignored.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn an_enroll_after_the_handshake_is_ignored(pool: PgPool) {
+        socket_agent(&pool, "enrolled-twice").await;
+        let state = build_test_state(pool);
+        let (sink, sent) = recording_sink();
+
+        let ((), logs) = crate::test_support::formatted_logs_while(Box::pin(serve_agent(
+            sink,
+            frames(vec![
+                hello_frame("enrolled-twice", SOCKET_TOKEN),
+                enroll_frame("enrolled-twice", ENROLLMENT_TOKEN),
+            ]),
+            state,
+        )))
+        .await;
+
+        assert!(logs.contains("unexpected Enroll after handshake"), "{logs}");
+        assert!(
+            sent_messages(&sent)
+                .iter()
+                .all(|message| !matches!(message, ServerToAgent::Enrolled { .. }))
+        );
     }
 
     /// The tags a token carries land on the agent that uses it.
@@ -5766,6 +5883,7 @@ exit 0
     enum WriteRejecting {
         BackupReports,
         CanaryResults,
+        EnrollmentTokens,
         RepoLastOp,
         ScheduleRepos,
         Schedules,
@@ -5783,6 +5901,10 @@ exit 0
             WriteRejecting::CanaryResults => sqlx::query!(
                 "ALTER TABLE canary_results ADD CONSTRAINT test_rejects_writes CHECK (false) NOT \
                  VALID"
+            ),
+            WriteRejecting::EnrollmentTokens => sqlx::query!(
+                "ALTER TABLE enrollment_tokens ADD CONSTRAINT test_rejects_writes CHECK (false) \
+                 NOT VALID"
             ),
             WriteRejecting::RepoLastOp => sqlx::query!(
                 "ALTER TABLE repo_last_op ADD CONSTRAINT test_rejects_writes CHECK (false) NOT \

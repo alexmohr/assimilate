@@ -6,6 +6,8 @@
 //! scripts hold no secrets, and the binary is the one anyone could build from
 //! the source; a host proves itself later, with its enrollment token.
 
+use std::path::Path;
+
 use axum::{
     body::Body,
     extract::Query,
@@ -92,27 +94,21 @@ pub fn install_ps1() -> Response {
     script_response(INSTALL_PS1, "text/plain; charset=utf-8")
 }
 
-/// The agent binary for `query`, opened for reading.
-async fn open_agent(query: &DownloadQuery) -> Result<(tokio::fs::File, u64), ApiError> {
+/// The agent binary for `query` in `dir`, opened for reading.
+async fn open_agent(dir: &Path, query: &DownloadQuery) -> Result<(tokio::fs::File, u64), ApiError> {
     let DownloadOs::Linux = query.os;
     let not_found =
         || ApiError::NotFound("this server carries no agent for that architecture".to_owned());
-    let path = agent_binary_dir().await.join(query.arch.file_name());
-    let file = tokio::fs::File::open(&path)
+    let file = tokio::fs::File::open(dir.join(query.arch.file_name()))
         .await
         .map_err(|_| not_found())?;
     let length = file.metadata().await.map_err(|_| not_found())?.len();
     Ok((file, length))
 }
 
-/// The agent binary this server carries, for the install script to download.
-/// It is streamed, not read into memory: anyone can ask for it.
-///
-/// # Errors
-///
-/// Returns [`ApiError::NotFound`] if the server has no agent for the architecture.
-pub async fn download_agent(Query(query): Query<DownloadQuery>) -> Result<Response, ApiError> {
-    let (file, length) = open_agent(&query).await?;
+/// The agent binary in `dir`, streamed, not read into memory: anyone can ask for it.
+async fn agent_response(dir: &Path, query: &DownloadQuery) -> Result<Response, ApiError> {
+    let (file, length) = open_agent(dir, query).await?;
     Ok((
         StatusCode::OK,
         [
@@ -127,16 +123,11 @@ pub async fn download_agent(Query(query): Query<DownloadQuery>) -> Result<Respon
         .into_response())
 }
 
-/// The SHA-256 of that binary, in `sha256sum` format, hashed in chunks.
-///
-/// # Errors
-///
-/// Returns [`ApiError::NotFound`] if the server has no agent for the architecture, or
-/// [`ApiError::Internal`] if reading it fails.
-pub async fn download_agent_sha256(Query(query): Query<DownloadQuery>) -> Result<String, ApiError> {
+/// The SHA-256 of the agent binary in `dir`, in `sha256sum` format, hashed in chunks.
+async fn agent_sha256(dir: &Path, query: &DownloadQuery) -> Result<String, ApiError> {
     use std::fmt::Write as _;
 
-    let (mut file, _length) = open_agent(&query).await?;
+    let (mut file, _length) = open_agent(dir, query).await?;
     let mut hasher = Sha256::new();
     let mut chunk = vec![0u8; HASH_CHUNK_BYTES];
     loop {
@@ -154,6 +145,25 @@ pub async fn download_agent_sha256(Query(query): Query<DownloadQuery>) -> Result
         acc
     });
     Ok(format!("{hex}  assimilate-agent\n"))
+}
+
+/// The agent binary this server carries, for the install script to download.
+///
+/// # Errors
+///
+/// Returns [`ApiError::NotFound`] if the server has no agent for the architecture.
+pub async fn download_agent(Query(query): Query<DownloadQuery>) -> Result<Response, ApiError> {
+    agent_response(&agent_binary_dir().await, &query).await
+}
+
+/// The SHA-256 of that binary, in `sha256sum` format.
+///
+/// # Errors
+///
+/// Returns [`ApiError::NotFound`] if the server has no agent for the architecture, or
+/// [`ApiError::Internal`] if reading it fails.
+pub async fn download_agent_sha256(Query(query): Query<DownloadQuery>) -> Result<String, ApiError> {
+    agent_sha256(&agent_binary_dir().await, &query).await
 }
 
 #[cfg(test)]
@@ -200,5 +210,72 @@ mod tests {
     fn an_architecture_maps_to_the_binary_the_deploy_stages() {
         assert_eq!(DownloadArch::X86_64.file_name(), "agent-x86_64");
         assert_eq!(DownloadArch::Aarch64.file_name(), "agent-aarch64");
+    }
+
+    fn x86_64() -> DownloadQuery {
+        DownloadQuery {
+            os: DownloadOs::Linux,
+            arch: DownloadArch::X86_64,
+        }
+    }
+
+    fn sha256_hex(bytes: &[u8]) -> String {
+        use std::fmt::Write as _;
+
+        Sha256::digest(bytes)
+            .iter()
+            .fold(String::new(), |mut acc, b| {
+                let _ = write!(acc, "{b:02x}");
+                acc
+            })
+    }
+
+    #[tokio::test]
+    async fn the_agent_is_streamed_with_its_length() {
+        let dir = tempfile::tempdir().unwrap();
+        tokio::fs::write(dir.path().join("agent-x86_64"), b"agent bytes")
+            .await
+            .unwrap();
+
+        let response = agent_response(dir.path(), &x86_64()).await.unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response.headers().get(header::CONTENT_LENGTH).unwrap(),
+            "11"
+        );
+        assert_eq!(
+            response.headers().get(header::CONTENT_TYPE).unwrap(),
+            "application/octet-stream"
+        );
+        assert_eq!(body_of(response).await, "agent bytes");
+    }
+
+    #[tokio::test]
+    async fn the_checksum_is_in_sha256sum_format_and_covers_a_file_larger_than_a_chunk() {
+        let dir = tempfile::tempdir().unwrap();
+        let bytes = vec![7u8; HASH_CHUNK_BYTES * 2 + 1];
+        tokio::fs::write(dir.path().join("agent-aarch64"), &bytes)
+            .await
+            .unwrap();
+        let query = DownloadQuery {
+            os: DownloadOs::Linux,
+            arch: DownloadArch::Aarch64,
+        };
+
+        let line = agent_sha256(dir.path(), &query).await.unwrap();
+
+        assert_eq!(line, format!("{}  assimilate-agent\n", sha256_hex(&bytes)));
+    }
+
+    #[tokio::test]
+    async fn an_architecture_the_server_does_not_carry_is_not_found() {
+        let dir = tempfile::tempdir().unwrap();
+
+        let download = agent_response(dir.path(), &x86_64()).await;
+        let checksum = agent_sha256(dir.path(), &x86_64()).await;
+
+        assert!(matches!(download, Err(ApiError::NotFound(_))));
+        assert!(matches!(checksum, Err(ApiError::NotFound(_))));
     }
 }

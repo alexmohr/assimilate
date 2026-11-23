@@ -86,8 +86,9 @@ async fn enroll(state: &AppState, request: &EnrollRequest) -> Result<String, Ref
     let agent_token_hash =
         tokio::task::spawn_blocking(move || bcrypt::hash(to_hash, bcrypt::DEFAULT_COST))
             .await
-            .map_err(|_| Refusal::Other("enrollment failed"))?
-            .map_err(|_| Refusal::Other("enrollment failed"))?;
+            .ok()
+            .and_then(Result::ok)
+            .ok_or(Refusal::Other("enrollment failed"))?;
 
     let enrolled = enroll_agent(
         &state.pool,

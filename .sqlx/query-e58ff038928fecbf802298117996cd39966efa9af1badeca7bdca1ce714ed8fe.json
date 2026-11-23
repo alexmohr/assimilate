@@ -1,0 +1,12 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "ALTER TABLE enrollment_tokens ADD CONSTRAINT test_rejects_writes CHECK (false) NOT VALID",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": []
+  },
+  "hash": "e58ff038928fecbf802298117996cd39966efa9af1badeca7bdca1ce714ed8fe"
+}

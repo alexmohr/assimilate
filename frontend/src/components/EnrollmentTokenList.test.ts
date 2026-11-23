@@ -93,6 +93,17 @@ describe('EnrollmentTokenList', () => {
     expect(mockList).toHaveBeenCalledTimes(2)
   })
 
+  it('shows why a token could not be revoked', async () => {
+    mockRevoke.mockRejectedValue(new Error('already used'))
+    const wrapper = await mountList([token({ id: 6 })])
+    await wrapper.get('button').trigger('click')
+
+    await wrapper.get('[data-testid="enrollment-token-row"] button').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.get('.form-error').text()).toContain('already used')
+  })
+
   it('reads the list again when its version changes', async () => {
     const wrapper = await mountList([token({})])
 

@@ -98,6 +98,7 @@ DELETE FROM dependency_hosts;
 DELETE FROM repo_hosts h WHERE NOT EXISTS (SELECT 1 FROM repos r WHERE r.repo_host_id = h.id);
 DELETE FROM system_events;
 DELETE FROM audit_log;
+DELETE FROM borgbase_account;
 DELETE FROM login_attempts;
 DELETE FROM users WHERE username IN ('operator1','viewer1');
 -- Reset admin password to 'admin' (bcrypt cost 10, pre-computed)
@@ -2112,6 +2113,18 @@ PGPASSWORD=borg_demo psql -h postgres -U borg -d borg -v ON_ERROR_STOP=1 -tAc \
     "SELECT 1 FROM repo_hosts WHERE ssh_host = 'u123456.your-storagebox.de' AND provider = 'hetzner'" \
     | grep -q 1 || {
     echo "ERROR: the offsite-hetzner host should be a Hetzner provider host" >&2
+    exit 1
+}
+
+echo "==> Storing the BorgBase API token the demo stand-in accepts..."
+# The server checks the token with BorgBase before it stores it, so this also
+# proves the server reaches the stand-in started by start-demo.sh.
+api PUT /api/borgbase/token '{"token":"demo-token"}' | jq -e '.token_set == true' > /dev/null || {
+    echo "ERROR: the BorgBase API token should be accepted and stored" >&2
+    exit 1
+}
+api GET /api/borgbase/repos | jq -e 'length >= 2' > /dev/null || {
+    echo "ERROR: the BorgBase stand-in should list its repositories" >&2
     exit 1
 }
 

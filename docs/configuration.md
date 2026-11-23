@@ -29,6 +29,7 @@ Assimilate is configured in two places:
 | `BORG_KILL_ESCALATION_SECS` | `30` | No | Seconds a cancelled `borg` process gets after `SIGTERM` before it is killed with `SIGKILL`. Read by the server and by agents. |
 | `SCHEDULER_TICK_INTERVAL_SECS`, `SCHEDULER_RETENTION_INTERVAL_SECS`, `SCHEDULER_SYNC_CHECK_INTERVAL_SECS`, `SCHEDULER_SESSION_CLEANUP_INTERVAL_SECS` | `30`, `3600`, `60`, `3600` | No | How often the scheduler checks schedules, prunes old records, checks repository syncs, and removes expired sessions. Meant for tests; leave them unset in production. At least `1`. |
 | `ASSIMILATE_TRUSTED_PROXIES` | — | No | Comma-separated list of trusted proxy CIDR networks (e.g., `10.0.0.0/8,172.16.0.0/12`). When set, the server respects the `X-Forwarded-For` header from these proxies to determine the real client IP for rate limiting. Leave empty to never trust `X-Forwarded-For`. |
+| `ASSIMILATE_BORGBASE_API_URL` | `https://api.borgbase.com/graphql` | No | The GraphQL endpoint the server sends [BorgBase](provider-guides.md#borgbase) requests, with the stored API token, to. Only for a test or demo stand-in; leave it unset to use BorgBase. |
 
 !!! warning "Security"
     `ASSIMILATE_SECRET_KEY` is used to derive the encryption key that protects all repository passphrases stored in the database. If you lose it, or replace it without [rotating it](#rotating-the-secret-key), every encrypted passphrase becomes **permanently unrecoverable**. Store it in a secrets manager. The server also derives its [agent channel key](agents.md#encrypted-connection) from it. Changing it changes that key, and every agent then needs the new `BORG_SERVER_KEY`.
@@ -37,7 +38,7 @@ Assimilate is configured in two places:
 
 To replace `ASSIMILATE_SECRET_KEY`, for example after it may have leaked, start the server with the new secret in `ASSIMILATE_SECRET_KEY` and the old one in `ASSIMILATE_PREVIOUS_SECRET_KEY`. The server then moves everything over to the new secret:
 
-* **Stored secrets.** At startup, before it serves anything, the server re-encrypts every repository passphrase, TOTP secret, SMTP password and webhook header value still encrypted under the old secret, in one transaction. It logs how many of each it re-encrypted. A value already under the new secret is left alone, so restarting with both variables still set does nothing more.
+* **Stored secrets.** At startup, before it serves anything, the server re-encrypts every repository passphrase, TOTP secret, SMTP password, webhook header value and [BorgBase API token](provider-guides.md#borgbase) still encrypted under the old secret, in one transaction. It logs how many of each it re-encrypted. A value already under the new secret is left alone, so restarting with both variables still set does nothing more.
 * **Agents.** The [agent channel key](agents.md#encrypted-connection) changes with the secret. While `ASSIMILATE_PREVIOUS_SECRET_KEY` is set, the server still accepts agents whose `BORG_SERVER_KEY` is the old key, and logs a warning each time one connects with it. The **System** page and **Deploy agent** show and use only the new key.
 
 1. Back up the database.

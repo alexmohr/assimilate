@@ -40,9 +40,25 @@ rsync.net runs several borg versions side by side and selects one by the name of
 
 ## BorgBase
 
-BorgBase gives each repository its own host name and path, and its key is the one added to the repository in the BorgBase console. Choosing the provider fixes the port and runs plain `borg`.
+BorgBase gives each repository its own host name (`<id>.repo.borgbase.com`), its own SSH user (the same `<id>`) and the path `./repo`. Choosing the provider fixes the port and runs plain `borg`.
 
-1. Create the repository in the BorgBase console and add the server's public key from the **System** page, with **Full access** or **Append-only access**.
+You can create the repository in the BorgBase console and add it by hand, or let Assimilate create it through the BorgBase API.
+
+### Create repositories from Assimilate
+
+On the **System** page, open **BorgBase**, enter a BorgBase API token and select **Save token**. The token needs **Full Access** or **Create Only** permission. Assimilate checks it with BorgBase before it stores it, encrypts it like a repository passphrase and never shows it again. **Remove token** deletes it.
+
+![BorgBase settings](assets/screenshots/system-borgbase.png)
+
+- **New repository** adds the server's SSH key to your BorgBase account (once, however many repositories you create), creates a repository in the region you choose, and gives the key **Append only** or **Full access** to it. Afterwards the panel shows the host, user and path to enter when you add the repository.
+- **Repositories on the account** lists every repository with its host, usage and quota. BorgBase does not document the unit of the usage and quota figures, so they are shown as BorgBase reports them.
+
+!!! note
+    The token belongs to the BorgBase account, not to one repository host, because every BorgBase repository is its own host. Creating, removing and replacing the token, and creating a repository, are written to the [audit log](audit-log.md#borgbase). The token itself never is.
+
+### Add the repository
+
+1. Create the repository as above, or in the BorgBase console with the server's public key from the **System** page added with **Full access** or **Append-only access**.
 2. In **Repositories**, select **Import** and choose **BorgBase** as the **Provider**.
 3. Enter the repository's host name as **SSH host**, its user as **SSH user** and its path as **Repo path**.
 4. Enter the passphrase and select **Import Repo**.

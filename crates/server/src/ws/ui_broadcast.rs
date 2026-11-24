@@ -330,27 +330,7 @@ mod tests {
         broadcast.send(ServerToUi::BackupCompleted {
             hostname: "web-server-01".to_string(),
             target_name: "server-daily".to_string(),
-            report: Box::new(shared::types::BackupReport {
-                id: shared::types::ReportId(1),
-                agent_id: shared::types::AgentId(10),
-                repo_id: shared::types::RepoId(20),
-                schedule_id: Some(8),
-                started_at: Timestamp::now(),
-                finished_at: Timestamp::now(),
-                status: shared::types::BackupStatus::Success,
-                original_size: 0,
-                compressed_size: 0,
-                deduplicated_size: 0,
-                repo_unique_csize: 0,
-                files_processed: 0,
-                duration_secs: 0,
-                error_message: None,
-                warnings: Vec::new(),
-                borg_version: None,
-                archive_name: None,
-                borg_command: None,
-                run_id: None,
-            }),
+            report: Box::new(crate::test_support::backup_report(10, 20, Some(8))),
         });
 
         assert_eq!(broadcast.current_active_backups().len(), 0);

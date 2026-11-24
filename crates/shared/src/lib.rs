@@ -43,10 +43,10 @@ pub mod db_text;
 /// Wire types for dependency hosts: machines a backup needs besides its agent
 /// and repository.
 pub mod dependency_hosts;
-/// Human-readable formatting shared by the agent's VM staging output and the
-/// server's notification content.
 /// Single-use tokens that let a new host enroll itself as an agent.
 pub mod enrollment;
+/// Human-readable formatting shared by the agent's VM staging output and the
+/// server's notification content.
 pub mod format;
 /// Pre- and post-backup hook commands and their per-command timeouts.
 pub mod hooks;

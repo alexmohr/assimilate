@@ -187,7 +187,7 @@ pub async fn enrollment_token_is_usable(
         r#"SELECT EXISTS (
                SELECT 1 FROM enrollment_tokens
                WHERE token_hash = $1 AND used_at IS NULL AND revoked_at IS NULL
-                 AND expires_at > NOW() AND (hostname IS NULL OR hostname = $2)
+                 AND expires_at > NOW() AND (hostname IS NULL OR lower(hostname) = lower($2))
            ) AS "usable!""#,
         token_hash,
         hostname,
@@ -258,8 +258,8 @@ pub async fn enroll_agent(
 
     let claimed = sqlx::query!(
         "UPDATE enrollment_tokens SET used_at = NOW() WHERE token_hash = $1 AND used_at IS NULL \
-         AND revoked_at IS NULL AND expires_at > NOW() AND (hostname IS NULL OR hostname = $2) \
-         RETURNING id, created_by, tag_ids",
+         AND revoked_at IS NULL AND expires_at > NOW() AND (hostname IS NULL OR lower(hostname) = \
+         lower($2)) RETURNING id, created_by, tag_ids",
         token_hash,
         hostname,
     )

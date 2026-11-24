@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "UPDATE enrollment_tokens SET used_at = NOW() WHERE token_hash = $1 AND used_at IS NULL AND revoked_at IS NULL AND expires_at > NOW() AND (hostname IS NULL OR hostname = $2) RETURNING id, created_by, tag_ids",
+  "query": "UPDATE enrollment_tokens SET used_at = NOW() WHERE token_hash = $1 AND used_at IS NULL AND revoked_at IS NULL AND expires_at > NOW() AND (hostname IS NULL OR lower(hostname) = lower($2)) RETURNING id, created_by, tag_ids",
   "describe": {
     "columns": [
       {
@@ -49,5 +49,5 @@
       false
     ]
   },
-  "hash": "154cfe0a9795b8c96cd301d6dac7ec3bd6f46a4c7a6d3867916bde36cc524a8e"
+  "hash": "02c25a509e6eabfa877bcef2419cfbc0ded1ba11540c2cd1e8128d90896a8b1e"
 }

@@ -66,7 +66,8 @@ done
 [ -n "$SERVER_KEY" ] || die "--server-key is required"
 SERVER="${SERVER%/}"
 case "$SERVER" in
-    https://* | http://*) ;;
+    https://*) ;;
+    http://*) printf 'install.sh: warning: %s is not HTTPS, so the downloads cannot be trusted\n' "$SERVER" >&2 ;;
     *) die "--server must start with https:// or http://" ;;
 esac
 [ "$(id -u)" -eq 0 ] || die "run this as root, for example with sudo"

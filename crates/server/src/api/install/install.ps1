@@ -22,6 +22,7 @@ $Version = '@VERSION@'
 $ReleasesUrl = if ($env:ASSIMILATE_RELEASES_URL) { $env:ASSIMILATE_RELEASES_URL } else { 'https://github.com/alexmohr/assimilate/releases/download' }
 $InstallDir = Join-Path $env:ProgramFiles 'Assimilate'
 $Server = $Server.TrimEnd('/')
+if ($Server -like 'http://*') { Write-Warning "$Server is not HTTPS, so the downloads cannot be trusted" }
 
 function Fail([string]$Message) {
     Write-Error "install.ps1: $Message"

@@ -1,5 +1,5 @@
 {
   "test": "repositories",
   "pages": ["frontend/src/views/RepoHostDetailView.vue"],
-  "fingerprint": "bb6797929a922bbb420261b0c76b278f09e84112173ee50631326b6e3a331e27"
+  "fingerprint": "03aaeb43b3884781763cb2cc2ce98b610e8d6794354a3ce1424e52c32d556871"
 }

@@ -1,5 +1,5 @@
 {
   "test": "settings pages",
   "pages": ["frontend/src/views/DatabaseStorageView.vue"],
-  "fingerprint": "59e21749a251096faa764a2ca81b235848058c71283f9a05f9911afd6ad145df"
+  "fingerprint": "fde31fd4629356a019b91cf8f0168d9abe68c72a968377b8de410b2f2f673447"
 }

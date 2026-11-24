@@ -275,12 +275,7 @@ mod tests {
                     ),
                 )
                 .with_state(state);
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-            .await
-            .expect("bind");
-        let addr = listener.local_addr().expect("address");
-        tokio::spawn(async move { axum::serve(listener, app).await });
-        addr
+        crate::test_support::serve_on_loopback(app).await
     }
 
     /// Inserts a session for `user_id` and returns its cookie value.

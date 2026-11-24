@@ -149,6 +149,14 @@ pub(crate) fn build_test_state(pool: sqlx::PgPool, key_material: &[u8]) -> crate
     }
 }
 
+/// Serves `app` on a fresh loopback port in the background and returns its address.
+pub(crate) async fn serve_on_loopback(app: Router) -> std::net::SocketAddr {
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let addr = listener.local_addr().expect("address");
+    tokio::spawn(async move { axum::serve(listener, app).await });
+    addr
+}
+
 /// Installs `script` as the borg binary until the returned guard is dropped; keep the
 /// returned directory alive as long as the guard. Hold
 /// [`acquire_test_binary_gate`](crate::borg::acquire_test_binary_gate) for the whole test.

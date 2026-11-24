@@ -1,5 +1,5 @@
 {
   "test": "dependency used by",
   "pages": ["frontend/src/views/DependencyHostDetailView.vue"],
-  "fingerprint": "ec9c0e28612c12649fd59451a61433a35661688612308cfe4bbd758dd0092fea"
+  "fingerprint": "e064ae6ee7808b1ff03dad7cc6c2f1f6b38bc8df6b5c716914fc6efc0af9be45"
 }

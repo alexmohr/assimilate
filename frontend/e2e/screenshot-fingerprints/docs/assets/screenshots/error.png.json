@@ -1,5 +1,5 @@
 {
   "test": "settings pages",
   "pages": ["frontend/src/views/ErrorView.vue"],
-  "fingerprint": "e44c93421bf9f624088a493140134d89d1ec20f6e04b56899ffe4b2002013019"
+  "fingerprint": "ad1b5cad6705c253336113627e55148099d4556c78bec284a43b711f9872f9e2"
 }

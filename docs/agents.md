@@ -187,6 +187,9 @@ Creating, using and revoking a token each write an entry to the [audit log](audi
 !!! note
     The enrollment token appears on the command line of `sudo sh` while the script runs, where other local users can read it. It is single-use and short-lived, so a token read that way is worth nothing once the host has enrolled. Use the manual steps, which pass it through the environment, to avoid even that.
 
+!!! warning
+    Serve the server over HTTPS for this flow. The script, the agent binary and its SHA-256 all come from the same server, so over plain `http://` anyone who can modify the traffic can serve a changed script and binary with a matching checksum. The checksum then proves nothing. The encrypted, key-pinned channel only protects the enrollment that follows, not these downloads. `install.sh` prints a warning when `--server` starts with `http://`.
+
 ### Enrollment API
 
 | Method | Path | Description |

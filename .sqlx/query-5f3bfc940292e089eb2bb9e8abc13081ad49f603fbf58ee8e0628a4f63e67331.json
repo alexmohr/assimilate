@@ -1,0 +1,24 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT EXISTS (\n               SELECT 1 FROM enrollment_tokens\n               WHERE token_hash = $1 AND used_at IS NULL AND revoked_at IS NULL\n                 AND expires_at > NOW() AND (hostname IS NULL OR lower(hostname) = lower($2))\n           ) AS \"usable!\"",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "usable!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "5f3bfc940292e089eb2bb9e8abc13081ad49f603fbf58ee8e0628a4f63e67331"
+}

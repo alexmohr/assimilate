@@ -5098,6 +5098,27 @@ exit 0
         ));
     }
 
+    /// Hostnames match without regard to case, as they do when an agent logs in: a
+    /// token restricted to `DB-02` is for the host that reports itself as `db-02`.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_token_bound_to_a_hostname_ignores_its_case(pool: PgPool) {
+        enrollment_token(
+            &pool,
+            ENROLLMENT_TOKEN,
+            shared::time::SignedDuration::from_secs(3600),
+            Some("DB-02"),
+        )
+        .await;
+        let state = build_test_state(pool);
+
+        assert_refused(&enroll_answer(&state, "web-01", ENROLLMENT_TOKEN).await);
+        assert!(matches!(
+            enroll_answer(&state, "db-02", ENROLLMENT_TOKEN).await,
+            ServerToAgent::Enrolled { .. }
+        ));
+    }
+
     /// A hostname that is already registered cannot be enrolled again, and the
     /// failed attempt does not spend the token.
     #[ignore = "requires DATABASE_URL"]

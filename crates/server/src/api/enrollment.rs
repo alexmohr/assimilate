@@ -318,6 +318,29 @@ mod tests {
 
     #[ignore = "requires DATABASE_URL"]
     #[sqlx::test(migrations = "./migrations")]
+    async fn a_token_can_carry_agent_tags(pool: PgPool) {
+        let state = build_test_state(pool.clone(), b"enrollment-api-test-key");
+        let admin = insert_auth_user(&pool, "enroller").await;
+        let tag = db::insert_tag(&pool, "enrolled-tag", "#336699", AGENT_TAG_SCOPE)
+            .await
+            .unwrap();
+
+        let created = create(
+            &state,
+            &admin,
+            CreateEnrollmentTokenRequest {
+                tag_ids: vec![tag.id],
+                ..request(None, None)
+            },
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(created.token.tag_ids, vec![tag.id]);
+    }
+
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
     async fn a_lifetime_outside_the_allowed_range_is_rejected(pool: PgPool) {
         let state = build_test_state(pool.clone(), b"enrollment-api-test-key");
         let admin = insert_auth_user(&pool, "enroller").await;

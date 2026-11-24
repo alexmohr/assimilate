@@ -96,61 +96,95 @@ impl FromRequestParts<AppState> for AuthUser {
 
         let session_id = cookies::session_cookie(&parts.headers)
             .ok_or_else(|| ApiError::Unauthorized("not authenticated".to_string()))?;
-        let hashed_id = hash_token(&session_id);
-        let session = db::get_session(&state.pool, &hashed_id).await?;
-        let user = db::get_user_by_id(&state.pool, session.user_id).await?;
-
-        // Idle timeout check using the cached value from AppState. Remember-me
-        // sessions are exempt: the user explicitly opted into staying signed
-        // in for the full `remember_me` duration (see `create_session_response`),
-        // so cutting that short after a few hours of inactivity would defeat
-        // the point of the checkbox. Those sessions are still bounded by their
-        // absolute `expires_at` (checked in `db::get_session`) and by the
-        // client-side refresh mechanism that extends it before it lapses.
-        let idle_timeout_minutes = state
-            .session_idle_timeout_minutes
-            .load(std::sync::atomic::Ordering::Relaxed);
-
-        let idle_duration = Timestamp::now().since(session.last_seen_at);
-        if !session.remember_me && idle_duration.as_mins() > idle_timeout_minutes {
-            db::delete_session(&state.pool, &hashed_id).await?;
-            return Err(ApiError::Unauthorized(
-                "session expired due to inactivity".to_string(),
-            ));
-        }
-
-        // Reject sessions pending TOTP verification - they are not fully authenticated.
-        if session.pending_totp {
-            return Err(ApiError::Unauthorized(
-                "TOTP verification required".to_string(),
-            ));
-        }
-
-        if user.must_change_password {
-            let path = parts.uri.path();
-            if !ALLOWED_PATHS_DURING_PASSWORD_CHANGE.contains(&path) {
-                return Err(ApiError::Forbidden(
-                    "password change required before accessing this resource".to_string(),
-                ));
-            }
-        }
-
-        // Slide the idle-timeout window forward on authenticated requests,
-        // not just `me()`/`refresh_session()` - otherwise a continuously
-        // active user still gets force-logged-out once
-        // `session_idle_timeout_minutes` has elapsed since login. Throttled
-        // to avoid a DB write on every single request (see
-        // LAST_SEEN_UPDATE_THROTTLE_SECONDS).
-        if idle_duration.as_secs() >= LAST_SEEN_UPDATE_THROTTLE_SECONDS {
-            db::update_session_last_seen(&state.pool, &hashed_id).await?;
-        }
-
-        Ok(Self {
-            user_id: user.id,
-            username: user.username,
-            session_id: Some(session_id),
-        })
+        authenticate_session(state, session_id, parts.uri.path(), SessionUse::Request).await
     }
+}
+
+/// Whether checking a session counts as the user being active on it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SessionUse {
+    /// A request the user made: slides the idle-timeout window forward.
+    Request,
+    /// A background re-check of a session that is already in use (a live
+    /// WebSocket re-validating itself). It must not keep an idle session
+    /// alive on its own, so it leaves `last_seen_at` alone.
+    Recheck,
+}
+
+/// Authenticates a session cookie value with every check a fully signed-in
+/// session has to pass: it exists and has not expired, it is not idle past
+/// `session_idle_timeout_minutes` (unless it is a remember-me session), it is
+/// not still waiting for TOTP verification, and its user is not required to
+/// change their password first (outside [`ALLOWED_PATHS_DURING_PASSWORD_CHANGE`]).
+///
+/// The [`AuthUser`] extractor uses this for cookie authentication; the UI
+/// WebSocket uses it on upgrade and again periodically for as long as the
+/// socket stays open.
+///
+/// # Errors
+///
+/// Returns [`ApiError::Unauthorized`] if the session is unknown, expired,
+/// idle or pending TOTP, and [`ApiError::Forbidden`] if the user must change
+/// their password before using `path`.
+pub async fn authenticate_session(
+    state: &AppState,
+    session_id: String,
+    path: &str,
+    session_use: SessionUse,
+) -> Result<AuthUser, ApiError> {
+    let hashed_id = hash_token(&session_id);
+    let session = db::get_session(&state.pool, &hashed_id).await?;
+    let user = db::get_user_by_id(&state.pool, session.user_id).await?;
+
+    // Idle timeout check using the cached value from AppState. Remember-me
+    // sessions are exempt: the user explicitly opted into staying signed
+    // in for the full `remember_me` duration (see `create_session_response`),
+    // so cutting that short after a few hours of inactivity would defeat
+    // the point of the checkbox. Those sessions are still bounded by their
+    // absolute `expires_at` (checked in `db::get_session`) and by the
+    // client-side refresh mechanism that extends it before it lapses.
+    let idle_timeout_minutes = state
+        .session_idle_timeout_minutes
+        .load(std::sync::atomic::Ordering::Relaxed);
+
+    let idle_duration = Timestamp::now().since(session.last_seen_at);
+    if !session.remember_me && idle_duration.as_mins() > idle_timeout_minutes {
+        db::delete_session(&state.pool, &hashed_id).await?;
+        return Err(ApiError::Unauthorized(
+            "session expired due to inactivity".to_string(),
+        ));
+    }
+
+    // Reject sessions pending TOTP verification - they are not fully authenticated.
+    if session.pending_totp {
+        return Err(ApiError::Unauthorized(
+            "TOTP verification required".to_string(),
+        ));
+    }
+
+    if user.must_change_password && !ALLOWED_PATHS_DURING_PASSWORD_CHANGE.contains(&path) {
+        return Err(ApiError::Forbidden(
+            "password change required before accessing this resource".to_string(),
+        ));
+    }
+
+    // Slide the idle-timeout window forward on authenticated requests,
+    // not just `me()`/`refresh_session()` - otherwise a continuously
+    // active user still gets force-logged-out once
+    // `session_idle_timeout_minutes` has elapsed since login. Throttled
+    // to avoid a DB write on every single request (see
+    // LAST_SEEN_UPDATE_THROTTLE_SECONDS).
+    if session_use == SessionUse::Request
+        && idle_duration.as_secs() >= LAST_SEEN_UPDATE_THROTTLE_SECONDS
+    {
+        db::update_session_last_seen(&state.pool, &hashed_id).await?;
+    }
+
+    Ok(AuthUser {
+        user_id: user.id,
+        username: user.username,
+        session_id: Some(session_id),
+    })
 }
 
 /// The token in an `Authorization: Bearer <token>` header, if the request has

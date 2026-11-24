@@ -1,82 +1,182 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
+use std::time::Duration;
+
 use axum::{
     extract::{
         State,
-        ws::{Message, WebSocket, WebSocketUpgrade},
+        ws::{CloseFrame, Message, WebSocket, WebSocketUpgrade, close_code},
     },
     http::StatusCode,
     response::IntoResponse,
 };
-use futures_util::{SinkExt, StreamExt};
+use futures_util::{SinkExt, StreamExt, stream::SplitSink};
+use shared::protocol::ServerToUi;
 
-use crate::{AppState, api::tokens::hash_token, cookies, db};
+use super::ui_audience::UiAudience;
+use crate::{
+    AppState,
+    api::auth::{SessionUse, authenticate_session},
+    cookies,
+};
+
+/// The path the UI socket is served on, for the password-change gate in
+/// [`authenticate_session`].
+const UI_SOCKET_PATH: &str = "/ws/ui";
+
+/// How often an open UI socket re-checks its session and reloads what its
+/// user may see. A socket whose session was logged out, revoked, expired or
+/// went idle closes within this long, and a change to the user's roles or to
+/// an agent's or repository's visibility reaches it within this long.
+const SESSION_RECHECK_INTERVAL: Duration = Duration::from_secs(30);
 
 /// WebSocket upgrade handler for browser UI clients.
 ///
-/// Extracts the session token from the cookie header, validates it, and upgrades
-/// the connection to a UI broadcast receiver.
+/// Authenticates the session cookie with every check the REST API applies to
+/// a session (expiry, idle timeout, pending TOTP, forced password change),
+/// then upgrades the connection to a UI broadcast receiver that only
+/// delivers events for the agents and repositories the user can see.
 pub async fn ui_ws_handler(
     ws: WebSocketUpgrade,
     headers: axum::http::HeaderMap,
     State(state): State<AppState>,
 ) -> impl IntoResponse {
-    let Some(session_id) = cookies::session_cookie(&headers) else {
+    upgrade_ui_socket(ws, &headers, state, SESSION_RECHECK_INTERVAL).await
+}
+
+/// [`ui_ws_handler`] with the session re-check interval as a parameter, so
+/// tests can watch a socket close without waiting the production interval.
+async fn upgrade_ui_socket(
+    ws: WebSocketUpgrade,
+    headers: &axum::http::HeaderMap,
+    state: AppState,
+    recheck_every: Duration,
+) -> axum::response::Response {
+    let Some(session_id) = cookies::session_cookie(headers) else {
         return StatusCode::UNAUTHORIZED.into_response();
     };
 
-    if db::get_session(&state.pool, &hash_token(&session_id))
-        .await
-        .is_err()
+    let user = match authenticate_session(
+        &state,
+        session_id.clone(),
+        UI_SOCKET_PATH,
+        SessionUse::Request,
+    )
+    .await
     {
-        return StatusCode::UNAUTHORIZED.into_response();
-    }
+        Ok(user) => user,
+        Err(e) => return e.into_response(),
+    };
+    let audience = match UiAudience::load(&state.pool, user.user_id).await {
+        Ok(audience) => audience,
+        Err(e) => return e.into_response(),
+    };
 
-    ws.on_upgrade(|socket| handle_ui_socket(socket, state))
+    let session = UiSession {
+        session_id,
+        audience,
+        recheck_every,
+    };
+    ws.on_upgrade(|socket| handle_ui_socket(socket, state, session))
         .into_response()
 }
 
-async fn handle_ui_socket(socket: WebSocket, state: AppState) {
+/// The signed-in session one UI socket serves.
+struct UiSession {
+    /// The session cookie value, re-checked every `recheck_every`.
+    session_id: String,
+    /// What the session's user may see, reloaded on every re-check.
+    audience: UiAudience,
+    /// How often to re-check the session.
+    recheck_every: Duration,
+}
+
+impl UiSession {
+    /// Re-checks the session and reloads its audience. `false` means the
+    /// session is no longer valid (or could not be checked) and the socket
+    /// must close.
+    async fn recheck(&mut self, state: &AppState) -> bool {
+        let user = match authenticate_session(
+            state,
+            self.session_id.clone(),
+            UI_SOCKET_PATH,
+            SessionUse::Recheck,
+        )
+        .await
+        {
+            Ok(user) => user,
+            Err(e) => {
+                tracing::debug!(error = %e, "closing UI socket: session no longer valid");
+                return false;
+            }
+        };
+        match UiAudience::load(&state.pool, user.user_id).await {
+            Ok(audience) => {
+                self.audience = audience;
+                true
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "closing UI socket: could not reload its audience");
+                false
+            }
+        }
+    }
+}
+
+type UiSink = SplitSink<WebSocket, Message>;
+
+/// Sends `event` if `audience` may see it. `Err` means the socket is gone.
+async fn deliver(sink: &mut UiSink, audience: &UiAudience, event: &ServerToUi) -> Result<(), ()> {
+    if !audience.may_see(event) {
+        return Ok(());
+    }
+    let Ok(json) = serde_json::to_string(event) else {
+        return Ok(());
+    };
+    sink.send(Message::Text(json.into())).await.map_err(|_| ())
+}
+
+async fn handle_ui_socket(socket: WebSocket, state: AppState, mut session: UiSession) {
     let mut rx = state.ui_broadcast.subscribe();
     let (mut sink, mut stream) = socket.split();
 
     for (repo_id, snap) in state.ui_broadcast.current_import_snapshots() {
-        let event = shared::protocol::ServerToUi::ImportProgress {
+        let event = ServerToUi::ImportProgress {
             repo_id,
             progress: snap.progress,
             total: snap.total,
             message: snap.message,
         };
-        if let Ok(json) = serde_json::to_string(&event)
-            && sink.send(Message::Text(json.into())).await.is_err()
-        {
+        if deliver(&mut sink, &session.audience, &event).await.is_err() {
             return;
         }
     }
 
     for snap in state.ui_broadcast.current_active_backups() {
-        let started = shared::protocol::ServerToUi::BackupStarted {
+        let started = ServerToUi::BackupStarted {
             hostname: snap.hostname.clone(),
             target_name: snap.target_name.clone(),
             archive_name: snap.archive_name.clone(),
             schedule_id: snap.schedule_id,
             started_at: snap.started_at,
         };
-        if let Ok(json) = serde_json::to_string(&started)
-            && sink.send(Message::Text(json.into())).await.is_err()
+        if deliver(&mut sink, &session.audience, &started)
+            .await
+            .is_err()
         {
             return;
         }
         if let Some(line) = snap.progress_line {
-            let progress = shared::protocol::ServerToUi::BackupLog {
+            let progress = ServerToUi::BackupLog {
                 hostname: snap.hostname,
                 schedule_id: snap.schedule_id,
                 repo_id: snap.repo_id,
                 line,
             };
-            if let Ok(json) = serde_json::to_string(&progress)
-                && sink.send(Message::Text(json.into())).await.is_err()
+            if deliver(&mut sink, &session.audience, &progress)
+                .await
+                .is_err()
             {
                 return;
             }
@@ -92,6 +192,11 @@ async fn handle_ui_socket(socket: WebSocket, state: AppState) {
     };
 
     let send_task = async {
+        let mut recheck = tokio::time::interval(session.recheck_every);
+        recheck.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        // The first tick completes at once; the session was just checked by
+        // the upgrade, so the first re-check is one interval from now.
+        recheck.tick().await;
         loop {
             tokio::select! {
                 event = rx.recv() => {
@@ -108,10 +213,20 @@ async fn handle_ui_socket(socket: WebSocket, state: AppState) {
                         Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
                         Err(tokio::sync::broadcast::error::RecvError::Closed) => return,
                     };
-                    let Ok(json) = serde_json::to_string(&event) else {
-                        continue;
-                    };
-                    if sink.send(Message::Text(json.into())).await.is_err() {
+                    if deliver(&mut sink, &session.audience, &event).await.is_err() {
+                        return;
+                    }
+                }
+                _ = recheck.tick() => {
+                    if !session.recheck(&state).await {
+                        // Best effort: the socket closes either way once this
+                        // task returns.
+                        let _ = sink
+                            .send(Message::Close(Some(CloseFrame {
+                                code: close_code::POLICY,
+                                reason: "session ended".into(),
+                            })))
+                            .await;
                         return;
                     }
                 }
@@ -130,8 +245,225 @@ async fn handle_ui_socket(socket: WebSocket, state: AppState) {
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
+    use futures_util::StreamExt as _;
+    use shared::{protocol::ServerToUi, time::Timestamp};
     use tokio_tungstenite::tungstenite::{self, client::IntoClientRequest};
     use tokio_util::sync::CancellationToken;
+
+    use crate::{api::tokens::hash_token, db, test_support::insert_auth_user};
+
+    /// Serves `/ws/ui` on a loopback port, re-checking sessions every
+    /// `recheck_every`, and returns the server's address.
+    async fn serve_ui_socket(
+        state: crate::AppState,
+        recheck_every: Duration,
+    ) -> std::net::SocketAddr {
+        let app =
+            axum::Router::new()
+                .route(
+                    "/ws/ui",
+                    axum::routing::get(
+                        move |ws: axum::extract::WebSocketUpgrade,
+                              headers: axum::http::HeaderMap,
+                              axum::extract::State(state): axum::extract::State<
+                            crate::AppState,
+                        >| async move {
+                            super::upgrade_ui_socket(ws, &headers, state, recheck_every).await
+                        },
+                    ),
+                )
+                .with_state(state);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
+        let addr = listener.local_addr().expect("address");
+        tokio::spawn(async move { axum::serve(listener, app).await });
+        addr
+    }
+
+    /// Inserts a session for `user_id` and returns its cookie value.
+    async fn insert_session(pool: &sqlx::PgPool, user_id: i64, pending_totp: bool) -> String {
+        let cookie = format!("ui-handler-session-{user_id}-{pending_totp}");
+        db::insert_session(
+            pool,
+            &hash_token(&cookie),
+            user_id,
+            Timestamp::now()
+                .checked_add(shared::time::minutes(60))
+                .expect("expiry in range"),
+            false,
+            pending_totp,
+        )
+        .await
+        .expect("insert session");
+        cookie
+    }
+
+    async fn connect(
+        addr: std::net::SocketAddr,
+        cookie: &str,
+    ) -> Result<
+        tokio_tungstenite::WebSocketStream<
+            tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
+        >,
+        Box<tungstenite::Error>,
+    > {
+        let mut request = format!("ws://{addr}/ws/ui")
+            .into_client_request()
+            .expect("request");
+        let cookie = format!("{}={cookie}", shared::cookies::SESSION_COOKIE);
+        request.headers_mut().insert(
+            axum::http::header::COOKIE,
+            cookie.parse().expect("cookie header"),
+        );
+        tokio_tungstenite::connect_async(request)
+            .await
+            .map(|(socket, _)| socket)
+            .map_err(Box::new)
+    }
+
+    fn refused_with(
+        result: &Result<impl std::fmt::Debug, Box<tungstenite::Error>>,
+        status: axum::http::StatusCode,
+    ) -> bool {
+        matches!(result, Err(error) if matches!(&**error, tungstenite::Error::Http(response) if response.status() == status))
+    }
+
+    /// A password-only login of a TOTP-protected account gets a session that
+    /// is still waiting for the second factor. It must not open the live
+    /// event stream, the same as it cannot call any other API.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_session_pending_totp_is_refused(pool: sqlx::PgPool) {
+        let state =
+            crate::test_support::build_test_state(pool.clone(), b"ui-handler-test-key-material");
+        let user = insert_auth_user(&pool, "totp-pending").await;
+        let cookie = insert_session(&pool, user.user_id, true).await;
+        let addr = serve_ui_socket(state, Duration::from_secs(30)).await;
+
+        let refused = connect(addr, &cookie).await;
+
+        assert!(
+            refused_with(&refused, axum::http::StatusCode::UNAUTHORIZED),
+            "{refused:?}"
+        );
+    }
+
+    /// A user who still has to change their password can reach only the
+    /// password-change endpoints, not the live event stream.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_user_who_must_change_their_password_is_refused(pool: sqlx::PgPool) {
+        let state =
+            crate::test_support::build_test_state(pool.clone(), b"ui-handler-test-key-material");
+        let user = insert_auth_user(&pool, "must-change").await;
+        sqlx::query!(
+            "UPDATE users SET must_change_password = true WHERE id = $1",
+            user.user_id
+        )
+        .execute(&pool)
+        .await
+        .expect("require password change");
+        let cookie = insert_session(&pool, user.user_id, false).await;
+        let addr = serve_ui_socket(state, Duration::from_secs(30)).await;
+
+        let refused = connect(addr, &cookie).await;
+
+        assert!(
+            refused_with(&refused, axum::http::StatusCode::FORBIDDEN),
+            "{refused:?}"
+        );
+    }
+
+    /// Logging out (or revoking or expiring the session) must end a socket
+    /// that was opened with it, not leave it streaming for as long as the
+    /// browser keeps it open.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn the_socket_closes_once_its_session_is_gone(pool: sqlx::PgPool) {
+        let state =
+            crate::test_support::build_test_state(pool.clone(), b"ui-handler-test-key-material");
+        let user = insert_auth_user(&pool, "logs-out").await;
+        let cookie = insert_session(&pool, user.user_id, false).await;
+        let addr = serve_ui_socket(state, Duration::from_millis(50)).await;
+        let mut socket = connect(addr, &cookie).await.expect("upgrade");
+
+        db::delete_session(&pool, &hash_token(&cookie))
+            .await
+            .expect("log out");
+
+        let closed = tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                match socket.next().await {
+                    None | Some(Err(_) | Ok(tungstenite::Message::Close(_))) => return,
+                    Some(Ok(_)) => {}
+                }
+            }
+        })
+        .await;
+        assert!(
+            closed.is_ok(),
+            "socket still open after its session was deleted"
+        );
+    }
+
+    /// A user who cannot see an agent receives none of its live events (its
+    /// backup log lines name the files it is backing up), while events for
+    /// their own agent still arrive.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_user_receives_only_events_for_agents_they_can_see(pool: sqlx::PgPool) {
+        let state =
+            crate::test_support::build_test_state(pool.clone(), b"ui-handler-test-key-material");
+        let viewer = insert_auth_user(&pool, "viewer").await;
+        let other = insert_auth_user(&pool, "other").await;
+        db::insert_agent(
+            &pool,
+            "viewer-host",
+            None,
+            "token-a",
+            Some(viewer.user_id),
+            None,
+        )
+        .await
+        .expect("insert visible agent");
+        db::insert_agent(
+            &pool,
+            "other-host",
+            None,
+            "token-b",
+            Some(other.user_id),
+            None,
+        )
+        .await
+        .expect("insert hidden agent");
+        let cookie = insert_session(&pool, viewer.user_id, false).await;
+        let addr = serve_ui_socket(state.clone(), Duration::from_secs(30)).await;
+        let mut socket = connect(addr, &cookie).await.expect("upgrade");
+
+        state.ui_broadcast.send(ServerToUi::AgentConnected {
+            hostname: "other-host".to_owned(),
+        });
+        state.ui_broadcast.send(ServerToUi::AgentConnected {
+            hostname: "viewer-host".to_owned(),
+        });
+
+        let first = tokio::time::timeout(Duration::from_secs(5), socket.next())
+            .await
+            .expect("an event arrives")
+            .expect("socket open")
+            .expect("frame");
+        let tungstenite::Message::Text(text) = first else {
+            panic!("expected a text frame, got {first:?}");
+        };
+        let event: ServerToUi = serde_json::from_str(&text).expect("event json");
+        let ServerToUi::AgentConnected { hostname } = event else {
+            panic!("expected AgentConnected, got {event:?}");
+        };
+        assert_eq!(hostname, "viewer-host");
+    }
 
     /// A session cookie that names no session is refused before the upgrade,
     /// the same as no cookie at all. e2e only reaches this when a browser

@@ -137,6 +137,14 @@ An idle timeout can be configured as **Idle session** under **Timeouts** in **Sy
 - This is enforced in `AuthUser::from_request_parts`, which runs before every protected handler, so there is no gap between the timeout elapsing and access being denied.
 - **"Remember Me" sessions are exempt.** A session created by checking "Remember Me" at login is not subject to the idle timeout — it stays valid until its absolute 7-day expiry, which the frontend transparently extends by another 7 days as long as the session keeps being used before it lapses. Applying the (much shorter) idle timeout on top of `remember_me` would defeat the purpose of the checkbox.
 
+## Live Updates WebSocket
+
+The web UI receives live events (agents connecting, backups starting and finishing, backup log lines, repository operations) over a WebSocket at `/ws/ui`, authenticated with the session cookie.
+
+- **Same checks as the API.** The upgrade runs every check `AuthUser` applies to a session cookie: the session must exist and not be expired, must not be idle past the idle timeout, must not be waiting for TOTP verification, and its user must not be required to change their password first. A failed check refuses the upgrade with `401` (or `403` for a pending password change). API tokens cannot open it.
+- **Re-checked while open.** An open socket re-checks its session every 30 seconds and closes (close code `1008`, "session ended") once the session has been logged out, revoked, has expired or gone idle. These re-checks do not count as activity: an open tab alone does not keep an idle session alive.
+- **Filtered per user.** Each socket only receives events for the agents and repositories its user can see in the agent and repository lists: an admin (`can_delete_repo`) receives everything, anyone else only events whose agent and repository they own or that are shared with a group they belong to. Events that name no agent or repository (a generic "data changed" refresh signal, a restore's id and status) reach every signed-in user. The visible set is reloaded on every re-check, so a change to a user's roles or to an agent's or repository's visibility applies to an open socket within 30 seconds.
+
 ## Two-Factor Authentication (TOTP)
 
 Users can enable TOTP-based two-factor authentication from their **Profile** page. Once enabled, logging in requires two steps:
@@ -146,7 +154,7 @@ Users can enable TOTP-based two-factor authentication from their **Profile** pag
 
 Security properties:
 
-- **Temp tokens** are stored in the same `sessions` table but with `pending_totp = true`. The `AuthUser` middleware **rejects** pending sessions, so a temp token cannot be used to access any API endpoint except TOTP verification/recovery.
+- **Temp tokens** are stored in the same `sessions` table but with `pending_totp = true`. The `AuthUser` middleware **rejects** pending sessions, so a temp token cannot be used to access any API endpoint except TOTP verification/recovery. The live-update WebSocket (`/ws/ui`) applies the same check, so a temp token cannot open it either.
 - **TOTP codes** use RFC 6238 (SHA-1, 30-second period, 6 digits).
 - **Replay protection** — each successful login records the exact 30-second time-step its code belonged to. A later login is rejected as "TOTP code already used" only if its code maps to that same step or an earlier one; a different, currently-valid code from a later step (e.g. a second device logging in shortly after the first) is accepted.
 - **Recovery codes** — 10 codes are generated at enrollment using 8 bytes of cryptographic randomness, formatted as hex groups. They are hashed with **bcrypt** before storage. Each code is single-use: after verification it is removed from the stored set.

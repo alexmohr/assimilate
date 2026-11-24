@@ -290,27 +290,7 @@ mod tests {
     }
 
     fn report(repo_id: i64) -> Box<shared::types::BackupReport> {
-        Box::new(shared::types::BackupReport {
-            id: shared::types::ReportId(1),
-            agent_id: shared::types::AgentId(1),
-            repo_id: shared::types::RepoId(repo_id),
-            schedule_id: None,
-            started_at: Timestamp::now(),
-            finished_at: Timestamp::now(),
-            status: shared::types::BackupStatus::Success,
-            original_size: 0,
-            compressed_size: 0,
-            deduplicated_size: 0,
-            repo_unique_csize: 0,
-            files_processed: 0,
-            duration_secs: 0,
-            error_message: None,
-            warnings: Vec::new(),
-            borg_version: None,
-            archive_name: None,
-            borg_command: None,
-            run_id: None,
-        })
+        Box::new(crate::test_support::backup_report(1, repo_id, None))
     }
 
     /// Every maintenance and completion event is shown only when both its

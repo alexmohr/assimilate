@@ -149,6 +149,36 @@ pub(crate) fn build_test_state(pool: sqlx::PgPool, key_material: &[u8]) -> crate
     }
 }
 
+/// A successful [`BackupReport`](shared::types::BackupReport) with every
+/// size and count zero, for tests that only care about who ran it where.
+pub(crate) fn backup_report(
+    agent_id: i64,
+    repo_id: i64,
+    schedule_id: Option<i64>,
+) -> shared::types::BackupReport {
+    shared::types::BackupReport {
+        id: shared::types::ReportId(1),
+        agent_id: shared::types::AgentId(agent_id),
+        repo_id: shared::types::RepoId(repo_id),
+        schedule_id,
+        started_at: shared::time::Timestamp::now(),
+        finished_at: shared::time::Timestamp::now(),
+        status: shared::types::BackupStatus::Success,
+        original_size: 0,
+        compressed_size: 0,
+        deduplicated_size: 0,
+        repo_unique_csize: 0,
+        files_processed: 0,
+        duration_secs: 0,
+        error_message: None,
+        warnings: Vec::new(),
+        borg_version: None,
+        archive_name: None,
+        borg_command: None,
+        run_id: None,
+    }
+}
+
 /// Serves `app` on a fresh loopback port in the background and returns its address.
 pub(crate) async fn serve_on_loopback(app: Router) -> std::net::SocketAddr {
     let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");

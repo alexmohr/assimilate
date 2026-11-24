@@ -5,7 +5,7 @@
     "**/dist/**",
     "**/.git/**",
     "**/*.lock",
-    "frontend/src/types/generated/**",
+    "**/frontend/src/types/generated/**",
     "**/.sqlx/**",
     "**/*.json.license"
   ],

@@ -19,6 +19,7 @@ use crate::{
     AppState,
     api::auth::{SessionUse, authenticate_session},
     cookies,
+    error::ApiError,
 };
 
 /// The path the UI socket is served on, for the password-change gate in
@@ -56,30 +57,28 @@ async fn upgrade_ui_socket(
     let Some(session_id) = cookies::session_cookie(headers) else {
         return StatusCode::UNAUTHORIZED.into_response();
     };
+    match load_audience(&state, session_id.clone(), SessionUse::Request).await {
+        Ok(audience) => {
+            let session = UiSession {
+                session_id,
+                audience,
+                recheck_every,
+            };
+            ws.on_upgrade(|socket| handle_ui_socket(socket, state, session))
+                .into_response()
+        }
+        Err(e) => e.into_response(),
+    }
+}
 
-    let user = match authenticate_session(
-        &state,
-        session_id.clone(),
-        UI_SOCKET_PATH,
-        SessionUse::Request,
-    )
-    .await
-    {
-        Ok(user) => user,
-        Err(e) => return e.into_response(),
-    };
-    let audience = match UiAudience::load(&state.pool, user.user_id).await {
-        Ok(audience) => audience,
-        Err(e) => return e.into_response(),
-    };
-
-    let session = UiSession {
-        session_id,
-        audience,
-        recheck_every,
-    };
-    ws.on_upgrade(|socket| handle_ui_socket(socket, state, session))
-        .into_response()
+/// Authenticates `session_id` and loads what its user may see.
+async fn load_audience(
+    state: &AppState,
+    session_id: String,
+    session_use: SessionUse,
+) -> Result<UiAudience, ApiError> {
+    let user = authenticate_session(state, session_id, UI_SOCKET_PATH, session_use).await?;
+    UiAudience::load(&state.pool, user.user_id).await
 }
 
 /// The signed-in session one UI socket serves.
@@ -97,27 +96,13 @@ impl UiSession {
     /// session is no longer valid (or could not be checked) and the socket
     /// must close.
     async fn recheck(&mut self, state: &AppState) -> bool {
-        let user = match authenticate_session(
-            state,
-            self.session_id.clone(),
-            UI_SOCKET_PATH,
-            SessionUse::Recheck,
-        )
-        .await
-        {
-            Ok(user) => user,
-            Err(e) => {
-                tracing::debug!(error = %e, "closing UI socket: session no longer valid");
-                return false;
-            }
-        };
-        match UiAudience::load(&state.pool, user.user_id).await {
+        match load_audience(state, self.session_id.clone(), SessionUse::Recheck).await {
             Ok(audience) => {
                 self.audience = audience;
                 true
             }
             Err(e) => {
-                tracing::warn!(error = %e, "closing UI socket: could not reload its audience");
+                tracing::debug!(error = %e, "closing UI socket: session ended or unverifiable");
                 false
             }
         }
@@ -126,21 +111,39 @@ impl UiSession {
 
 type UiSink = SplitSink<WebSocket, Message>;
 
-/// Sends `event` if `audience` may see it. `Err` means the socket is gone.
-async fn deliver(sink: &mut UiSink, audience: &UiAudience, event: &ServerToUi) -> Result<(), ()> {
-    if !audience.may_see(event) {
-        return Ok(());
+/// The client end of a UI socket went away while sending to it.
+struct SocketGone;
+
+/// Sends `event` if `audience` may see it.
+async fn deliver(
+    sink: &mut UiSink,
+    audience: &UiAudience,
+    event: &ServerToUi,
+) -> Result<(), SocketGone> {
+    if audience.may_see(event) {
+        send(sink, event).await?;
     }
-    let Ok(json) = serde_json::to_string(event) else {
-        return Ok(());
-    };
-    sink.send(Message::Text(json.into())).await.map_err(|_| ())
+    Ok(())
 }
 
-async fn handle_ui_socket(socket: WebSocket, state: AppState, mut session: UiSession) {
-    let mut rx = state.ui_broadcast.subscribe();
-    let (mut sink, mut stream) = socket.split();
+/// Sends `event` unfiltered.
+async fn send(sink: &mut UiSink, event: &ServerToUi) -> Result<(), SocketGone> {
+    if let Ok(json) = serde_json::to_string(event) {
+        sink.send(Message::Text(json.into()))
+            .await
+            .map_err(|_| SocketGone)?;
+    }
+    Ok(())
+}
 
+/// Replays the in-progress imports and backups `audience` may see, so a
+/// client that connects mid-operation shows it without waiting for its
+/// next event.
+async fn replay_snapshots(
+    sink: &mut UiSink,
+    state: &AppState,
+    audience: &UiAudience,
+) -> Result<(), SocketGone> {
     for (repo_id, snap) in state.ui_broadcast.current_import_snapshots() {
         let event = ServerToUi::ImportProgress {
             repo_id,
@@ -148,12 +151,13 @@ async fn handle_ui_socket(socket: WebSocket, state: AppState, mut session: UiSes
             total: snap.total,
             message: snap.message,
         };
-        if deliver(&mut sink, &session.audience, &event).await.is_err() {
-            return;
-        }
+        deliver(sink, audience, &event).await?;
     }
 
     for snap in state.ui_broadcast.current_active_backups() {
+        if !audience.may_see_backup(&snap.hostname, snap.repo_id) {
+            continue;
+        }
         let started = ServerToUi::BackupStarted {
             hostname: snap.hostname.clone(),
             target_name: snap.target_name.clone(),
@@ -161,12 +165,7 @@ async fn handle_ui_socket(socket: WebSocket, state: AppState, mut session: UiSes
             schedule_id: snap.schedule_id,
             started_at: snap.started_at,
         };
-        if deliver(&mut sink, &session.audience, &started)
-            .await
-            .is_err()
-        {
-            return;
-        }
+        send(sink, &started).await?;
         if let Some(line) = snap.progress_line {
             let progress = ServerToUi::BackupLog {
                 hostname: snap.hostname,
@@ -174,13 +173,21 @@ async fn handle_ui_socket(socket: WebSocket, state: AppState, mut session: UiSes
                 repo_id: snap.repo_id,
                 line,
             };
-            if deliver(&mut sink, &session.audience, &progress)
-                .await
-                .is_err()
-            {
-                return;
-            }
+            send(sink, &progress).await?;
         }
+    }
+    Ok(())
+}
+
+async fn handle_ui_socket(socket: WebSocket, state: AppState, mut session: UiSession) {
+    let mut rx = state.ui_broadcast.subscribe();
+    let (mut sink, mut stream) = socket.split();
+
+    if replay_snapshots(&mut sink, &state, &session.audience)
+        .await
+        .is_err()
+    {
+        return;
     }
 
     let recv_task = async {
@@ -191,55 +198,60 @@ async fn handle_ui_socket(socket: WebSocket, state: AppState, mut session: UiSes
         }
     };
 
-    let send_task = async {
-        let mut recheck = tokio::time::interval(session.recheck_every);
-        recheck.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-        // The first tick completes at once; the session was just checked by
-        // the upgrade, so the first re-check is one interval from now.
-        recheck.tick().await;
-        loop {
-            tokio::select! {
-                event = rx.recv() => {
-                    let event = match event {
-                        Ok(event) => event,
-                        // A burst of events (e.g. `borg create --list` logging one
-                        // line per file) can outrun a single client's send loop
-                        // faster than this broadcast channel's fixed capacity.
-                        // Dropping the connection here would be worse than the
-                        // lag itself: a `BackupStarted`/`BackupCompleted` lost in
-                        // the gap has no other way to reach the client, since
-                        // nothing re-polls for it after page load. Skip past the
-                        // gap and keep receiving instead of closing the socket.
-                        Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
-                        Err(tokio::sync::broadcast::error::RecvError::Closed) => return,
-                    };
-                    if deliver(&mut sink, &session.audience, &event).await.is_err() {
-                        return;
-                    }
-                }
-                _ = recheck.tick() => {
-                    if !session.recheck(&state).await {
-                        // Best effort: the socket closes either way once this
-                        // task returns.
-                        let _ = sink
-                            .send(Message::Close(Some(CloseFrame {
-                                code: close_code::POLICY,
-                                reason: "session ended".into(),
-                            })))
-                            .await;
-                        return;
-                    }
-                }
-                () = state.shutdown_token.cancelled() => {
-                    return;
+    tokio::select! {
+        _ = stream_events(&mut sink, &mut rx, &state, &mut session) => {}
+        () = recv_task => {}
+    }
+}
+
+/// Forwards broadcast events `session` may see until the broadcast closes,
+/// the server shuts down, the session ends or the client goes away.
+async fn stream_events(
+    sink: &mut UiSink,
+    rx: &mut tokio::sync::broadcast::Receiver<ServerToUi>,
+    state: &AppState,
+    session: &mut UiSession,
+) -> Result<(), SocketGone> {
+    let mut recheck = tokio::time::interval(session.recheck_every);
+    recheck.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    // The first tick completes at once; the session was just checked by
+    // the upgrade, so the first re-check is one interval from now.
+    recheck.tick().await;
+    loop {
+        tokio::select! {
+            event = rx.recv() => {
+                let event = match event {
+                    Ok(event) => event,
+                    // A burst of events (e.g. `borg create --list` logging one
+                    // line per file) can outrun a single client's send loop
+                    // faster than this broadcast channel's fixed capacity.
+                    // Dropping the connection here would be worse than the
+                    // lag itself: a `BackupStarted`/`BackupCompleted` lost in
+                    // the gap has no other way to reach the client, since
+                    // nothing re-polls for it after page load. Skip past the
+                    // gap and keep receiving instead of closing the socket.
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => return Ok(()),
+                };
+                deliver(sink, &session.audience, &event).await?;
+            }
+            _ = recheck.tick() => {
+                if !session.recheck(state).await {
+                    // Best effort: the socket closes either way once this
+                    // returns.
+                    let _ = sink
+                        .send(Message::Close(Some(CloseFrame {
+                            code: close_code::POLICY,
+                            reason: "session ended".into(),
+                        })))
+                        .await;
+                    return Ok(());
                 }
             }
+            () = state.shutdown_token.cancelled() => {
+                return Ok(());
+            }
         }
-    };
-
-    tokio::select! {
-        () = send_task => {}
-        () = recv_task => {}
     }
 }
 
@@ -323,7 +335,9 @@ mod tests {
         result: &Result<impl std::fmt::Debug, Box<tungstenite::Error>>,
         status: axum::http::StatusCode,
     ) -> bool {
-        matches!(result, Err(error) if matches!(&**error, tungstenite::Error::Http(response) if response.status() == status))
+        result.as_ref().err().is_some_and(|error| {
+            matches!(&**error, tungstenite::Error::Http(response) if response.status() == status)
+        })
     }
 
     /// A password-only login of a TOTP-protected account gets a session that
@@ -389,13 +403,14 @@ mod tests {
             .await
             .expect("log out");
 
+        // Reads until the socket closes; no event is sent, so the first
+        // frame is the close.
         let closed = tokio::time::timeout(Duration::from_secs(5), async {
-            loop {
-                match socket.next().await {
-                    None | Some(Err(_) | Ok(tungstenite::Message::Close(_))) => return,
-                    Some(Ok(_)) => {}
-                }
-            }
+            while socket
+                .next()
+                .await
+                .is_some_and(|frame| frame.is_ok_and(|message| !message.is_close()))
+            {}
         })
         .await;
         assert!(
@@ -458,6 +473,142 @@ mod tests {
             panic!("expected AgentConnected, got {event:?}");
         };
         assert_eq!(hostname, "viewer-host");
+    }
+
+    /// Reads the next text frame from `socket` as a UI event.
+    async fn next_event(
+        socket: &mut tokio_tungstenite::WebSocketStream<
+            tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
+        >,
+    ) -> ServerToUi {
+        let frame = tokio::time::timeout(Duration::from_secs(5), socket.next())
+            .await
+            .expect("an event arrives")
+            .expect("socket open")
+            .expect("frame");
+        let tungstenite::Message::Text(text) = frame else {
+            panic!("expected a text frame, got {frame:?}");
+        };
+        serde_json::from_str(&text).expect("event json")
+    }
+
+    /// A browser that connects while a backup is running is shown the
+    /// backup's start and latest progress line, but only for backups it may
+    /// see: another user's host's file paths stay hidden.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_connecting_user_is_replayed_only_their_own_running_backups(pool: sqlx::PgPool) {
+        let state =
+            crate::test_support::build_test_state(pool.clone(), b"ui-handler-test-key-material");
+        let viewer = insert_auth_user(&pool, "replay-viewer").await;
+        let other = insert_auth_user(&pool, "replay-other").await;
+        db::insert_agent(
+            &pool,
+            "viewer-host",
+            None,
+            "token-a",
+            Some(viewer.user_id),
+            None,
+        )
+        .await
+        .expect("insert visible agent");
+        let own_repo = insert_repo(&pool, "viewer-repo", Some(viewer.user_id)).await;
+        let hidden_repo = insert_repo(&pool, "other-repo", Some(other.user_id)).await;
+        for (hostname, repo_id) in [("other-host", hidden_repo), ("viewer-host", own_repo)] {
+            state.ui_broadcast.send(ServerToUi::BackupLog {
+                hostname: hostname.to_owned(),
+                schedule_id: None,
+                repo_id,
+                line: progress_line(hostname),
+            });
+        }
+        let cookie = insert_session(&pool, viewer.user_id, false).await;
+        let addr = serve_ui_socket(state, Duration::from_secs(30)).await;
+
+        let mut socket = connect(addr, &cookie).await.expect("upgrade");
+
+        let ServerToUi::BackupStarted { hostname, .. } = next_event(&mut socket).await else {
+            panic!("expected the running backup's start first");
+        };
+        assert_eq!(hostname, "viewer-host");
+        let ServerToUi::BackupLog { line, .. } = next_event(&mut socket).await else {
+            panic!("expected the running backup's progress line next");
+        };
+        assert_eq!(line, progress_line("viewer-host"));
+    }
+
+    /// Sharing an agent with a user reaches a socket they already have open
+    /// at its next re-check, without reconnecting.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn an_open_socket_picks_up_a_newly_visible_agent(pool: sqlx::PgPool) {
+        let state =
+            crate::test_support::build_test_state(pool.clone(), b"ui-handler-test-key-material");
+        let viewer = insert_auth_user(&pool, "late-viewer").await;
+        let cookie = insert_session(&pool, viewer.user_id, false).await;
+        let addr = serve_ui_socket(state.clone(), Duration::from_millis(50)).await;
+        let mut socket = connect(addr, &cookie).await.expect("upgrade");
+
+        db::insert_agent(
+            &pool,
+            "late-host",
+            None,
+            "token-late",
+            Some(viewer.user_id),
+            None,
+        )
+        .await
+        .expect("insert agent");
+        // Keep announcing until a re-check has reloaded the audience.
+        let event = tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                state.ui_broadcast.send(ServerToUi::AgentConnected {
+                    hostname: "late-host".to_owned(),
+                });
+                if let Ok(event) =
+                    tokio::time::timeout(Duration::from_millis(100), next_event(&mut socket)).await
+                {
+                    return event;
+                }
+            }
+        })
+        .await
+        .expect("the newly visible agent's event arrives");
+
+        let ServerToUi::AgentConnected { hostname } = event else {
+            panic!("expected AgentConnected, got {event:?}");
+        };
+        assert_eq!(hostname, "late-host");
+    }
+
+    /// A complete `archive_progress` line naming a path on `hostname`, as
+    /// borg reports it while a backup runs.
+    fn progress_line(hostname: &str) -> String {
+        format!(
+            r#"{{"type":"archive_progress","nfiles":1,"original_size":1,"path":"/srv/{hostname}"}}"#
+        )
+    }
+
+    /// Inserts a repository named `name` owned by `owner_id` and returns its id.
+    async fn insert_repo(pool: &sqlx::PgPool, name: &str, owner_id: Option<i64>) -> i64 {
+        db::insert_repo(
+            pool,
+            &db::InsertRepoParams {
+                name,
+                repo_path: &format!("/backups/{name}"),
+                ssh_user: "backup",
+                ssh_host: "storage.local",
+                ssh_port: 22,
+                passphrase_encrypted: b"unused",
+                compression: "lz4",
+                encryption: "repokey",
+                owner_id,
+                sync_schedule: None,
+            },
+        )
+        .await
+        .expect("insert repo")
+        .id
     }
 
     /// A session cookie that names no session is refused before the upgrade,

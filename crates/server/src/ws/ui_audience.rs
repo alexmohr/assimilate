@@ -149,6 +149,17 @@ impl UiAudience {
         Ok(Self::Limited(scope))
     }
 
+    /// Whether this audience may see a backup by `hostname` into `repo_id`.
+    /// Used to replay a running backup's snapshot, whose repository name
+    /// can be empty when the snapshot was started from a progress line.
+    #[must_use]
+    pub fn may_see_backup(&self, hostname: &str, repo_id: i64) -> bool {
+        match self {
+            Self::Everything => true,
+            Self::Limited(scope) => scope.hostname(hostname) && scope.repo(repo_id),
+        }
+    }
+
     /// Whether this audience may receive `event`.
     #[must_use]
     pub fn may_see(&self, event: &ServerToUi) -> bool {
@@ -276,6 +287,88 @@ mod tests {
         }));
         assert!(!audience.may_see(&run_event(2, "mine", 10)));
         assert!(!audience.may_see(&run_event(1, "mine", 99)));
+    }
+
+    fn report(repo_id: i64) -> Box<shared::types::BackupReport> {
+        Box::new(shared::types::BackupReport {
+            id: shared::types::ReportId(1),
+            agent_id: shared::types::AgentId(1),
+            repo_id: shared::types::RepoId(repo_id),
+            schedule_id: None,
+            started_at: Timestamp::now(),
+            finished_at: Timestamp::now(),
+            status: shared::types::BackupStatus::Success,
+            original_size: 0,
+            compressed_size: 0,
+            deduplicated_size: 0,
+            repo_unique_csize: 0,
+            files_processed: 0,
+            duration_secs: 0,
+            error_message: None,
+            warnings: Vec::new(),
+            borg_version: None,
+            archive_name: None,
+            borg_command: None,
+            run_id: None,
+        })
+    }
+
+    /// Every maintenance and completion event is shown only when both its
+    /// host and its repository are visible.
+    #[test]
+    fn completion_events_need_both_their_host_and_their_repo() {
+        let audience = limited();
+        for (hostname, target_name, repo_id, visible) in [
+            ("mine", "my-repo", 10, true),
+            ("theirs", "my-repo", 10, false),
+            ("mine", "their-repo", 10, false),
+            ("mine", "my-repo", 99, false),
+        ] {
+            let events = [
+                ServerToUi::VerifyCompleted {
+                    hostname: hostname.to_owned(),
+                    target_name: target_name.to_owned(),
+                    success: true,
+                    error_message: None,
+                },
+                ServerToUi::CanaryVerified {
+                    hostname: hostname.to_owned(),
+                    target_name: target_name.to_owned(),
+                    success: true,
+                    error_message: None,
+                },
+                ServerToUi::BackupCompleted {
+                    hostname: hostname.to_owned(),
+                    target_name: target_name.to_owned(),
+                    report: report(repo_id),
+                },
+                ServerToUi::BackupStopped {
+                    hostname: hostname.to_owned(),
+                    target_name: target_name.to_owned(),
+                    repo_id,
+                    schedule_id: None,
+                },
+            ];
+            for event in &events {
+                // VerifyCompleted and CanaryVerified carry no repo id, so
+                // only the repo-id case differs between them and the rest.
+                let names_repo_id = matches!(
+                    event,
+                    ServerToUi::BackupCompleted { .. } | ServerToUi::BackupStopped { .. }
+                );
+                let expected = visible || (repo_id == 99 && !names_repo_id);
+                assert_eq!(audience.may_see(event), expected, "{event:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_running_backup_is_replayed_by_host_and_repo_id() {
+        let audience = limited();
+        assert!(audience.may_see_backup("mine", 10));
+        assert!(!audience.may_see_backup("theirs", 10));
+        assert!(!audience.may_see_backup("mine", 99));
+        assert!(UiAudience::Everything.may_see_backup("theirs", 99));
     }
 
     #[test]

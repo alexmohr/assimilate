@@ -98,6 +98,7 @@ test.describe('Project website', () => {
     await expect(button).toHaveText('Copied')
     const copied = await page.evaluate(() => navigator.clipboard.readText())
     expect(copied.split('\n').slice(1)).toEqual([
+      'export POSTGRES_PASSWORD=$(openssl rand -hex 24)',
       'export ASSIMILATE_SECRET_KEY=$(openssl rand -hex 32)',
       'docker compose up -d',
     ])

@@ -1,5 +1,5 @@
 {
   "test": "restore crop",
   "pages": ["frontend/src/views/RepoDetailView.vue"],
-  "fingerprint": "703675c7fa95d98016b35fd9716df70a5cefc77994a0c87d4d9013f0b680eb15"
+  "fingerprint": "05b137a4c985a6fe29823c9c0d17b711fab77c5debbcd57bd0edf599b9dcc1c4"
 }

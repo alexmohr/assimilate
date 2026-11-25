@@ -7,6 +7,7 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 import { computed, ref, onMounted } from 'vue'
 import { getExcludes, setExcludes } from '../api/excludes'
 import { useAsyncAction } from '../composables/useAsyncAction'
+import { useAuthStore } from '../stores/auth'
 import BaseSpinner from '../components/BaseSpinner.vue'
 import BorgPatternReference from '../components/BorgPatternReference.vue'
 import EditableSection from '../components/EditableSection.vue'
@@ -18,6 +19,8 @@ import { excludePatternWarnings } from '../utils/excludePatterns'
  * behind Edit, so a long list can still be pasted in one go and keep its
  * `#` comments.
  */
+/** Only an admin may change them: they apply to every host's backups. */
+const auth = useAuthStore()
 const { loading, error, run } = useAsyncAction()
 const { loading: saving, error: saveError, run: runSave } = useAsyncAction()
 /** The saved text, as the server has it. */
@@ -96,7 +99,7 @@ onMounted(loadData)
         <EditableSection
           lede="Paths every backup leaves out, unless its schedule opts out of the global excludes."
           :editing="editing"
-          can-edit
+          :can-edit="auth.isAdmin"
           :saving="saving"
           :error="saveError"
           @edit="startEdit"

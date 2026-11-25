@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
-import { expect, loginAsAdmin, openSettingsSection, test } from './fixtures'
+import { expect, loginAsAdmin, loginAsViewer, openSettingsSection, test } from './fixtures'
 
 test.describe('Settings journey', () => {
   test('global excludes page loads with common patterns', async ({ page }) => {
@@ -20,6 +20,20 @@ test.describe('Settings journey', () => {
     // The pattern reference opens from inside the card.
     await page.getByRole('button', { name: 'Pattern reference' }).click()
     await expect(page.getByRole('button', { name: 'Close pattern reference' })).toBeVisible()
+  })
+
+  test('a viewer can read the global excludes but not edit them', async ({ page }) => {
+    await loginAsViewer(page)
+    await page.goto('/excludes')
+    await page.waitForLoadState('networkidle')
+
+    const patterns = page.getByRole('list', { name: 'Global exclude patterns' })
+    await expect(patterns).toContainText('node_modules', { timeout: 15_000 })
+    await expect(page.getByRole('button', { name: 'Edit' })).toHaveCount(0)
+
+    // The server refuses the change too, not only the page.
+    const res = await page.request.put('/api/excludes', { data: { raw_text: '*' } })
+    expect(res.status()).toBe(403)
   })
 
   test('global excludes warns about a pattern anchored at the backup root', async ({ page }) => {

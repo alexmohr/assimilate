@@ -3,9 +3,12 @@
 
 use axum::{Json, extract::State};
 use serde::Deserialize;
-use shared::responses::GlobalExcludesResponse;
+use shared::{audit::AuditEvent, responses::GlobalExcludesResponse};
 
-use super::auth::AuthUser;
+use super::{
+    audit_trail::{self, Actor, ClientIp},
+    auth::{AuthUser, RequireAdmin},
+};
 use crate::{
     AppState, db,
     error::{ApiError, ApiJson},
@@ -50,20 +53,38 @@ pub async fn get_excludes(
     responses(
         (status = 200, description = "Updated", body = GlobalExcludesResponse),
         (status = 401, description = "Unauthorized"),
+        (status = 403, description = "Forbidden -- admin only"),
     )
 )]
 /// Set global exclude patterns from raw text.
 ///
+/// The patterns apply to every schedule on every host, so only an admin may
+/// change them, and each change is recorded in the audit log.
+///
 /// # Errors
 ///
-/// Returns an error if the underlying operation fails.
+/// Returns [`ApiError::Forbidden`] if the caller is not an admin,
+/// [`ApiError::BadRequest`] if the text is too long, or an error if the
+/// underlying operation fails.
 pub async fn set_excludes(
     State(state): State<AppState>,
-    _auth: AuthUser,
+    RequireAdmin(admin): RequireAdmin,
+    ip: ClientIp,
     ApiJson(req): ApiJson<SetGlobalExcludesRequest>,
 ) -> Result<Json<GlobalExcludesResponse>, ApiError> {
     super::helpers::validate_max_len(&req.raw_text, "raw_text", super::helpers::MaxLen::Text)?;
+    let previous = db::get_global_excludes_raw(&state.pool).await?;
     db::set_global_excludes_raw(&state.pool, &req.raw_text).await?;
+    audit_trail::record(
+        &state.pool,
+        Actor::new(&admin, ip),
+        None,
+        AuditEvent::SetGlobalExcludes {
+            before: previous,
+            after: req.raw_text.clone(),
+        },
+    )
+    .await;
 
     super::helpers::push_config_to_all_agents(&state).await;
 

@@ -291,6 +291,14 @@ pub enum AuditEvent {
     },
     /// The server's web push (VAPID) key pair was replaced. Neither key is recorded.
     SetVapidKeys {},
+    /// The global exclude patterns, which apply to every schedule on every
+    /// host, were replaced.
+    SetGlobalExcludes {
+        /// The pattern text before the change.
+        before: String,
+        /// The pattern text after the change.
+        after: String,
+    },
     /// The `BorgBase` API token was stored or replaced. The token is not recorded.
     SetBorgbaseToken {},
     /// The `BorgBase` API token was removed.
@@ -491,6 +499,21 @@ mod tests {
         let (action, details) = event.to_stored().unwrap();
         assert_eq!(action, "create_notification_rule");
         assert_eq!(details.get("event_type"), Some(&json!("backup_failed")));
+        assert_eq!(
+            AuditEvent::from_stored(&action, Some(details)).unwrap(),
+            event
+        );
+    }
+
+    #[test]
+    fn a_global_excludes_change_round_trips_its_before_and_after() {
+        let event = AuditEvent::SetGlobalExcludes {
+            before: "*.tmp".to_owned(),
+            after: "*.tmp\n/home".to_owned(),
+        };
+        let (action, details) = event.to_stored().unwrap();
+        assert_eq!(action, "set_global_excludes");
+        assert_eq!(details.get("after"), Some(&json!("*.tmp\n/home")));
         assert_eq!(
             AuditEvent::from_stored(&action, Some(details)).unwrap(),
             event

@@ -474,6 +474,19 @@ export type AuditEntryResponse =
       };
     }
     | { "action": "set_vapid_keys"; "details": Record<symbol, never> }
+    | {
+      "action": "set_global_excludes";
+      "details": {
+        /**
+         * The pattern text before the change.
+         */
+        before: string;
+        /**
+         * The pattern text after the change.
+         */
+        after: string;
+      };
+    }
     | { "action": "set_borgbase_token"; "details": Record<symbol, never> }
     | { "action": "delete_borgbase_token"; "details": Record<symbol, never> }
     | {

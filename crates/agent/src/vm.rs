@@ -641,6 +641,37 @@ fn parse_chain(text: &str) -> Vec<ChainEntry> {
     entries
 }
 
+/// The libvirt doubles under `tests/mock-virt`, driven from the state
+/// directory `state`, for a test that stages machines through a
+/// [`crate::backup::BackupEngine`]. The doubles are shell scripts, so Unix
+/// only.
+#[cfg(all(test, unix))]
+#[derive(Debug, Clone)]
+pub(crate) struct MockVmTools {
+    /// Where the doubles read the host's domains from and log their calls.
+    pub state: PathBuf,
+}
+
+#[cfg(all(test, unix))]
+impl MockVmTools {
+    /// A stager for `config` that runs the doubles, its children registering
+    /// with `task_registry`.
+    pub(crate) fn stager(&self, config: VmSnapshotConfig, task_registry: TaskRegistry) -> VmStager {
+        let mocks = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/mock-virt");
+        let mut stager = VmStager::with_binaries(
+            config,
+            mocks.join("virsh"),
+            mocks.join("qemu-img"),
+            vec![(
+                "MOCK_VIRT_STATE".to_owned(),
+                self.state.to_string_lossy().into_owned(),
+            )],
+        );
+        stager.task_registry = task_registry;
+        stager
+    }
+}
+
 /// Stages a host's domains according to the settings the server delivered.
 pub struct VmStager {
     config: VmSnapshotConfig,
@@ -2414,6 +2445,25 @@ mod tests {
     use tempfile::TempDir;
 
     use super::*;
+
+    /// A stager the backup engine builds registers its `virsh` and
+    /// `qemu-img` children with the engine's own registry, the one shutdown
+    /// drains, and uses the configuration it was given.
+    #[tokio::test]
+    async fn a_stager_from_the_backup_engine_shares_its_task_registry() {
+        let registry = TaskRegistry::default();
+        let config = VmSnapshotConfig {
+            enabled: true,
+            staging_dir: "/srv/vm-staging".to_owned(),
+            ..VmSnapshotConfig::default()
+        };
+
+        let stager = crate::backup::BackupEngine::new(registry.clone()).vm_stager(config.clone());
+
+        assert_eq!(stager.config, config);
+        stager.task_registry.register(tokio::spawn(async {}));
+        assert_eq!(registry.pending_count(), 1);
+    }
 
     #[cfg(not(unix))]
     #[tokio::test]

@@ -143,6 +143,10 @@ pub struct BackupEngine {
     /// to stop: past the point where borg is killed outright, so it can never
     /// read the end of the truncated dump and commit it.
     dump_abort_hold: Duration,
+    /// The libvirt doubles a test stages virtual machines with, in place of
+    /// the `virsh` and `qemu-img` on `PATH`.
+    #[cfg(all(test, unix))]
+    vm_tools: Option<crate::vm::MockVmTools>,
 }
 
 impl BackupEngine {
@@ -154,6 +158,8 @@ impl BackupEngine {
             hook_kill_grace: shared::borg::kill_escalation_delay(),
             dump_abort_hold: shared::borg::kill_escalation_delay()
                 .saturating_add(Duration::from_secs(1)),
+            #[cfg(all(test, unix))]
+            vm_tools: None,
         }
     }
 
@@ -161,6 +167,26 @@ impl BackupEngine {
     #[must_use]
     pub fn task_registry(&self) -> &TaskRegistry {
         &self.task_registry
+    }
+
+    /// A stager for `config` whose `virsh` and `qemu-img` children register
+    /// with this engine's registry, so shutdown drains them with borg's.
+    #[must_use]
+    pub fn vm_stager(&self, config: shared::vm::VmSnapshotConfig) -> crate::vm::VmStager {
+        #[cfg(all(test, unix))]
+        if let Some(tools) = &self.vm_tools {
+            return tools.stager(config, self.task_registry().clone());
+        }
+        crate::vm::VmStager::new(config, self.task_registry().clone())
+    }
+
+    /// Stages virtual machines with the libvirt doubles in `tools` rather than
+    /// the tools on `PATH`. The doubles are shell scripts, so Unix only.
+    #[cfg(all(test, unix))]
+    #[must_use]
+    pub(crate) fn with_vm_tools(mut self, tools: crate::vm::MockVmTools) -> Self {
+        self.vm_tools = Some(tools);
+        self
     }
 
     #[cfg(test)]
@@ -171,6 +197,8 @@ impl BackupEngine {
             task_registry: TaskRegistry::default(),
             hook_kill_grace: shared::borg::kill_escalation_delay(),
             dump_abort_hold: Duration::from_millis(100),
+            #[cfg(unix)]
+            vm_tools: None,
         }
     }
 
@@ -186,6 +214,8 @@ impl BackupEngine {
             task_registry: TaskRegistry::default(),
             hook_kill_grace: shared::borg::kill_escalation_delay(),
             dump_abort_hold: Duration::from_millis(100),
+            #[cfg(unix)]
+            vm_tools: None,
         }
     }
 

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
-use shared::{protocol::AgentToServer, task_registry::TaskRegistry, vm::VmSnapshotConfig};
+use shared::{protocol::AgentToServer, vm::VmSnapshotConfig};
 use tokio::sync::mpsc;
 use tracing::{info, warn};
 
@@ -23,25 +23,18 @@ pub(super) async fn stage_configured_machines(
     let Some(vm_config) = target.vm_snapshot.clone() else {
         return Ok(());
     };
-    stage_virtual_machines(
-        vm_config,
-        schedule_id,
-        outbound_tx,
-        engine.task_registry().clone(),
-    )
-    .await
+    info!("Staging virtual machines into {}", vm_config.staging_dir);
+    stage_virtual_machines(&engine.vm_stager(vm_config), schedule_id, outbound_tx).await
 }
 
 /// Stages this host's domains and reports what happened to each. Returns the
 /// reason the backup must not go ahead, when a domain failed.
-pub(super) async fn stage_virtual_machines(
-    config: shared::vm::VmSnapshotConfig,
+async fn stage_virtual_machines(
+    stager: &VmStager,
     schedule_id: Option<i64>,
     outbound_tx: &mpsc::Sender<AgentToServer>,
-    task_registry: TaskRegistry,
 ) -> Result<(), String> {
-    info!("Staging virtual machines into {}", config.staging_dir);
-    let outcomes = match VmStager::new(config, task_registry).stage_all().await {
+    let outcomes = match stager.stage_all().await {
         Ok(outcomes) => outcomes,
         Err(e) => {
             // Tell the server the phase ran and found nothing, then fail the

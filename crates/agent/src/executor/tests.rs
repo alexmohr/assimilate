@@ -1442,3 +1442,119 @@ async fn leftover_snapshots_are_removed_beside_the_command_loop() {
 
     assert_eq!(registry.shutdown(Duration::from_secs(30)).await, 0);
 }
+
+/// The staging that runs before a backup whose schedule carries virtual
+/// machines, driven through the libvirt doubles so every outcome is reached
+/// without a real hypervisor.
+#[cfg(unix)]
+mod vm_staging {
+    use shared::{protocol::AgentToServer, vm::VmSnapshotConfig};
+    use tokio::sync::mpsc;
+
+    use super::super::vms::stage_configured_machines;
+    use crate::{
+        backup::{BackupEngine, BackupTarget},
+        vm::MockVmTools,
+    };
+
+    fn mock_borg() -> std::path::PathBuf {
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/mock-borg/borg")
+    }
+
+    fn target(staging_dir: &std::path::Path) -> BackupTarget {
+        BackupTarget {
+            vm_snapshot: Some(VmSnapshotConfig {
+                enabled: true,
+                staging_dir: staging_dir.to_string_lossy().into_owned(),
+                ..VmSnapshotConfig::default()
+            }),
+            ..BackupTarget::default()
+        }
+    }
+
+    /// Stages `target` with the doubles reading `state`, and returns the
+    /// result with every message sent to the server.
+    async fn stage(
+        target: &BackupTarget,
+        state: std::path::PathBuf,
+    ) -> (Result<(), String>, Vec<AgentToServer>) {
+        let engine =
+            BackupEngine::with_config(mock_borg(), Vec::new()).with_vm_tools(MockVmTools { state });
+        let (tx, mut rx) = mpsc::channel(8);
+        let result = stage_configured_machines(target, Some(7), &tx, &engine).await;
+        drop(tx);
+        let mut sent = Vec::new();
+        while let Some(msg) = rx.recv().await {
+            sent.push(msg);
+        }
+        (result, sent)
+    }
+
+    fn reported_outcomes(sent: &[AgentToServer]) -> Vec<String> {
+        match sent {
+            [
+                AgentToServer::VmSnapshotReport {
+                    schedule_id: Some(7),
+                    outcomes,
+                },
+            ] => outcomes.iter().map(|o| o.name.clone()).collect(),
+            other => panic!("expected one snapshot report for schedule 7, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn a_target_without_machine_settings_stages_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let (result, sent) = stage(&BackupTarget::default(), dir.path().join("state")).await;
+        assert_eq!(result, Ok(()));
+        assert!(sent.is_empty(), "{sent:?}");
+    }
+
+    #[tokio::test]
+    async fn a_host_with_no_domains_reports_an_empty_run_and_goes_ahead() {
+        let dir = tempfile::tempdir().unwrap();
+        let (result, sent) = stage(
+            &target(&dir.path().join("staging")),
+            dir.path().join("state"),
+        )
+        .await;
+        assert_eq!(result, Ok(()));
+        assert_eq!(reported_outcomes(&sent), Vec::<String>::new());
+    }
+
+    #[tokio::test]
+    async fn a_host_whose_domains_cannot_be_listed_fails_the_backup() {
+        let dir = tempfile::tempdir().unwrap();
+        // The doubles keep their state in a directory; a plain file there
+        // makes every `virsh` call fail, as a host without libvirt would.
+        let state = dir.path().join("state");
+        std::fs::write(&state, "").unwrap();
+
+        let (result, sent) = stage(&target(&dir.path().join("staging")), state).await;
+
+        let error = result.unwrap_err();
+        assert!(
+            error.starts_with("could not list the virtual machines of this host"),
+            "{error}"
+        );
+        assert_eq!(reported_outcomes(&sent), Vec::<String>::new());
+    }
+
+    #[tokio::test]
+    async fn a_domain_that_fails_to_stage_fails_the_backup_and_is_reported() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = dir.path().join("state");
+        std::fs::create_dir(&state).unwrap();
+        // Listed, but with no state or disks the doubles can describe.
+        std::fs::write(state.join("domains"), "web-01\n").unwrap();
+
+        let (result, sent) = stage(&target(&dir.path().join("staging")), state).await;
+
+        let error = result.unwrap_err();
+        assert!(
+            error.starts_with("could not stage 1 virtual machine(s): web-01: "),
+            "{error}"
+        );
+        assert_eq!(reported_outcomes(&sent), vec!["web-01".to_owned()]);
+    }
+}

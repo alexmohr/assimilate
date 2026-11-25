@@ -7543,6 +7543,96 @@ async fn test_global_excludes_overwrite_replaces_fully(pool: sqlx::PgPool) {
     assert_eq!(body.get("raw_text").unwrap(), "only-this-one");
 }
 
+/// Global excludes apply to every schedule on every host, so a non-admin
+/// replacing them could silently drop data from every backup. A viewer may
+/// read them but not change them.
+#[sqlx::test(migrations = "./migrations")]
+async fn test_global_excludes_put_forbidden_for_non_admin(pool: sqlx::PgPool) {
+    create_test_user_and_session(&pool).await;
+    create_non_admin_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+
+    let resp = oneshot(
+        &mut app,
+        json_request(
+            "PUT",
+            "/api/excludes",
+            Some(serde_json::json!({"raw_text": "*.tmp"})),
+        ),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let viewer_put = Request::builder()
+        .uri("/api/excludes")
+        .method("PUT")
+        .header("content-type", "application/json")
+        .header("cookie", format!("session={NON_ADMIN_SESSION_ID}"))
+        .body(Body::from(serde_json::json!({"raw_text": "*"}).to_string()))
+        .unwrap();
+    let resp = oneshot(&mut app, viewer_put).await;
+    assert_eq!(
+        resp.status(),
+        StatusCode::FORBIDDEN,
+        "a viewer must not be able to replace the global excludes"
+    );
+
+    let resp = oneshot(&mut app, non_admin_get_request("/api/excludes")).await;
+    assert_eq!(
+        resp.status(),
+        StatusCode::OK,
+        "a viewer may still read them"
+    );
+    let body = body_json(resp).await;
+    assert_eq!(
+        body.get("raw_text").unwrap(),
+        "*.tmp",
+        "a rejected change must leave the excludes as they were"
+    );
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn test_global_excludes_change_is_audited_with_before_and_after(pool: sqlx::PgPool) {
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+
+    for text in ["*.tmp", "*.tmp\n/var/cache"] {
+        let resp = oneshot(
+            &mut app,
+            json_request(
+                "PUT",
+                "/api/excludes",
+                Some(serde_json::json!({"raw_text": text})),
+            ),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    let rows: Vec<(String, String, Option<Value>)> = sqlx::query_as(
+        "SELECT username, action, details FROM audit_log WHERE action = 'set_global_excludes' \
+         ORDER BY id",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        rows,
+        vec![
+            (
+                "integration-admin".to_owned(),
+                "set_global_excludes".to_owned(),
+                Some(serde_json::json!({"before": "", "after": "*.tmp"})),
+            ),
+            (
+                "integration-admin".to_owned(),
+                "set_global_excludes".to_owned(),
+                Some(serde_json::json!({"before": "*.tmp", "after": "*.tmp\n/var/cache"})),
+            ),
+        ]
+    );
+}
+
 /// Regression test for `project_upcoming_schedule_events`'s batch-hostname rewrite: the
 /// projected "Scheduled" calendar event for an enabled schedule must still carry its target
 /// agent's hostname, now that the lookup is a single batched query instead of one query per

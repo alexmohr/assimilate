@@ -101,6 +101,7 @@ export function auditActionTone(action: AuditEvent['action']): BadgeTone {
     case 'update_notification_channel':
     case 'set_vapid_keys':
     case 'set_borgbase_token':
+    case 'set_global_excludes':
       return 'warning'
     case 'create_user':
     case 'create_group':

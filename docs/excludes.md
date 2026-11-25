@@ -12,7 +12,7 @@ This means you can define patterns once (e.g., cache directories, temporary file
 
 ## Managing Patterns
 
-The Excludes page lists the patterns one per row, with each `#` comment shown as a heading over the patterns under it, and counts them. Click **Edit** to change them in a plain-text editor — one pattern per line, so a long list can be pasted in one go — then **Save**, or **Cancel** to leave them as they were. **Pattern reference** under the list opens a summary of borg's pattern syntax beside it.
+The Excludes page lists the patterns one per row, with each `#` comment shown as a heading over the patterns under it, and counts them. Every signed-in user can read them; only an admin can change them, since they apply to every host's backups. Each change is recorded in the [audit log](audit-log.md) with the text before and after it. Click **Edit** to change them in a plain-text editor — one pattern per line, so a long list can be pasted in one go — then **Save**, or **Cancel** to leave them as they were. **Pattern reference** under the list opens a summary of borg's pattern syntax beside it.
 
 Patterns are evaluated in order. Borg checks each file path against the pattern list and skips the first match.
 

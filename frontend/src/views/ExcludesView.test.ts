@@ -20,9 +20,14 @@ const mockPut = vi.mocked(apiClient.put)
 
 const MOCK_RAW_TEXT = 'node_modules\n__pycache__'
 
-async function mountWith(rawText: string): Promise<ReturnType<typeof renderWithPlugins>> {
+async function mountWith(
+  rawText: string,
+  role: 'admin' | 'viewer' = 'admin',
+): Promise<ReturnType<typeof renderWithPlugins>> {
   mockGet.mockResolvedValue({ data: { raw_text: rawText } })
-  const wrapper = renderWithPlugins(ExcludesView)
+  const wrapper = renderWithPlugins(ExcludesView, {
+    storeState: { auth: { user: { role } } },
+  })
   await flushPromises()
   return wrapper
 }
@@ -68,6 +73,15 @@ describe('ExcludesView', () => {
     await flushPromises()
     expect(wrapper.find('.error-banner').exists()).toBe(true)
     expect(wrapper.find('.excludes-card').exists()).toBe(false)
+  })
+
+  it('lets a non-admin read the patterns but offers no Edit', async () => {
+    const wrapper = await mountWith(MOCK_RAW_TEXT, 'viewer')
+    expect(listItems(wrapper)).toEqual([
+      { kind: 'pattern', text: 'node_modules' },
+      { kind: 'pattern', text: '__pycache__' },
+    ])
+    expect(wrapper.findAll('button').some((b) => b.text() === 'Edit')).toBe(false)
   })
 
   describe('read view', () => {

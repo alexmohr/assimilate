@@ -93,6 +93,12 @@ A login is recorded only once it completes, so an account with two-factor authen
 | `delete_notification_rule` | `notification_rule` | the same fields as `create_notification_rule` |
 | `set_vapid_keys` | none | none |
 
+### Settings
+
+| Action | Resource | Details |
+|--------|----------|---------|
+| `set_global_excludes` | none | the global exclude pattern text `before` and `after` the change |
+
 ### BorgBase
 
 | Action | Resource | Details |

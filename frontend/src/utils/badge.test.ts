@@ -211,6 +211,7 @@ describe('auditActionTone', () => {
     ['update_notification_channel', 'warning'],
     ['set_vapid_keys', 'warning'],
     ['set_borgbase_token', 'warning'],
+    ['set_global_excludes', 'warning'],
     ['create_borgbase_repo', 'accent'],
     ['delete_borgbase_token', 'danger'],
     ['delete_user', 'danger'],

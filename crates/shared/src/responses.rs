@@ -1757,6 +1757,21 @@ pub struct TunnelResponse {
     pub status: TunnelStatus,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, TS, utoipa::ToSchema)]
+#[ts(export)]
+/// The permissions a group holds on one repository. Every member of the
+/// group holds them, on top of their own grants.
+pub struct GroupRepoPermissionResponse {
+    #[ts(type = "number")]
+    /// The group holding them.
+    pub group_id: i64,
+    #[ts(type = "number")]
+    /// The repository they apply to.
+    pub repo_id: i64,
+    /// What the group's members may do on the repository.
+    pub permissions: Vec<crate::audit::RepoPermission>,
+}
+
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]
 #[ts(export)]
 /// Response containing group.
@@ -1832,6 +1847,9 @@ pub struct RoleResponse {
     pub can_manage_tunnels: bool,
     /// Whether the role can upgrade agents.
     pub can_upgrade_agent: bool,
+    /// Whether the role sees every agent, including one no schedule backs up
+    /// yet.
+    pub can_view_all_agents: bool,
 }
 
 #[derive(Debug, Clone, Serialize, TS, utoipa::ToSchema)]

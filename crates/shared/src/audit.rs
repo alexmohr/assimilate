@@ -201,6 +201,15 @@ pub enum AuditEvent {
         /// What they hold on it now; empty if everything was revoked.
         after: Vec<RepoPermission>,
     },
+    /// An admin set what a group's members may do on a repository.
+    SetGroupRepoPermission {
+        /// The group whose permissions changed.
+        group: String,
+        /// What it held on the repository; empty if it held nothing.
+        before: Vec<RepoPermission>,
+        /// What it holds on it now; empty if everything was revoked.
+        after: Vec<RepoPermission>,
+    },
     /// A user created an API token for themselves. The token is never recorded.
     CreateApiToken {
         /// The token's name.

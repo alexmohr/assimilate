@@ -25,6 +25,7 @@ import ModalFormActions from '../components/ModalFormActions.vue'
 import ConfirmDeleteDialog from '../components/ConfirmDeleteDialog.vue'
 import BaseModal from '../components/BaseModal.vue'
 import EmptyState from '../components/EmptyState.vue'
+import GroupRepoPermissionsDialog from '../components/GroupRepoPermissionsDialog.vue'
 
 const groups = ref<Group[]>([])
 const allUsers = ref<User[]>([])
@@ -64,6 +65,8 @@ const membersSubmitting = ref(false)
 const membersError = ref<string | null>(null)
 
 const memberCounts = ref<Record<number, number>>({})
+
+const permissionsTarget = ref<Group | null>(null)
 
 const filterText = ref('')
 
@@ -227,8 +230,9 @@ onMounted(async () => {
     </div>
 
     <p class="page-description">
-      Groups organize users into named collections. They grant no permissions of their own: give
-      each member repository permissions on their user page.
+      Groups organize users into collections for shared repository access. Use a group's Permissions
+      to set what its members may do on each repository; they hold that on top of their own
+      permissions.
     </p>
 
     <div class="toolbar">
@@ -301,6 +305,12 @@ onMounted(async () => {
                 @click="openMembers(group)"
               >
                 Members
+              </button>
+              <button
+                class="btn btn-sm btn-ghost"
+                @click="permissionsTarget = group"
+              >
+                Permissions
               </button>
               <button
                 class="btn btn-sm btn-ghost"
@@ -431,6 +441,12 @@ onMounted(async () => {
       Are you sure you want to delete <strong>{{ deleteTarget?.name }}</strong
       >? Members will be removed from this group.
     </ConfirmDeleteDialog>
+
+    <GroupRepoPermissionsDialog
+      :open="permissionsTarget !== null"
+      :group="permissionsTarget"
+      @close="permissionsTarget = null"
+    />
 
     <!-- Members Modal -->
     <BaseModal

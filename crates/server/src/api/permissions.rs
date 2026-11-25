@@ -192,7 +192,7 @@ pub async fn check_repo_permission(
         return Ok(());
     }
 
-    let perm = db::get_repo_permission(pool, auth.user_id, repo_id).await?;
+    let perm = db::get_effective_repo_permission(pool, auth.user_id, repo_id).await?;
     if perm.is_some_and(|p| check(&p)) {
         return Ok(());
     }

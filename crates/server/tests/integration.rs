@@ -482,6 +482,14 @@ fn test_app_password_routes() -> Router<server::AppState> {
             "/api/users/{id}/password",
             put(server::api::users::update_password),
         )
+        .route(
+            "/api/groups/{group_id}/permissions",
+            get(server::api::group_grants::list_for_group),
+        )
+        .route(
+            "/api/groups/{group_id}/permissions/{repo_id}",
+            put(server::api::group_grants::set_for_group),
+        )
 }
 
 #[cfg(test)]
@@ -1915,6 +1923,30 @@ async fn insert_viewer_only_session(pool: &PgPool, label: &str) -> String {
     insert_session_with_role(pool, label, false).await
 }
 
+/// Grants `username` `can_view` on a repository, which is what lets a user
+/// who is not an admin see it at all.
+#[cfg(test)]
+async fn grant_repo_view(pool: &PgPool, username: &str, repo_id: i64) {
+    sqlx::query(
+        "INSERT INTO repo_permissions (user_id, repo_id, can_view) SELECT id, $2, true FROM users \
+         WHERE username = $1 ON CONFLICT (user_id, repo_id) DO UPDATE SET can_view = true",
+    )
+    .bind(username)
+    .bind(repo_id)
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
+/// Lets `username` see `agent_id` the way a user who is not an admin does:
+/// a repository they may read with a schedule that backs the agent up.
+#[cfg(test)]
+async fn let_user_see_agent(pool: &PgPool, username: &str, agent_id: i64) -> i64 {
+    let repo_id = insert_test_repo(pool, &format!("{username}-{agent_id}-seen-repo")).await;
+    grant_repo_view(pool, username, repo_id).await;
+    insert_test_schedule(pool, agent_id, repo_id).await
+}
+
 /// Inserts a user holding one custom role and an active session for them,
 /// returning the session cookie value. `can_view_all_repos` is the operator
 /// tier's distinguishing permission: it grants sight of the wake
@@ -1983,7 +2015,7 @@ async fn test_agent_responses_redact_wake_secrets_for_non_privileged_viewer() {
     create_test_user_and_session(&pool).await;
     let mut app = build_test_app(pool.clone());
 
-    server::db::insert_agent(&pool, "wake-secret-host", None, "hash", None, None)
+    let agent = server::db::insert_agent(&pool, "wake-secret-host", None, "hash", None, None)
         .await
         .unwrap();
     sqlx::query("UPDATE agents SET last_ssh_user = 'root' WHERE hostname = 'wake-secret-host'")
@@ -2012,6 +2044,7 @@ async fn test_agent_responses_redact_wake_secrets_for_non_privileged_viewer() {
     assert_eq!(resp.status(), StatusCode::OK);
 
     let viewer_session = insert_viewer_only_session(&pool, "agent-wake-secret").await;
+    let_user_see_agent(&pool, "agent-wake-secret-user", agent.id).await;
 
     let resp = oneshot(
         &mut app,
@@ -2083,6 +2116,7 @@ async fn test_repo_responses_redact_wake_secrets_for_non_privileged_viewer() {
     assert_eq!(resp.status(), StatusCode::OK);
 
     let viewer_session = insert_viewer_only_session(&pool, "repo-wake-secret").await;
+    grant_repo_view(&pool, "repo-wake-secret-user", repo_id).await;
 
     let resp = oneshot(
         &mut app,
@@ -5534,6 +5568,7 @@ async fn test_me_can_upgrade_agent_reflects_admin_bypass(pool: sqlx::PgPool) {
             can_view_all_repos: false,
             can_manage_tunnels: false,
             can_upgrade_agent: false,
+            can_view_all_agents: false,
         },
     )
     .await
@@ -9773,6 +9808,7 @@ async fn repo_list_hides_quota_config_from_viewer_but_shows_it_to_admin(pool: sq
     .unwrap();
 
     create_non_admin_user_and_session(&pool).await;
+    grant_repo_view(&pool, "integration-viewer", repo_id).await;
     create_test_user_and_session(&pool).await;
     let mut app = build_test_app(pool);
 
@@ -11801,6 +11837,26 @@ async fn insert_foreign_private_agent(pool: &PgPool, hostname: &str) -> i64 {
     .unwrap()
 }
 
+/// Gives the non-admin test user a role with the **Create Schedule**
+/// capability, on top of its viewer role.
+#[cfg(test)]
+async fn grant_non_admin_create_schedule(pool: &PgPool) {
+    sqlx::query(
+        "INSERT INTO roles (name, can_create_schedule) VALUES ('schedule-creator', true) ON \
+         CONFLICT (name) DO UPDATE SET can_create_schedule = true",
+    )
+    .execute(pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO user_roles (user_id, role_id) SELECT u.id, r.id FROM users u, roles r WHERE \
+         u.username = 'integration-viewer' AND r.name = 'schedule-creator' ON CONFLICT DO NOTHING",
+    )
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
 /// Grants the non-admin test user `can_modify_schedules` on `repo_id`.
 #[cfg(test)]
 async fn grant_non_admin_schedule_permission(pool: &PgPool, repo_id: i64) {
@@ -11828,14 +11884,22 @@ async fn creating_a_schedule_on_an_agent_the_caller_cannot_see_is_refused() {
 
     let repo_id = insert_test_repo(&pool, "hidden-agent-create-repo").await;
     grant_non_admin_schedule_permission(&pool, repo_id).await;
+    grant_non_admin_create_schedule(&pool).await;
     let foreign_agent = insert_foreign_private_agent(&pool, "hidden-agent-create-host").await;
-    let shared_agent: i64 = sqlx::query_scalar(
+    let visible_agent: i64 = sqlx::query_scalar(
         "INSERT INTO agents (hostname, agent_token_hash) VALUES ('shared-agent-create-host', \
          'hash') RETURNING id",
     )
     .fetch_one(&pool)
     .await
     .unwrap();
+    // A schedule on a repository the caller may read already backs it up,
+    // which is what makes it visible to them.
+    let_user_see_agent(&pool, "integration-viewer", visible_agent).await;
+    let schedules_before: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM schedules")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
 
     let create = |agent_ids: Vec<i64>| {
         non_admin_json_request(
@@ -11852,7 +11916,7 @@ async fn creating_a_schedule_on_an_agent_the_caller_cannot_see_is_refused() {
         )
     };
 
-    let resp = oneshot(&mut app, create(vec![shared_agent, foreign_agent])).await;
+    let resp = oneshot(&mut app, create(vec![visible_agent, foreign_agent])).await;
     assert_eq!(
         resp.status(),
         StatusCode::NOT_FOUND,
@@ -11873,15 +11937,15 @@ async fn creating_a_schedule_on_an_agent_the_caller_cannot_see_is_refused() {
         .await
         .unwrap();
     assert_eq!(
-        schedules, 0,
+        schedules, schedules_before,
         "the refused request must not create a schedule"
     );
 
-    let resp = oneshot(&mut app, create(vec![shared_agent])).await;
+    let resp = oneshot(&mut app, create(vec![visible_agent])).await;
     assert_eq!(
         resp.status(),
         StatusCode::CREATED,
-        "an agent shared with everyone can still be targeted"
+        "an agent the caller can see can still be targeted"
     );
 }
 
@@ -11975,7 +12039,11 @@ async fn reading_a_schedule_the_caller_cannot_see_is_refused() {
     .fetch_one(&pool)
     .await
     .unwrap();
-    let shared = insert_test_schedule(&pool, shared_agent, repo_id).await;
+    // Visibility follows the repository grant: the hidden schedule's
+    // repository is not granted, this one's is.
+    let visible_repo = insert_test_repo(&pool, "visible-schedule-repo").await;
+    grant_repo_view(&pool, "integration-viewer", visible_repo).await;
+    let shared = insert_test_schedule(&pool, shared_agent, visible_repo).await;
 
     let reads = [
         "",
@@ -12256,6 +12324,254 @@ async fn an_admin_password_reset_signs_the_user_out_everywhere() {
     assert!(!session_exists(&pool, user.own_session).await);
     assert!(!session_exists(&pool, user.other_session).await);
     assert_eq!(api_token_count(&pool, user.id).await, 0);
+}
+
+/// A group's repository grant reaches every member: they see the repository
+/// as if it were granted to them, a user outside the group still does not,
+/// and revoking the grant takes it away again.
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn a_group_grant_lets_its_members_read_a_repository() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+    create_non_admin_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+
+    let repo_id = insert_test_repo(&pool, "group-granted-repo").await;
+    let member_id: i64 = sqlx::query_scalar("SELECT id FROM users WHERE username = $1")
+        .bind("integration-viewer")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    let group = server::db::insert_group(&pool, "granted-team", None)
+        .await
+        .unwrap();
+    server::db::set_group_members(&pool, group.id, &[member_id])
+        .await
+        .unwrap();
+    let outsider = insert_viewer_only_session(&pool, "group-outsider").await;
+    let repo_uri = format!("/api/repos/{repo_id}");
+
+    let resp = oneshot(&mut app, non_admin_get_request(&repo_uri)).await;
+    assert_eq!(
+        resp.status(),
+        StatusCode::NOT_FOUND,
+        "without any grant the repository stays hidden"
+    );
+
+    let grant_uri = format!("/api/groups/{}/permissions/{repo_id}", group.id);
+    let resp = oneshot(
+        &mut app,
+        json_request(
+            "PUT",
+            &grant_uri,
+            Some(json!({ "permissions": ["view", "backup"] })),
+        ),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(
+        body_json(resp).await.get("permissions").unwrap(),
+        &json!(["view", "backup"])
+    );
+
+    let resp = oneshot(&mut app, non_admin_get_request(&repo_uri)).await;
+    assert_eq!(
+        resp.status(),
+        StatusCode::OK,
+        "a member holds what their group was granted"
+    );
+    let resp = oneshot(&mut app, get_request_as(&repo_uri, &outsider)).await;
+    assert_eq!(
+        resp.status(),
+        StatusCode::NOT_FOUND,
+        "a user outside the group gains nothing from its grant"
+    );
+
+    let resp = oneshot(
+        &mut app,
+        get_request(&format!("/api/groups/{}/permissions", group.id)),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(
+        body_json(resp).await,
+        json!([{ "group_id": group.id, "repo_id": repo_id, "permissions": ["view", "backup"] }])
+    );
+
+    let actions: Vec<String> = sqlx::query_scalar(
+        "SELECT action FROM audit_log WHERE action = 'set_group_repo_permission'",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(actions.len(), 1, "setting a group grant is audited");
+
+    let resp = oneshot(
+        &mut app,
+        json_request("PUT", &grant_uri, Some(json!({ "permissions": [] }))),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let resp = oneshot(&mut app, non_admin_get_request(&repo_uri)).await;
+    assert_eq!(
+        resp.status(),
+        StatusCode::NOT_FOUND,
+        "revoking the group grant takes the repository away again"
+    );
+}
+
+/// Group grants are admin-only to change.
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn setting_a_group_grant_needs_an_admin() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_non_admin_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+    let repo_id = insert_test_repo(&pool, "group-grant-admin-repo").await;
+    let group = server::db::insert_group(&pool, "self-granted-team", None)
+        .await
+        .unwrap();
+
+    let resp = oneshot(
+        &mut app,
+        non_admin_json_request(
+            "PUT",
+            &format!("/api/groups/{}/permissions/{repo_id}", group.id),
+            &json!({ "permissions": ["view"] }),
+        ),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+}
+
+/// A new agent has no schedule yet, so only a role that sees every agent
+/// shows it to a user who is not an admin: that is how whoever sets up new
+/// agents gets to them.
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn view_all_agents_shows_an_agent_no_schedule_backs_up_yet() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    let mut app = build_test_app(pool.clone());
+    server::db::insert_agent(&pool, "brand-new-host", None, "hash", None, None)
+        .await
+        .unwrap();
+
+    let plain = insert_viewer_only_session(&pool, "no-agent-view").await;
+    let resp = oneshot(
+        &mut app,
+        get_request_as("/api/agents/brand-new-host", &plain),
+    )
+    .await;
+    assert_eq!(
+        resp.status(),
+        StatusCode::NOT_FOUND,
+        "a plain viewer does not see an agent nothing backs up"
+    );
+
+    let setup_user = insert_viewer_only_session(&pool, "agent-setup").await;
+    sqlx::query("UPDATE roles SET can_view_all_agents = true WHERE name = 'agent-setup-role'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let resp = oneshot(
+        &mut app,
+        get_request_as("/api/agents/brand-new-host", &setup_user),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let resp = oneshot(&mut app, get_request_as("/api/agents", &setup_user)).await;
+    let agents = body_json(resp).await;
+    assert!(
+        agents
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|agent| agent.get("hostname").unwrap() == "brand-new-host"),
+        "View All Agents lists the new agent too"
+    );
+}
+
+/// The dashboard figures count only what the caller may read: a viewer
+/// granted one repository is told about one repository, not the whole
+/// installation.
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn dashboard_statistics_cover_only_readable_repositories() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+    create_non_admin_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+    let readable = insert_test_repo(&pool, "stats-readable-repo").await;
+    insert_test_repo(&pool, "stats-hidden-repo").await;
+    grant_repo_view(&pool, "integration-viewer", readable).await;
+
+    let resp = oneshot(&mut app, non_admin_get_request("/api/stats/summary")).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(body_json(resp).await.get("total_repos").unwrap(), 1);
+    let resp = oneshot(&mut app, get_request("/api/stats/summary")).await;
+    assert_eq!(body_json(resp).await.get("total_repos").unwrap(), 2);
+
+    let resp = oneshot(
+        &mut app,
+        non_admin_get_request("/api/stats/storage-breakdown"),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let names: Vec<Value> = body_json(resp)
+        .await
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|entry| entry.get("name").unwrap().clone())
+        .collect();
+    assert_eq!(names, vec![json!("stats-readable-repo")]);
+}
+
+/// A user whose roles lack Create Schedule cannot create one, even with
+/// `can_modify_schedules` on the repository.
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn creating_a_schedule_needs_the_create_schedule_capability() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_non_admin_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+    let repo_id = insert_test_repo(&pool, "no-create-capability-repo").await;
+    grant_non_admin_schedule_permission(&pool, repo_id).await;
+    let agent_id: i64 = sqlx::query_scalar(
+        "INSERT INTO agents (hostname, agent_token_hash) VALUES ('no-create-host', 'hash') \
+         RETURNING id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    let resp = oneshot(
+        &mut app,
+        non_admin_json_request(
+            "POST",
+            "/api/schedules",
+            &json!({
+                "agent_ids": [agent_id],
+                "repo_id": repo_id,
+                "cron_expression": "0 3 * * *",
+                "enabled": false,
+                "backup_sources": ["/data"],
+            }),
+        ),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+    let schedules: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM schedules")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(schedules, 0);
 }
 
 /// The realistic middle case between the two extremes the other bulk tests
@@ -15147,6 +15463,7 @@ async fn test_repo_host_dependencies_show_on_its_schedules() {
         .await
         .unwrap();
     let repo_id = insert_test_repo(&pool, "deps-repo").await;
+    grant_repo_view(&pool, "integration-viewer", repo_id).await;
     let schedule_id = insert_test_schedule(&pool, agent.id, repo_id).await;
     let repo_host_id = repo_host_id_of(&pool, repo_id).await;
     let switch = create_dependency_id(&mut app, "nas-power-switch", 80).await;

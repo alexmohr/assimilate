@@ -100,9 +100,7 @@ use uuid::Uuid;
 use super::{
     auth::AuthUser,
     helpers,
-    permissions::{
-        check_agents_visible, check_repo_permission, get_visible_schedule,
-    },
+    permissions::{check_agents_visible, check_repo_permission, get_visible_schedule},
     read_scope::visible_schedules,
 };
 use crate::{

@@ -2,7 +2,12 @@
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 import { apiClient } from './client'
-import type { GroupMembersResponse, GroupResponse } from '../types/generated'
+import type {
+  GroupMembersResponse,
+  GroupRepoPermissionResponse,
+  GroupResponse,
+  RepoPermission,
+} from '../types/generated'
 
 export type Group = GroupResponse
 
@@ -44,4 +49,23 @@ export async function updateGroupMembers(
   data: UpdateGroupMembersRequest,
 ): Promise<void> {
   await apiClient.put(`/groups/${id}/members`, data)
+}
+
+/** Every repository grant of a group. */
+export async function listGroupPermissions(id: number): Promise<GroupRepoPermissionResponse[]> {
+  const response = await apiClient.get<GroupRepoPermissionResponse[]>(`/groups/${id}/permissions`)
+  return response.data
+}
+
+/** Sets what a group's members may do on a repository; an empty list revokes the grant. */
+export async function setGroupPermission(
+  groupId: number,
+  repoId: number,
+  permissions: RepoPermission[],
+): Promise<GroupRepoPermissionResponse> {
+  const response = await apiClient.put<GroupRepoPermissionResponse>(
+    `/groups/${groupId}/permissions/${repoId}`,
+    { permissions },
+  )
+  return response.data
 }

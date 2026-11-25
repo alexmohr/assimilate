@@ -276,7 +276,7 @@ Waking a powered-down machine, shutting it back down, whether it is expected to 
 
 ## Repository Permissions
 
-A user who is not an admin sees only the repositories they hold `can_view` on, together with those repositories' schedules, agents, reports and statistics; **View All Repos** shows every repository. Admins grant per-user access to specific repositories in the **Repository permissions** section of a user's page — see [Access Control](access-control.md#what-a-user-can-see).
+A user who is not an admin sees only the repositories they, or a group they belong to, hold `can_view` on, together with those repositories' schedules, agents, reports and statistics; **View All Repos** shows every repository. Admins grant per-user access to specific repositories in the **Repository permissions** section of a user's page, and per-group access with a group's **Permissions** on the **Groups** page — see [Access Control](access-control.md#what-a-user-can-see).
 
 | Permission | Effect |
 |------------|--------|

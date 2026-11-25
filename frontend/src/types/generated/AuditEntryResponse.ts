@@ -323,6 +323,23 @@ export type AuditEntryResponse =
       };
     }
     | {
+      "action": "set_group_repo_permission";
+      "details": {
+        /**
+         * The group whose permissions changed.
+         */
+        group: string;
+        /**
+         * What it held on the repository; empty if it held nothing.
+         */
+        before: Array<RepoPermission>;
+        /**
+         * What it holds on it now; empty if everything was revoked.
+         */
+        after: Array<RepoPermission>;
+      };
+    }
+    | {
       "action": "create_api_token";
       "details": {
         /**

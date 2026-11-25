@@ -77,6 +77,40 @@ pub(crate) async fn insert_auth_user(
     }
 }
 
+/// Lets `user_id` see `agent_id` the way a user who is not an admin does: a
+/// `can_view` grant on `repo_id` and a schedule there that backs the agent up.
+pub(crate) async fn let_user_see_agent(
+    pool: &sqlx::PgPool,
+    user_id: i64,
+    agent_id: i64,
+    repo_id: i64,
+) {
+    crate::db::upsert_repo_permission(
+        pool,
+        &crate::db::UpsertRepoPermissionParams {
+            user_id,
+            repo_id,
+            can_view: true,
+            can_backup: false,
+            can_modify_schedules: false,
+            can_extract: false,
+            can_delete: false,
+        },
+    )
+    .await
+    .expect("grant can_view");
+    let schedule_id = sqlx::query_scalar!(
+        "INSERT INTO schedules (repo_id, cron_expression) VALUES ($1, '0 3 * * *') RETURNING id",
+        repo_id,
+    )
+    .fetch_one(pool)
+    .await
+    .expect("insert schedule");
+    crate::db::insert_schedule_targets(pool, schedule_id, &[(agent_id, 0)])
+        .await
+        .expect("insert schedule target");
+}
+
 /// A [`NotificationService`](crate::notifications::NotificationService) around `pool` for unit
 /// tests that never deliver to an email channel with a stored password.
 pub(crate) fn test_notification_service(

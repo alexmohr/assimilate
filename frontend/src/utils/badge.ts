@@ -96,6 +96,7 @@ export function auditActionTone(action: AuditEvent['action']): BadgeTone {
     case 'set_group_members':
     case 'update_role':
     case 'set_repo_permission':
+    case 'set_group_repo_permission':
     case 'regenerate_agent_token':
     case 'revoke_enrollment_token':
     case 'update_notification_channel':

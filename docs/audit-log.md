@@ -70,6 +70,7 @@ A login is recorded only once it completes, so an account with two-factor authen
 | `update_role` | `role` | its `name` now, its `previous_name`, and the permissions it granted `before` and grants `after` |
 | `delete_role` | `role` | `name` |
 | `set_repo_permission` | `repo` | the `username`, and what they held on the repository `before` and hold `after` (`view`, `backup`, `modify_schedules`, `extract`, `delete`) |
+| `set_group_repo_permission` | `repo` | the `group` name, and what it held on the repository `before` and holds `after` |
 
 ### Tokens
 

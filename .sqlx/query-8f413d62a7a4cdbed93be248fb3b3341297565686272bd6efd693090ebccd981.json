@@ -1,0 +1,88 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT repo_id, can_view, can_backup, can_modify_schedules, can_extract, can_delete FROM group_repo_permissions WHERE group_id = $1 ORDER BY repo_id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "repo_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "group_repo_permissions",
+            "name": "repo_id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "can_view",
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "group_repo_permissions",
+            "name": "can_view"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "can_backup",
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "group_repo_permissions",
+            "name": "can_backup"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "can_modify_schedules",
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "group_repo_permissions",
+            "name": "can_modify_schedules"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "can_extract",
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "group_repo_permissions",
+            "name": "can_extract"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "can_delete",
+        "type_info": "Bool",
+        "origin": {
+          "Table": {
+            "table": "group_repo_permissions",
+            "name": "can_delete"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "8f413d62a7a4cdbed93be248fb3b3341297565686272bd6efd693090ebccd981"
+}

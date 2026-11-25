@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT BOOL_OR(r.can_create_agent) AS can_create_agent, BOOL_OR(r.can_delete_agent) AS can_delete_agent, BOOL_OR(r.can_delete_own_agent) AS can_delete_own_agent, BOOL_OR(r.can_create_repo) AS can_create_repo, BOOL_OR(r.can_delete_repo) AS can_delete_repo, BOOL_OR(r.can_delete_own_repo) AS can_delete_own_repo, BOOL_OR(r.can_create_schedule) AS can_create_schedule, BOOL_OR(r.can_delete_schedule) AS can_delete_schedule, BOOL_OR(r.can_delete_own_schedule) AS can_delete_own_schedule, BOOL_OR(r.can_manage_tags) AS can_manage_tags, BOOL_OR(r.can_view_all_repos) AS can_view_all_repos, BOOL_OR(r.can_manage_tunnels) AS can_manage_tunnels, BOOL_OR(r.can_upgrade_agent) AS can_upgrade_agent FROM roles r JOIN user_roles ur ON ur.role_id = r.id WHERE ur.user_id = $1",
+  "query": "SELECT BOOL_OR(r.can_create_agent) AS can_create_agent, BOOL_OR(r.can_delete_agent) AS can_delete_agent, BOOL_OR(r.can_delete_own_agent) AS can_delete_own_agent, BOOL_OR(r.can_create_repo) AS can_create_repo, BOOL_OR(r.can_delete_repo) AS can_delete_repo, BOOL_OR(r.can_delete_own_repo) AS can_delete_own_repo, BOOL_OR(r.can_create_schedule) AS can_create_schedule, BOOL_OR(r.can_delete_schedule) AS can_delete_schedule, BOOL_OR(r.can_delete_own_schedule) AS can_delete_own_schedule, BOOL_OR(r.can_manage_tags) AS can_manage_tags, BOOL_OR(r.can_view_all_repos) AS can_view_all_repos, BOOL_OR(r.can_manage_tunnels) AS can_manage_tunnels, BOOL_OR(r.can_upgrade_agent) AS can_upgrade_agent, BOOL_OR(r.can_view_all_agents) AS can_view_all_agents FROM roles r JOIN user_roles ur ON ur.role_id = r.id WHERE ur.user_id = $1",
   "describe": {
     "columns": [
       {
@@ -80,6 +80,12 @@
         "name": "can_upgrade_agent",
         "type_info": "Bool",
         "origin": "Expression"
+      },
+      {
+        "ordinal": 13,
+        "name": "can_view_all_agents",
+        "type_info": "Bool",
+        "origin": "Expression"
       }
     ],
     "parameters": {
@@ -100,8 +106,9 @@
       null,
       null,
       null,
+      null,
       null
     ]
   },
-  "hash": "456220f92a2743be58ec676fbcc5eeb3545206a6e6b97cf3d0cdeef6bff09751"
+  "hash": "82fa14e3c191ef3107916f2ff9c8d1a81f40581109c5029a30cd34fa66d92909"
 }

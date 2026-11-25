@@ -1167,6 +1167,7 @@ mod tests {
             can_view_all_repos: false,
             can_manage_tunnels: false,
             can_upgrade_agent: false,
+            can_view_all_agents: false,
         }
     }
 

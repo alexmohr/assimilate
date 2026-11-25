@@ -206,6 +206,7 @@ describe('auditActionTone', () => {
     ['set_group_members', 'warning'],
     ['update_role', 'warning'],
     ['set_repo_permission', 'warning'],
+    ['set_group_repo_permission', 'warning'],
     ['regenerate_agent_token', 'warning'],
     ['revoke_enrollment_token', 'warning'],
     ['update_notification_channel', 'warning'],

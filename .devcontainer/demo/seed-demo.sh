@@ -1370,6 +1370,14 @@ SQL
 echo "==> Creating groups..."
 api POST "/api/groups" '{"name":"backend-team","description":"Backend infrastructure engineers"}' > /dev/null 2>&1 || true
 api POST "/api/groups" '{"name":"data-team","description":"Database and analytics team"}' > /dev/null 2>&1 || true
+# data-team may view and back up database-hourly: its Permissions dialog on
+# the Groups page shows a group grant (Access Control docs). It has no members,
+# so viewer1 keeps seeing server-daily alone (e2e/rbac.spec.ts).
+PGPASSWORD=borg_demo psql -h postgres -U borg -d borg <<'SQL'
+INSERT INTO group_repo_permissions (group_id, repo_id, can_view, can_backup)
+SELECT g.id, r.id FROM groups g, repos r WHERE g.name = 'data-team' AND r.name = 'database-hourly'
+ON CONFLICT (group_id, repo_id) DO UPDATE SET can_view = true, can_backup = true;
+SQL
 
 echo "==> Configuring hostname pattern matching..."
 # Demonstrates pattern-based agent matching: archives from any 'web-server-*'

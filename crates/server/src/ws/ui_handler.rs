@@ -111,7 +111,9 @@ impl UiSession {
 
 type UiSink = SplitSink<WebSocket, Message>;
 
-/// The client end of a UI socket went away while sending to it.
+/// An event could not be sent: the client end of the socket went away (or,
+/// in principle, the event did not serialize). Either way the socket closes,
+/// and the browser reconnects and refetches what it shows.
 struct SocketGone;
 
 /// Sends `event` if `audience` may see it.
@@ -128,12 +130,10 @@ async fn deliver(
 
 /// Sends `event` unfiltered.
 async fn send(sink: &mut UiSink, event: &ServerToUi) -> Result<(), SocketGone> {
-    if let Ok(json) = serde_json::to_string(event) {
-        sink.send(Message::Text(json.into()))
-            .await
-            .map_err(|_| SocketGone)?;
-    }
-    Ok(())
+    let json = serde_json::to_string(event).map_err(|_| SocketGone)?;
+    sink.send(Message::Text(json.into()))
+        .await
+        .map_err(|_| SocketGone)
 }
 
 /// Replays the in-progress imports and backups `audience` may see, so a
@@ -183,13 +183,6 @@ async fn handle_ui_socket(socket: WebSocket, state: AppState, mut session: UiSes
     let mut rx = state.ui_broadcast.subscribe();
     let (mut sink, mut stream) = socket.split();
 
-    if replay_snapshots(&mut sink, &state, &session.audience)
-        .await
-        .is_err()
-    {
-        return;
-    }
-
     let recv_task = async {
         while let Some(Ok(msg)) = stream.next().await {
             if matches!(msg, Message::Close(_)) {
@@ -204,14 +197,34 @@ async fn handle_ui_socket(socket: WebSocket, state: AppState, mut session: UiSes
     }
 }
 
-/// Forwards broadcast events `session` may see until the broadcast closes,
-/// the server shuts down, the session ends or the client goes away.
+/// The next broadcast event, or `None` once the broadcast has closed.
+///
+/// A burst of events (e.g. `borg create --list` logging one line per file) can
+/// outrun a single client's send loop faster than the broadcast channel's
+/// fixed capacity. Dropping the connection then would be worse than the lag
+/// itself: a `BackupStarted`/`BackupCompleted` lost in the gap has no other way
+/// to reach the client, since nothing re-polls for it after page load. So a
+/// lagged receiver skips past the gap and keeps receiving.
+async fn next_event<T: Clone>(rx: &mut tokio::sync::broadcast::Receiver<T>) -> Option<T> {
+    loop {
+        match rx.recv().await {
+            Ok(event) => return Some(event),
+            Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
+            Err(tokio::sync::broadcast::error::RecvError::Closed) => return None,
+        }
+    }
+}
+
+/// Replays the running operations, then forwards broadcast events `session`
+/// may see until the server shuts down, the session ends or the client goes
+/// away.
 async fn stream_events(
     sink: &mut UiSink,
     rx: &mut tokio::sync::broadcast::Receiver<ServerToUi>,
     state: &AppState,
     session: &mut UiSession,
 ) -> Result<(), SocketGone> {
+    replay_snapshots(sink, state, &session.audience).await?;
     let mut recheck = tokio::time::interval(session.recheck_every);
     recheck.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     // The first tick completes at once; the session was just checked by
@@ -219,20 +232,9 @@ async fn stream_events(
     recheck.tick().await;
     loop {
         tokio::select! {
-            event = rx.recv() => {
-                let event = match event {
-                    Ok(event) => event,
-                    // A burst of events (e.g. `borg create --list` logging one
-                    // line per file) can outrun a single client's send loop
-                    // faster than this broadcast channel's fixed capacity.
-                    // Dropping the connection here would be worse than the
-                    // lag itself: a `BackupStarted`/`BackupCompleted` lost in
-                    // the gap has no other way to reach the client, since
-                    // nothing re-polls for it after page load. Skip past the
-                    // gap and keep receiving instead of closing the socket.
-                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
-                    Err(tokio::sync::broadcast::error::RecvError::Closed) => return Ok(()),
-                };
+            // Once the broadcast closes this branch stops matching, and the
+            // socket stays open until the session ends or the server stops.
+            Some(event) = next_event(rx) => {
                 deliver(sink, &session.audience, &event).await?;
             }
             _ = recheck.tick() => {
@@ -260,6 +262,7 @@ mod tests {
     use std::time::Duration;
 
     use futures_util::StreamExt as _;
+    use serde_json::json;
     use shared::{protocol::ServerToUi, time::Timestamp};
     use tokio_tungstenite::tungstenite::{self, client::IntoClientRequest};
     use tokio_util::sync::CancellationToken;
@@ -397,22 +400,15 @@ mod tests {
         let user = insert_auth_user(&pool, "logs-out").await;
         let cookie = insert_session(&pool, user.user_id, false).await;
         let addr = serve_ui_socket(state, Duration::from_millis(50)).await;
-        let mut socket = connect(addr, &cookie).await.expect("upgrade");
+        let socket = connect(addr, &cookie).await.expect("upgrade");
 
         db::delete_session(&pool, &hash_token(&cookie))
             .await
             .expect("log out");
 
-        // Reads until the socket closes; no event is sent, so the first
-        // frame is the close.
-        let closed = tokio::time::timeout(Duration::from_secs(5), async {
-            while socket
-                .next()
-                .await
-                .is_some_and(|frame| frame.is_ok_and(|message| !message.is_close()))
-            {}
-        })
-        .await;
+        // Reads until the socket closes; no event is sent, so the only frame
+        // is the close.
+        let closed = tokio::time::timeout(Duration::from_secs(5), socket.collect::<Vec<_>>()).await;
         assert!(
             closed.is_ok(),
             "socket still open after its session was deleted"
@@ -460,36 +456,29 @@ mod tests {
             hostname: "viewer-host".to_owned(),
         });
 
-        let first = tokio::time::timeout(Duration::from_secs(5), socket.next())
-            .await
-            .expect("an event arrives")
-            .expect("socket open")
-            .expect("frame");
-        let tungstenite::Message::Text(text) = first else {
-            panic!("expected a text frame, got {first:?}");
-        };
-        let event: ServerToUi = serde_json::from_str(&text).expect("event json");
-        let ServerToUi::AgentConnected { hostname } = event else {
-            panic!("expected AgentConnected, got {event:?}");
-        };
-        assert_eq!(hostname, "viewer-host");
+        assert_eq!(
+            read_event(&mut socket).await,
+            agent_connected("viewer-host")
+        );
     }
 
-    /// Reads the next text frame from `socket` as a UI event.
-    async fn next_event(
+    /// The JSON of an `AgentConnected` event for `hostname`.
+    fn agent_connected(hostname: &str) -> serde_json::Value {
+        json!({ "type": "AgentConnected", "payload": { "hostname": hostname } })
+    }
+
+    /// Reads the next text frame from `socket` as a UI event's JSON.
+    async fn read_event(
         socket: &mut tokio_tungstenite::WebSocketStream<
             tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
         >,
-    ) -> ServerToUi {
+    ) -> serde_json::Value {
         let frame = tokio::time::timeout(Duration::from_secs(5), socket.next())
             .await
             .expect("an event arrives")
             .expect("socket open")
             .expect("frame");
-        let tungstenite::Message::Text(text) = frame else {
-            panic!("expected a text frame, got {frame:?}");
-        };
-        serde_json::from_str(&text).expect("event json")
+        serde_json::from_str(&frame.into_text().expect("a text frame")).expect("event json")
     }
 
     /// A browser that connects while a backup is running is shown the
@@ -527,14 +516,18 @@ mod tests {
 
         let mut socket = connect(addr, &cookie).await.expect("upgrade");
 
-        let ServerToUi::BackupStarted { hostname, .. } = next_event(&mut socket).await else {
-            panic!("expected the running backup's start first");
-        };
-        assert_eq!(hostname, "viewer-host");
-        let ServerToUi::BackupLog { line, .. } = next_event(&mut socket).await else {
-            panic!("expected the running backup's progress line next");
-        };
-        assert_eq!(line, progress_line("viewer-host"));
+        let started = read_event(&mut socket).await;
+        assert_eq!(started.pointer("/type"), Some(&json!("BackupStarted")));
+        assert_eq!(
+            started.pointer("/payload/hostname"),
+            Some(&json!("viewer-host"))
+        );
+        let progress = read_event(&mut socket).await;
+        assert_eq!(progress.pointer("/type"), Some(&json!("BackupLog")));
+        assert_eq!(
+            progress.pointer("/payload/line"),
+            Some(&json!(progress_line("viewer-host")))
+        );
     }
 
     /// Sharing an agent with a user reaches a socket they already have open
@@ -566,7 +559,7 @@ mod tests {
                     hostname: "late-host".to_owned(),
                 });
                 if let Ok(event) =
-                    tokio::time::timeout(Duration::from_millis(100), next_event(&mut socket)).await
+                    tokio::time::timeout(Duration::from_millis(100), read_event(&mut socket)).await
                 {
                     return event;
                 }
@@ -575,10 +568,7 @@ mod tests {
         .await
         .expect("the newly visible agent's event arrives");
 
-        let ServerToUi::AgentConnected { hostname } = event else {
-            panic!("expected AgentConnected, got {event:?}");
-        };
-        assert_eq!(hostname, "late-host");
+        assert_eq!(event, agent_connected("late-host"));
     }
 
     /// A complete `archive_progress` line naming a path on `hostname`, as
@@ -587,6 +577,39 @@ mod tests {
         format!(
             r#"{{"type":"archive_progress","nfiles":1,"original_size":1,"path":"/srv/{hostname}"}}"#
         )
+    }
+
+    /// Stopping the server ends every open UI socket.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn the_socket_closes_when_the_server_shuts_down(pool: sqlx::PgPool) {
+        let state =
+            crate::test_support::build_test_state(pool.clone(), b"ui-handler-test-key-material");
+        let user = insert_auth_user(&pool, "shutdown-viewer").await;
+        let cookie = insert_session(&pool, user.user_id, false).await;
+        let addr = serve_ui_socket(state.clone(), Duration::from_secs(30)).await;
+        let socket = connect(addr, &cookie).await.expect("upgrade");
+
+        state.shutdown_token.cancel();
+
+        let closed = tokio::time::timeout(Duration::from_secs(5), socket.collect::<Vec<_>>()).await;
+        assert!(closed.is_ok(), "socket still open after shutdown");
+    }
+
+    /// A receiver that fell behind the broadcast skips the events it missed
+    /// and goes on with the newest, instead of ending the socket; a closed
+    /// broadcast ends it.
+    #[tokio::test]
+    async fn next_event_skips_a_lag_and_ends_on_close() {
+        let (tx, mut rx) = tokio::sync::broadcast::channel::<i32>(2);
+        for i in 0..5 {
+            tx.send(i).expect("send");
+        }
+        drop(tx);
+
+        assert_eq!(super::next_event(&mut rx).await, Some(3));
+        assert_eq!(super::next_event(&mut rx).await, Some(4));
+        assert_eq!(super::next_event(&mut rx).await, None);
     }
 
     /// Inserts a repository named `name` owned by `owner_id` and returns its id.

@@ -11747,6 +11747,169 @@ async fn dropping_a_target_the_caller_has_no_permission_on_is_refused() {
     );
 }
 
+/// Inserts an agent owned by a fresh user who shares no group with the
+/// non-admin test user, so that user cannot see it in the agent list.
+#[cfg(test)]
+async fn insert_foreign_private_agent(pool: &PgPool, hostname: &str) -> i64 {
+    let owner_id: i64 = sqlx::query_scalar(
+        "INSERT INTO users (username, password_hash) VALUES ($1, 'hash') RETURNING id",
+    )
+    .bind(format!("{hostname}-owner"))
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    sqlx::query_scalar(
+        "INSERT INTO agents (hostname, agent_token_hash, owner_id, visibility) VALUES ($1, \
+         'hash', $2, 'private') RETURNING id",
+    )
+    .bind(hostname)
+    .bind(owner_id)
+    .fetch_one(pool)
+    .await
+    .unwrap()
+}
+
+/// Grants the non-admin test user `can_modify_schedules` on `repo_id`.
+#[cfg(test)]
+async fn grant_non_admin_schedule_permission(pool: &PgPool, repo_id: i64) {
+    sqlx::query(
+        "INSERT INTO repo_permissions (user_id, repo_id, can_view, can_modify_schedules) SELECT \
+         id, $1, true, true FROM users WHERE username = 'integration-viewer'",
+    )
+    .bind(repo_id)
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
+/// The bug this guards: `create_schedule` checked the repositories but never
+/// the agents, so anyone holding `can_modify_schedules` on one repository
+/// could point a schedule with their own hook commands at another user's
+/// private agent and run them there as the agent's user.
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn creating_a_schedule_on_an_agent_the_caller_cannot_see_is_refused() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_non_admin_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+
+    let repo_id = insert_test_repo(&pool, "hidden-agent-create-repo").await;
+    grant_non_admin_schedule_permission(&pool, repo_id).await;
+    let foreign_agent = insert_foreign_private_agent(&pool, "hidden-agent-create-host").await;
+    let shared_agent: i64 = sqlx::query_scalar(
+        "INSERT INTO agents (hostname, agent_token_hash) VALUES ('shared-agent-create-host', \
+         'hash') RETURNING id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    let create = |agent_ids: Vec<i64>| {
+        non_admin_json_request(
+            "POST",
+            "/api/schedules",
+            &json!({
+                "agent_ids": agent_ids,
+                "repo_id": repo_id,
+                "cron_expression": "0 3 * * *",
+                "enabled": false,
+                "backup_sources": ["/"],
+                "pre_backup_commands": [{ "command": "id" }],
+            }),
+        )
+    };
+
+    let resp = oneshot(&mut app, create(vec![shared_agent, foreign_agent])).await;
+    assert_eq!(
+        resp.status(),
+        StatusCode::NOT_FOUND,
+        "an agent the caller cannot see must be refused exactly like one that does not exist"
+    );
+    let targeting: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM schedule_targets WHERE agent_id = $1")
+            .bind(foreign_agent)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        targeting, 0,
+        "the refused request must not target the agent"
+    );
+    let schedules: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM schedules")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        schedules, 0,
+        "the refused request must not create a schedule"
+    );
+
+    let resp = oneshot(&mut app, create(vec![shared_agent])).await;
+    assert_eq!(
+        resp.status(),
+        StatusCode::CREATED,
+        "an agent shared with everyone can still be targeted"
+    );
+}
+
+/// Same hole through `update_schedule`: its agent list was replaced without
+/// any check. Agents the schedule already runs on are not re-checked, so an
+/// operator can still edit a schedule an admin pointed at a host they cannot
+/// see, but they cannot add one.
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn adding_an_agent_the_caller_cannot_see_to_a_schedule_is_refused() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_non_admin_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+
+    let repo_id = insert_test_repo(&pool, "hidden-agent-update-repo").await;
+    grant_non_admin_schedule_permission(&pool, repo_id).await;
+    let existing_hidden = insert_foreign_private_agent(&pool, "hidden-agent-existing-host").await;
+    let added_hidden = insert_foreign_private_agent(&pool, "hidden-agent-added-host").await;
+    let schedule_id = insert_test_schedule(&pool, existing_hidden, repo_id).await;
+
+    let update = |agent_ids: Vec<i64>| {
+        non_admin_json_request(
+            "PUT",
+            &format!("/api/schedules/{schedule_id}"),
+            &json!({
+                "name": "edited by the operator",
+                "cron_expression": "0 3 * * *",
+                "enabled": false,
+                "agent_ids": agent_ids,
+            }),
+        )
+    };
+
+    let resp = oneshot(&mut app, update(vec![existing_hidden])).await;
+    assert_eq!(
+        resp.status(),
+        StatusCode::OK,
+        "re-sending the agents a schedule already has must not need visibility of each"
+    );
+
+    let resp = oneshot(&mut app, update(vec![existing_hidden, added_hidden])).await;
+    assert_eq!(
+        resp.status(),
+        StatusCode::NOT_FOUND,
+        "adding an agent the caller cannot see must be refused"
+    );
+    let targets: Vec<i64> =
+        sqlx::query_scalar("SELECT agent_id FROM schedule_targets WHERE schedule_id = $1")
+            .bind(schedule_id)
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        targets,
+        vec![existing_hidden],
+        "the refused update must leave the agent list unchanged"
+    );
+}
+
 /// The realistic middle case between the two extremes the other bulk tests
 /// cover: a non-admin holding `can_modify_schedules` on one repository but not
 /// on another that also has outstanding reports. This is the

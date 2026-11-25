@@ -244,6 +244,45 @@ pub async fn is_visible_to_user(
     }
 }
 
+/// Requires that the caller can see every agent in `agent_ids` in the agent
+/// list, the same rule `GET /api/agents` applies.
+///
+/// A schedule runs its hook commands as a shell on each agent it targets, so
+/// pointing one at an agent is code execution on that host. An agent the
+/// caller cannot see is reported exactly like one that does not exist, so
+/// the check cannot be used to discover private agent ids.
+///
+/// # Errors
+///
+/// Returns [`ApiError::NotFound`] for an agent that does not exist or that
+/// the caller cannot see.
+pub async fn check_agents_visible(
+    pool: &sqlx::PgPool,
+    auth: &AuthUser,
+    agent_ids: impl IntoIterator<Item = i64>,
+) -> Result<(), ApiError> {
+    let is_admin = db::get_effective_permissions(pool, auth.user_id)
+        .await?
+        .can_delete_repo;
+    for agent_id in agent_ids {
+        let agent = db::get_agent_by_id(pool, agent_id).await?;
+        if !is_visible_to_user(
+            pool,
+            auth.user_id,
+            agent.owner_id,
+            agent.visibility,
+            is_admin,
+        )
+        .await?
+        {
+            return Err(ApiError::NotFound(format!(
+                "agent id '{agent_id}' not found"
+            )));
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use sqlx::PgPool;

@@ -88,6 +88,9 @@ The following permissions can be granted to a group (or directly to a user) for 
 | `can_extract` | Browse and extract archive contents |
 | `can_delete` | Delete archives from this repository |
 
+!!! warning "Schedules run commands on their agents"
+    A schedule's pre- and post-backup hook commands run as a shell on every agent it targets. Treat `can_modify_schedules` as permission to run commands on any agent the user can point a schedule at. `can_modify_schedules` covers the repository only. A schedule can target only agents the user can see in the agent list: agents the user owns, shared agents with no owner, and shared agents whose owner is in one of the user's groups. Creating a schedule for any other agent, or adding one to an existing schedule, fails as if the agent did not exist. A schedule can keep agents an admin already added to it, and the user can still edit it.
+
 ### When to Use Groups
 
 Use groups when you need to control **which repositories** a set of users can access:

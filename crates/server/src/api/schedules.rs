@@ -100,7 +100,7 @@ use uuid::Uuid;
 use super::{
     auth::AuthUser,
     helpers,
-    permissions::{check_repo_permission, is_visible_to_user},
+    permissions::{check_agents_visible, check_repo_permission, is_visible_to_user},
 };
 use crate::{
     AppState, config_assembler,
@@ -739,6 +739,7 @@ pub async fn create_schedule(
     for (repo_id, _) in &repo_targets {
         check_repo_permission(&state.pool, &auth, *repo_id, |p| p.can_modify_schedules).await?;
     }
+    check_agents_visible(&state.pool, &auth, req.agent_ids.iter().copied()).await?;
     let primary_repo_id = primary_target(&repo_targets).unwrap_or(req.repo_id);
     check_cron_expression(&req.cron_expression)?;
     let schedule_type = req.schedule_type.unwrap_or_default();
@@ -1049,6 +1050,7 @@ pub async fn update_schedule(
     let existing = db::get_schedule_by_id(&state.pool, id).await?;
     check_schedule_edit_permission(&state, &auth, &existing).await?;
     let target_plan = authorize_repo_targets(&state, &auth, &req, &existing).await?;
+    authorize_agent_targets(&state, &auth, &req, existing.id).await?;
     check_cron_expression(&req.cron_expression)?;
     let values = resolve_effective_schedule_values(&req, &existing)?;
     ensure_updated_backup_sources_available(&state, &req, &existing).await?;
@@ -1131,6 +1133,32 @@ pub async fn update_schedule(
     config_assembler::push_config_to_all_schedule_targets(&state, schedule.id).await;
 
     Ok(Json(schedule))
+}
+
+/// Checks the caller can see every agent an update adds to the schedule.
+///
+/// Only additions are checked: an agent the schedule already runs on was
+/// put there by someone allowed to, and the edit page sends the whole agent
+/// list back on every save.
+async fn authorize_agent_targets(
+    state: &AppState,
+    auth: &AuthUser,
+    req: &UpdateScheduleRequest,
+    schedule_id: i64,
+) -> Result<(), ApiError> {
+    let Some(requested) = req.agent_ids.as_deref() else {
+        return Ok(());
+    };
+    let existing: Vec<i64> = db::list_schedule_targets(&state.pool, schedule_id)
+        .await?
+        .into_iter()
+        .map(|t| t.agent_id)
+        .collect();
+    let added = requested
+        .iter()
+        .copied()
+        .filter(|agent_id| !existing.contains(agent_id));
+    check_agents_visible(&state.pool, auth, added).await
 }
 
 /// May this caller edit the schedule at all - separate from what the edit does

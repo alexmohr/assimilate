@@ -1,5 +1,5 @@
 {
   "test": "settings pages",
   "pages": ["frontend/src/views/ArchivesView.vue"],
-  "fingerprint": "48c51b539b3ce23787df509df05aa0fa017fd5ae40a6388c8f6c33637b61576f"
+  "fingerprint": "866014c06c86b5389ffc40c77ca534fdae0eff20694cdf2401a79a05ae076956"
 }

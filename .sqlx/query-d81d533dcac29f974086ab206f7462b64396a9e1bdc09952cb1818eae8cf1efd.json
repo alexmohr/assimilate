@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT r.name, COALESCE(rs.compressed_size, 0)::INT8 AS \"compressed_size!\", COALESCE(rs.deduplicated_size, 0)::INT8 AS \"deduplicated_size!\" FROM repos r LEFT JOIN repo_stats rs ON rs.repo_id = r.id ORDER BY rs.deduplicated_size DESC NULLS LAST",
+  "query": "SELECT r.name, COALESCE(rs.compressed_size, 0)::INT8 AS \"compressed_size!\", COALESCE(rs.deduplicated_size, 0)::INT8 AS \"deduplicated_size!\" FROM repos r LEFT JOIN repo_stats rs ON rs.repo_id = r.id WHERE ($1::BIGINT[] IS NULL OR r.id = ANY($1)) ORDER BY rs.deduplicated_size DESC NULLS LAST",
   "describe": {
     "columns": [
       {
@@ -28,7 +28,9 @@
       }
     ],
     "parameters": {
-      "Left": []
+      "Left": [
+        "Int8Array"
+      ]
     },
     "nullable": [
       false,
@@ -36,5 +38,5 @@
       null
     ]
   },
-  "hash": "e5cc8e40c5f8a05d9296d4886e97570805d1becbdf0214247d065a48488d67d9"
+  "hash": "d81d533dcac29f974086ab206f7462b64396a9e1bdc09952cb1818eae8cf1efd"
 }

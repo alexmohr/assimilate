@@ -10,14 +10,20 @@ The page shows your username, then its sections as collapsible rows stacked in o
 
 The **Change password** section lets you update your login password.
 
-1. Enter your new password (minimum 8 characters).
-2. Confirm the password.
-3. Click **Update Password**.
+1. Enter your current password.
+2. Enter your new password (minimum 8 characters).
+3. Confirm the new password.
+4. Optionally turn on **Also delete my API tokens**.
+5. Click **Update Password**.
+
+The change signs out every other session of your account, so anyone who had taken over one of them loses it; the session you change it from stays signed in. With **Also delete my API tokens** on, every API token of your account is deleted as well.
+
+Asking for the current password means a stolen session alone cannot take the account over. Wrong current passwords count toward the same lockout as two-factor codes. An API token cannot change the password at all. When the account is being made to change its password after a reset, the forced-change screen does not ask for the old one.
 
 Passwords are hashed with bcrypt before storage. The server enforces a minimum length of 8 characters.
 
 !!! note
-    Admins can also reset other users' passwords from **Settings → Access Control → Users**. See [Access Control](access-control.md) for details.
+    Admins can also reset other users' passwords from **Settings → Access Control → Users**. A reset signs the user out of every session, and can delete their API tokens too. See [Access Control](access-control.md) for details.
 
 ## API Tokens
 

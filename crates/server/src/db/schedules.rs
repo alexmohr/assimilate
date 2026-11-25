@@ -270,6 +270,26 @@ pub async fn replace_schedule_repos(
     tx.commit().await.map_err(ApiError::Database)
 }
 
+/// The agents a schedule writing to one of `repo_ids` runs on: the agents a
+/// user who may read those repositories can see.
+///
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
+pub async fn list_agent_ids_backing_up_to(
+    pool: &PgPool,
+    repo_ids: &[i64],
+) -> Result<Vec<i64>, ApiError> {
+    sqlx::query_scalar!(
+        "SELECT DISTINCT st.agent_id FROM schedule_targets st JOIN schedules s ON s.id = \
+         st.schedule_id WHERE s.repo_id = ANY($1)",
+        repo_ids,
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(ApiError::Database)
+}
+
 /// Number of schedules targeting a specific agent.
 #[derive(Debug, Clone, Serialize, sqlx::FromRow, utoipa::ToSchema)]
 pub struct ScheduleCountByAgent {

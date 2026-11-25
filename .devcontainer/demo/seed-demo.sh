@@ -1359,6 +1359,12 @@ ON CONFLICT DO NOTHING;
 INSERT INTO user_roles (user_id, role_id)
 SELECT u.id, r.id FROM users u, roles r WHERE u.username = 'totpuser' AND r.name = 'viewer'
 ON CONFLICT DO NOTHING;
+-- viewer1 may read server-daily only, so it sees just that repository and the
+-- schedules, hosts, reports and statistics behind it (Access Control, "What a
+-- User Can See"; e2e/rbac.spec.ts).
+INSERT INTO repo_permissions (user_id, repo_id, can_view)
+SELECT u.id, r.id FROM users u, repos r WHERE u.username = 'viewer1' AND r.name = 'server-daily'
+ON CONFLICT (user_id, repo_id) DO UPDATE SET can_view = true;
 SQL
 
 echo "==> Creating groups..."

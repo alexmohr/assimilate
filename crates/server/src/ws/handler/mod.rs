@@ -966,7 +966,7 @@ exit 0
         );
 
         // A security_violation event was logged
-        let events = crate::db::get_system_events(&pool, 10, AcknowledgedFilter::All)
+        let events = crate::db::get_system_events(&pool, 10, AcknowledgedFilter::All, None)
             .await
             .expect("get system events");
         let security_events: Vec<_> = events
@@ -2173,7 +2173,7 @@ exit 0
         handle_agent_message(&msg, &rogue_agent.hostname, rogue_agent.id, &state).await;
 
         // Verify a security_violation was logged (BackupLog is guarded)
-        let events = crate::db::get_system_events(&pool, 10, AcknowledgedFilter::All)
+        let events = crate::db::get_system_events(&pool, 10, AcknowledgedFilter::All, None)
             .await
             .expect("get system events");
         let security_events: Vec<_> = events
@@ -2201,7 +2201,7 @@ exit 0
 
         handle_agent_message(&msg, &rogue_agent.hostname, rogue_agent.id, &state).await;
 
-        let events = crate::db::get_system_events(&pool, 10, AcknowledgedFilter::All)
+        let events = crate::db::get_system_events(&pool, 10, AcknowledgedFilter::All, None)
             .await
             .expect("get system events");
         let security_events: Vec<_> = events
@@ -2230,7 +2230,7 @@ exit 0
 
         handle_agent_message(&msg, &rogue_agent.hostname, rogue_agent.id, &state).await;
 
-        let events = crate::db::get_system_events(&pool, 10, AcknowledgedFilter::All)
+        let events = crate::db::get_system_events(&pool, 10, AcknowledgedFilter::All, None)
             .await
             .expect("get system events");
         let security_events: Vec<_> = events
@@ -2318,7 +2318,7 @@ exit 0
 
         // The forged step is logged as a security violation, like any other
         // report on a repo the agent is not assigned to.
-        let system_events = crate::db::get_system_events(&pool, 10, AcknowledgedFilter::All)
+        let system_events = crate::db::get_system_events(&pool, 10, AcknowledgedFilter::All, None)
             .await
             .expect("get system events");
         let security_events: Vec<_> = system_events
@@ -3553,7 +3553,7 @@ exit 0
         assert!(reenabled.enabled);
         assert!(!reenabled.auto_disabled_agent_unreachable);
 
-        let events = crate::db::get_system_events(&pool, 10, AcknowledgedFilter::All)
+        let events = crate::db::get_system_events(&pool, 10, AcknowledgedFilter::All, None)
             .await
             .expect("get system events");
         let event = events
@@ -3971,7 +3971,7 @@ exit 0
     }
 
     async fn recorded_catch_up_events(pool: &PgPool) -> usize {
-        crate::db::get_system_events(pool, 20, AcknowledgedFilter::All)
+        crate::db::get_system_events(pool, 20, AcknowledgedFilter::All, None)
             .await
             .expect("get system events")
             .iter()

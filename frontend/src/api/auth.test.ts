@@ -114,10 +114,16 @@ describe('auth api', () => {
   it('changes the password', async () => {
     vi.mocked(apiClient.post).mockResolvedValue({})
 
-    await changePassword('new-password')
+    await changePassword({
+      current_password: 'old-password',
+      new_password: 'new-password',
+      revoke_api_tokens: true,
+    })
 
     expect(apiClient.post).toHaveBeenCalledWith('/auth/change-password', {
+      current_password: 'old-password',
       new_password: 'new-password',
+      revoke_api_tokens: true,
     })
   })
 

@@ -652,8 +652,15 @@ pub async fn refresh_session(
 /// Request payload for changing the current user's password.
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct ChangePasswordRequest {
+    /// The password the account has now. Required, except while the account
+    /// is being made to change its password.
+    #[serde(default)]
+    pub current_password: Option<String>,
     /// The new password (minimum 8 characters).
     pub new_password: String,
+    /// Also delete every API token of the account.
+    #[serde(default)]
+    pub revoke_api_tokens: bool,
 }
 
 #[utoipa::path(
@@ -663,32 +670,67 @@ pub struct ChangePasswordRequest {
     operation_id = "change_password",
     request_body = ChangePasswordRequest,
     responses(
-        (status = 204, description = "Password changed successfully"),
-        (status = 400, description = "Password too short"),
+        (status = 204, description = "Password changed; other sessions signed out"),
+        (status = 400, description = "Password too short, or current password missing or wrong"),
         (status = 401, description = "Not authenticated"),
+        (status = 403, description = "Called with an API token instead of a signed-in session"),
+        (status = 429, description = "Too many wrong current passwords"),
         (status = 500, description = "Internal server error"),
     )
 )]
 /// Change the current user's password.
 ///
+/// The current password has to be given, so that a stolen session alone
+/// cannot take the account over, and an API token cannot be used at all.
+/// Every other session of the account is signed out, and its API tokens are
+/// deleted too when `revoke_api_tokens` is set.
+///
 /// # Errors
 ///
-/// Returns [`ApiError::BadRequest`] if the request is invalid.
+/// Returns [`ApiError::Forbidden`] for a request authenticated with an API
+/// token, [`ApiError::BadRequest`] for a short new password or a missing or
+/// wrong current password, or [`ApiError::TooManyRequests`] while wrong
+/// current passwords have locked the account.
 pub async fn change_password(
     State(state): State<AppState>,
     auth: AuthUser,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
     ApiJson(req): ApiJson<ChangePasswordRequest>,
 ) -> Result<StatusCode, ApiError> {
+    let Some(session_id) = auth.session_id.as_deref() else {
+        return Err(ApiError::Forbidden(
+            "a password can only be changed from a signed-in session, not with an API token"
+                .to_string(),
+        ));
+    };
     if req.new_password.len() < 8 {
         return Err(ApiError::BadRequest(
             "password must be at least 8 characters".to_string(),
         ));
     }
+    let user = db::get_user_by_id(&state.pool, auth.user_id).await?;
+    if !user.must_change_password {
+        let Some(current) = req.current_password else {
+            return Err(ApiError::BadRequest(
+                "the current password is required".to_string(),
+            ));
+        };
+        super::totp::verify_current_password(&state, &auth, peer, &headers, current).await?;
+    }
 
-    let password = req.new_password;
-    let hash = helpers::hash_password(password).await?;
-
-    db::update_user_password(&state.pool, auth.user_id, &hash).await?;
+    let hash = helpers::hash_password(req.new_password).await?;
+    let keep_session = hash_token(session_id);
+    db::change_user_password(
+        &state.pool,
+        auth.user_id,
+        &hash,
+        db::PasswordChangeEffects {
+            keep_session: Some(&keep_session),
+            revoke_api_tokens: req.revoke_api_tokens,
+        },
+    )
+    .await?;
     Ok(StatusCode::NO_CONTENT)
 }
 

@@ -472,6 +472,19 @@ fn test_app_schedule_routes() -> Router<server::AppState> {
 }
 
 #[cfg(test)]
+fn test_app_password_routes() -> Router<server::AppState> {
+    Router::new()
+        .route(
+            "/api/auth/change-password",
+            post(server::api::auth::change_password),
+        )
+        .route(
+            "/api/users/{id}/password",
+            put(server::api::users::update_password),
+        )
+}
+
+#[cfg(test)]
 fn test_app_stats_and_notification_routes() -> Router<server::AppState> {
     Router::new()
         .route("/api/stats/storage", get(server::api::stats::storage))
@@ -595,6 +608,7 @@ fn build_test_app_with_idle_timeout(
         .merge(test_app_metrics_routes())
         .merge(test_app_repo_routes())
         .merge(test_app_schedule_routes())
+        .merge(test_app_password_routes())
         .merge(test_app_repo_host_routes())
         .merge(test_app_dependency_host_routes())
         .merge(test_app_stats_and_notification_routes())
@@ -11995,6 +12009,253 @@ async fn reading_a_schedule_the_caller_cannot_see_is_refused() {
             "GET /api/schedules/{{id}}{suffix} must still return a shared schedule"
         );
     }
+}
+
+/// A user with a real password and two signed-in sessions, the way the
+/// password-change tests need one.
+#[cfg(test)]
+struct PasswordTestUser {
+    id: i64,
+    /// The session making the change.
+    own_session: &'static str,
+    /// Another session of the same user, as a thief's would be.
+    other_session: &'static str,
+}
+
+#[cfg(test)]
+async fn insert_password_test_user(
+    pool: &PgPool,
+    username: &str,
+    password: &'static str,
+    must_change_password: bool,
+) -> PasswordTestUser {
+    let hash = tokio::task::spawn_blocking(move || bcrypt::hash(password, 4))
+        .await
+        .unwrap()
+        .unwrap();
+    let id: i64 = sqlx::query_scalar(
+        "INSERT INTO users (username, password_hash, must_change_password) VALUES ($1, $2, $3) \
+         RETURNING id",
+    )
+    .bind(username)
+    .bind(hash)
+    .bind(must_change_password)
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    let user = PasswordTestUser {
+        id,
+        own_session: "password-change-own-session-0000000",
+        other_session: "password-change-other-session-00000",
+    };
+    let expires = Timestamp::now()
+        .checked_add(shared::time::hours(24))
+        .unwrap();
+    for session in [user.own_session, user.other_session] {
+        server::db::insert_session(pool, &hash_token(session), id, expires, false, false)
+            .await
+            .unwrap();
+    }
+    user
+}
+
+#[cfg(test)]
+async fn session_exists(pool: &PgPool, session: &str) -> bool {
+    sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM sessions WHERE id = $1)")
+        .bind(hash_token(session))
+        .fetch_one(pool)
+        .await
+        .unwrap()
+}
+
+#[cfg(test)]
+async fn api_token_count(pool: &PgPool, user_id: i64) -> i64 {
+    sqlx::query_scalar("SELECT COUNT(*) FROM api_tokens WHERE user_id = $1")
+        .bind(user_id)
+        .fetch_one(pool)
+        .await
+        .unwrap()
+}
+
+#[cfg(test)]
+fn change_password_request(session: &str, body: &Value) -> Request<Body> {
+    let mut req = Request::builder()
+        .uri("/api/auth/change-password")
+        .method("POST")
+        .header("content-type", "application/json")
+        .header("cookie", format!("session={session}"))
+        .body(Body::from(body.to_string()))
+        .unwrap();
+    req.extensions_mut()
+        .insert(axum::extract::ConnectInfo::<std::net::SocketAddr>(
+            "127.0.0.1:54321".parse().unwrap(),
+        ));
+    req
+}
+
+/// The bug this guards: the endpoint took only the new password, so a stolen
+/// session cookie alone was enough to take the account over, and the change
+/// left every other session - the thief's included - signed in.
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn changing_your_password_needs_the_current_one_and_signs_out_other_sessions() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    let mut app = build_test_app(pool.clone());
+    let user = insert_password_test_user(&pool, "pw-change-user", "old-passw0rd", false).await;
+    server::db::insert_api_token(&pool, user.id, "pw-change-token", &hash_token("tok-1"))
+        .await
+        .unwrap();
+
+    let resp = oneshot(
+        &mut app,
+        change_password_request(user.own_session, &json!({ "new_password": "n3w-passw0rd" })),
+    )
+    .await;
+    assert_eq!(
+        resp.status(),
+        StatusCode::BAD_REQUEST,
+        "a change without the current password must be refused"
+    );
+
+    let resp = oneshot(
+        &mut app,
+        change_password_request(
+            user.own_session,
+            &json!({ "current_password": "not-it-at-all", "new_password": "n3w-passw0rd" }),
+        ),
+    )
+    .await;
+    assert_eq!(
+        resp.status(),
+        StatusCode::BAD_REQUEST,
+        "a wrong current password must be refused"
+    );
+    assert!(
+        session_exists(&pool, user.other_session).await,
+        "a refused change must sign nothing out"
+    );
+
+    let resp = oneshot(
+        &mut app,
+        change_password_request(
+            user.own_session,
+            &json!({ "current_password": "old-passw0rd", "new_password": "n3w-passw0rd" }),
+        ),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+    assert!(
+        session_exists(&pool, user.own_session).await,
+        "the session making the change stays signed in"
+    );
+    assert!(
+        !session_exists(&pool, user.other_session).await,
+        "every other session of the account must be signed out"
+    );
+    assert_eq!(
+        api_token_count(&pool, user.id).await,
+        1,
+        "API tokens stay unless their deletion is asked for"
+    );
+
+    let resp = oneshot(
+        &mut app,
+        change_password_request(
+            user.own_session,
+            &json!({
+                "current_password": "n3w-passw0rd",
+                "new_password": "an0ther-passw0rd",
+                "revoke_api_tokens": true,
+            }),
+        ),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+    assert_eq!(
+        api_token_count(&pool, user.id).await,
+        0,
+        "asked to, the change deletes the account's API tokens"
+    );
+}
+
+/// An API token must not be able to change the password at all: it would
+/// turn a leaked token into the account.
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn an_api_token_cannot_change_the_password() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    let mut app = build_test_app(pool.clone());
+    let user = insert_password_test_user(&pool, "pw-token-user", "old-passw0rd", false).await;
+    server::db::insert_api_token(&pool, user.id, "pw-token", &hash_token("plain-token"))
+        .await
+        .unwrap();
+
+    let mut req = Request::builder()
+        .uri("/api/auth/change-password")
+        .method("POST")
+        .header("content-type", "application/json")
+        .header("authorization", "Bearer plain-token")
+        .body(Body::from(
+            json!({ "current_password": "old-passw0rd", "new_password": "n3w-passw0rd" })
+                .to_string(),
+        ))
+        .unwrap();
+    req.extensions_mut()
+        .insert(axum::extract::ConnectInfo::<std::net::SocketAddr>(
+            "127.0.0.1:54321".parse().unwrap(),
+        ));
+    let resp = oneshot(&mut app, req).await;
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+}
+
+/// A forced change has no current password to ask for: the user signed in
+/// with the one an admin set and is being made to replace it.
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn a_forced_password_change_does_not_ask_for_the_current_password() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    let mut app = build_test_app(pool.clone());
+    let user = insert_password_test_user(&pool, "pw-forced-user", "temp-passw0rd", true).await;
+
+    let resp = oneshot(
+        &mut app,
+        change_password_request(user.own_session, &json!({ "new_password": "n3w-passw0rd" })),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+    assert!(!session_exists(&pool, user.other_session).await);
+}
+
+/// An admin resetting a compromised account's password must evict whoever
+/// holds it: every session ends, and the API tokens go too when asked.
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn an_admin_password_reset_signs_the_user_out_everywhere() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+    let user = insert_password_test_user(&pool, "pw-reset-user", "old-passw0rd", false).await;
+    server::db::insert_api_token(&pool, user.id, "pw-reset-token", &hash_token("tok-2"))
+        .await
+        .unwrap();
+
+    let resp = oneshot(
+        &mut app,
+        json_request(
+            "PUT",
+            &format!("/api/users/{}/password", user.id),
+            Some(json!({ "password": "res3t-passw0rd", "revoke_api_tokens": true })),
+        ),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+    assert!(!session_exists(&pool, user.own_session).await);
+    assert!(!session_exists(&pool, user.other_session).await);
+    assert_eq!(api_token_count(&pool, user.id).await, 0);
 }
 
 /// The realistic middle case between the two extremes the other bulk tests

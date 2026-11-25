@@ -101,8 +101,9 @@ use super::{
     auth::AuthUser,
     helpers,
     permissions::{
-        check_agents_visible, check_repo_permission, get_visible_schedule, is_visible_to_user,
+        check_agents_visible, check_repo_permission, get_visible_schedule,
     },
+    read_scope::visible_schedules,
 };
 use crate::{
     AppState, config_assembler,
@@ -441,23 +442,12 @@ pub async fn list_schedules(
     State(state): State<AppState>,
     auth: AuthUser,
 ) -> Result<Json<Vec<ScheduleRow>>, ApiError> {
-    let schedules = db::list_schedules(&state.pool).await?;
-    let effective = db::get_effective_permissions(&state.pool, auth.user_id).await?;
-    let is_admin = effective.can_delete_repo;
-    let mut visible = Vec::with_capacity(schedules.len());
-    for s in schedules {
-        if is_visible_to_user(
-            &state.pool,
-            auth.user_id,
-            s.owner_id,
-            s.visibility,
-            is_admin,
-        )
+    let scope = visible_schedules(&state.pool, auth.user_id).await?;
+    let visible = db::list_schedules(&state.pool)
         .await?
-        {
-            visible.push(s);
-        }
-    }
+        .into_iter()
+        .filter(|schedule| scope.allows(schedule.id))
+        .collect();
     Ok(Json(visible))
 }
 
@@ -723,14 +713,26 @@ fn primary_target(targets: &[(i64, bool)]) -> Option<i64> {
 )]
 /// Create a new backup schedule.
 ///
+/// Needs the **Create Schedule** role capability, `can_modify_schedules` on
+/// every repository the schedule writes to, and visibility of every agent it
+/// runs on.
+///
 /// # Errors
 ///
-/// Returns [`ApiError::BadRequest`] if the request is invalid.
+/// Returns [`ApiError::Forbidden`] without the role capability or a
+/// repository grant, [`ApiError::NotFound`] for an agent the caller cannot
+/// see, or [`ApiError::BadRequest`] if the request is invalid.
 pub async fn create_schedule(
     State(state): State<AppState>,
     auth: AuthUser,
     ApiJson(req): ApiJson<CreateScheduleRequest>,
 ) -> Result<(StatusCode, Json<ScheduleRow>), ApiError> {
+    let effective = db::get_effective_permissions(&state.pool, auth.user_id).await?;
+    if !(effective.can_create_schedule || effective.can_delete_repo) {
+        return Err(ApiError::Forbidden(
+            "your role does not allow creating schedules".into(),
+        ));
+    }
     if req.agent_ids.is_empty() {
         return Err(ApiError::BadRequest(
             "agent_ids must contain at least one entry".into(),

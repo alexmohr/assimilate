@@ -3004,7 +3004,7 @@ esac
         })
         .await;
 
-        let events = db::get_system_events(&pool, 10, shared::types::AcknowledgedFilter::All)
+        let events = db::get_system_events(&pool, 10, shared::types::AcknowledgedFilter::All, None)
             .await
             .unwrap();
         assert!(
@@ -3907,7 +3907,7 @@ esac
         );
 
         // The auto-disable must not be invisible outside server logs.
-        let events = db::get_system_events(&pool, 10, AcknowledgedFilter::All)
+        let events = db::get_system_events(&pool, 10, AcknowledgedFilter::All, None)
             .await
             .unwrap();
         assert!(
@@ -4770,7 +4770,7 @@ esac
             "the streak contained a config error, so it must not be marked agent-unreachable"
         );
 
-        let events = db::get_system_events(&pool, 10, AcknowledgedFilter::All)
+        let events = db::get_system_events(&pool, 10, AcknowledgedFilter::All, None)
             .await
             .unwrap();
         let event = events

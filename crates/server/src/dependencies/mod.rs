@@ -736,7 +736,7 @@ mod tests {
         }
 
         pub(super) async fn system_events(&self) -> Vec<(SystemEventType, String)> {
-            db::get_system_events(self.pool(), 50, AcknowledgedFilter::All)
+            db::get_system_events(self.pool(), 50, AcknowledgedFilter::All, None)
                 .await
                 .unwrap()
                 .into_iter()

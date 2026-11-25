@@ -1,22 +1,21 @@
 # Access Control
 
-Assimilate uses a role-based access-control model with **roles**, **groups**, and **per-repository permissions**. This page explains how they interact and when to use each.
+Assimilate uses a role-based access-control model with **roles** and **per-repository permissions**, plus **groups** to organize users. This page explains how they interact and when to use each.
 
 ## Overview
 
 | Concept | Purpose | Scope |
 |---------|---------|-------|
 | **Role** | Defines what actions a user can perform | System-wide capabilities |
-| **Group** | Organizes users for shared repository access | Per-repository permissions |
 | **Per-repo permission** | Grants specific operations on a single repository | Individual repository |
+| **Group** | Organizes users | No permissions of its own |
 
 ```mermaid
 graph TD
     U[User] -->|assigned| R[Role]
-    U -->|member of| G[Group]
     R -->|grants| C[System capabilities]
-    G -->|grants| P[Per-repo permissions]
-    U -->|direct grant| P
+    U -->|granted| P[Per-repo permissions]
+    P -->|decide what they see| V[Repositories, schedules, agents, reports]
 ```
 
 ## Roles
@@ -45,11 +44,11 @@ Admins can create custom roles with any combination of these capabilities:
 | Create Repo | Register new borg repositories |
 | Delete Repo | Delete any repository |
 | Delete Own Repo | Delete only repositories the user created |
-| Create Schedule | Create backup schedules |
+| Create Schedule | Create backup schedules, on repositories where the user also holds `can_modify_schedules` |
 | Delete Schedule | Delete any schedule |
 | Delete Own Schedule | Delete only schedules the user created |
 | Manage Tags | Create and assign tags |
-| View All Repos | See all repositories regardless of per-repo permissions |
+| View All Repos | See every repository, schedule, agent, report and statistic regardless of per-repo permissions |
 | Manage Tunnels | Configure SSH reverse tunnels |
 | Upgrade Agent | Deploy, upgrade and redeploy the agent binary on remote hosts via SSH |
 
@@ -66,19 +65,11 @@ Use roles when you need to control **what kind of actions** a user can perform a
 - A service account that only triggers backups → create a minimal custom role with no create/delete capabilities and use an API token.
 - An external auditor who needs read-only access → **viewer** role.
 
-Roles do **not** control which specific repositories a user can see or interact with — that is the job of groups and per-repo permissions.
+Roles do **not** control which specific repositories a user can see or interact with — that is the job of per-repo permissions.
 
-## Groups
+## Per-Repository Permissions
 
-A group is a collection of users that share the same **per-repository permissions**. When you grant a group access to a repository, every member of the group gains that access.
-
-Groups do **not** grant system capabilities — they only control which repositories their members can access and what operations they can perform on those repositories.
-
-![Groups](assets/screenshots/groups.png)
-
-### Per-Repository Permissions
-
-The following permissions can be granted to a group (or directly to a user) for each repository:
+The following permissions are granted to a user for each repository, in the **Repository permissions** section of the user's page:
 
 | Permission | Effect |
 |------------|--------|
@@ -89,48 +80,56 @@ The following permissions can be granted to a group (or directly to a user) for 
 | `can_delete` | Delete archives from this repository |
 
 !!! warning "Schedules run commands on their agents"
-    A schedule's pre- and post-backup hook commands run as a shell on every agent it targets. Treat `can_modify_schedules` as permission to run commands on any agent the user can point a schedule at. `can_modify_schedules` covers the repository only. A schedule can target only agents the user can see in the agent list: agents the user owns, shared agents with no owner, and shared agents whose owner is in one of the user's groups. Creating a schedule for any other agent, or adding one to an existing schedule, fails as if the agent did not exist. A schedule can keep agents an admin already added to it, and the user can still edit it.
+    A schedule's pre- and post-backup hook commands run as a shell on every agent it targets. Treat `can_modify_schedules` as permission to run commands on any agent the user can point a schedule at. A schedule can target only agents the user can see (see below). Creating a schedule for any other agent, or adding one to an existing schedule, fails as if the agent did not exist. A schedule can keep agents an admin already added to it, and the user can still edit it.
 
-### Schedule Visibility
+### What a User Can See
 
-Schedules follow the same owner model as agents and repositories. An admin sees every schedule. Anyone else sees the schedules they own, shared schedules with no owner, and shared schedules whose owner is in one of their groups. This applies to the Schedules list and to every read of a single schedule: its settings and hook commands, reports, targets, repositories, backup sources, catch-up hosts, machines and dependencies. A schedule the user cannot see is reported as not found, the same as one that does not exist.
+Everything a user who is not an admin can see follows from their `can_view` grants. An admin, and a holder of **View All Repos**, sees everything.
 
-### When to Use Groups
+| Resource | Visible when |
+|----------|--------------|
+| Repository | The user holds `can_view` on it |
+| Schedule | The user may see its repository. A schedule with no repository is admin-only |
+| Agent | One of those schedules backs it up, so a newly added agent is visible to admins only until it has a schedule |
+| Reports, activity, calendar, trends and dashboard figures | They belong to a repository the user may see |
+| System events | They name no agent, or name an agent the user may see |
+| Live updates | The same rule, applied to every event the UI receives |
 
-Use groups when you need to control **which repositories** a set of users can access:
-
-- A "backend-team" group that can view and backup the production database repositories.
-- A "developers" group that has full access to development environment repositories but read-only access to production.
-- An "auditors" group that can view all repositories but cannot modify or delete anything.
+A resource the user cannot see is reported as not found, the same as one that does not exist, and is left out of every list, count and total. This covers single-item reads too: a repository's page, a schedule's settings and hook commands, an agent's page, virtual machines, hostname aliases and dependencies.
 
 ### Permission Resolution
 
 When evaluating whether a user can perform an action on a repository:
 
 1. **Admin bypass** — if the user has `can_delete_repo` in any of their roles, the action is always allowed.
-2. **Direct user grant** — if the user has been granted the permission directly on the repository, it is allowed.
-3. **Group membership** — if any group the user belongs to has been granted the permission on the repository, it is allowed.
+2. **View All Repos** — a user with this capability may view any repository, but not change it.
+3. **Direct user grant** — if the user has been granted the permission on the repository, it is allowed.
 4. **Deny by default** — if none of the above apply, the action is denied.
 
-## Roles vs Groups — Decision Guide
+## Groups
+
+A group is a named collection of users, managed on the **Groups** page. Groups organize users but grant no permissions of their own: neither system capabilities nor repository access. Give each member the repository permissions they need on their own user page.
+
+![Groups](assets/screenshots/groups.png)
+
+## Roles vs Per-Repository Permissions — Decision Guide
 
 | Question | Answer |
 |----------|--------|
 | "Should this user be able to create new agents?" | **Role** — this is a system capability |
-| "Should this user see repository X?" | **Group** (or direct grant) — this is per-repo access |
-| "Should this team share the same repo access?" | **Group** — add all team members to one group |
+| "Should this user see repository X?" | **Per-repo permission** — `can_view` on X, which also shows its schedules and agents |
 | "Should this user be able to delete schedules?" | **Role** — this is a system capability |
-| "Should this user trigger backups on repo Y?" | **Group** (or direct grant) — per-repo `can_backup` |
+| "Should this user trigger backups on repo Y?" | **Per-repo permission** — `can_backup` on Y |
 
 !!! tip "Rule of thumb"
-    **Roles** answer "what can they do?" — **Groups** answer "where can they do it?"
+    **Roles** answer "what can they do?" — **per-repository permissions** answer "where can they do it?"
 
 ## Managing Access in the UI
 
 All access-control settings are under **Settings → Access Control** in the sidebar:
 
-- **Users** — create accounts with **New**, and click a user to open their page. Its collapsible sections are **Role** (the base role), **Roles & groups**, **Repository permissions** (direct per-repo grants: View, Backup, Schedules, Extract, Delete) and **Password** (a reset). Your own account opens read-only: change your own password on your [profile](profile.md).
-- **Groups** — create groups with **New**, and use a group's **Members** and **Edit** buttons to manage its membership, name and description.
+- **Users** — create accounts with **New**, and click a user to open their page. Its collapsible sections are **Role** (the base role), **Roles & groups**, **Repository permissions** (direct per-repo grants: View, Backup, Schedules, Extract, Delete) and **Password** (a reset, which signs the user out of every session and, with **API tokens** turned on, deletes their API tokens). Your own account opens read-only: change your own password on your [profile](profile.md).
+- **Groups** — create groups with **New**, and use a group's **Members** and **Edit** buttons to manage its membership, name and description. Groups grant no access.
 - **Roles** — view and create roles with custom capability sets.
 
 ![Users](assets/screenshots/users.png)

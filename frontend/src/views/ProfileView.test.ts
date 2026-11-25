@@ -191,7 +191,9 @@ describe('ProfileView', () => {
       wrapper: ReturnType<typeof renderWithPlugins>,
       newPassword: string,
       confirmPassword: string,
+      currentPassword = 'curr3nt-passw0rd',
     ): Promise<void> {
+      await wrapper.find('#profile-current-pw').setValue(currentPassword)
       await wrapper.find('#profile-new-pw').setValue(newPassword)
       await wrapper.find('#profile-confirm-pw').setValue(confirmPassword)
       await wrapper.find('form.password-form').trigger('submit')
@@ -202,11 +204,41 @@ describe('ProfileView', () => {
       const wrapper = renderProfile()
       await submitPasswords(wrapper, 'n3w-passw0rd', 'n3w-passw0rd')
 
-      expect(useAuthStore().changePassword).toHaveBeenCalledWith('n3w-passw0rd')
-      expect(wrapper.get('.form-success').text()).toBe('Password changed successfully.')
+      expect(useAuthStore().changePassword).toHaveBeenCalledWith({
+        current_password: 'curr3nt-passw0rd',
+        new_password: 'n3w-passw0rd',
+        revoke_api_tokens: false,
+      })
+      expect(wrapper.get('.form-success').text()).toBe(
+        'Password changed. Your other sessions were signed out.',
+      )
       expect(wrapper.find('.form-error').exists()).toBe(false)
+      expect(wrapper.find<HTMLInputElement>('#profile-current-pw').element.value).toBe('')
       expect(wrapper.find<HTMLInputElement>('#profile-new-pw').element.value).toBe('')
       expect(wrapper.find<HTMLInputElement>('#profile-confirm-pw').element.value).toBe('')
+    })
+
+    it('refuses a change without the current password, without asking the server', async () => {
+      const wrapper = renderProfile()
+      await submitPasswords(wrapper, 'n3w-passw0rd', 'n3w-passw0rd', '')
+
+      expect(wrapper.get('.form-error').text()).toBe('Enter your current password.')
+      expect(useAuthStore().changePassword).not.toHaveBeenCalled()
+    })
+
+    it('deletes the API tokens too when asked', async () => {
+      const wrapper = renderProfile()
+      await wrapper.get('.password-form [role="switch"]').trigger('click')
+      await submitPasswords(wrapper, 'n3w-passw0rd', 'n3w-passw0rd')
+
+      expect(useAuthStore().changePassword).toHaveBeenCalledWith({
+        current_password: 'curr3nt-passw0rd',
+        new_password: 'n3w-passw0rd',
+        revoke_api_tokens: true,
+      })
+      expect(wrapper.get('.form-success').text()).toBe(
+        'Password changed. Your other sessions were signed out and your API tokens deleted.',
+      )
     })
 
     it('refuses a confirmation that does not match, without asking the server', async () => {

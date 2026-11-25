@@ -356,6 +356,20 @@ describe('UserDetailView', () => {
 
       expect(mockPut).toHaveBeenCalledWith('/users/2/password', {
         password: 'a much longer secret',
+        revoke_api_tokens: false,
+      })
+    })
+
+    it('deletes the API tokens with the reset when asked', async () => {
+      const wrapper = await render(2, 'password')
+      const section = await editSection(wrapper, 'password')
+      await section.get('#user-edit-password').setValue('a much longer secret')
+      await section.get('[role="switch"]').trigger('click')
+      await click(section, 'Save')
+
+      expect(mockPut).toHaveBeenCalledWith('/users/2/password', {
+        password: 'a much longer secret',
+        revoke_api_tokens: true,
       })
     })
 

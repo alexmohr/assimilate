@@ -70,8 +70,17 @@ export async function verifyTotpLogin(
   return response.data
 }
 
-export async function changePassword(newPassword: string): Promise<void> {
-  await apiClient.post('/auth/change-password', { new_password: newPassword })
+/** A password change of the signed-in user. */
+export interface ChangePasswordRequest {
+  /** The password the account has now; not needed for a forced change. */
+  current_password?: string
+  new_password: string
+  /** Also delete every API token of the account. */
+  revoke_api_tokens?: boolean
+}
+
+export async function changePassword(request: ChangePasswordRequest): Promise<void> {
+  await apiClient.post('/auth/change-password', request)
 }
 
 export async function logout(): Promise<void> {

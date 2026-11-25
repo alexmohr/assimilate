@@ -63,12 +63,15 @@ pub async fn get_system_events(
     pool: &PgPool,
     limit: i64,
     acknowledged_filter: AcknowledgedFilter,
+    hostnames: Option<&[String]>,
 ) -> Result<Vec<SystemEventRow>, ApiError> {
     let rows = sqlx::query!(
         "SELECT id, created_at, event_type, hostname, message, acknowledged FROM system_events \
-         WHERE ($1::bool IS NULL OR acknowledged = $1) ORDER BY created_at DESC LIMIT $2",
+         WHERE ($1::bool IS NULL OR acknowledged = $1) AND ($3::TEXT[] IS NULL OR hostname IS \
+         NULL OR hostname = ANY($3)) ORDER BY created_at DESC LIMIT $2",
         acknowledged_filter.as_sql_predicate(),
         limit,
+        hostnames,
     )
     .fetch_all(pool)
     .await

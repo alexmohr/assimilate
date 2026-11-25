@@ -244,8 +244,8 @@ pub async fn is_visible_to_user(
     }
 }
 
-/// Loads a schedule the caller may read, under the same rule `GET
-/// /api/schedules` filters its list by.
+/// Loads a schedule the caller may read, under the rule in
+/// [`super::read_scope`] that `GET /api/schedules` filters its list by.
 ///
 /// A schedule carries its hook commands, which often hold credentials, so
 /// every read of one goes through here. A schedule the caller cannot see is
@@ -261,24 +261,8 @@ pub async fn get_visible_schedule(
     schedule_id: i64,
 ) -> Result<db::ScheduleRow, ApiError> {
     let schedule = db::get_schedule_by_id(pool, schedule_id).await?;
-    let is_admin = db::get_effective_permissions(pool, auth.user_id)
-        .await?
-        .can_delete_repo;
-    if is_visible_to_user(
-        pool,
-        auth.user_id,
-        schedule.owner_id,
-        schedule.visibility,
-        is_admin,
-    )
-    .await?
-    {
-        Ok(schedule)
-    } else {
-        Err(ApiError::NotFound(format!(
-            "schedule {schedule_id} not found"
-        )))
-    }
+    super::read_scope::require_visible_schedule(pool, auth, &schedule).await?;
+    Ok(schedule)
 }
 
 /// Requires that the caller can see every agent in `agent_ids` in the agent
@@ -298,20 +282,10 @@ pub async fn check_agents_visible(
     auth: &AuthUser,
     agent_ids: impl IntoIterator<Item = i64>,
 ) -> Result<(), ApiError> {
-    let is_admin = db::get_effective_permissions(pool, auth.user_id)
-        .await?
-        .can_delete_repo;
+    let visible = super::read_scope::visible_agents(pool, auth.user_id).await?;
     for agent_id in agent_ids {
-        let agent = db::get_agent_by_id(pool, agent_id).await?;
-        if !is_visible_to_user(
-            pool,
-            auth.user_id,
-            agent.owner_id,
-            agent.visibility,
-            is_admin,
-        )
-        .await?
-        {
+        db::get_agent_by_id(pool, agent_id).await?;
+        if !visible.allows(agent_id) {
             return Err(ApiError::NotFound(format!(
                 "agent id '{agent_id}' not found"
             )));

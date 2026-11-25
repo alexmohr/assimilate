@@ -65,7 +65,9 @@ describe('ChangePasswordView', () => {
 
     await wrapper.vm.$nextTick()
 
-    expect(authStore.changePassword).toHaveBeenCalledWith('newpassword1')
+    // A forced change sends no current password: the account is made to
+    // pick a new one, so the server does not ask for the old.
+    expect(authStore.changePassword).toHaveBeenCalledWith({ new_password: 'newpassword1' })
   })
 
   it('shows an error message when the API call fails', async () => {

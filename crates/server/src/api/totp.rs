@@ -547,11 +547,38 @@ pub async fn totp_disable(
     headers: HeaderMap,
     ApiJson(req): ApiJson<TotpDisableRequest>,
 ) -> Result<Json<TotpVerifyResponse>, ApiError> {
-    // Same account-level lockout as the TOTP/recovery login steps: this
-    // endpoint accepts a password guess from an already-authenticated
-    // session, which an attacker with a hijacked session (stolen cookie,
-    // XSS) could otherwise use to brute-force the real password with no
-    // rate limit at all, since it isn't behind the login router either.
+    verify_current_password(&state, &auth, peer, &headers, req.password.clone()).await?;
+
+    db::disable_user_totp(&state.pool, auth.user_id).await?;
+
+    Ok(Json(TotpVerifyResponse {
+        success: true,
+        backup_codes_remaining: None,
+    }))
+}
+
+/// Checks a password a signed-in user re-enters to confirm a sensitive
+/// change, such as turning off two-factor authentication or setting a new
+/// password.
+///
+/// It shares the account-level lockout of the TOTP and recovery login steps:
+/// these endpoints accept a password guess from an already-authenticated
+/// session, which an attacker with a hijacked session (stolen cookie, XSS)
+/// could otherwise use to brute-force the real password with no rate limit at
+/// all, since they are not behind the login router either.
+///
+/// # Errors
+///
+/// Returns [`ApiError::TooManyRequests`] while the account is locked out, or
+/// [`ApiError::BadRequest`] for a wrong password, which also counts as a
+/// failed attempt.
+pub(crate) async fn verify_current_password(
+    state: &AppState,
+    auth: &AuthUser,
+    peer: SocketAddr,
+    headers: &HeaderMap,
+    password: String,
+) -> Result<(), ApiError> {
     let failed_count =
         db::count_failed_totp_attempts(&state.pool, auth.user_id, TOTP_ATTEMPTS_WINDOW_MINUTES)
             .await?;
@@ -563,25 +590,19 @@ pub async fn totp_disable(
 
     let hash = db::get_user_password_hash_by_id(&state.pool, auth.user_id).await?;
 
-    let valid = super::helpers::verify_password(req.password.clone(), hash)
+    let valid = super::helpers::verify_password(password, hash)
         .await
         .map_err(|_| ApiError::BadRequest("incorrect password".to_string()))?;
 
     if !valid {
         let ip = state
             .client_ip_resolver
-            .resolve(peer.ip(), &headers)
+            .resolve(peer.ip(), headers)
             .to_string();
         db::insert_totp_attempt(&state.pool, auth.user_id, &ip, false).await?;
         return Err(ApiError::BadRequest("incorrect password".to_string()));
     }
-
-    db::disable_user_totp(&state.pool, auth.user_id).await?;
-
-    Ok(Json(TotpVerifyResponse {
-        success: true,
-        backup_codes_remaining: None,
-    }))
+    Ok(())
 }
 
 #[utoipa::path(

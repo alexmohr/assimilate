@@ -11,7 +11,7 @@ import {
   refreshSession,
   verifyTotpLogin,
 } from '../api/auth'
-import type { CurrentUserResponse } from '../api/auth'
+import type { ChangePasswordRequest, CurrentUserResponse } from '../api/auth'
 import { logger } from '../utils/logger'
 import { useSystemModeStore } from './systemMode'
 
@@ -121,8 +121,8 @@ export const useAuthStore = defineStore('auth', () => {
     tempToken.value = null
   }
 
-  async function changePassword(newPassword: string): Promise<void> {
-    await apiChangePassword(newPassword)
+  async function changePassword(request: ChangePasswordRequest): Promise<void> {
+    await apiChangePassword(request)
     if (user.value) {
       user.value.must_change_password = false
     }

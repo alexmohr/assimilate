@@ -181,11 +181,17 @@ fn validate_staging_dir(dir: &str) -> Result<(), ApiError> {
 /// Returns [`ApiError::NotFound`] when the agent does not exist.
 pub async fn get_agent_vms(
     State(state): State<AppState>,
-    _user: AuthUser,
+    user: AuthUser,
     Path(hostname): Path<String>,
     Query(query): Query<DomainQuery>,
 ) -> Result<Json<AgentVmSnapshotResponse>, ApiError> {
-    let agent = db::get_agent_by_hostname(&state.pool, &hostname, query.domain.as_deref()).await?;
+    let agent = super::read_scope::get_visible_agent(
+        &state.pool,
+        &user,
+        &hostname,
+        query.domain.as_deref(),
+    )
+    .await?;
     Ok(Json(build_response(&state, agent.id).await?))
 }
 

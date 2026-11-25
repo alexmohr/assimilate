@@ -60,6 +60,9 @@ pub struct CreateUserRequest {
 pub struct UpdatePasswordRequest {
     /// New password (minimum 8 characters).
     pub password: String,
+    /// Also delete every API token of the user.
+    #[serde(default)]
+    pub revoke_api_tokens: bool,
 }
 
 #[utoipa::path(
@@ -151,7 +154,7 @@ pub async fn create_user(
     ),
     request_body = UpdatePasswordRequest,
     responses(
-        (status = 204, description = "Password updated"),
+        (status = 204, description = "Password updated; every session of the user is signed out"),
         (status = 400, description = "Password too short"),
         (status = 401, description = "Not authenticated"),
         (status = 403, description = "Admin access required"),
@@ -160,6 +163,10 @@ pub async fn create_user(
     )
 )]
 /// Update a user's password (admin only).
+///
+/// Every session of the user is signed out, so whoever held the account
+/// before the reset loses it, and their API tokens are deleted too when
+/// `revoke_api_tokens` is set.
 ///
 /// # Errors
 ///
@@ -180,7 +187,16 @@ pub async fn update_password(
     let hash = helpers::hash_password(req.password.clone()).await?;
 
     let user = db::get_user_by_id(&state.pool, user_id).await?;
-    db::update_user_password(&state.pool, user_id, &hash).await?;
+    db::change_user_password(
+        &state.pool,
+        user_id,
+        &hash,
+        db::PasswordChangeEffects {
+            keep_session: None,
+            revoke_api_tokens: req.revoke_api_tokens,
+        },
+    )
+    .await?;
     audit_trail::record(
         &state.pool,
         Actor::new(&admin, ip),
@@ -273,6 +289,7 @@ mod tests {
             Path(created.id),
             ApiJson(UpdatePasswordRequest {
                 password: "another-long-secret".to_owned(),
+                revoke_api_tokens: false,
             }),
         )
         .await
@@ -346,6 +363,7 @@ mod tests {
             Path(987_654),
             ApiJson(UpdatePasswordRequest {
                 password: "long-enough-secret".to_owned(),
+                revoke_api_tokens: false,
             }),
         )
         .await;

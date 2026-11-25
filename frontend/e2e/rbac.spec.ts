@@ -4,8 +4,10 @@
 import {
   adminRoutes,
   expect,
+  loginAsAdmin,
   loginAsOperator,
   loginAsViewer,
+  seededIdByName,
   test,
   verifyRedirectFromAdminRoutes,
 } from './fixtures'
@@ -46,5 +48,32 @@ test.describe('RBAC - viewer permissions', () => {
     await page.goto('/agents')
     await page.waitForLoadState('networkidle')
     await expect(page).toHaveURL(/\/agents/)
+  })
+})
+
+test.describe('RBAC - repository grants decide what a viewer sees', () => {
+  test('a viewer sees only the repository they may read, and nothing behind the others', async ({
+    page,
+  }) => {
+    // The demo grants viewer1 can_view on server-daily alone.
+    await loginAsAdmin(page)
+    const hiddenRepoId = await seededIdByName(page, '/api/repos', 'database-hourly')
+    await page.context().clearCookies()
+
+    await loginAsViewer(page)
+    await page.goto('/repos')
+    await page.waitForLoadState('networkidle')
+    await expect(page.getByText('server-daily', { exact: true }).first()).toBeVisible()
+    await expect(page.getByText('database-hourly', { exact: true })).toHaveCount(0)
+
+    const repos = (await (await page.request.get('/api/repos')).json()) as { name: string }[]
+    expect(repos.map((repo) => repo.name)).toEqual(['server-daily'])
+
+    // A repository the viewer may not read answers like one that does not exist.
+    expect((await page.request.get(`/api/repos/${hiddenRepoId}`)).status()).toBe(404)
+    const activity = (await (await page.request.get('/api/stats/activity?limit=200')).json()) as {
+      target_name: string
+    }[]
+    expect(activity.every((row) => row.target_name === 'server-daily')).toBe(true)
   })
 })

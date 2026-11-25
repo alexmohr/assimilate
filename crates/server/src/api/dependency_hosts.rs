@@ -510,20 +510,24 @@ impl From<DependencySource> for DependencySourceKind {
         (status = 404, description = "Not found"),
     )
 )]
-/// Every schedule and agent that needs a dependency host.
+/// Every schedule and agent that needs a dependency host, limited to the
+/// schedules and agents the caller can see.
 ///
 /// # Errors
 ///
 /// Returns [`ApiError::NotFound`] if it does not exist.
 pub async fn list_dependency_host_usage(
     State(state): State<AppState>,
-    _auth: AuthUser,
+    auth: AuthUser,
     Path(id): Path<i64>,
 ) -> Result<Json<Vec<DependencyUsageResponse>>, ApiError> {
     db::dependency_hosts::get_dependency_host(&state.pool, id).await?;
+    let schedules = super::read_scope::visible_schedules(&state.pool, auth.user_id).await?;
+    let agents = super::read_scope::visible_agents(&state.pool, auth.user_id).await?;
     let usage = db::dependency_hosts::list_dependency_usage(&state.pool, id)
         .await?
         .into_iter()
+        .filter(|row| schedules.allows(row.schedule_id) && agents.allows(row.agent_id))
         .map(|row| DependencyUsageResponse {
             schedule_id: row.schedule_id,
             schedule_name: row.schedule_name,
@@ -734,11 +738,17 @@ pub async fn update_schedule_dependencies(
 /// Returns [`ApiError::NotFound`] if the agent does not exist.
 pub async fn get_agent_dependencies(
     State(state): State<AppState>,
-    _auth: AuthUser,
+    auth: AuthUser,
     Path(hostname): Path<String>,
     Query(query): Query<DomainQuery>,
 ) -> Result<Json<AgentDependenciesBody>, ApiError> {
-    let agent = db::get_agent_by_hostname(&state.pool, &hostname, query.domain.as_deref()).await?;
+    let agent = super::read_scope::get_visible_agent(
+        &state.pool,
+        &auth,
+        &hostname,
+        query.domain.as_deref(),
+    )
+    .await?;
     Ok(Json(AgentDependenciesBody {
         dependency_host_ids: db::dependency_hosts::list_agent_default_dependencies(
             &state.pool,

@@ -6900,6 +6900,7 @@ async fn roles_crud(pool: PgPool) {
             can_view_all_repos: false,
             can_manage_tunnels: false,
             can_upgrade_agent: false,
+            can_view_all_agents: false,
         },
     )
     .await
@@ -6931,6 +6932,7 @@ async fn roles_crud(pool: PgPool) {
             can_view_all_repos: true,
             can_manage_tunnels: true,
             can_upgrade_agent: true,
+            can_view_all_agents: false,
         },
     )
     .await
@@ -6968,6 +6970,7 @@ async fn user_roles_and_effective_permissions(pool: PgPool) {
             can_view_all_repos: true,
             can_manage_tunnels: false,
             can_upgrade_agent: false,
+            can_view_all_agents: false,
         },
     )
     .await
@@ -6990,6 +6993,7 @@ async fn user_roles_and_effective_permissions(pool: PgPool) {
             can_view_all_repos: false,
             can_manage_tunnels: false,
             can_upgrade_agent: false,
+            can_view_all_agents: false,
         },
     )
     .await
@@ -12369,6 +12373,7 @@ async fn check_repo_permission_view_all_is_view_only(pool: PgPool) {
             can_view_all_repos: true,
             can_manage_tunnels: false,
             can_upgrade_agent: false,
+            can_view_all_agents: false,
         },
     )
     .await
@@ -17848,6 +17853,7 @@ fn role_params(name: &str) -> InsertRoleParams<'_> {
         can_view_all_repos: false,
         can_manage_tunnels: false,
         can_upgrade_agent: false,
+        can_view_all_agents: false,
     }
 }
 

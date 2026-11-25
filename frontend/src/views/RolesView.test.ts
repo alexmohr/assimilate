@@ -34,6 +34,7 @@ interface Role {
   can_view_all_repos: boolean
   can_manage_tunnels: boolean
   can_upgrade_agent: boolean
+  can_view_all_agents: boolean
 }
 
 function makeRole(id: number, name: string, isSeeded: boolean, allPerms: boolean): Role {
@@ -54,6 +55,7 @@ function makeRole(id: number, name: string, isSeeded: boolean, allPerms: boolean
     can_view_all_repos: allPerms,
     can_manage_tunnels: allPerms,
     can_upgrade_agent: allPerms,
+    can_view_all_agents: allPerms,
   }
 }
 
@@ -109,7 +111,7 @@ describe('RolesView', () => {
 
     const counts = wrapper.findAll('.perm-count')
     expect(counts.length).toBeGreaterThan(0)
-    expect(counts[0].text()).toContain('/13')
+    expect(counts[0].text()).toContain('/14')
   })
 
   it('renders New button', async () => {
@@ -145,7 +147,7 @@ describe('RolesView', () => {
     expect(wrapper.find('form').exists()).toBe(true)
     expect(wrapper.find('input#create-role-name').exists()).toBe(true)
     const perms = wrapper.findAll('.perm-checkbox')
-    expect(perms.length).toBe(13)
+    expect(perms.length).toBe(14)
   })
 
   it('opens the edit modal and populates the form', async () => {

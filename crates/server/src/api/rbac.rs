@@ -52,6 +52,7 @@ impl From<db::RoleRow> for RoleResponse {
             can_view_all_repos: r.can_view_all_repos,
             can_manage_tunnels: r.can_manage_tunnels,
             can_upgrade_agent: r.can_upgrade_agent,
+            can_view_all_agents: r.can_view_all_agents,
         }
     }
 }
@@ -114,6 +115,10 @@ pub struct RolePermissionFields {
     pub can_manage_tunnels: bool,
     /// Permission to upgrade agents.
     pub can_upgrade_agent: bool,
+    /// Permission to see every agent, including one no schedule backs up
+    /// yet. Optional so a client that predates it keeps working.
+    #[serde(default)]
+    pub can_view_all_agents: bool,
 }
 
 /// Holds role name and flattened permission fields for create/update operations.
@@ -362,6 +367,7 @@ fn build_role_params<'a>(
         can_view_all_repos: perms.can_view_all_repos,
         can_manage_tunnels: perms.can_manage_tunnels,
         can_upgrade_agent: perms.can_upgrade_agent,
+        can_view_all_agents: perms.can_view_all_agents,
     })
 }
 
@@ -588,6 +594,7 @@ mod tests {
                 can_view_all_repos: false,
                 can_manage_tunnels: false,
                 can_upgrade_agent: false,
+                can_view_all_agents: false,
             },
         }
     }

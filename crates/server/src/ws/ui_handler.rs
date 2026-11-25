@@ -425,7 +425,7 @@ mod tests {
             crate::test_support::build_test_state(pool.clone(), b"ui-handler-test-key-material");
         let viewer = insert_auth_user(&pool, "viewer").await;
         let other = insert_auth_user(&pool, "other").await;
-        db::insert_agent(
+        let visible = db::insert_agent(
             &pool,
             "viewer-host",
             None,
@@ -435,6 +435,9 @@ mod tests {
         )
         .await
         .expect("insert visible agent");
+        let viewer_repo = insert_repo(&pool, "viewer-agent-repo", None).await;
+        crate::test_support::let_user_see_agent(&pool, viewer.user_id, visible.id, viewer_repo)
+            .await;
         db::insert_agent(
             &pool,
             "other-host",
@@ -491,7 +494,7 @@ mod tests {
             crate::test_support::build_test_state(pool.clone(), b"ui-handler-test-key-material");
         let viewer = insert_auth_user(&pool, "replay-viewer").await;
         let other = insert_auth_user(&pool, "replay-other").await;
-        db::insert_agent(
+        let visible = db::insert_agent(
             &pool,
             "viewer-host",
             None,
@@ -503,6 +506,7 @@ mod tests {
         .expect("insert visible agent");
         let own_repo = insert_repo(&pool, "viewer-repo", Some(viewer.user_id)).await;
         let hidden_repo = insert_repo(&pool, "other-repo", Some(other.user_id)).await;
+        crate::test_support::let_user_see_agent(&pool, viewer.user_id, visible.id, own_repo).await;
         for (hostname, repo_id) in [("other-host", hidden_repo), ("viewer-host", own_repo)] {
             state.ui_broadcast.send(ServerToUi::BackupLog {
                 hostname: hostname.to_owned(),
@@ -530,8 +534,8 @@ mod tests {
         );
     }
 
-    /// Sharing an agent with a user reaches a socket they already have open
-    /// at its next re-check, without reconnecting.
+    /// An agent becoming visible to a user reaches a socket they already
+    /// have open at its next re-check, without reconnecting.
     #[ignore = "requires DATABASE_URL"]
     #[sqlx::test(migrations = "./migrations")]
     async fn an_open_socket_picks_up_a_newly_visible_agent(pool: sqlx::PgPool) {
@@ -542,7 +546,7 @@ mod tests {
         let addr = serve_ui_socket(state.clone(), Duration::from_millis(50)).await;
         let mut socket = connect(addr, &cookie).await.expect("upgrade");
 
-        db::insert_agent(
+        let late = db::insert_agent(
             &pool,
             "late-host",
             None,
@@ -552,6 +556,10 @@ mod tests {
         )
         .await
         .expect("insert agent");
+        // A repository grant and a schedule backing the agent up are what
+        // make it visible.
+        let repo = insert_repo(&pool, "late-repo", None).await;
+        crate::test_support::let_user_see_agent(&pool, viewer.user_id, late.id, repo).await;
         // Keep announcing until a re-check has reloaded the audience.
         let event = tokio::time::timeout(Duration::from_secs(5), async {
             loop {

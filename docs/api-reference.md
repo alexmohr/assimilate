@@ -91,7 +91,7 @@ For full request/response schemas, use the [interactive explorer](#interactive-a
 | `POST` | `/api/auth/logout` | End the current session |
 | `POST` | `/api/auth/refresh` | Refresh the current session cookie |
 | `GET` | `/api/auth/me` | Return the currently authenticated user |
-| `POST` | `/api/auth/change-password` | Change the current user's password |
+| `POST` | `/api/auth/change-password` | Change the current user's password: needs `current_password` (except a forced change) and a signed-in session, not an API token; signs out the account's other sessions, and deletes its API tokens with `revoke_api_tokens` |
 | `GET` / `PUT` | `/api/auth/preferences` | Get or replace the current user's UI preferences (`{"theme": "light" \| "dark" \| "auto"}`) |
 
 ### Users
@@ -101,7 +101,7 @@ For full request/response schemas, use the [interactive explorer](#interactive-a
 | `GET` | `/api/users` | List all users |
 | `POST` | `/api/users` | Create a user |
 | `PUT` | `/api/users/{id}/role` | Change a user's built-in role |
-| `PUT` | `/api/users/{id}/password` | Reset a user's password |
+| `PUT` | `/api/users/{id}/password` | Reset a user's password; signs the user out of every session, and deletes their API tokens with `revoke_api_tokens` |
 | `DELETE` | `/api/users/{id}` | Delete a user |
 
 ### API Tokens
@@ -336,6 +336,8 @@ See [Notifications](notifications.md) for channel and rule configuration.
 | `GET` / `PUT` | `/api/users/{id}/roles` | List or set a user's roles |
 | `GET` | `/api/users/{id}/groups` | List a user's groups |
 | `GET` | `/api/users/{id}/permissions` | List a user's directly assigned repo permissions |
+| `GET` | `/api/groups/{id}/permissions` | List a group's repository permissions |
+| `PUT` | `/api/groups/{id}/permissions/{repo_id}` | Set what a group's members may do on a repository |
 | `GET` | `/api/users/{id}/effective-permissions` | List a user's effective (resolved) permissions |
 
 See [Access Control](access-control.md) for roles, groups, and permissions management.

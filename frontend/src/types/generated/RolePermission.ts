@@ -16,4 +16,5 @@ export type RolePermission =
   | "manage_tags"
   | "view_all_repos"
   | "manage_tunnels"
-  | "upgrade_agent";
+  | "upgrade_agent"
+  | "view_all_agents";

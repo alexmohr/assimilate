@@ -18,6 +18,7 @@ export interface RolePermissions {
   can_view_all_repos: boolean
   can_manage_tunnels: boolean
   can_upgrade_agent: boolean
+  can_view_all_agents: boolean
 }
 
 export interface Role extends RolePermissions {

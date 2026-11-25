@@ -68,4 +68,9 @@ export type RoleResponse = {
    * Whether the role can upgrade agents.
    */
   can_upgrade_agent: boolean;
+  /**
+   * Whether the role sees every agent, including one no schedule backs up
+   * yet.
+   */
+  can_view_all_agents: boolean;
 };

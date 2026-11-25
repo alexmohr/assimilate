@@ -29,6 +29,7 @@ type PermissionKey =
   | 'can_view_all_repos'
   | 'can_manage_tunnels'
   | 'can_upgrade_agent'
+  | 'can_view_all_agents'
 
 const PERMISSION_LABELS: { key: PermissionKey; label: string }[] = [
   { key: 'can_create_agent', label: 'Create Agent' },
@@ -44,6 +45,7 @@ const PERMISSION_LABELS: { key: PermissionKey; label: string }[] = [
   { key: 'can_view_all_repos', label: 'View All Repos' },
   { key: 'can_manage_tunnels', label: 'Manage Tunnels' },
   { key: 'can_upgrade_agent', label: 'Upgrade Agent' },
+  { key: 'can_view_all_agents', label: 'View All Agents' },
 ]
 
 const SEEDED_ROLES = new Set(['admin', 'operator', 'viewer'])
@@ -67,6 +69,7 @@ function emptyPerms(): Record<PermissionKey, boolean> {
     can_view_all_repos: false,
     can_manage_tunnels: false,
     can_upgrade_agent: false,
+    can_view_all_agents: false,
   }
 }
 
@@ -147,6 +150,7 @@ async function submitCreate(): Promise<void> {
       can_view_all_repos: createForm.value.can_view_all_repos,
       can_manage_tunnels: createForm.value.can_manage_tunnels,
       can_upgrade_agent: createForm.value.can_upgrade_agent,
+      can_view_all_agents: createForm.value.can_view_all_agents,
     })
     showCreateModal.value = false
     await fetchRoles()

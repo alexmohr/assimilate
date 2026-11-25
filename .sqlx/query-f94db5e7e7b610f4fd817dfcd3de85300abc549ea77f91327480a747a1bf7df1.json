@@ -1,0 +1,66 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT $1::BIGINT AS \"user_id!\", $2::BIGINT AS \"repo_id!\", BOOL_OR(can_view) AS \"can_view!\", BOOL_OR(can_backup) AS \"can_backup!\", BOOL_OR(can_modify_schedules) AS \"can_modify_schedules!\", BOOL_OR(can_extract) AS \"can_extract!\", BOOL_OR(can_delete) AS \"can_delete!\" FROM ( SELECT can_view, can_backup, can_modify_schedules, can_extract, can_delete FROM repo_permissions WHERE user_id = $1 AND repo_id = $2 UNION ALL SELECT g.can_view, g.can_backup, g.can_modify_schedules, g.can_extract, g.can_delete FROM group_repo_permissions g JOIN user_groups ug ON ug.group_id = g.group_id WHERE ug.user_id = $1 AND g.repo_id = $2 ) grants HAVING COUNT(*) > 0",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "user_id!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 1,
+        "name": "repo_id!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 2,
+        "name": "can_view!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 3,
+        "name": "can_backup!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 4,
+        "name": "can_modify_schedules!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 5,
+        "name": "can_extract!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 6,
+        "name": "can_delete!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+    ]
+  },
+  "hash": "f94db5e7e7b610f4fd817dfcd3de85300abc549ea77f91327480a747a1bf7df1"
+}

@@ -9,11 +9,14 @@
 //! hides. An admin (`can_delete_repo`) and a holder of **View All Repos** read
 //! everything. Anyone else:
 //!
-//! - reads a repository they were granted `can_view` on;
+//! - reads a repository they, or a group they belong to, were granted
+//!   `can_view` on;
 //! - sees a schedule whose repository they may read - the repository its
 //!   edit permission is checked against too. A schedule left with no
 //!   repository is admin-only;
-//! - sees an agent that one of those schedules runs on.
+//! - sees an agent that one of those schedules runs on. A role with **View
+//!   All Agents** or **Upgrade Agent** sees every agent, including a new one
+//!   no schedule backs up yet.
 //!
 //! A resource's `owner_id` and `visibility` columns grant nothing.
 
@@ -72,7 +75,7 @@ async fn granted_repos(pool: &sqlx::PgPool, user_id: i64) -> Result<Option<Vec<i
         return Ok(None);
     }
     Ok(Some(
-        db::list_repo_permissions_for_user(pool, user_id)
+        db::list_effective_repo_permissions_for_user(pool, user_id)
             .await?
             .into_iter()
             .filter(|grant| grant.can_view)
@@ -87,6 +90,12 @@ async fn granted_repos(pool: &sqlx::PgPool, user_id: i64) -> Result<Option<Vec<i
 ///
 /// Returns [`ApiError::Database`] if a query fails.
 pub async fn visible_agents(pool: &sqlx::PgPool, user_id: i64) -> Result<ReadScope, ApiError> {
+    if db::get_effective_permissions(pool, user_id)
+        .await?
+        .sees_all_agents()
+    {
+        return Ok(ReadScope::All);
+    }
     let Some(granted) = granted_repos(pool, user_id).await? else {
         return Ok(ReadScope::All);
     };
@@ -141,7 +150,9 @@ pub async fn visible_schedules(pool: &sqlx::PgPool, user_id: i64) -> Result<Read
 }
 
 fn schedule_readable(repos: &HashSet<i64>, schedule: &db::ScheduleRow) -> bool {
-    schedule.repo_id.is_some_and(|repo_id| repos.contains(&repo_id))
+    schedule
+        .repo_id
+        .is_some_and(|repo_id| repos.contains(&repo_id))
 }
 
 /// Requires that the caller may see `schedule`. One they may not is reported

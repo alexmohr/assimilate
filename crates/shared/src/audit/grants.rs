@@ -42,6 +42,8 @@ pub enum RolePermission {
     ManageTunnels,
     /// Upgrade agents.
     UpgradeAgent,
+    /// See every agent.
+    ViewAllAgents,
 }
 
 impl RolePermission {
@@ -62,6 +64,7 @@ impl RolePermission {
             (role.can_view_all_repos, Self::ViewAllRepos),
             (role.can_manage_tunnels, Self::ManageTunnels),
             (role.can_upgrade_agent, Self::UpgradeAgent),
+            (role.can_view_all_agents, Self::ViewAllAgents),
         ]
         .into_iter()
         .filter_map(|(granted, permission)| granted.then_some(permission))
@@ -90,16 +93,37 @@ impl RepoPermission {
     /// The permissions `permission` grants, in a fixed order.
     #[must_use]
     pub fn granted_by(permission: &RepoPermissionResponse) -> Vec<Self> {
-        [
-            (permission.can_view, Self::View),
-            (permission.can_backup, Self::Backup),
-            (permission.can_modify_schedules, Self::ModifySchedules),
-            (permission.can_extract, Self::Extract),
-            (permission.can_delete, Self::Delete),
-        ]
-        .into_iter()
-        .filter_map(|(granted, permission)| granted.then_some(permission))
-        .collect()
+        Self::from_flags([
+            permission.can_view,
+            permission.can_backup,
+            permission.can_modify_schedules,
+            permission.can_extract,
+            permission.can_delete,
+        ])
+    }
+
+    /// The permissions set in `flags`, which holds the `can_view`,
+    /// `can_backup`, `can_modify_schedules`, `can_extract` and `can_delete`
+    /// columns in that order.
+    #[must_use]
+    pub fn from_flags(flags: [bool; 5]) -> Vec<Self> {
+        flags
+            .into_iter()
+            .zip([
+                Self::View,
+                Self::Backup,
+                Self::ModifySchedules,
+                Self::Extract,
+                Self::Delete,
+            ])
+            .filter_map(|(granted, permission)| granted.then_some(permission))
+            .collect()
+    }
+
+    /// Whether `permissions` holds this one.
+    #[must_use]
+    pub fn is_in(self, permissions: &[Self]) -> bool {
+        permissions.contains(&self)
     }
 }
 
@@ -127,6 +151,7 @@ mod tests {
             can_view_all_repos: false,
             can_manage_tunnels: false,
             can_upgrade_agent: true,
+            can_view_all_agents: false,
         };
         assert_eq!(
             RolePermission::granted_by(&role),
@@ -136,6 +161,21 @@ mod tests {
                 RolePermission::UpgradeAgent,
             ]
         );
+    }
+
+    #[test]
+    fn flags_map_to_permissions_in_column_order() {
+        assert_eq!(
+            RepoPermission::from_flags([true, false, true, false, true]),
+            [
+                RepoPermission::View,
+                RepoPermission::ModifySchedules,
+                RepoPermission::Delete,
+            ]
+        );
+        assert_eq!(RepoPermission::from_flags([false; 5]), Vec::<RepoPermission>::new());
+        assert!(RepoPermission::Extract.is_in(&[RepoPermission::Extract]));
+        assert!(!RepoPermission::Backup.is_in(&[RepoPermission::View]));
     }
 
     #[test]

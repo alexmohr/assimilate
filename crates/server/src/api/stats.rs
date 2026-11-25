@@ -1027,9 +1027,9 @@ struct AcknowledgeScope {
 ///
 /// Mirrors `check_repo_permission(.., |p| p.can_modify_schedules)` exactly:
 /// `can_delete_repo` (what `RequireAdmin` checks) clears everything, otherwise
-/// a repo needs an explicit `can_modify_schedules` grant. `can_view_all_repos`
-/// deliberately does not widen this - it only ever synthesises a view-only
-/// permission, which fails that check.
+/// a repo needs a `can_modify_schedules` grant, the user's own or a group's.
+/// `can_view_all_repos` deliberately does not widen this - it only ever
+/// synthesises a view-only permission, which fails that check.
 ///
 /// Reading the user's permissions in one query keeps this to a bounded number
 /// of round trips rather than one per candidate repository. The caller's
@@ -1053,7 +1053,7 @@ async fn acknowledge_scope(
         });
     }
 
-    let granted: HashSet<i64> = db::list_repo_permissions_for_user(pool, auth.user_id)
+    let granted: HashSet<i64> = db::list_effective_repo_permissions_for_user(pool, auth.user_id)
         .await?
         .into_iter()
         .filter(|permission| permission.can_modify_schedules)

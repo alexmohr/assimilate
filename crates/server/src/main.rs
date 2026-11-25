@@ -1362,6 +1362,14 @@ fn rbac_routes() -> Router<AppState> {
             get(api::rbac::list_group_members).put(api::rbac::set_group_members),
         )
         .route(
+            "/api/groups/{group_id}/permissions",
+            get(api::group_grants::list_for_group),
+        )
+        .route(
+            "/api/groups/{group_id}/permissions/{repo_id}",
+            put(api::group_grants::set_for_group),
+        )
+        .route(
             "/api/roles",
             get(api::rbac::list_roles).post(api::rbac::create_role),
         )

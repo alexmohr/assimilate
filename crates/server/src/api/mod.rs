@@ -44,6 +44,8 @@ pub mod export;
 /// Comparing one file between two archives.
 pub mod file_diff;
 pub mod file_history;
+/// A group's per-repository permissions.
+pub mod group_grants;
 /// Health check and deployment mode endpoints.
 pub mod health;
 /// Shared helper functions for API handlers.

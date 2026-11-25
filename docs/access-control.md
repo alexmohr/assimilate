@@ -91,6 +91,10 @@ The following permissions can be granted to a group (or directly to a user) for 
 !!! warning "Schedules run commands on their agents"
     A schedule's pre- and post-backup hook commands run as a shell on every agent it targets. Treat `can_modify_schedules` as permission to run commands on any agent the user can point a schedule at. `can_modify_schedules` covers the repository only. A schedule can target only agents the user can see in the agent list: agents the user owns, shared agents with no owner, and shared agents whose owner is in one of the user's groups. Creating a schedule for any other agent, or adding one to an existing schedule, fails as if the agent did not exist. A schedule can keep agents an admin already added to it, and the user can still edit it.
 
+### Schedule Visibility
+
+Schedules follow the same owner model as agents and repositories. An admin sees every schedule. Anyone else sees the schedules they own, shared schedules with no owner, and shared schedules whose owner is in one of their groups. This applies to the Schedules list and to every read of a single schedule: its settings and hook commands, reports, targets, repositories, backup sources, catch-up hosts, machines and dependencies. A schedule the user cannot see is reported as not found, the same as one that does not exist.
+
 ### When to Use Groups
 
 Use groups when you need to control **which repositories** a set of users can access:

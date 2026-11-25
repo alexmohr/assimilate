@@ -648,10 +648,10 @@ async fn schedule_dependencies_response(
 /// Returns [`ApiError::NotFound`] if the schedule does not exist.
 pub async fn get_schedule_dependencies(
     State(state): State<AppState>,
-    _auth: AuthUser,
+    auth: AuthUser,
     Path(id): Path<i64>,
 ) -> Result<Json<ScheduleDependenciesResponse>, ApiError> {
-    db::get_schedule_by_id(&state.pool, id).await?;
+    super::permissions::get_visible_schedule(&state.pool, &auth, id).await?;
     Ok(Json(schedule_dependencies_response(&state, id).await?))
 }
 

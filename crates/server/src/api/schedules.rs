@@ -100,7 +100,9 @@ use uuid::Uuid;
 use super::{
     auth::AuthUser,
     helpers,
-    permissions::{check_agents_visible, check_repo_permission, is_visible_to_user},
+    permissions::{
+        check_agents_visible, check_repo_permission, get_visible_schedule, is_visible_to_user,
+    },
 };
 use crate::{
     AppState, config_assembler,
@@ -861,10 +863,10 @@ pub async fn create_schedule(
 /// Returns an error if the underlying operation fails.
 pub async fn get_schedule(
     State(state): State<AppState>,
-    _auth: AuthUser,
+    auth: AuthUser,
     Path(id): Path<i64>,
 ) -> Result<Json<ScheduleRow>, ApiError> {
-    let schedule = db::get_schedule_by_id(&state.pool, id).await?;
+    let schedule = get_visible_schedule(&state.pool, &auth, id).await?;
     Ok(Json(schedule))
 }
 
@@ -1889,11 +1891,11 @@ pub struct ListScheduleReportsQuery {
 /// Returns an error if the underlying operation fails.
 pub async fn list_schedule_reports(
     State(state): State<AppState>,
-    _auth: AuthUser,
+    auth: AuthUser,
     Path(id): Path<i64>,
     Query(query): Query<ListScheduleReportsQuery>,
 ) -> Result<Json<ReportListResponse>, ApiError> {
-    let _schedule = db::get_schedule_by_id(&state.pool, id).await?;
+    get_visible_schedule(&state.pool, &auth, id).await?;
     let limit = query.limit.unwrap_or(20);
     let offset = query.offset.unwrap_or(0);
     helpers::validate_pagination(limit, offset)?;
@@ -1967,10 +1969,10 @@ pub async fn delete_failed_schedule_reports(
 /// Returns an error if the underlying operation fails.
 pub async fn count_failed_schedule_reports(
     State(state): State<AppState>,
-    _auth: AuthUser,
+    auth: AuthUser,
     Path(id): Path<i64>,
 ) -> Result<Json<FailedReportCountResponse>, ApiError> {
-    let _schedule = db::get_schedule_by_id(&state.pool, id).await?;
+    get_visible_schedule(&state.pool, &auth, id).await?;
     let count = db::count_failed_backup_reports_for_schedule(&state.pool, id).await?;
     Ok(Json(FailedReportCountResponse { count }))
 }
@@ -1994,10 +1996,10 @@ pub async fn count_failed_schedule_reports(
 /// Returns an error if the underlying operation fails.
 pub async fn list_schedule_targets(
     State(state): State<AppState>,
-    _auth: AuthUser,
+    auth: AuthUser,
     Path(id): Path<i64>,
 ) -> Result<Json<Vec<ScheduleTargetResponse>>, ApiError> {
-    let _schedule = db::get_schedule_by_id(&state.pool, id).await?;
+    get_visible_schedule(&state.pool, &auth, id).await?;
     let targets: Vec<ScheduleTargetResponse> = db::list_schedule_targets(&state.pool, id)
         .await?
         .into_iter()
@@ -2025,10 +2027,10 @@ pub async fn list_schedule_targets(
 /// Returns an error if the underlying operation fails.
 pub async fn list_schedule_repos(
     State(state): State<AppState>,
-    _auth: AuthUser,
+    auth: AuthUser,
     Path(id): Path<i64>,
 ) -> Result<Json<Vec<ScheduleRepoResponse>>, ApiError> {
-    let _schedule = db::get_schedule_by_id(&state.pool, id).await?;
+    get_visible_schedule(&state.pool, &auth, id).await?;
     let repos: Vec<ScheduleRepoResponse> = db::list_schedule_repos(&state.pool, id)
         .await?
         .into_iter()
@@ -2057,10 +2059,10 @@ pub async fn list_schedule_repos(
 /// Returns an error if the underlying operation fails.
 pub async fn list_schedule_catch_up_sources(
     State(state): State<AppState>,
-    _auth: AuthUser,
+    auth: AuthUser,
     Path(id): Path<i64>,
 ) -> Result<Json<ScheduleCatchUpSourcesResponse>, ApiError> {
-    let _schedule = db::get_schedule_by_id(&state.pool, id).await?;
+    get_visible_schedule(&state.pool, &auth, id).await?;
     let (hosts, repo_hosts) = db::catch_up::list_schedule_catch_up_sources(&state.pool, id).await?;
     let to_response = |row: db::catch_up::CatchUpSourceRow| CatchUpSourceResponse {
         id: row.id,
@@ -2091,10 +2093,10 @@ pub async fn list_schedule_catch_up_sources(
 /// Returns an error if the underlying operation fails.
 pub async fn list_schedule_backup_sources(
     State(state): State<AppState>,
-    _auth: AuthUser,
+    auth: AuthUser,
     Path(id): Path<i64>,
 ) -> Result<Json<ScheduleBackupSourcesResponse>, ApiError> {
-    let _schedule = db::get_schedule_by_id(&state.pool, id).await?;
+    get_visible_schedule(&state.pool, &auth, id).await?;
     let backup_sources = db::list_backup_sources_for_schedule(&state.pool, id).await?;
     let backup_sources_per_agent: Vec<PerAgentBackupSourcesResponse> =
         db::list_all_per_agent_backup_sources_for_schedule(&state.pool, id)

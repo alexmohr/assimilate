@@ -244,6 +244,43 @@ pub async fn is_visible_to_user(
     }
 }
 
+/// Loads a schedule the caller may read, under the same rule `GET
+/// /api/schedules` filters its list by.
+///
+/// A schedule carries its hook commands, which often hold credentials, so
+/// every read of one goes through here. A schedule the caller cannot see is
+/// reported exactly like one that does not exist.
+///
+/// # Errors
+///
+/// Returns [`ApiError::NotFound`] for a schedule that does not exist or that
+/// the caller cannot see.
+pub async fn get_visible_schedule(
+    pool: &sqlx::PgPool,
+    auth: &AuthUser,
+    schedule_id: i64,
+) -> Result<db::ScheduleRow, ApiError> {
+    let schedule = db::get_schedule_by_id(pool, schedule_id).await?;
+    let is_admin = db::get_effective_permissions(pool, auth.user_id)
+        .await?
+        .can_delete_repo;
+    if is_visible_to_user(
+        pool,
+        auth.user_id,
+        schedule.owner_id,
+        schedule.visibility,
+        is_admin,
+    )
+    .await?
+    {
+        Ok(schedule)
+    } else {
+        Err(ApiError::NotFound(format!(
+            "schedule {schedule_id} not found"
+        )))
+    }
+}
+
 /// Requires that the caller can see every agent in `agent_ids` in the agent
 /// list, the same rule `GET /api/agents` applies.
 ///

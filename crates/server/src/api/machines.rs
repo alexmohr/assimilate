@@ -563,7 +563,7 @@ pub async fn get_schedule_machines(
     auth: AuthUser,
     Path(id): Path<i64>,
 ) -> Result<Json<ScheduleMachinesResponse>, ApiError> {
-    db::get_schedule_by_id(&state.pool, id).await?;
+    super::permissions::get_visible_schedule(&state.pool, &auth, id).await?;
     Ok(Json(schedule_machines_response(&state, id, &auth).await?))
 }
 

@@ -26,7 +26,8 @@ use super::{
     audit_trail::{self, Actor, AuditTarget, ClientIp},
     auth::{AuthUser, RequireAdmin},
     helpers::{self, DomainQuery, MaxLen},
-    permissions::{check_repo_permission, is_visible_to_user},
+    permissions::check_repo_permission,
+    read_scope::{get_visible_agent, visible_agents},
 };
 use crate::{
     AppState, config_assembler,
@@ -336,17 +337,10 @@ pub async fn list_agents(
     let can_view_wake_secrets = effective.can_view_wake_secrets();
     let include_hidden = query.include_hidden && is_admin;
     let agents = db::list_agents(&state.pool, include_hidden).await?;
+    let visible = visible_agents(&state.pool, auth.user_id).await?;
     let mut responses = Vec::with_capacity(agents.len());
     for a in agents {
-        if !is_visible_to_user(
-            &state.pool,
-            auth.user_id,
-            a.owner_id,
-            a.visibility,
-            is_admin,
-        )
-        .await?
-        {
+        if !visible.allows(a.id) {
             continue;
         }
         let mut response = build_agent_response(&state, a).await;
@@ -385,7 +379,7 @@ pub async fn get_agent(
     Path(hostname): Path<String>,
     Query(query): Query<DomainQuery>,
 ) -> Result<Json<AgentResponse>, ApiError> {
-    let agent = db::get_agent_by_hostname(&state.pool, &hostname, query.domain.as_deref()).await?;
+    let agent = get_visible_agent(&state.pool, &auth, &hostname, query.domain.as_deref()).await?;
     let mut response = build_agent_response(&state, agent).await;
     let effective = db::get_effective_permissions(&state.pool, auth.user_id).await?;
     if !(effective.can_delete_repo || effective.can_view_all_repos) {
@@ -746,11 +740,11 @@ pub async fn check_agent_borg(
 /// Returns an error if the underlying operation fails.
 pub async fn list_hostname_patterns(
     State(state): State<AppState>,
-    _auth: AuthUser,
+    auth: AuthUser,
     Path(hostname): Path<String>,
     Query(query): Query<DomainQuery>,
 ) -> Result<Json<Vec<HostnamePatternRow>>, ApiError> {
-    let agent = db::get_agent_by_hostname(&state.pool, &hostname, query.domain.as_deref()).await?;
+    let agent = get_visible_agent(&state.pool, &auth, &hostname, query.domain.as_deref()).await?;
     let patterns = db::patterns::list_patterns_for_agent(&state.pool, agent.id).await?;
     Ok(Json(patterns))
 }

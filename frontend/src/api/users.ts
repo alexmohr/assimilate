@@ -30,6 +30,8 @@ export interface UpdateUserRoleRequest {
 
 export interface UpdateUserPasswordRequest {
   password: string
+  /** Also delete every API token of the user. */
+  revoke_api_tokens?: boolean
 }
 
 export interface UpdateUserRolesRequest {

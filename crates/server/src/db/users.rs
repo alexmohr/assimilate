@@ -245,6 +245,78 @@ pub async fn update_user_password(
     Ok(())
 }
 
+/// What else a password change takes away from the account, besides the old
+/// password.
+#[derive(Debug, Clone, Copy)]
+pub struct PasswordChangeEffects<'a> {
+    /// The session (its stored, hashed id) that stays signed in: the one
+    /// making the change. `None` ends every session of the user.
+    pub keep_session: Option<&'a str>,
+    /// Whether the user's API tokens are deleted too.
+    pub revoke_api_tokens: bool,
+}
+
+/// What a password change ended.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PasswordChangeOutcome {
+    /// How many sessions were signed out.
+    pub sessions_ended: u64,
+    /// How many API tokens were deleted.
+    pub api_tokens_revoked: u64,
+}
+
+/// Sets a user's password and, in the same transaction, signs out their
+/// other sessions and, when asked, deletes their API tokens - so whoever held
+/// the account before the change does not keep it.
+///
+/// # Errors
+///
+/// Returns an error if:
+/// - [`ApiError::Database`]: a query fails
+/// - [`ApiError::NotFound`]: the user does not exist
+pub async fn change_user_password(
+    pool: &PgPool,
+    user_id: i64,
+    password_hash: &str,
+    effects: PasswordChangeEffects<'_>,
+) -> Result<PasswordChangeOutcome, ApiError> {
+    let mut tx = pool.begin().await.map_err(ApiError::Database)?;
+    let updated = sqlx::query!(
+        "UPDATE users SET password_hash = $2, must_change_password = false WHERE id = $1",
+        user_id,
+        password_hash,
+    )
+    .execute(&mut *tx)
+    .await
+    .map_err(ApiError::Database)?;
+    if updated.rows_affected() == 0 {
+        return Err(ApiError::NotFound(format!("user {user_id} not found")));
+    }
+    let sessions_ended = sqlx::query!(
+        "DELETE FROM sessions WHERE user_id = $1 AND ($2::TEXT IS NULL OR id <> $2)",
+        user_id,
+        effects.keep_session,
+    )
+    .execute(&mut *tx)
+    .await
+    .map_err(ApiError::Database)?
+    .rows_affected();
+    let api_tokens_revoked = if effects.revoke_api_tokens {
+        sqlx::query!("DELETE FROM api_tokens WHERE user_id = $1", user_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(ApiError::Database)?
+            .rows_affected()
+    } else {
+        0
+    };
+    tx.commit().await.map_err(ApiError::Database)?;
+    Ok(PasswordChangeOutcome {
+        sessions_ended,
+        api_tokens_revoked,
+    })
+}
+
 /// # Errors
 ///
 /// Returns [`ApiError::Database`] if the database query fails.

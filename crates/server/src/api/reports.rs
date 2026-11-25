@@ -14,6 +14,7 @@ use shared::responses::{
 use super::{
     auth::{AuthUser, RequireAdmin},
     helpers::{self, DomainQuery},
+    read_scope::{get_visible_agent, readable_repos, require_readable_repo, require_visible_agent},
 };
 use crate::{AppState, db, error::ApiError};
 
@@ -153,11 +154,12 @@ pub struct ListReportsQuery {
 /// Returns an error if the underlying operation fails.
 pub async fn list_reports(
     State(state): State<AppState>,
-    _auth: AuthUser,
+    auth: AuthUser,
     Path(hostname): Path<String>,
     Query(query): Query<ListReportsQuery>,
 ) -> Result<Json<ReportListResponse>, ApiError> {
-    let agent = db::get_agent_by_hostname(&state.pool, &hostname, query.domain.as_deref()).await?;
+    let agent = get_visible_agent(&state.pool, &auth, &hostname, query.domain.as_deref()).await?;
+    let repo_ids = readable_repos(&state.pool, auth.user_id).await?.sql_ids();
     let limit = query.limit.unwrap_or(50);
     let offset = query.offset.unwrap_or(0);
     helpers::validate_pagination(limit, offset)?;
@@ -167,9 +169,15 @@ pub async fn list_reports(
             agent.id,
             query.target.as_deref(),
             limit,
-            offset
+            offset,
+            repo_ids.as_deref(),
         ),
-        db::count_reports_for_agent(&state.pool, agent.id, query.target.as_deref()),
+        db::count_reports_for_agent(
+            &state.pool,
+            agent.id,
+            query.target.as_deref(),
+            repo_ids.as_deref(),
+        ),
     )?;
     let reports: Vec<ReportResponse> = rows
         .into_iter()
@@ -212,6 +220,7 @@ pub struct ListRunEventsQuery {
     responses(
         (status = 200, description = "The run's power timeline", body = Vec<RunEventResponse>),
         (status = 401, description = "Unauthorized"),
+        (status = 404, description = "Agent or repository not found"),
     )
 )]
 /// List a run's power-management timeline (reachability checks, wakes,
@@ -223,10 +232,13 @@ pub struct ListRunEventsQuery {
 /// Returns an error if the underlying operation fails.
 pub async fn list_run_events(
     State(state): State<AppState>,
-    _auth: AuthUser,
+    auth: AuthUser,
     Path(run_id): Path<String>,
     Query(query): Query<ListRunEventsQuery>,
 ) -> Result<Json<Vec<RunEventResponse>>, ApiError> {
+    require_readable_repo(&state.pool, &auth, query.repo_id).await?;
+    let agent = db::get_agent_by_id(&state.pool, query.agent_id).await?;
+    require_visible_agent(&state.pool, &auth, &agent).await?;
     let events =
         db::run_events::list_run_events(&state.pool, &run_id, query.agent_id, query.repo_id)
             .await?
@@ -294,11 +306,14 @@ pub async fn delete_failed_reports(
 /// Returns an error if the underlying operation fails.
 pub async fn count_failed_reports(
     State(state): State<AppState>,
-    _auth: AuthUser,
+    auth: AuthUser,
     Path(hostname): Path<String>,
     Query(query): Query<DomainQuery>,
 ) -> Result<Json<FailedReportCountResponse>, ApiError> {
-    let agent = db::get_agent_by_hostname(&state.pool, &hostname, query.domain.as_deref()).await?;
-    let count = db::count_failed_backup_reports_for_agent(&state.pool, agent.id).await?;
+    let agent = get_visible_agent(&state.pool, &auth, &hostname, query.domain.as_deref()).await?;
+    let repo_ids = readable_repos(&state.pool, auth.user_id).await?.sql_ids();
+    let count =
+        db::count_failed_backup_reports_for_agent(&state.pool, agent.id, repo_ids.as_deref())
+            .await?;
     Ok(Json(FailedReportCountResponse { count }))
 }

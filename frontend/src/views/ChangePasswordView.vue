@@ -25,7 +25,7 @@ async function handleSubmit(): Promise<void> {
   }
 
   await run(async () => {
-    await authStore.changePassword(newPassword.value)
+    await authStore.changePassword({ new_password: newPassword.value })
     const next =
       typeof route.query.next === 'string' && route.query.next.startsWith('/')
         ? route.query.next

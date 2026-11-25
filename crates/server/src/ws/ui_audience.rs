@@ -5,15 +5,19 @@
 //!
 //! Every UI socket subscribes to the same broadcast, so each one filters the
 //! stream down to the agents and repositories its user can see through the
-//! list endpoints (`GET /api/agents`, `GET /api/repos`): an admin sees
-//! everything, anyone else only what they own or what is shared with a group
-//! they belong to.
+//! list endpoints (`GET /api/agents`, `GET /api/repos`), under the rules in
+//! [`crate::api::read_scope`]: an admin sees everything, anyone else only the
+//! agents they can see and the repositories they may read.
 
 use std::collections::HashSet;
 
 use shared::protocol::ServerToUi;
 
-use crate::{api::permissions::is_visible_to_user, db, error::ApiError};
+use crate::{
+    api::read_scope::{readable_repos, visible_agents},
+    db,
+    error::ApiError,
+};
 
 /// The agents and repositories one UI socket's user may see events for.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -133,15 +137,17 @@ impl UiAudience {
             return Ok(Self::Everything);
         }
 
+        let agents = visible_agents(pool, user_id).await?;
+        let repos = readable_repos(pool, user_id).await?;
         let mut scope = VisibleScope::default();
-        for agent in db::list_agents(pool, false).await? {
-            if is_visible_to_user(pool, user_id, agent.owner_id, agent.visibility, false).await? {
+        for agent in db::list_agents(pool, true).await? {
+            if agents.allows(agent.id) {
                 scope.agent_ids.insert(agent.id);
                 scope.hostnames.insert(agent.hostname);
             }
         }
         for repo in db::list_all_repos(pool).await? {
-            if is_visible_to_user(pool, user_id, repo.owner_id, repo.visibility, false).await? {
+            if repos.allows(repo.id) {
                 scope.repo_ids.insert(repo.id);
                 scope.repo_names.insert(repo.name);
             }

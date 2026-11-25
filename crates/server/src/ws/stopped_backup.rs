@@ -201,7 +201,7 @@ mod tests {
             .unwrap();
 
         assert!(cancelled);
-        let reports = db::list_reports_for_agent(&pool, agent_id, None, 10, 0)
+        let reports = db::list_reports_for_agent(&pool, agent_id, None, 10, 0, None)
             .await
             .unwrap();
         assert!(matches!(

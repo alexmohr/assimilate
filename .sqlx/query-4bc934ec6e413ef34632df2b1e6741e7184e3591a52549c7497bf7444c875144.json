@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT COUNT(*) as count FROM backup_reports br JOIN repos r ON r.id = br.repo_id WHERE br.agent_id = $1 AND r.name = $2",
+  "query": "SELECT COUNT(*) as count FROM backup_reports br JOIN repos r ON r.id = br.repo_id WHERE br.agent_id = $1 AND r.name = $2 AND ($3::BIGINT[] IS NULL OR br.repo_id = ANY($3))",
   "describe": {
     "columns": [
       {
@@ -13,12 +13,13 @@
     "parameters": {
       "Left": [
         "Int8",
-        "Text"
+        "Text",
+        "Int8Array"
       ]
     },
     "nullable": [
       null
     ]
   },
-  "hash": "2d8d732cfb8276c8de453ac24bcf126961b0ef06a79118e6ef55387165faed0b"
+  "hash": "4bc934ec6e413ef34632df2b1e6741e7184e3591a52549c7497bf7444c875144"
 }

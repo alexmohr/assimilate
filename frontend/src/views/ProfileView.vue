@@ -17,6 +17,7 @@ import { useSystemModeStore } from '../stores/systemMode'
 import { useTheme } from '../composables/useTheme'
 import { useEscapeKey } from '../composables/useEscapeKey'
 import { useApiTokens } from '../composables/useApiTokens'
+import ToggleSwitch from '../components/ToggleSwitch.vue'
 import { formatDate } from '../utils/format'
 import { validatePassword } from '../utils/validation'
 import { extractError } from '../utils/error'
@@ -44,8 +45,10 @@ const allTabs: SettingsSections<TabId> = [
 
 const activeTab = ref<TabId>('password')
 
+const currentPassword = ref('')
 const newPassword = ref('')
 const confirmPassword = ref('')
+const revokeApiTokens = ref(false)
 const passwordError = ref('')
 const passwordSuccess = ref('')
 const passwordSubmitting = ref(false)
@@ -121,6 +124,10 @@ async function handlePasswordSubmit(): Promise<void> {
   passwordError.value = ''
   passwordSuccess.value = ''
 
+  if (currentPassword.value === '') {
+    passwordError.value = 'Enter your current password.'
+    return
+  }
   const validationError = validatePassword(newPassword.value, confirmPassword.value)
   if (validationError) {
     passwordError.value = validationError
@@ -129,10 +136,19 @@ async function handlePasswordSubmit(): Promise<void> {
 
   passwordSubmitting.value = true
   try {
-    await authStore.changePassword(newPassword.value)
-    passwordSuccess.value = 'Password changed successfully.'
+    await authStore.changePassword({
+      current_password: currentPassword.value,
+      new_password: newPassword.value,
+      revoke_api_tokens: revokeApiTokens.value,
+    })
+    passwordSuccess.value = revokeApiTokens.value
+      ? 'Password changed. Your other sessions were signed out and your API tokens deleted.'
+      : 'Password changed. Your other sessions were signed out.'
+    if (revokeApiTokens.value) await fetchTokens()
+    currentPassword.value = ''
     newPassword.value = ''
     confirmPassword.value = ''
+    revokeApiTokens.value = false
   } catch (e: unknown) {
     passwordError.value = extractError(e, 'Failed to change password')
   } finally {
@@ -277,6 +293,22 @@ onMounted(async () => {
           <div class="field">
             <label
               class="field-label"
+              for="profile-current-pw"
+              >Current password</label
+            >
+            <input
+              id="profile-current-pw"
+              v-model="currentPassword"
+              type="password"
+              class="input"
+              autocomplete="current-password"
+              :disabled="passwordSubmitting"
+            />
+          </div>
+
+          <div class="field">
+            <label
+              class="field-label"
               for="profile-new-pw"
               >New password</label
             >
@@ -305,6 +337,17 @@ onMounted(async () => {
               autocomplete="new-password"
               :disabled="passwordSubmitting"
             />
+          </div>
+
+          <p class="field-hint">Changing your password signs out your other sessions.</p>
+
+          <div class="field">
+            <ToggleSwitch
+              v-model="revokeApiTokens"
+              :disabled="passwordSubmitting"
+            >
+              Also delete my API tokens
+            </ToggleSwitch>
           </div>
 
           <div

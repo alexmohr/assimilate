@@ -227,9 +227,8 @@ onMounted(async () => {
     </div>
 
     <p class="page-description">
-      Groups organize users into collections for shared repository access. Assign per-repository
-      permissions to a group and all its members inherit them. Use groups when multiple users need
-      identical access to the same set of repositories.
+      Groups organize users into named collections. They grant no permissions of their own: give
+      each member repository permissions on their user page.
     </p>
 
     <div class="toolbar">

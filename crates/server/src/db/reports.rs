@@ -821,6 +821,7 @@ pub async fn list_reports_for_agent(
     target: Option<&str>,
     limit: i64,
     offset: i64,
+    repo_ids: Option<&[i64]>,
 ) -> Result<Vec<ReportRow>, ApiError> {
     if let Some(target_name) = target {
         sqlx::query_as!(
@@ -832,11 +833,13 @@ pub async fn list_reports_for_agent(
              br.duration_secs, br.error_message, br.warnings, br.borg_version, br.archive_name, \
              br.borg_command, br.run_id FROM backup_reports br JOIN repos r ON r.id = br.repo_id \
              LEFT JOIN schedules s ON s.id = br.schedule_id WHERE br.agent_id = $1 AND r.name = \
-             $2 ORDER by br.started_at DESC, br.id DESC LIMIT $3 OFFSET $4",
+             $2 AND ($5::BIGINT[] IS NULL OR br.repo_id = ANY($5)) ORDER by br.started_at DESC, \
+             br.id DESC LIMIT $3 OFFSET $4",
             agent_id,
             target_name,
             limit,
             offset,
+            repo_ids,
         )
         .fetch_all(pool)
         .await
@@ -850,11 +853,13 @@ pub async fn list_reports_for_agent(
              br.original_size, br.compressed_size, br.deduplicated_size, br.files_processed, \
              br.duration_secs, br.error_message, br.warnings, br.borg_version, br.archive_name, \
              br.borg_command, br.run_id FROM backup_reports br JOIN repos r ON r.id = br.repo_id \
-             LEFT JOIN schedules s ON s.id = br.schedule_id WHERE br.agent_id = $1 ORDER BY \
-             br.started_at DESC, br.id DESC LIMIT $2 OFFSET $3",
+             LEFT JOIN schedules s ON s.id = br.schedule_id WHERE br.agent_id = $1 AND \
+             ($4::BIGINT[] IS NULL OR br.repo_id = ANY($4)) ORDER BY br.started_at DESC, br.id \
+             DESC LIMIT $2 OFFSET $3",
             agent_id,
             limit,
             offset,
+            repo_ids,
         )
         .fetch_all(pool)
         .await
@@ -869,6 +874,7 @@ pub async fn count_reports_for_agent(
     pool: &PgPool,
     agent_id: i64,
     target: Option<&str>,
+    repo_ids: Option<&[i64]>,
 ) -> Result<i64, ApiError> {
     #[derive(sqlx::FromRow)]
     struct CountRow {
@@ -879,9 +885,11 @@ pub async fn count_reports_for_agent(
         sqlx::query_as!(
             CountRow,
             "SELECT COUNT(*) as count FROM backup_reports br JOIN repos r ON r.id = br.repo_id \
-             WHERE br.agent_id = $1 AND r.name = $2",
+             WHERE br.agent_id = $1 AND r.name = $2 AND ($3::BIGINT[] IS NULL OR br.repo_id = \
+             ANY($3))",
             agent_id,
             target_name,
+            repo_ids,
         )
         .fetch_one(pool)
         .await
@@ -889,8 +897,10 @@ pub async fn count_reports_for_agent(
     } else {
         sqlx::query_as!(
             CountRow,
-            "SELECT COUNT(*) as count FROM backup_reports WHERE agent_id = $1",
+            "SELECT COUNT(*) as count FROM backup_reports WHERE agent_id = $1 AND ($2::BIGINT[] \
+             IS NULL OR repo_id = ANY($2))",
             agent_id,
+            repo_ids,
         )
         .fetch_one(pool)
         .await
@@ -950,7 +960,10 @@ pub async fn count_reports_for_schedule(pool: &PgPool, schedule_id: i64) -> Resu
 /// # Errors
 ///
 /// Returns [`ApiError::Database`] if the database query fails.
-pub async fn get_storage_stats(pool: &PgPool) -> Result<Vec<StorageStatRow>, ApiError> {
+pub async fn get_storage_stats(
+    pool: &PgPool,
+    repo_ids: Option<&[i64]>,
+) -> Result<Vec<StorageStatRow>, ApiError> {
     sqlx::query_as!(
         StorageStatRow,
         "SELECT a.hostname, r.name AS target_name, COALESCE(SUM(br.original_size), 0)::INT8 AS \
@@ -958,7 +971,9 @@ pub async fn get_storage_stats(pool: &PgPool) -> Result<Vec<StorageStatRow>, Api
          \"total_compressed_size!\", COALESCE(SUM(br.deduplicated_size), 0)::INT8 AS \
          \"total_deduplicated_size!\", COUNT(br.id)::INT8 AS \"report_count!\" FROM \
          backup_reports br JOIN agents a ON a.id = br.agent_id JOIN repos r ON r.id = br.repo_id \
-         WHERE a.is_hidden = false GROUP BY a.hostname, r.name ORDER BY a.hostname, r.name",
+         WHERE a.is_hidden = false AND ($1::BIGINT[] IS NULL OR br.repo_id = ANY($1)) GROUP BY \
+         a.hostname, r.name ORDER BY a.hostname, r.name",
+        repo_ids,
     )
     .fetch_all(pool)
     .await
@@ -982,6 +997,9 @@ pub struct ActivityFeedFilters<'a> {
     /// Only this one report: how a link to a single run is looked up, in the
     /// same shape and with the same hidden and imported agents left out.
     pub report_id: Option<i64>,
+    /// Only runs against these repositories - the ones the caller may read.
+    /// `None` leaves every repository in.
+    pub repo_ids: Option<&'a [i64]>,
 }
 
 /// # Errors
@@ -1002,8 +1020,8 @@ pub async fn get_activity_feed(
          false AND COALESCE(a.display_name, '') NOT ILIKE '%(imported)%' AND ($1::bigint IS NULL \
          OR br.repo_id = $1) AND ($2::text IS NULL OR a.hostname = $2) AND ($3::bigint IS NULL OR \
          br.schedule_id = $3) AND ($4::text IS NULL OR br.run_id = $4) AND ($5::bool IS NULL OR \
-         br.acknowledged = $5) AND ($7::bigint IS NULL OR br.id = $7) ORDER BY br.started_at DESC \
-         LIMIT $6",
+         br.acknowledged = $5) AND ($7::bigint IS NULL OR br.id = $7) AND ($8::BIGINT[] IS NULL \
+         OR br.repo_id = ANY($8)) ORDER BY br.started_at DESC LIMIT $6",
         filters.repo_id,
         filters.hostname,
         filters.schedule_id,
@@ -1011,6 +1029,7 @@ pub async fn get_activity_feed(
         filters.acknowledged.as_sql_predicate(),
         limit,
         filters.report_id,
+        filters.repo_ids,
     )
     .fetch_all(pool)
     .await
@@ -1180,6 +1199,7 @@ pub async fn delete_failed_backup_reports_for_schedule(
 pub async fn count_failed_backup_reports_for_agent(
     pool: &PgPool,
     agent_id: i64,
+    repo_ids: Option<&[i64]>,
 ) -> Result<i64, ApiError> {
     #[derive(sqlx::FromRow)]
     struct CountRow {
@@ -1189,8 +1209,9 @@ pub async fn count_failed_backup_reports_for_agent(
     let row = sqlx::query_as!(
         CountRow,
         "SELECT COUNT(*) as count FROM backup_reports WHERE agent_id = $1 AND status = 'failed' \
-         AND archive_name IS NULL",
+         AND archive_name IS NULL AND ($2::BIGINT[] IS NULL OR repo_id = ANY($2))",
         agent_id,
+        repo_ids,
     )
     .fetch_one(pool)
     .await

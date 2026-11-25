@@ -77,7 +77,11 @@ pub struct DashboardSummaryRow {
 /// # Errors
 ///
 /// Returns [`ApiError::Database`] if the database query fails.
-pub async fn get_dashboard_summary(pool: &PgPool) -> Result<DashboardSummaryRow, ApiError> {
+pub async fn get_dashboard_summary(
+    pool: &PgPool,
+    repo_ids: Option<&[i64]>,
+    agent_ids: Option<&[i64]>,
+) -> Result<DashboardSummaryRow, ApiError> {
     // The last_failure_*/last_warning_* CTEs skip acknowledged reports: once someone has
     // reviewed a warning or failure in the Activity Log, the dashboard's "Last failure" and
     // "Last warning" tiles fall back to the most recent one still awaiting review.
@@ -94,44 +98,53 @@ pub async fn get_dashboard_summary(pool: &PgPool) -> Result<DashboardSummaryRow,
     sqlx::query_as!(
         DashboardSummaryRow,
         "WITH last_success_at AS ( SELECT MAX(finished_at) AS finished_at FROM backup_reports \
-         WHERE status = 'success' AND finished_at > '1970-01-01T00:00:00Z' ), last_success_row AS \
-         ( SELECT br.repo_id, br.archive_name FROM backup_reports br WHERE br.status = 'success' \
-         ORDER BY br.finished_at DESC LIMIT 1 ), last_backup_row AS ( SELECT br.schedule_id FROM \
-         backup_reports br WHERE br.schedule_id IS NOT NULL ORDER BY br.finished_at DESC LIMIT 1 \
-         ), next_backup_row AS ( SELECT s.id, s.next_run_at FROM schedules s JOIN repos r ON r.id \
-         = s.repo_id WHERE s.enabled = true AND r.enabled = true AND s.next_run_at IS NOT NULL \
-         AND s.next_run_at > NOW() ORDER BY s.next_run_at LIMIT 1 ), last_failure_general AS ( \
-         SELECT br.finished_at, br.error_message, br.repo_id, r.name AS repo_name FROM \
-         backup_reports br JOIN repos r ON r.id = br.repo_id WHERE br.status = 'failed' AND \
-         br.acknowledged = false AND br.finished_at > '1970-01-01T00:00:00Z' ORDER BY \
-         br.finished_at DESC LIMIT 1 ), last_failure_scheduled AS ( SELECT br.schedule_id, \
-         s.cron_expression AS schedule_name FROM backup_reports br JOIN schedules s ON s.id = \
-         br.schedule_id WHERE br.status = 'failed' AND br.acknowledged = false AND br.finished_at \
-         > '1970-01-01T00:00:00Z' ORDER BY br.finished_at DESC LIMIT 1 ), last_warning_general AS \
-         ( SELECT br.finished_at, br.warnings[1] AS warning_message, br.repo_id, r.name AS \
-         repo_name FROM backup_reports br JOIN repos r ON r.id = br.repo_id WHERE br.status = \
-         'warning' AND br.acknowledged = false AND br.finished_at > '1970-01-01T00:00:00Z' ORDER \
-         BY br.finished_at DESC LIMIT 1 ), last_warning_scheduled AS ( SELECT br.schedule_id, \
-         s.cron_expression AS schedule_name FROM backup_reports br JOIN schedules s ON s.id = \
-         br.schedule_id WHERE br.status = 'warning' AND br.acknowledged = false AND \
-         br.finished_at > '1970-01-01T00:00:00Z' ORDER BY br.finished_at DESC LIMIT 1 ) SELECT \
-         (SELECT COUNT(*) FROM agents WHERE is_hidden = false) AS \"total_agents!\", (SELECT \
-         COUNT(*) FROM repos) AS \"total_repos!\", (SELECT COUNT(*) FROM schedules WHERE enabled \
-         = true) AS \"active_schedules!\", (SELECT COUNT(*) FROM schedules) AS \
-         \"total_schedules!\", COALESCE((SELECT SUM(deduplicated_size) FROM repo_stats), 0)::INT8 \
-         AS \"total_storage_bytes!\", last_success_at.finished_at AS last_backup_at, \
+         WHERE status = 'success' AND finished_at > '1970-01-01T00:00:00Z' AND ($1::BIGINT[] IS \
+         NULL OR repo_id = ANY($1)) ), last_success_row AS ( SELECT br.repo_id, br.archive_name \
+         FROM backup_reports br WHERE br.status = 'success' AND ($1::BIGINT[] IS NULL OR \
+         br.repo_id = ANY($1)) ORDER BY br.finished_at DESC LIMIT 1 ), last_backup_row AS ( \
+         SELECT br.schedule_id FROM backup_reports br WHERE br.schedule_id IS NOT NULL AND \
+         ($1::BIGINT[] IS NULL OR br.repo_id = ANY($1)) ORDER BY br.finished_at DESC LIMIT 1 ), \
+         next_backup_row AS ( SELECT s.id, s.next_run_at FROM schedules s JOIN repos r ON r.id = \
+         s.repo_id WHERE s.enabled = true AND r.enabled = true AND s.next_run_at IS NOT NULL AND \
+         s.next_run_at > NOW() AND ($1::BIGINT[] IS NULL OR s.repo_id = ANY($1)) ORDER BY \
+         s.next_run_at LIMIT 1 ), last_failure_general AS ( SELECT br.finished_at, \
+         br.error_message, br.repo_id, r.name AS repo_name FROM backup_reports br JOIN repos r ON \
+         r.id = br.repo_id WHERE br.status = 'failed' AND br.acknowledged = false AND \
+         br.finished_at > '1970-01-01T00:00:00Z' AND ($1::BIGINT[] IS NULL OR br.repo_id = \
+         ANY($1)) ORDER BY br.finished_at DESC LIMIT 1 ), last_failure_scheduled AS ( SELECT \
+         br.schedule_id, s.cron_expression AS schedule_name FROM backup_reports br JOIN schedules \
+         s ON s.id = br.schedule_id WHERE br.status = 'failed' AND br.acknowledged = false AND \
+         br.finished_at > '1970-01-01T00:00:00Z' AND ($1::BIGINT[] IS NULL OR br.repo_id = \
+         ANY($1)) ORDER BY br.finished_at DESC LIMIT 1 ), last_warning_general AS ( SELECT \
+         br.finished_at, br.warnings[1] AS warning_message, br.repo_id, r.name AS repo_name FROM \
+         backup_reports br JOIN repos r ON r.id = br.repo_id WHERE br.status = 'warning' AND \
+         br.acknowledged = false AND br.finished_at > '1970-01-01T00:00:00Z' AND ($1::BIGINT[] IS \
+         NULL OR br.repo_id = ANY($1)) ORDER BY br.finished_at DESC LIMIT 1 ), \
+         last_warning_scheduled AS ( SELECT br.schedule_id, s.cron_expression AS schedule_name \
+         FROM backup_reports br JOIN schedules s ON s.id = br.schedule_id WHERE br.status = \
+         'warning' AND br.acknowledged = false AND br.finished_at > '1970-01-01T00:00:00Z' AND \
+         ($1::BIGINT[] IS NULL OR br.repo_id = ANY($1)) ORDER BY br.finished_at DESC LIMIT 1 ) \
+         SELECT (SELECT COUNT(*) FROM agents WHERE is_hidden = false AND ($2::BIGINT[] IS NULL OR \
+         id = ANY($2))) AS \"total_agents!\", (SELECT COUNT(*) FROM repos WHERE ($1::BIGINT[] IS \
+         NULL OR id = ANY($1))) AS \"total_repos!\", (SELECT COUNT(*) FROM schedules WHERE \
+         enabled = true AND ($1::BIGINT[] IS NULL OR repo_id = ANY($1))) AS \
+         \"active_schedules!\", (SELECT COUNT(*) FROM schedules WHERE ($1::BIGINT[] IS NULL OR \
+         repo_id = ANY($1))) AS \"total_schedules!\", COALESCE((SELECT SUM(deduplicated_size) \
+         FROM repo_stats WHERE ($1::BIGINT[] IS NULL OR repo_id = ANY($1))), 0)::INT8 AS \
+         \"total_storage_bytes!\", last_success_at.finished_at AS last_backup_at, \
          next_backup_row.next_run_at AS next_backup_at, last_backup_row.schedule_id AS \
          last_backup_schedule_id, last_success_row.repo_id AS last_backup_repo_id, \
          last_success_row.archive_name AS last_backup_archive_name, next_backup_row.id AS \
          next_backup_schedule_id, (SELECT COUNT(*) FROM backup_reports WHERE status = 'success' \
-         AND started_at > NOW() - INTERVAL '30 days') AS \"success_30d!\", (SELECT COUNT(*) FROM \
-         backup_reports WHERE status != 'success' AND started_at > NOW() - INTERVAL '30 days') AS \
-         \"failed_30d!\", (SELECT COUNT(*) FROM backup_reports WHERE started_at > NOW() - \
-         INTERVAL '30 days') AS \"total_30d!\", last_failure_general.finished_at AS \
-         last_failure_at, last_warning_general.finished_at AS last_warning_at, \
-         last_failure_scheduled.schedule_id AS last_failure_schedule_id, \
-         last_warning_scheduled.schedule_id AS last_warning_schedule_id, \
-         last_failure_general.error_message AS last_failure_message, \
+         AND started_at > NOW() - INTERVAL '30 days' AND ($1::BIGINT[] IS NULL OR repo_id = \
+         ANY($1))) AS \"success_30d!\", (SELECT COUNT(*) FROM backup_reports WHERE status != \
+         'success' AND started_at > NOW() - INTERVAL '30 days' AND ($1::BIGINT[] IS NULL OR \
+         repo_id = ANY($1))) AS \"failed_30d!\", (SELECT COUNT(*) FROM backup_reports WHERE \
+         started_at > NOW() - INTERVAL '30 days' AND ($1::BIGINT[] IS NULL OR repo_id = ANY($1))) \
+         AS \"total_30d!\", last_failure_general.finished_at AS last_failure_at, \
+         last_warning_general.finished_at AS last_warning_at, last_failure_scheduled.schedule_id \
+         AS last_failure_schedule_id, last_warning_scheduled.schedule_id AS \
+         last_warning_schedule_id, last_failure_general.error_message AS last_failure_message, \
          last_warning_general.warning_message AS last_warning_message, \
          last_failure_general.repo_id AS last_failure_repo_id, last_warning_general.repo_id AS \
          last_warning_repo_id, last_failure_general.repo_name AS last_failure_repo_name, \
@@ -142,6 +155,8 @@ pub async fn get_dashboard_summary(pool: &PgPool) -> Result<DashboardSummaryRow,
          last_backup_row ON true LEFT JOIN next_backup_row ON true LEFT JOIN last_failure_general \
          ON true LEFT JOIN last_failure_scheduled ON true LEFT JOIN last_warning_general ON true \
          LEFT JOIN last_warning_scheduled ON true",
+        repo_ids,
+        agent_ids,
     )
     .fetch_one(pool)
     .await
@@ -162,12 +177,17 @@ pub struct StorageBreakdownRow {
 /// # Errors
 ///
 /// Returns [`ApiError::Database`] if the database query fails.
-pub async fn get_storage_breakdown(pool: &PgPool) -> Result<Vec<StorageBreakdownRow>, ApiError> {
+pub async fn get_storage_breakdown(
+    pool: &PgPool,
+    repo_ids: Option<&[i64]>,
+) -> Result<Vec<StorageBreakdownRow>, ApiError> {
     sqlx::query_as!(
         StorageBreakdownRow,
         "SELECT r.name, COALESCE(rs.compressed_size, 0)::INT8 AS \"compressed_size!\", \
          COALESCE(rs.deduplicated_size, 0)::INT8 AS \"deduplicated_size!\" FROM repos r LEFT JOIN \
-         repo_stats rs ON rs.repo_id = r.id ORDER BY rs.deduplicated_size DESC NULLS LAST",
+         repo_stats rs ON rs.repo_id = r.id WHERE ($1::BIGINT[] IS NULL OR r.id = ANY($1)) ORDER \
+         BY rs.deduplicated_size DESC NULLS LAST",
+        repo_ids,
     )
     .fetch_all(pool)
     .await
@@ -216,11 +236,12 @@ pub async fn get_activity_feed_days(
          - make_interval(days => $1::int) AND wa.is_hidden = false AND COALESCE(wa.display_name, \
          '') NOT ILIKE '%(imported)%' AND ($2::bigint IS NULL OR w.repo_id = $2) AND ($3::text IS \
          NULL OR wa.hostname = $3) AND ($4::bigint IS NULL OR w.schedule_id = $4) AND ($6::bool \
-         IS NULL OR w.acknowledged = $6) )) AND ($2::bigint IS NULL OR br.repo_id = $2) AND \
-         ($3::text IS NULL OR a.hostname = $3) AND ($4::bigint IS NULL OR br.schedule_id = $4) \
-         AND ($5::text IS NULL OR br.run_id = $5) AND ($6::bool IS NULL OR br.acknowledged = $6) \
-         AND ($8::bigint IS NULL OR br.id = $8) ) reports ) ranked WHERE $7::bigint IS NULL OR \
-         run_rank <= $7 ORDER BY started_at DESC",
+         IS NULL OR w.acknowledged = $6) AND ($9::BIGINT[] IS NULL OR w.repo_id = ANY($9)) )) AND \
+         ($2::bigint IS NULL OR br.repo_id = $2) AND ($3::text IS NULL OR a.hostname = $3) AND \
+         ($4::bigint IS NULL OR br.schedule_id = $4) AND ($5::text IS NULL OR br.run_id = $5) AND \
+         ($6::bool IS NULL OR br.acknowledged = $6) AND ($8::bigint IS NULL OR br.id = $8) AND \
+         ($9::BIGINT[] IS NULL OR br.repo_id = ANY($9)) ) reports ) ranked WHERE $7::bigint IS \
+         NULL OR run_rank <= $7 ORDER BY started_at DESC",
         i32::try_from(days).unwrap_or(14),
         filters.repo_id,
         filters.hostname,
@@ -229,6 +250,7 @@ pub async fn get_activity_feed_days(
         filters.acknowledged.as_sql_predicate(),
         per_schedule_limit,
         filters.report_id,
+        filters.repo_ids,
     )
     .fetch_all(pool)
     .await
@@ -261,6 +283,7 @@ pub async fn get_backup_trends(
     pool: &PgPool,
     repo_id: Option<i64>,
     days: i64,
+    repo_ids: Option<&[i64]>,
 ) -> Result<Vec<TrendRow>, ApiError> {
     let days = i32::try_from(days).unwrap_or(30);
     if let Some(rid) = repo_id {
@@ -288,8 +311,10 @@ pub async fn get_backup_trends(
              COALESCE(AVG(files_processed), 0)::INT8 AS \"file_count!\", \
              COALESCE(AVG(duration_secs), 0)::INT8 AS \"duration_seconds!\", COUNT(*)::INT8 AS \
              \"backup_count!\" FROM backup_reports WHERE started_at > NOW() - make_interval(days \
-             => $1) GROUP BY started_at::date ORDER BY 1",
+             => $1) AND ($2::BIGINT[] IS NULL OR repo_id = ANY($2)) GROUP BY started_at::date \
+             ORDER BY 1",
             days,
+            repo_ids,
         )
         .fetch_all(pool)
         .await
@@ -333,6 +358,7 @@ pub async fn get_calendar_events(
     month: u32,
     repo_id: Option<i64>,
     tz: &jiff::tz::TimeZone,
+    repo_ids: Option<&[i64]>,
 ) -> Result<Vec<CalendarEventRow>, ApiError> {
     let (start, end) = Date::month_bounds(year, month)
         .ok_or_else(|| ApiError::BadRequest("invalid month".to_string()))?;
@@ -369,10 +395,12 @@ pub async fn get_calendar_events(
              \"report_id?\", br.repo_id AS \"repo_id?\", br.error_message, br.archive_name FROM \
              backup_reports br JOIN repos r ON r.id = br.repo_id JOIN agents a ON a.id = \
              br.agent_id WHERE a.is_hidden = false AND (br.started_at AT TIME ZONE $3)::date >= \
-             $1 AND (br.started_at AT TIME ZONE $3)::date < $2 ORDER BY br.started_at",
+             $1 AND (br.started_at AT TIME ZONE $3)::date < $2 AND ($4::BIGINT[] IS NULL OR \
+             br.repo_id = ANY($4)) ORDER BY br.started_at",
             start,
             end,
             tz_name,
+            repo_ids,
         )
         .fetch_all(pool)
         .await
@@ -424,6 +452,7 @@ pub async fn get_storage_trends(
     pool: &PgPool,
     repo_id: Option<i64>,
     days: i64,
+    repo_ids: Option<&[i64]>,
 ) -> Result<Vec<StorageTrendRow>, ApiError> {
     let days = i32::try_from(days).unwrap_or(30);
     if let Some(rid) = repo_id {
@@ -461,11 +490,12 @@ pub async fn get_storage_trends(
             StorageTrendRow,
             "WITH days AS ( SELECT generate_series( (CURRENT_DATE - make_interval(days => \
              $1))::date, CURRENT_DATE, '1 day'::interval )::date AS date ), repos_list AS ( \
-             SELECT DISTINCT br.repo_id FROM backup_reports br WHERE br.status = 'success' ), \
-             daily AS ( SELECT br.repo_id, br.started_at::date AS date, SUM(br.original_size) AS \
-             day_original, SUM(br.compressed_size) AS day_compressed, \
-             (ARRAY_AGG(br.repo_unique_csize ORDER BY br.started_at DESC))[1] AS day_csize FROM \
-             backup_reports br WHERE br.status = 'success' GROUP BY br.repo_id, \
+             SELECT DISTINCT br.repo_id FROM backup_reports br WHERE br.status = 'success' AND \
+             ($2::BIGINT[] IS NULL OR br.repo_id = ANY($2)) ), daily AS ( SELECT br.repo_id, \
+             br.started_at::date AS date, SUM(br.original_size) AS day_original, \
+             SUM(br.compressed_size) AS day_compressed, (ARRAY_AGG(br.repo_unique_csize ORDER BY \
+             br.started_at DESC))[1] AS day_csize FROM backup_reports br WHERE br.status = \
+             'success' AND ($2::BIGINT[] IS NULL OR br.repo_id = ANY($2)) GROUP BY br.repo_id, \
              br.started_at::date ), joined AS ( SELECT rl.repo_id, d.date, dl.day_original, \
              dl.day_compressed, dl.day_csize, COUNT(dl.date) OVER (PARTITION BY rl.repo_id ORDER \
              BY d.date) AS fill_grp FROM repos_list rl CROSS JOIN days d LEFT JOIN daily dl ON \
@@ -481,6 +511,7 @@ pub async fn get_storage_trends(
              NULLIF(COALESCE(f.csize_sum, 0), 0)::INT8 AS \"deduplicated_size?\" FROM days d LEFT \
              JOIN fleet_by_date f ON f.date = d.date ORDER BY d.date",
             days,
+            repo_ids,
         )
         .fetch_all(pool)
         .await

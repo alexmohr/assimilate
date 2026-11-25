@@ -26,6 +26,10 @@ use shared::{
 use super::{
     auth::{AuthUser, RequireAdmin},
     permissions::check_repo_permission,
+    read_scope::{
+        readable_repos, require_readable_repo, visible_agent_hostnames, visible_agents,
+        visible_schedules,
+    },
 };
 use crate::{AppState, db, error::ApiError};
 
@@ -143,13 +147,31 @@ pub async fn dashboard_overview(
     State(state): State<AppState>,
     auth: AuthUser,
 ) -> Result<Json<DashboardOverviewResponse>, ApiError> {
-    let (targets, hosts, upcoming, repositories, dismissed) = tokio::try_join!(
+    let (targets, hosts, upcoming, repositories, dismissed, repos, agents) = tokio::try_join!(
         db::dashboard::targets(&state.pool),
         db::dashboard::eligible_hosts(&state.pool),
         db::dashboard::upcoming_schedules(&state.pool),
         db::dashboard::repositories(&state.pool),
         db::dashboard::dismissed_finding_ids(&state.pool, auth.user_id),
+        readable_repos(&state.pool, auth.user_id),
+        visible_agents(&state.pool, auth.user_id),
     )?;
+    let targets: Vec<_> = targets
+        .into_iter()
+        .filter(|t| repos.allows(t.repo_id) && agents.allows(t.agent_id))
+        .collect();
+    let hosts: Vec<_> = hosts
+        .into_iter()
+        .filter(|h| agents.allows(h.agent_id))
+        .collect();
+    let upcoming: Vec<_> = upcoming
+        .into_iter()
+        .filter(|u| repos.allows(u.repo_id))
+        .collect();
+    let repositories: Vec<_> = repositories
+        .into_iter()
+        .filter(|r| repos.allows(r.repo_id))
+        .collect();
     let connected: HashSet<i64> = state
         .registry
         .connected_agents()
@@ -650,11 +672,21 @@ fn repository_capacity(repo: &db::dashboard::RepositoryRow) -> DashboardReposito
 /// Returns an error if the underlying operation fails.
 pub async fn summary(
     State(state): State<AppState>,
-    _auth: AuthUser,
+    auth: AuthUser,
 ) -> Result<Json<DashboardSummaryResponse>, ApiError> {
-    let row = db::get_dashboard_summary(&state.pool).await?;
-    let breakdown = db::get_storage_breakdown(&state.pool).await?;
-    let online_agents = state.registry.connected_agents().await.len();
+    let repo_ids = readable_repos(&state.pool, auth.user_id).await?.sql_ids();
+    let agents = visible_agents(&state.pool, auth.user_id).await?;
+    let agent_ids = agents.sql_ids();
+    let row =
+        db::get_dashboard_summary(&state.pool, repo_ids.as_deref(), agent_ids.as_deref()).await?;
+    let breakdown = db::get_storage_breakdown(&state.pool, repo_ids.as_deref()).await?;
+    let online_agents = state
+        .registry
+        .connected_agents()
+        .await
+        .into_iter()
+        .filter(|id| agents.allows(*id))
+        .count();
 
     let total_storage = row.total_storage_bytes;
     let storage_by_repo = breakdown
@@ -723,9 +755,10 @@ pub async fn summary(
 /// Returns an error if the underlying operation fails.
 pub async fn storage(
     State(state): State<AppState>,
-    _auth: AuthUser,
+    auth: AuthUser,
 ) -> Result<Json<Vec<db::StorageStatRow>>, ApiError> {
-    let rows = db::get_storage_stats(&state.pool).await?;
+    let repo_ids = readable_repos(&state.pool, auth.user_id).await?.sql_ids();
+    let rows = db::get_storage_stats(&state.pool, repo_ids.as_deref()).await?;
     Ok(Json(rows))
 }
 
@@ -750,9 +783,14 @@ pub async fn storage(
 /// Returns an error if the underlying operation fails.
 pub async fn schedule_counts(
     State(state): State<AppState>,
-    _auth: AuthUser,
+    auth: AuthUser,
 ) -> Result<Json<Vec<db::ScheduleCountByAgent>>, ApiError> {
-    let counts = db::get_schedule_counts_by_agent(&state.pool).await?;
+    let agents = visible_agents(&state.pool, auth.user_id).await?;
+    let counts = db::get_schedule_counts_by_agent(&state.pool)
+        .await?
+        .into_iter()
+        .filter(|count| agents.allows(count.agent_id))
+        .collect();
     Ok(Json(counts))
 }
 
@@ -773,9 +811,10 @@ pub async fn schedule_counts(
 /// Returns an error if the underlying operation fails.
 pub async fn storage_breakdown(
     State(state): State<AppState>,
-    _auth: AuthUser,
+    auth: AuthUser,
 ) -> Result<Json<Vec<StorageRepoEntryResponse>>, ApiError> {
-    let breakdown = db::get_storage_breakdown(&state.pool).await?;
+    let repo_ids = readable_repos(&state.pool, auth.user_id).await?.sql_ids();
+    let breakdown = db::get_storage_breakdown(&state.pool, repo_ids.as_deref()).await?;
 
     let total: i64 = breakdown.iter().map(|b| b.deduplicated_size).sum();
     let entries = breakdown
@@ -825,14 +864,16 @@ pub async fn storage_breakdown(
 /// Returns an error if the underlying operation fails.
 pub async fn activity(
     State(state): State<AppState>,
-    _auth: AuthUser,
+    auth: AuthUser,
     Query(query): Query<ActivityQuery>,
 ) -> Result<Json<Vec<db::ActivityRow>>, ApiError> {
+    let repo_ids = readable_repos(&state.pool, auth.user_id).await?.sql_ids();
     if let Some(id) = query.report_id {
         // One run by id, whatever its acknowledgment: the other filters are
         // ignored, so a link to an old or acknowledged run still opens.
         let filters = db::ActivityFeedFilters {
             report_id: Some(id),
+            repo_ids: repo_ids.as_deref(),
             ..db::ActivityFeedFilters::default()
         };
         return Ok(Json(db::get_activity_feed(&state.pool, 1, filters).await?));
@@ -844,6 +885,7 @@ pub async fn activity(
         run_id: query.run_id.as_deref(),
         acknowledged: query.acknowledged,
         report_id: None,
+        repo_ids: repo_ids.as_deref(),
     };
     let rows = if let Some(days) = query.days {
         db::get_activity_feed_days(&state.pool, days, query.limit_per_schedule, filters).await?
@@ -1220,11 +1262,13 @@ pub async fn unacknowledge_system_event(
 /// Returns an error if the underlying operation fails.
 pub async fn system_events(
     State(state): State<AppState>,
-    _auth: AuthUser,
+    auth: AuthUser,
     Query(query): Query<ActivityQuery>,
 ) -> Result<Json<Vec<db::SystemEventRow>>, ApiError> {
     let limit = query.limit.unwrap_or(50);
-    let rows = db::get_system_events(&state.pool, limit, query.acknowledged).await?;
+    let hostnames = visible_agent_hostnames(&state.pool, auth.user_id).await?;
+    let rows =
+        db::get_system_events(&state.pool, limit, query.acknowledged, hostnames.as_deref()).await?;
     Ok(Json(rows))
 }
 
@@ -1262,13 +1306,18 @@ pub struct HealthQuery {
 /// Returns an error if the underlying operation fails.
 pub async fn health(
     State(state): State<AppState>,
-    _auth: AuthUser,
+    auth: AuthUser,
     Query(query): Query<HealthQuery>,
 ) -> Result<Json<Vec<HealthResponse>>, ApiError> {
+    let (repos, schedules) = tokio::try_join!(
+        readable_repos(&state.pool, auth.user_id),
+        visible_schedules(&state.pool, auth.user_id),
+    )?;
     let rows = db::get_health_summary(&state.pool, query.schedule_id).await?;
     let tz = db::get_schedule_timezone(&state.pool).await?;
     let response = rows
         .into_iter()
+        .filter(|row| repos.allows(row.repo_id) && schedules.allows(row.schedule_id))
         .map(|row| {
             let overdue = !row.last_status.is_some_and(ReportStatus::is_in_flight)
                 && is_overdue(row.last_backup_at, row.cron_expression.as_deref(), &tz);
@@ -1337,11 +1386,12 @@ pub struct TrendsQuery {
 /// Returns an error if the underlying operation fails.
 pub async fn trends(
     State(state): State<AppState>,
-    _auth: AuthUser,
+    auth: AuthUser,
     Query(query): Query<TrendsQuery>,
 ) -> Result<Json<Vec<TrendEntryResponse>>, ApiError> {
     let days = query.days.unwrap_or(30);
-    let rows = db::get_backup_trends(&state.pool, query.repo_id, days).await?;
+    let repo_ids = trend_scope(&state, &auth, query.repo_id).await?;
+    let rows = db::get_backup_trends(&state.pool, query.repo_id, days, repo_ids.as_deref()).await?;
     let entries = rows
         .into_iter()
         .map(|row| {
@@ -1390,11 +1440,13 @@ pub async fn trends(
 /// Returns an error if the underlying operation fails.
 pub async fn storage_trends(
     State(state): State<AppState>,
-    _auth: AuthUser,
+    auth: AuthUser,
     Query(query): Query<TrendsQuery>,
 ) -> Result<Json<Vec<StorageTrendEntryResponse>>, ApiError> {
     let days = query.days.unwrap_or(30);
-    let rows = db::get_storage_trends(&state.pool, query.repo_id, days).await?;
+    let repo_ids = trend_scope(&state, &auth, query.repo_id).await?;
+    let rows =
+        db::get_storage_trends(&state.pool, query.repo_id, days, repo_ids.as_deref()).await?;
     let entries = rows
         .into_iter()
         .map(|row| StorageTrendEntryResponse {
@@ -1428,13 +1480,15 @@ pub async fn storage_trends(
 /// Returns an error if the underlying operation fails.
 pub async fn storage_trends_by_repo(
     State(state): State<AppState>,
-    _auth: AuthUser,
+    auth: AuthUser,
     Query(query): Query<TrendsQuery>,
 ) -> Result<Json<Vec<StorageTrendByRepoEntryResponse>>, ApiError> {
     let days = query.days.unwrap_or(30);
+    let repos = readable_repos(&state.pool, auth.user_id).await?;
     let rows = db::get_storage_trends_by_repo(&state.pool, days).await?;
     let entries = rows
         .into_iter()
+        .filter(|row| repos.allows(row.repo_id))
         .map(|row| StorageTrendByRepoEntryResponse {
             date: row.date.to_string(),
             repo_id: row.repo_id,
@@ -1615,7 +1669,7 @@ async fn project_upcoming_schedule_events(
 /// Returns [`ApiError::BadRequest`] if the request is invalid.
 pub async fn calendar(
     State(state): State<AppState>,
-    _auth: AuthUser,
+    auth: AuthUser,
     Query(query): Query<CalendarQuery>,
 ) -> Result<Json<Vec<CalendarDayResponse>>, ApiError> {
     let parts: Vec<&str> = query.month.split('-').collect();
@@ -1631,10 +1685,27 @@ pub async fn calendar(
         .parse()
         .map_err(|_| ApiError::BadRequest("invalid month".to_string()))?;
 
+    let readable = readable_repos(&state.pool, auth.user_id).await?;
+    let repo_ids = trend_scope(&state, &auth, query.repo_id).await?;
     let tz = db::get_schedule_timezone(&state.pool).await?;
-    let rows = db::get_calendar_events(&state.pool, year, month, query.repo_id, &tz).await?;
+    let rows = db::get_calendar_events(
+        &state.pool,
+        year,
+        month,
+        query.repo_id,
+        &tz,
+        repo_ids.as_deref(),
+    )
+    .await?;
 
-    let schedules = db::get_enabled_schedules_for_calendar(&state.pool).await?;
+    let visible = visible_schedules(&state.pool, auth.user_id).await?;
+    let schedules: Vec<_> = db::get_enabled_schedules_for_calendar(&state.pool)
+        .await?
+        .into_iter()
+        .filter(|schedule| {
+            visible.allows(schedule.id) && schedule.repo_id.is_some_and(|id| readable.allows(id))
+        })
+        .collect();
     let now = Timestamp::now();
 
     let (month_start, month_end) = Date::month_bounds(year, month)
@@ -1667,7 +1738,11 @@ pub async fn calendar(
             });
     }
 
-    let repos = db::list_all_repos(&state.pool).await?;
+    let repos: Vec<_> = db::list_all_repos(&state.pool)
+        .await?
+        .into_iter()
+        .filter(|repo| readable.allows(repo.id))
+        .collect();
 
     project_upcoming_schedule_events(
         &state.pool,
@@ -1712,6 +1787,25 @@ pub async fn undismiss_finding(
 ) -> Result<StatusCode, ApiError> {
     db::dashboard::undismiss_finding(&state.pool, auth.user_id, &finding_id).await?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+/// The repository scope of a statistic that covers one repository or all of
+/// them: one named repository has to be readable, and the all-repositories
+/// form is narrowed to the readable ones.
+///
+/// # Errors
+///
+/// Returns [`ApiError::NotFound`] when `repo_id` names a repository the
+/// caller may not read.
+async fn trend_scope(
+    state: &AppState,
+    auth: &AuthUser,
+    repo_id: Option<i64>,
+) -> Result<Option<Vec<i64>>, ApiError> {
+    if let Some(repo_id) = repo_id {
+        require_readable_repo(&state.pool, auth, repo_id).await?;
+    }
+    Ok(readable_repos(&state.pool, auth.user_id).await?.sql_ids())
 }
 
 #[cfg(test)]

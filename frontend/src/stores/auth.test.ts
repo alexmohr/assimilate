@@ -168,7 +168,7 @@ describe('auth store - TOTP flow', () => {
 
     const store = useAuthStore()
     store.user = { ...defaultMeUser, must_change_password: true }
-    await store.changePassword('new-secret')
+    await store.changePassword({ new_password: 'new-secret' })
 
     expect(apiClient.post).toHaveBeenCalledWith('/auth/change-password', {
       new_password: 'new-secret',

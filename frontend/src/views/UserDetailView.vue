@@ -46,6 +46,7 @@ import DetailHeader from '../components/DetailHeader.vue'
 import EditableSection from '../components/EditableSection.vue'
 import OverflowMenu from '../components/OverflowMenu.vue'
 import PaneRow from '../components/PaneRow.vue'
+import ToggleSwitch from '../components/ToggleSwitch.vue'
 import SettingsRail, { type SettingsSections } from '../components/SettingsRail.vue'
 
 /**
@@ -307,9 +308,11 @@ const pwEditing = ref(false)
 const pwSaving = ref(false)
 const pwError = ref<string | null>(null)
 const pwDraft = ref('')
+const pwRevokeTokens = ref(false)
 
 function startPwEdit(): void {
   pwDraft.value = ''
+  pwRevokeTokens.value = false
   pwError.value = null
   pwEditing.value = true
 }
@@ -323,10 +326,17 @@ async function savePassword(): Promise<void> {
   pwSaving.value = true
   pwError.value = null
   try {
-    await changeUserPassword(user.value.id, { password: pwDraft.value })
+    await changeUserPassword(user.value.id, {
+      password: pwDraft.value,
+      revoke_api_tokens: pwRevokeTokens.value,
+    })
     pwDraft.value = ''
     pwEditing.value = false
-    toast.success(`Password for ${user.value.username} reset`)
+    toast.success(
+      pwRevokeTokens.value
+        ? `Password for ${user.value.username} reset, signed out and API tokens deleted`
+        : `Password for ${user.value.username} reset and signed out`,
+    )
   } catch (e: unknown) {
     pwError.value = extractError(e, 'Failed to reset password')
   } finally {
@@ -674,7 +684,7 @@ async function confirmDelete(): Promise<void> {
 
           <EditableSection
             v-else-if="current === 'password'"
-            lede="Sets a new password for this account. Assimilate does not send it anywhere, so pass it on yourself."
+            lede="Sets a new password for this account and signs it out everywhere. Assimilate does not send the password anywhere, so pass it on yourself."
             :editing="pwEditing"
             :can-edit="canEdit"
             :saving="pwSaving"
@@ -708,6 +718,17 @@ async function confirmDelete(): Promise<void> {
                     autocomplete="new-password"
                     :minlength="MIN_PASSWORD_LENGTH"
                   />
+                </PaneRow>
+                <PaneRow
+                  title="API tokens"
+                  hint="Their sessions are always signed out. Delete their API tokens too when the account may be compromised."
+                >
+                  <ToggleSwitch
+                    v-model="pwRevokeTokens"
+                    label="Delete their API tokens"
+                  >
+                    Delete their API tokens
+                  </ToggleSwitch>
                 </PaneRow>
               </div>
             </template>

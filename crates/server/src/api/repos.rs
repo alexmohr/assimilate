@@ -51,7 +51,7 @@ use self::{
 use super::{
     auth::{AuthUser, RequireAdmin},
     helpers::{self, DomainQuery},
-    permissions::is_visible_to_user,
+    read_scope::{readable_repos, require_readable_repo, visible_schedules},
 };
 use crate::{
     AppState, RepoLock,
@@ -240,27 +240,20 @@ pub async fn list_repos(
 ) -> Result<Json<Vec<RepoResponse>>, ApiError> {
     let repos = db::list_all_repos(&state.pool).await?;
     let effective = db::get_effective_permissions(&state.pool, auth.user_id).await?;
-    let is_admin = effective.can_delete_repo;
     let can_view_wake_secrets = effective.can_view_wake_secrets();
-    let mut visible = Vec::with_capacity(repos.len());
-    for repo in repos {
-        if is_visible_to_user(
-            &state.pool,
-            auth.user_id,
-            repo.owner_id,
-            repo.visibility,
-            is_admin,
-        )
-        .await?
-        {
+    let readable = readable_repos(&state.pool, auth.user_id).await?;
+    let visible = repos
+        .into_iter()
+        .filter(|repo| readable.allows(repo.id))
+        .map(|repo| {
             let mut response = RepoResponse::from(repo);
             if !can_view_wake_secrets {
                 response.power.wake_mac_address = None;
                 response.power.wake_broadcast_address = None;
             }
-            visible.push(response);
-        }
-    }
+            response
+        })
+        .collect();
     Ok(Json(visible))
 }
 
@@ -948,22 +941,15 @@ pub async fn list_repos_with_stats(
 ) -> Result<Json<Vec<RepoWithStatsResponse>>, ApiError> {
     let repos = db::list_repos_with_stats(&state.pool).await?;
     let effective = db::get_effective_permissions(&state.pool, auth.user_id).await?;
-    let is_admin = effective.can_delete_repo;
+    let readable = readable_repos(&state.pool, auth.user_id).await?;
     // Quota configuration is otherwise gated to operators/admins (see
     // `require_operator_or_admin` in api/quota.rs) - strip it here too, so embedding it on the
     // list response doesn't leak it to a viewer who can see the repo but not its quota.
     let can_view_quota = effective.can_delete_repo || effective.can_view_all_repos;
-    let mut visible = Vec::with_capacity(repos.len());
-    for repo in repos {
-        if is_visible_to_user(
-            &state.pool,
-            auth.user_id,
-            repo.owner_id,
-            repo.visibility,
-            is_admin,
-        )
-        .await?
-        {
+    let visible = repos
+        .into_iter()
+        .filter(|repo| readable.allows(repo.id))
+        .map(|repo| {
             let mut response = RepoWithStatsResponse::from(repo);
             if !can_view_quota {
                 response.quota = None;
@@ -974,9 +960,9 @@ pub async fn list_repos_with_stats(
                 response.power.wake_mac_address = None;
                 response.power.wake_broadcast_address = None;
             }
-            visible.push(response);
-        }
-    }
+            response
+        })
+        .collect();
     Ok(Json(visible))
 }
 
@@ -1004,6 +990,7 @@ pub async fn get_repo(
     auth: AuthUser,
     Path(repo_id): Path<i64>,
 ) -> Result<Json<RepoWithStatsResponse>, ApiError> {
+    require_readable_repo(&state.pool, &auth, repo_id).await?;
     let mut res: RepoWithStatsResponse =
         db::get_repo_with_stats(&state.pool, repo_id).await?.into();
     res.current_op = state.repo_op_tracker.get(repo_id).await;
@@ -1218,23 +1205,13 @@ pub async fn list_schedules_for_repo(
     auth: AuthUser,
     Path(repo_id): Path<i64>,
 ) -> Result<Json<Vec<db::ScheduleRow>>, ApiError> {
-    let schedules = db::list_schedules_for_repo(&state.pool, repo_id).await?;
-    let effective = db::get_effective_permissions(&state.pool, auth.user_id).await?;
-    let is_admin = effective.can_delete_repo;
-    let mut visible = Vec::with_capacity(schedules.len());
-    for s in schedules {
-        if super::permissions::is_visible_to_user(
-            &state.pool,
-            auth.user_id,
-            s.owner_id,
-            s.visibility,
-            is_admin,
-        )
+    require_readable_repo(&state.pool, &auth, repo_id).await?;
+    let scope = visible_schedules(&state.pool, auth.user_id).await?;
+    let visible = db::list_schedules_for_repo(&state.pool, repo_id)
         .await?
-        {
-            visible.push(s);
-        }
-    }
+        .into_iter()
+        .filter(|schedule| scope.allows(schedule.id))
+        .collect();
     Ok(Json(visible))
 }
 

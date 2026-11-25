@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT id, created_at, event_type, hostname, message, acknowledged FROM system_events WHERE ($1::bool IS NULL OR acknowledged = $1) ORDER BY created_at DESC LIMIT $2",
+  "query": "SELECT id, created_at, event_type, hostname, message, acknowledged FROM system_events WHERE ($1::bool IS NULL OR acknowledged = $1) AND ($3::TEXT[] IS NULL OR hostname IS NULL OR hostname = ANY($3)) ORDER BY created_at DESC LIMIT $2",
   "describe": {
     "columns": [
       {
@@ -73,7 +73,8 @@
     "parameters": {
       "Left": [
         "Bool",
-        "Int8"
+        "Int8",
+        "TextArray"
       ]
     },
     "nullable": [
@@ -85,5 +86,5 @@
       false
     ]
   },
-  "hash": "5563b8a29cfd2d9242b81a365c942069b46fb8765e5880ec46bab499d70f0e12"
+  "hash": "1983678ec1b9f186b26e7b5f980a59ec38feaf3cf7b382eda2c07ff3495cc567"
 }

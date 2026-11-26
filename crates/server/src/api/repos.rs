@@ -2085,7 +2085,8 @@ async fn handle_repo_sync_failure(
         elapsed.as_secs_f64()
     );
     error!("{msg}");
-    let _ = db::insert_system_event(pool, SystemEventType::RepoSyncFailed, None, &msg).await;
+    let _ =
+        db::insert_repo_system_event(pool, SystemEventType::RepoSyncFailed, repo_id, &msg).await;
     if task_state.import_tasks.is_current(repo_id, task_id).await {
         let _ = db::set_repo_import_error(pool, repo_id, Some(&format!("{e}"))).await;
         let _ = db::set_repo_importing(pool, repo_id, false).await;
@@ -2120,11 +2121,13 @@ async fn log_repo_sync_completion(
             "{operation_label} for '{repo_name}' took {duration_secs}s (exceeds {}s threshold)",
             SYNC_WARN_DURATION.as_secs()
         );
-        let _ = db::insert_system_event(pool, SystemEventType::RepoSyncSlow, None, &warn_msg).await;
+        let _ =
+            db::insert_repo_system_event(pool, SystemEventType::RepoSyncSlow, repo_id, &warn_msg)
+                .await;
     }
 
     info!("{msg}");
-    let _ = db::insert_system_event(pool, SystemEventType::RepoSync, None, &msg).await;
+    let _ = db::insert_repo_system_event(pool, SystemEventType::RepoSync, repo_id, &msg).await;
 }
 
 #[utoipa::path(
@@ -2156,9 +2159,13 @@ pub async fn reset_import(
     if cancelled {
         info!(repo_id, repo_name = %repo.name, "repo sync cancelled");
         let msg = format!("repo sync cancelled for '{}'", repo.name);
-        if let Err(e) =
-            db::insert_system_event(&state.pool, SystemEventType::RepoSyncCancelled, None, &msg)
-                .await
+        if let Err(e) = db::insert_repo_system_event(
+            &state.pool,
+            SystemEventType::RepoSyncCancelled,
+            repo_id,
+            &msg,
+        )
+        .await
         {
             tracing::error!(repo_id, error = %e, "failed to log sync cancelled event");
         }

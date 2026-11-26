@@ -1,0 +1,17 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO system_events (event_type, hostname, repo_id, message) VALUES ($1, $2, $3, $4)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text",
+        "Int8",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "572c35cbcb26d923d9060c9d8b56cd9721c7ecfdb9d5874c4c1252788d8b83a6"
+}

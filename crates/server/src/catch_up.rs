@@ -670,9 +670,14 @@ mod tests {
 
         report_abandoned_agent_catch_up(&state, &candidate, now()).await;
 
-        let events = db::get_system_events(&pool, 10, shared::types::AcknowledgedFilter::All, None)
-            .await
-            .unwrap();
+        let events = db::get_system_events(
+            &pool,
+            10,
+            shared::types::AcknowledgedFilter::All,
+            crate::db::SystemEventScope::default(),
+        )
+        .await
+        .unwrap();
         let event = events
             .iter()
             .find(|e| e.event_type == shared::types::SystemEventType::ScheduleCatchUpAbandoned)

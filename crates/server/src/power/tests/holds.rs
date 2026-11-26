@@ -104,12 +104,17 @@ async fn run_event_types(pool: &sqlx::PgPool, agent_id: i64, repo_id: i64) -> Ve
 }
 
 async fn abandoned_events(pool: &sqlx::PgPool) -> Vec<db::SystemEventRow> {
-    db::get_system_events(pool, 100, AcknowledgedFilter::All, None)
-        .await
-        .unwrap()
-        .into_iter()
-        .filter(|e| e.event_type == SystemEventType::PowerReleaseAbandoned)
-        .collect()
+    db::get_system_events(
+        pool,
+        100,
+        AcknowledgedFilter::All,
+        crate::db::SystemEventScope::default(),
+    )
+    .await
+    .unwrap()
+    .into_iter()
+    .filter(|e| e.event_type == SystemEventType::PowerReleaseAbandoned)
+    .collect()
 }
 
 /// Makes every persisted hold look as old as `hours`.

@@ -12694,6 +12694,68 @@ async fn a_schedule_copying_into_a_readable_repository_is_visible() {
     );
 }
 
+/// A system event about a repository reaches only those who may read that
+/// repository; one about neither an agent nor a repository reaches everyone.
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn repository_system_events_reach_only_readers_of_the_repository() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+    create_non_admin_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+    let readable = insert_test_repo(&pool, "events-readable-repo").await;
+    let hidden = insert_test_repo(&pool, "events-hidden-repo").await;
+    grant_repo_view(&pool, "integration-viewer", readable).await;
+    for (repo_id, message) in [
+        (readable, "readable repo synced"),
+        (hidden, "hidden repo synced"),
+    ] {
+        server::db::insert_repo_system_event(
+            &pool,
+            shared::types::SystemEventType::RepoSync,
+            repo_id,
+            message,
+        )
+        .await
+        .unwrap();
+    }
+    server::db::insert_system_event(
+        &pool,
+        shared::types::SystemEventType::RepoSync,
+        None,
+        "an event about nothing in particular",
+    )
+    .await
+    .unwrap();
+
+    let messages = |events: Value| -> Vec<Value> {
+        let mut messages: Vec<Value> = events
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|event| event.get("message").unwrap().clone())
+            .collect();
+        messages.sort_by_key(ToString::to_string);
+        messages
+    };
+    let resp = oneshot(&mut app, non_admin_get_request("/api/stats/system-events")).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(
+        messages(body_json(resp).await),
+        vec![
+            json!("an event about nothing in particular"),
+            json!("readable repo synced"),
+        ]
+    );
+    let resp = oneshot(&mut app, get_request("/api/stats/system-events")).await;
+    assert_eq!(
+        messages(body_json(resp).await).len(),
+        3,
+        "an admin sees all three"
+    );
+}
+
 /// View All Repos without View All Agents still shows every agent, as
 /// Access Control documents: it reads the whole installation.
 #[tokio::test]

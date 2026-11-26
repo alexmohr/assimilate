@@ -4117,9 +4117,14 @@ async fn system_events_acknowledge_round_trip_and_filter(pool: PgPool) {
     .await
     .unwrap();
 
-    let events = db::get_system_events(&pool, 10, AcknowledgedFilter::All, None)
-        .await
-        .unwrap();
+    let events = db::get_system_events(
+        &pool,
+        10,
+        AcknowledgedFilter::All,
+        db::SystemEventScope::default(),
+    )
+    .await
+    .unwrap();
     assert_eq!(events.len(), 2);
     let failed = events
         .iter()
@@ -4143,18 +4148,28 @@ async fn system_events_acknowledge_round_trip_and_filter(pool: PgPool) {
         .await
         .unwrap();
 
-    let pending = db::get_system_events(&pool, 10, AcknowledgedFilter::Unacknowledged, None)
-        .await
-        .unwrap();
+    let pending = db::get_system_events(
+        &pool,
+        10,
+        AcknowledgedFilter::Unacknowledged,
+        db::SystemEventScope::default(),
+    )
+    .await
+    .unwrap();
     assert_eq!(pending.len(), 1);
     assert_eq!(
         pending.first().unwrap().event_type,
         SystemEventType::RepoSync
     );
 
-    let acknowledged = db::get_system_events(&pool, 10, AcknowledgedFilter::Acknowledged, None)
-        .await
-        .unwrap();
+    let acknowledged = db::get_system_events(
+        &pool,
+        10,
+        AcknowledgedFilter::Acknowledged,
+        db::SystemEventScope::default(),
+    )
+    .await
+    .unwrap();
     assert_eq!(acknowledged.len(), 1);
     assert!(acknowledged.first().unwrap().acknowledged);
 
@@ -4162,10 +4177,15 @@ async fn system_events_acknowledge_round_trip_and_filter(pool: PgPool) {
         .await
         .unwrap();
     assert_eq!(
-        db::get_system_events(&pool, 10, AcknowledgedFilter::Unacknowledged, None)
-            .await
-            .unwrap()
-            .len(),
+        db::get_system_events(
+            &pool,
+            10,
+            AcknowledgedFilter::Unacknowledged,
+            db::SystemEventScope::default()
+        )
+        .await
+        .unwrap()
+        .len(),
         2
     );
 }
@@ -4175,12 +4195,17 @@ async fn acknowledgeable_system_event_type_rejects_an_informational_event(pool: 
     db::insert_system_event(&pool, SystemEventType::RepoSync, None, "Synced")
         .await
         .unwrap();
-    let id = db::get_system_events(&pool, 1, AcknowledgedFilter::All, None)
-        .await
-        .unwrap()
-        .first()
-        .unwrap()
-        .id;
+    let id = db::get_system_events(
+        &pool,
+        1,
+        AcknowledgedFilter::All,
+        db::SystemEventScope::default(),
+    )
+    .await
+    .unwrap()
+    .first()
+    .unwrap()
+    .id;
 
     let err = db::get_acknowledgeable_system_event_type(&pool, id)
         .await
@@ -4289,9 +4314,14 @@ async fn acknowledge_all_system_events_skips_the_ones_with_nothing_to_review(poo
         "only the failed and slow events are ackable"
     );
 
-    let pending = db::get_system_events(&pool, 10, AcknowledgedFilter::Unacknowledged, None)
-        .await
-        .unwrap();
+    let pending = db::get_system_events(
+        &pool,
+        10,
+        AcknowledgedFilter::Unacknowledged,
+        db::SystemEventScope::default(),
+    )
+    .await
+    .unwrap();
     assert_eq!(pending.len(), 2);
     assert!(pending.iter().all(|e| !e.acknowledgeable));
 
@@ -6593,9 +6623,14 @@ async fn system_events_crud(pool: PgPool) {
     .await
     .unwrap();
 
-    let events = db::get_system_events(&pool, 10, AcknowledgedFilter::All, None)
-        .await
-        .unwrap();
+    let events = db::get_system_events(
+        &pool,
+        10,
+        AcknowledgedFilter::All,
+        db::SystemEventScope::default(),
+    )
+    .await
+    .unwrap();
     assert_eq!(events.len(), 2);
 
     let future = Timestamp::now()
@@ -6606,9 +6641,14 @@ async fn system_events_crud(pool: PgPool) {
         .unwrap();
     assert_eq!(deleted, 2);
 
-    let events = db::get_system_events(&pool, 10, AcknowledgedFilter::All, None)
-        .await
-        .unwrap();
+    let events = db::get_system_events(
+        &pool,
+        10,
+        AcknowledgedFilter::All,
+        db::SystemEventScope::default(),
+    )
+    .await
+    .unwrap();
     assert_eq!(events.len(), 0);
 }
 
@@ -6651,9 +6691,14 @@ async fn get_system_events_skips_rows_with_unrecognized_event_type(pool: PgPool)
     .await
     .unwrap();
 
-    let events = db::get_system_events(&pool, 10, AcknowledgedFilter::All, None)
-        .await
-        .unwrap();
+    let events = db::get_system_events(
+        &pool,
+        10,
+        AcknowledgedFilter::All,
+        db::SystemEventScope::default(),
+    )
+    .await
+    .unwrap();
     assert_eq!(events.len(), 2);
     assert!(
         events
@@ -11559,9 +11604,14 @@ async fn delete_system_events_before_keeps_recent(pool: PgPool) {
         "system event created after cutoff must not be deleted"
     );
 
-    let events = db::get_system_events(&pool, 10, AcknowledgedFilter::All, None)
-        .await
-        .unwrap();
+    let events = db::get_system_events(
+        &pool,
+        10,
+        AcknowledgedFilter::All,
+        db::SystemEventScope::default(),
+    )
+    .await
+    .unwrap();
     assert_eq!(events.len(), 1);
 }
 
@@ -11639,9 +11689,14 @@ async fn delete_system_events_before_deletes_old(pool: PgPool) {
         "system event must be deleted with future cutoff"
     );
 
-    let events = db::get_system_events(&pool, 10, AcknowledgedFilter::All, None)
-        .await
-        .unwrap();
+    let events = db::get_system_events(
+        &pool,
+        10,
+        AcknowledgedFilter::All,
+        db::SystemEventScope::default(),
+    )
+    .await
+    .unwrap();
     assert!(events.is_empty());
 }
 
@@ -12474,9 +12529,14 @@ async fn validate_agent_repo_rejects_and_logs_security_event(pool: PgPool) {
     .await
     .unwrap();
 
-    let events = db::get_system_events(&pool, 10, AcknowledgedFilter::All, None)
-        .await
-        .unwrap();
+    let events = db::get_system_events(
+        &pool,
+        10,
+        AcknowledgedFilter::All,
+        db::SystemEventScope::default(),
+    )
+    .await
+    .unwrap();
     let security_events: Vec<_> = events
         .iter()
         .filter(|e| e.event_type == shared::types::SystemEventType::SecurityViolation)
@@ -15080,9 +15140,14 @@ async fn the_repo_hosts_migration_groups_aliases_and_logs_what_it_decided(pool: 
         .expect("the quota on nas.lan moves to the host that took over the name");
     assert_eq!(quota.warn_bytes, Some(100));
 
-    let events = db::get_system_events(&pool, 100, AcknowledgedFilter::All, None)
-        .await
-        .unwrap();
+    let events = db::get_system_events(
+        &pool,
+        100,
+        AcknowledgedFilter::All,
+        db::SystemEventScope::default(),
+    )
+    .await
+    .unwrap();
     let migrated: Vec<&str> = events
         .iter()
         .filter(|e| e.event_type == SystemEventType::RepoHostMigrated)
@@ -16649,9 +16714,14 @@ async fn the_machines_migration_moves_settings_and_merges_linked_dependencies(po
         "the linked dependency got no machine of its own"
     );
 
-    let events = db::get_system_events(&pool, 100, AcknowledgedFilter::All, None)
-        .await
-        .unwrap();
+    let events = db::get_system_events(
+        &pool,
+        100,
+        AcknowledgedFilter::All,
+        db::SystemEventScope::default(),
+    )
+    .await
+    .unwrap();
     let migrated: Vec<&str> = events
         .iter()
         .filter(|e| e.event_type == SystemEventType::MachineMigrated)

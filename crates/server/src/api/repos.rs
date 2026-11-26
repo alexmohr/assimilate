@@ -2653,6 +2653,40 @@ mod tests {
         }
     }
 
+    /// A sync that ran past the warning threshold records a slow-sync event
+    /// beside its completion, both about the repository it synced.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_slow_sync_records_a_slow_sync_event_about_its_repository(pool: PgPool) {
+        log_repo_sync_completion(
+            &pool,
+            42,
+            "slow-repo",
+            "Sync",
+            1,
+            0,
+            SYNC_WARN_DURATION.saturating_add(Duration::from_secs(1)),
+        )
+        .await;
+
+        let scope = db::SystemEventScope {
+            hostnames: None,
+            repo_ids: Some(&[42]),
+        };
+        let mut types: Vec<SystemEventType> =
+            db::get_system_events(&pool, 10, shared::types::AcknowledgedFilter::All, scope)
+                .await
+                .unwrap()
+                .into_iter()
+                .map(|event| event.event_type)
+                .collect();
+        types.sort_by_key(ToString::to_string);
+        assert_eq!(
+            types,
+            vec![SystemEventType::RepoSync, SystemEventType::RepoSyncSlow]
+        );
+    }
+
     #[ignore = "requires DATABASE_URL"]
     #[sqlx::test(migrations = "./migrations")]
     async fn check_known_repo_host_lets_an_unknown_or_matching_host_through(pool: PgPool) {

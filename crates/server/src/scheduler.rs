@@ -589,9 +589,9 @@ async fn handle_scheduled_sync_success(success: ScheduledSyncSuccess<'_>) {
              {duration_secs}s",
         );
         tracing::info!("{msg}");
-        if let Err(e) =
-            db::insert_repo_system_event(pool, SystemEventType::RepoSync, repo_id, &msg).await
-        {
+        let recorded =
+            db::insert_repo_system_event(pool, SystemEventType::RepoSync, repo_id, &msg).await;
+        if let Err(e) = recorded {
             tracing::error!(error = %e, "failed to log sync event");
         }
     }
@@ -602,9 +602,9 @@ async fn handle_scheduled_sync_success(success: ScheduledSyncSuccess<'_>) {
             SYNC_WARN_DURATION.as_secs()
         );
         tracing::error!("{msg}");
-        if let Err(e) =
-            db::insert_repo_system_event(pool, SystemEventType::RepoSyncSlow, repo_id, &msg).await
-        {
+        let recorded =
+            db::insert_repo_system_event(pool, SystemEventType::RepoSyncSlow, repo_id, &msg).await;
+        if let Err(e) = recorded {
             tracing::error!(error = %e, "failed to log slow sync event");
         }
     }
@@ -2966,34 +2966,7 @@ esac
     #[ignore = "requires DATABASE_URL"]
     #[sqlx::test(migrations = "./migrations")]
     async fn a_scheduled_sync_that_changed_the_repo_records_an_event(pool: sqlx::PgPool) {
-        let encryption_key =
-            shared::crypto::derive_key(b"test-secret-key-for-changed-sync").unwrap();
-        let passphrase_encrypted =
-            shared::crypto::encrypt_passphrase("test-pass", &encryption_key).unwrap();
-        let repo = db::insert_repo(
-            &pool,
-            &InsertRepoParams {
-                name: "changed-sync-test-repo",
-                repo_path: "/backup/changed-sync-test",
-                ssh_user: "borg",
-                ssh_host: "storage.local",
-                ssh_port: 22,
-                passphrase_encrypted: &passphrase_encrypted,
-                compression: "lz4",
-                encryption: "repokey",
-                owner_id: None,
-                sync_schedule: None,
-            },
-        )
-        .await
-        .unwrap();
-        let importing_guard = db::ImportingGuard::acquire(
-            &pool,
-            repo.id,
-            shared::task_registry::TaskRegistry::default(),
-        )
-        .await
-        .unwrap();
+        let (repo, importing_guard) = insert_syncing_repo(&pool, "changed-sync-test-repo").await;
 
         handle_scheduled_sync_success(ScheduledSyncSuccess {
             pool: &pool,
@@ -3023,6 +2996,94 @@ esac
                         == "periodic sync for 'changed-sync-test-repo': added 2, removed 1 \
                             archives in 3s"),
             "{events:?}"
+        );
+    }
+
+    /// Inserts a repository named `name` and marks it as syncing, as a
+    /// scheduled sync does before it reports back.
+    async fn insert_syncing_repo(
+        pool: &sqlx::PgPool,
+        name: &str,
+    ) -> (db::RepoRow, db::ImportingGuard) {
+        let encryption_key =
+            shared::crypto::derive_key(b"test-secret-key-for-synced-repo").unwrap();
+        let passphrase_encrypted =
+            shared::crypto::encrypt_passphrase("test-pass", &encryption_key).unwrap();
+        let repo = db::insert_repo(
+            pool,
+            &InsertRepoParams {
+                name,
+                repo_path: &format!("/backup/{name}"),
+                ssh_user: "borg",
+                ssh_host: "storage.local",
+                ssh_port: 22,
+                passphrase_encrypted: &passphrase_encrypted,
+                compression: "lz4",
+                encryption: "repokey",
+                owner_id: None,
+                sync_schedule: None,
+            },
+        )
+        .await
+        .unwrap();
+        let importing_guard = db::ImportingGuard::acquire(
+            pool,
+            repo.id,
+            shared::task_registry::TaskRegistry::default(),
+        )
+        .await
+        .unwrap();
+        (repo, importing_guard)
+    }
+
+    /// A scheduled sync that ran past the warning threshold records a
+    /// slow-sync event about its repository.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_slow_scheduled_sync_records_a_slow_sync_event(pool: sqlx::PgPool) {
+        let (repo, importing_guard) = insert_syncing_repo(&pool, "slow-sync-test-repo").await;
+
+        handle_scheduled_sync_success(ScheduledSyncSuccess {
+            pool: &pool,
+            ui_broadcast: &UiBroadcast::new(),
+            importing_guard,
+            repo_id: repo.id,
+            repo_name: "slow-sync-test-repo",
+            elapsed: SYNC_WARN_DURATION.saturating_add(Duration::from_secs(1)),
+            added: 0,
+            removed: 0,
+        })
+        .await;
+
+        let readers_only = crate::db::SystemEventScope {
+            hostnames: None,
+            repo_ids: Some(&[repo.id]),
+        };
+        let events = db::get_system_events(
+            &pool,
+            10,
+            shared::types::AcknowledgedFilter::All,
+            readers_only,
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            events
+                .iter()
+                .map(|event| event.event_type)
+                .collect::<Vec<_>>(),
+            vec![SystemEventType::RepoSyncSlow]
+        );
+        let others = crate::db::SystemEventScope {
+            hostnames: None,
+            repo_ids: Some(&[repo.id.saturating_add(1)]),
+        };
+        assert!(
+            db::get_system_events(&pool, 10, shared::types::AcknowledgedFilter::All, others)
+                .await
+                .unwrap()
+                .is_empty(),
+            "the event is about this repository alone"
         );
     }
 

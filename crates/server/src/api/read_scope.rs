@@ -88,17 +88,25 @@ async fn view_grants(pool: &sqlx::PgPool, user_id: i64) -> Result<Vec<i64>, ApiE
         .collect())
 }
 
-/// The agents `user_id` may see, hidden agents included.
+/// The agents `user_id` may see. Only an admin sees a hidden agent: hiding an
+/// agent takes it out of every other user's view, View All Agents included.
 ///
 /// # Errors
 ///
 /// Returns [`ApiError::Database`] if a query fails.
 pub async fn visible_agents(pool: &sqlx::PgPool, user_id: i64) -> Result<ReadScope, ApiError> {
-    if db::get_effective_permissions(pool, user_id)
-        .await?
-        .sees_all_agents()
-    {
+    let effective = db::get_effective_permissions(pool, user_id).await?;
+    if effective.can_delete_repo {
         return Ok(ReadScope::All);
+    }
+    if effective.sees_all_agents() {
+        return Ok(ReadScope::Only(
+            db::list_agents(pool, false)
+                .await?
+                .into_iter()
+                .map(|agent| agent.id)
+                .collect(),
+        ));
     }
     // Whoever reads every repository also sees every agent, so only the
     // user's own view grants are left to decide.

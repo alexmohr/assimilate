@@ -12756,6 +12756,40 @@ async fn repository_system_events_reach_only_readers_of_the_repository() {
     );
 }
 
+/// A hidden agent is hidden from a user who sees every agent but is not an
+/// admin, on its own page as much as in the list; an admin still reaches it.
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn a_hidden_agent_is_hidden_from_every_non_admin_view() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+    let session = insert_session_with_role(&pool, "hidden-all-agents", true).await;
+    let mut app = build_test_app(pool.clone());
+    sqlx::query(
+        "INSERT INTO agents (hostname, agent_token_hash, is_hidden) VALUES ('legacy-nas', 'hash', \
+         true)",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let resp = oneshot(&mut app, get_request_as("/api/agents/legacy-nas", &session)).await;
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    let resp = oneshot(&mut app, get_request_as("/api/agents", &session)).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert!(
+        !body_json(resp)
+            .await
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|agent| agent.get("hostname").unwrap() == "legacy-nas")
+    );
+    let resp = oneshot(&mut app, get_request("/api/agents/legacy-nas")).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+}
+
 /// View All Repos without View All Agents still shows every agent, as
 /// Access Control documents: it reads the whole installation.
 #[tokio::test]

@@ -1198,45 +1198,13 @@ async fn execute_borg_delete(
         )
         .await;
 
-    match result {
-        Ok(output) => {
-            let exit_code = output.status.code().unwrap_or(-1);
-            if exit_code != 0 && exit_code != 1 {
-                let stderr = String::from_utf8_lossy(&output.stderr);
-                let err = classify_borg_error(exit_code, &stderr);
-                tracing::error!(repo_id, archive = %archive_name, error = %err, "archive deletion failed");
-                let msg =
-                    format!("failed to delete archive '{archive_name}' (repo {repo_id}): {err}");
-                if let Err(e) = db::insert_repo_system_event(
-                    &state.pool,
-                    SystemEventType::ArchiveDeleteFailed,
-                    repo_id,
-                    &msg,
-                )
-                .await
-                {
-                    tracing::warn!(error = %e, "failed to log archive delete failure");
-                }
-                return false;
-            }
-            true
-        }
-        Err(e) => {
-            tracing::error!(repo_id, archive = %archive_name, error = %e, "failed to execute borg delete");
-            let msg = format!("failed to delete archive '{archive_name}' (repo {repo_id}): {e}");
-            if let Err(log_err) = db::insert_repo_system_event(
-                &state.pool,
-                SystemEventType::ArchiveDeleteFailed,
-                repo_id,
-                &msg,
-            )
-            .await
-            {
-                tracing::warn!(error = %log_err, "failed to log archive delete failure");
-            }
-            false
-        }
-    }
+    let Some(err) = borg_run_failure(result) else {
+        return true;
+    };
+    tracing::error!(repo_id, archive = %archive_name, error = %err, "archive deletion failed");
+    let msg = format!("failed to delete archive '{archive_name}' (repo {repo_id}): {err}");
+    record_archive_failure(state, SystemEventType::ArchiveDeleteFailed, repo_id, &msg).await;
+    false
 }
 
 /// Records that an archive was deleted (or queued for deletion) in the audit
@@ -1320,45 +1288,39 @@ async fn execute_borg_compact(
         .run(&["compact", "--lock-wait", LOCK_WAIT_SECS, borg_repo], env)
         .await;
 
-    match result {
-        Ok(output) => {
-            let exit_code = output.status.code().unwrap_or(-1);
-            if exit_code != 0 && exit_code != 1 {
-                let stderr = String::from_utf8_lossy(&output.stderr);
-                let err = classify_borg_error(exit_code, &stderr);
-                tracing::error!(repo_id, error = %err, "post-delete repository compact failed");
-                let msg = format!(
-                    "failed to compact repository after archive deletion (repo {repo_id}): {err}"
-                );
-                if let Err(e) = db::insert_repo_system_event(
-                    &state.pool,
-                    SystemEventType::ArchiveCompactFailed,
-                    repo_id,
-                    &msg,
-                )
-                .await
-                {
-                    tracing::warn!(error = %e, "failed to log repository compact failure");
-                }
-            }
-        }
-        Err(e) => {
-            tracing::error!(repo_id, error = %e, "failed to execute borg compact");
-            let msg = format!(
-                "failed to compact repository after archive deletion (repo {repo_id}): {e}"
-            );
-            if let Err(log_err) = db::insert_repo_system_event(
-                &state.pool,
-                SystemEventType::ArchiveCompactFailed,
-                repo_id,
-                &msg,
-            )
-            .await
-            {
-                tracing::warn!(error = %log_err, "failed to log repository compact failure");
-            }
-        }
+    let Some(err) = borg_run_failure(result) else {
+        return;
+    };
+    tracing::error!(repo_id, error = %err, "post-delete repository compact failed");
+    let msg =
+        format!("failed to compact repository after archive deletion (repo {repo_id}): {err}");
+    record_archive_failure(state, SystemEventType::ArchiveCompactFailed, repo_id, &msg).await;
+}
+
+/// What went wrong with a borg run, or `None` when it succeeded. Exit code 1
+/// is borg's warning status and counts as success.
+fn borg_run_failure(result: std::io::Result<std::process::Output>) -> Option<String> {
+    let output = match result {
+        Ok(output) => output,
+        Err(e) => return Some(format!("could not run borg: {e}")),
+    };
+    let exit_code = output.status.code().unwrap_or(-1);
+    if exit_code == 0 || exit_code == 1 {
+        return None;
     }
+    Some(classify_borg_error(exit_code, &String::from_utf8_lossy(&output.stderr)).to_string())
+}
+
+/// Records a failed archive operation as a system event about its repository.
+async fn record_archive_failure(
+    state: &AppState,
+    event_type: SystemEventType,
+    repo_id: i64,
+    message: &str,
+) {
+    let _ = db::insert_repo_system_event(&state.pool, event_type, repo_id, message)
+        .await
+        .inspect_err(|e| tracing::warn!(error = %e, "could not record the failure"));
 }
 
 // Strip the leading "./" or bare "." that borg emits when archives are
@@ -2601,6 +2563,26 @@ mod tests {
         let result = fold_immediate_children("", entries);
         assert_eq!(result.len(), 1);
         assert_eq!(result.first().unwrap().path, "etc");
+    }
+
+    #[test]
+    fn a_borg_run_fails_unless_it_exits_with_success_or_a_warning() {
+        use std::os::unix::process::ExitStatusExt as _;
+        let exited = |code: i32| {
+            Ok(std::process::Output {
+                status: std::process::ExitStatus::from_raw(code << 8),
+                stdout: Vec::new(),
+                stderr: b"something broke".to_vec(),
+            })
+        };
+
+        assert_eq!(borg_run_failure(exited(0)), None);
+        assert_eq!(borg_run_failure(exited(1)), None, "exit 1 is a warning");
+        assert!(borg_run_failure(exited(2)).is_some());
+        assert_eq!(
+            borg_run_failure(Err(std::io::Error::other("no such file"))),
+            Some("could not run borg: no such file".to_owned())
+        );
     }
 
     #[test]

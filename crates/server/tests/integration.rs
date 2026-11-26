@@ -824,6 +824,10 @@ EOF
     esac
     ;;
   delete)
+    if [ -n "${{FAKE_BORG_DELETE_EXIT:-}}" ]; then
+      echo "fake delete failure" >&2
+      exit "$FAKE_BORG_DELETE_EXIT"
+    fi
     exit 0
     ;;
   compact)
@@ -4005,6 +4009,96 @@ async fn test_delete_archive_runs_compact_afterwards() {
         .await;
 }
 
+#[cfg(test)]
+/// Deletes the archive `delete-me` of a new repository named `repo_name`
+/// through the API, with a fake borg whose `fail_env` subcommand exits 2, and
+/// returns once the request is accepted. The caller holds the returned fake
+/// borg until the deletion it started has finished.
+async fn delete_archive_with_failing_borg(
+    pool: &PgPool,
+    fail_env: &'static str,
+    repo_name: &str,
+) -> FailingBorgDelete {
+    let empty_list = r#"{"archives": []}"#;
+    let info_repo_json = r#"{
+  "cache": {
+    "stats": {
+      "total_size": 0,
+      "total_csize": 0,
+      "unique_csize": 0,
+      "total_chunks": 0,
+      "total_unique_chunks": 0
+    }
+  }
+}"#;
+    let fake_borg = install_fake_borg(empty_list, empty_list, info_repo_json, "", "").await;
+    let fail = FakeBorgEnvGuard::set(fail_env, "2");
+
+    let (mut app, state) = build_test_app_with_state(pool.clone());
+    let agent_id: i64 = sqlx::query_scalar(
+        "INSERT INTO agents (hostname, agent_token_hash) VALUES ($1, 'hash') RETURNING id",
+    )
+    .bind(format!("{repo_name}-host"))
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    let repo_id = insert_test_repo(pool, repo_name).await;
+    sqlx::query(
+        "INSERT INTO backup_reports (agent_id, repo_id, started_at, finished_at, status, matched, \
+         archive_name) VALUES ($1, $2, NOW(), NOW(), 'success', true, $3)",
+    )
+    .bind(agent_id)
+    .bind(repo_id)
+    .bind("delete-me")
+    .execute(pool)
+    .await
+    .unwrap();
+
+    let req = delete_request(&format!("/api/repos/{repo_id}/archives/delete-me"));
+    let resp = oneshot(&mut app, req).await;
+    assert_eq!(resp.status(), StatusCode::ACCEPTED);
+    FailingBorgDelete {
+        state,
+        repo_id,
+        _fake_borg: fake_borg,
+        _fail: fail,
+    }
+}
+
+#[cfg(test)]
+/// A deletion [`delete_archive_with_failing_borg`] started, and the fake borg
+/// it runs against.
+struct FailingBorgDelete {
+    state: server::AppState,
+    repo_id: i64,
+    _fake_borg: (TempDir, BorgBinaryGuard),
+    _fail: FakeBorgEnvGuard,
+}
+
+#[cfg(test)]
+/// Waits for the system events of `event_type` about `repo_id` and returns
+/// how many there are.
+async fn wait_for_repo_system_events(pool: &PgPool, event_type: &str, repo_id: i64) -> i64 {
+    tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        loop {
+            let rows: i64 = sqlx::query_scalar(
+                "SELECT COUNT(*) FROM system_events WHERE event_type = $1 AND repo_id = $2",
+            )
+            .bind(event_type)
+            .bind(repo_id)
+            .fetch_one(pool)
+            .await
+            .unwrap();
+            if rows > 0 {
+                return rows;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+    })
+    .await
+    .unwrap_or_else(|_| panic!("no {event_type} system event about repo {repo_id}"))
+}
+
 #[tokio::test]
 #[ignore = "requires DATABASE_URL"]
 async fn test_delete_archive_logs_system_event_when_compact_fails() {
@@ -4018,48 +4112,13 @@ async fn test_delete_archive_logs_system_event_when_compact_fails() {
         .execute(&pool)
         .await
         .unwrap();
-
-    let empty_list = r#"{"archives": []}"#;
-    let info_repo_json = r#"{
-  "cache": {
-    "stats": {
-      "total_size": 0,
-      "total_csize": 0,
-      "unique_csize": 0,
-      "total_chunks": 0,
-      "total_unique_chunks": 0
-    }
-  }
-}"#;
-    let (_borg_dir, _borg_guard) =
-        install_fake_borg(empty_list, empty_list, info_repo_json, "", "").await;
-
-    let _compact_exit = FakeBorgEnvGuard::set("FAKE_BORG_COMPACT_EXIT", "2");
-
-    let (mut app, state) = build_test_app_with_state(pool.clone());
-    let agent_id: i64 = sqlx::query_scalar(
-        "INSERT INTO agents (hostname, agent_token_hash) VALUES ('compact-fail-host', 'hash') \
-         RETURNING id",
+    let deletion = delete_archive_with_failing_borg(
+        &pool,
+        "FAKE_BORG_COMPACT_EXIT",
+        "delete-archive-compact-fail-repo",
     )
-    .fetch_one(&pool)
-    .await
-    .unwrap();
-    let repo_id = insert_test_repo(&pool, "delete-archive-compact-fail-repo").await;
-
-    sqlx::query(
-        "INSERT INTO backup_reports (agent_id, repo_id, started_at, finished_at, status, matched, \
-         archive_name) VALUES ($1, $2, NOW(), NOW(), 'success', true, $3)",
-    )
-    .bind(agent_id)
-    .bind(repo_id)
-    .bind("delete-me")
-    .execute(&pool)
-    .await
-    .unwrap();
-
-    let req = delete_request(&format!("/api/repos/{repo_id}/archives/delete-me"));
-    let resp = oneshot(&mut app, req).await;
-    assert_eq!(resp.status(), StatusCode::ACCEPTED);
+    .await;
+    let repo_id = deletion.repo_id;
 
     // The delete itself must still succeed even though the compact that
     // follows it fails.
@@ -4081,29 +4140,41 @@ async fn test_delete_archive_logs_system_event_when_compact_fails() {
     .await
     .expect("the delete should complete even though the follow-up compact fails");
 
-    let event_rows: i64 = timeout(Duration::from_secs(10), async {
-        loop {
-            let rows: i64 = sqlx::query_scalar(
-                "SELECT COUNT(*) FROM system_events WHERE event_type = 'archive_compact_failed'",
-            )
-            .fetch_one(&pool)
-            .await
-            .unwrap();
-            if rows > 0 {
-                return rows;
-            }
-            tokio::time::sleep(Duration::from_millis(50)).await;
-        }
-    })
-    .await
-    .expect("a failed compact should log an archive_compact_failed system event");
+    let event_rows = wait_for_repo_system_events(&pool, "archive_compact_failed", repo_id).await;
     assert_eq!(event_rows, 1);
 
     // The archive deletion runs as a tracked background task whose tail (the
     // post-delete archive-list refresh) continues past the audit-log write.
     // Wait for the task itself rather than for one of its intermediate side
     // effects, so the runtime can't tear down mid-flight.
-    state
+    deletion
+        .state
+        .background_task_tracker
+        .assert_idle(std::time::Duration::from_secs(30))
+        .await;
+}
+
+/// A borg delete that fails records an `archive_delete_failed` event about
+/// the repository.
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn a_failed_archive_delete_logs_a_system_event_about_its_repository() {
+    let _borg_lock = borg_binary_lock().await;
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+    let deletion = delete_archive_with_failing_borg(
+        &pool,
+        "FAKE_BORG_DELETE_EXIT",
+        "delete-archive-delete-fail-repo",
+    )
+    .await;
+
+    let event_rows =
+        wait_for_repo_system_events(&pool, "archive_delete_failed", deletion.repo_id).await;
+    assert_eq!(event_rows, 1);
+    deletion
+        .state
         .background_task_tracker
         .assert_idle(std::time::Duration::from_secs(30))
         .await;

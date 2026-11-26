@@ -627,6 +627,24 @@ pub async fn update_role(
     id: i64,
     params: &InsertRoleParams<'_>,
 ) -> Result<RoleRow, ApiError> {
+    // Exhaustive, so a new role flag cannot be left out of the update.
+    let InsertRoleParams {
+        name,
+        can_create_agent,
+        can_delete_agent,
+        can_delete_own_agent,
+        can_create_repo,
+        can_delete_repo,
+        can_delete_own_repo,
+        can_create_schedule,
+        can_delete_schedule,
+        can_delete_own_schedule,
+        can_manage_tags,
+        can_view_all_repos,
+        can_manage_tunnels,
+        can_upgrade_agent,
+        can_view_all_agents,
+    } = *params;
     sqlx::query_as!(
         RoleRow,
         "UPDATE roles SET name = $2, can_create_agent = $3, can_delete_agent = $4, \
@@ -639,21 +657,21 @@ pub async fn update_role(
          can_delete_schedule, can_delete_own_schedule, can_manage_tags, can_view_all_repos, \
          can_manage_tunnels, can_upgrade_agent, can_view_all_agents, created_at",
         id,
-        params.name,
-        params.can_create_agent,
-        params.can_delete_agent,
-        params.can_delete_own_agent,
-        params.can_create_repo,
-        params.can_delete_repo,
-        params.can_delete_own_repo,
-        params.can_create_schedule,
-        params.can_delete_schedule,
-        params.can_delete_own_schedule,
-        params.can_manage_tags,
-        params.can_view_all_repos,
-        params.can_manage_tunnels,
-        params.can_upgrade_agent,
-        params.can_view_all_agents,
+        name,
+        can_create_agent,
+        can_delete_agent,
+        can_delete_own_agent,
+        can_create_repo,
+        can_delete_repo,
+        can_delete_own_repo,
+        can_create_schedule,
+        can_delete_schedule,
+        can_delete_own_schedule,
+        can_manage_tags,
+        can_view_all_repos,
+        can_manage_tunnels,
+        can_upgrade_agent,
+        can_view_all_agents,
     )
     .fetch_one(pool)
     .await

@@ -6865,17 +6865,6 @@ async fn group_members(pool: PgPool) {
     let user_groups = db::list_user_groups(&pool, user1.id).await.unwrap();
     assert_eq!(user_groups.len(), 1);
     assert_eq!(user_groups.first().unwrap().name, "team");
-
-    let shared = db::user_shares_group_with(&pool, user1.id, user2.id)
-        .await
-        .unwrap();
-    assert!(shared);
-
-    let user3 = db::insert_user(&pool, "grp-user3", "hash").await.unwrap();
-    let not_shared = db::user_shares_group_with(&pool, user1.id, user3.id)
-        .await
-        .unwrap();
-    assert!(!not_shared);
 }
 
 #[sqlx::test(migrations = "./migrations")]

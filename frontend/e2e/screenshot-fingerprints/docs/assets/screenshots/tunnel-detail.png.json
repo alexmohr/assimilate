@@ -1,5 +1,5 @@
 {
   "test": "settings pages",
   "pages": ["frontend/src/views/TunnelDetailView.vue"],
-  "fingerprint": "0bdec08234bd10fa47bbe0e7805d329ac64ed962b7372a4373eeecfd6e9d42d2"
+  "fingerprint": "3d41f0be3e3760e75e0c93a748af74aa844c529f46a95c5be2f6420dd865e46b"
 }

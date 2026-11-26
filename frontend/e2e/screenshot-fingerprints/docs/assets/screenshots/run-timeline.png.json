@@ -1,5 +1,5 @@
 {
   "test": "agents",
   "pages": ["frontend/src/views/ScheduleDetailView.vue"],
-  "fingerprint": "61a5e3f7cef50f125d814d7835cce7b381799a56e9ae2830e8de8b465f3e6a2c"
+  "fingerprint": "1e39f49bc99d29cb9202d90c0b8194eb124b4769222a4f7499d9d497c52ac039"
 }

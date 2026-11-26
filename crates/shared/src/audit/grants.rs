@@ -173,7 +173,10 @@ mod tests {
                 RepoPermission::Delete,
             ]
         );
-        assert_eq!(RepoPermission::from_flags([false; 5]), Vec::<RepoPermission>::new());
+        assert_eq!(
+            RepoPermission::from_flags([false; 5]),
+            Vec::<RepoPermission>::new()
+        );
         assert!(RepoPermission::Extract.is_in(&[RepoPermission::Extract]));
         assert!(!RepoPermission::Backup.is_in(&[RepoPermission::View]));
     }

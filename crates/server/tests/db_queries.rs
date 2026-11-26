@@ -19407,3 +19407,24 @@ async fn timestamps_and_dates_decode_from_postgres_text_output(pool: PgPool) {
     let day: shared::time::Date = row.try_get("day").unwrap();
     assert_eq!(day.to_string(), "2026-03-04");
 }
+
+/// Changing the password of a user who does not exist reports them missing
+/// and changes nothing.
+#[sqlx::test(migrations = "./migrations")]
+async fn changing_a_missing_users_password_is_not_found(pool: PgPool) {
+    let result = db::change_user_password(
+        &pool,
+        987_654,
+        "new-hash",
+        db::PasswordChangeEffects {
+            keep_session: None,
+            revoke_api_tokens: true,
+        },
+    )
+    .await;
+
+    assert!(
+        matches!(result, Err(server::error::ApiError::NotFound(_))),
+        "a missing user is reported missing: {result:?}"
+    );
+}

@@ -175,6 +175,26 @@ describe('GroupsView', () => {
     expect(apiClient.post).not.toHaveBeenCalled()
   })
 
+  it("opens a group's permissions and closes them via the close button and Cancel", async () => {
+    const wrapper = renderWithPlugins(GroupsView)
+    await flushPromises()
+
+    const permissions = () => wrapper.findAll('button').filter((b) => b.text() === 'Permissions')
+    await permissions()[1]!.trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('Group repository permissions')
+    expect(mockApiGet).toHaveBeenCalledWith('/groups/2/permissions')
+    await wrapper.find('button.modal-close').trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).not.toContain('Group repository permissions')
+
+    await permissions()[0]!.trigger('click')
+    await flushPromises()
+    await clickButtonWithText(wrapper, 'Cancel')
+    await flushPromises()
+    expect(wrapper.text()).not.toContain('Group repository permissions')
+  })
+
   it('edits a group via the edit modal, including its description', async () => {
     const mockApiPut = apiClient.put as ReturnType<typeof vi.fn>
     mockApiPut.mockResolvedValue({ data: {} })

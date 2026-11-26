@@ -459,6 +459,30 @@ mod tests {
         );
     }
 
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn shared_repo_is_visible_to_a_group_mate_of_its_owner(pool: PgPool) {
+        let owner = insert_auth_user(&pool, "shared-owner").await;
+        let mate = insert_auth_user(&pool, "shared-mate").await;
+        let stranger = insert_auth_user(&pool, "shared-stranger").await;
+        let group = db::insert_group(&pool, "shared-team", None).await.unwrap();
+        db::set_group_members(&pool, group.id, &[owner.user_id, mate.user_id])
+            .await
+            .unwrap();
+        let shared = shared::types::Visibility::Shared;
+
+        assert!(
+            is_visible_to_user(&pool, mate.user_id, Some(owner.user_id), shared, false)
+                .await
+                .unwrap()
+        );
+        assert!(
+            !is_visible_to_user(&pool, stranger.user_id, Some(owner.user_id), shared, false)
+                .await
+                .unwrap()
+        );
+    }
+
     #[tokio::test]
     async fn unowned_repo_defaults_to_private_semantics() {
         let pool = dummy_pool();

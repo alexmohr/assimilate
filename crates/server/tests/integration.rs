@@ -12646,8 +12646,8 @@ async fn a_schedule_copying_into_a_readable_repository_is_visible() {
     grant_repo_view(&pool, "integration-viewer", copy).await;
     let schedule_id = insert_test_schedule(&pool, agent_id, primary).await;
     sqlx::query(
-        "INSERT INTO schedule_repos (schedule_id, repo_id, execution_order, required) VALUES \
-         ($1, $2, 1, false)",
+        "INSERT INTO schedule_repos (schedule_id, repo_id, execution_order, required) VALUES ($1, \
+         $2, 1, false)",
     )
     .bind(schedule_id)
     .bind(copy)

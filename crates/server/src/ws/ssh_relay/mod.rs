@@ -214,11 +214,8 @@ where
                 }
             },
             read = agent.read(&mut unsolicited) => {
-                return match read {
-                    Ok(0) => Ok(None),
-                    Ok(_) => Err(RelayError::Unsolicited),
-                    Err(e) => Err(RelayError::Reply(ReplyError::Io(e))),
-                };
+                let read = read.map_err(|e| RelayError::Reply(ReplyError::Io(e)))?;
+                return if read == 0 { Ok(None) } else { Err(RelayError::Unsolicited) };
             }
         }
     }
@@ -479,6 +476,35 @@ mod tests {
         assert_eq!(refusals, two_failures);
         assert_eq!(listing, no_keys());
         assert_eq!(agent.await.expect("agent"), list_keys());
+    }
+
+    /// The SSH agent never speaks unasked, so bytes from it while no request
+    /// is waiting for a reply end the relay instead of being passed on as if
+    /// they answered the next one.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn an_unsolicited_reply_from_the_ssh_agent_ends_the_relay(pool: PgPool) {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let (listener, path) = fake_agent(&dir);
+        let agent = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.expect("accept");
+            stream.write_all(&no_keys()).await.expect("write");
+            // The relay drops the connection with the unsolicited bytes
+            // unread, so this side may see a reset rather than a clean end;
+            // either way the read returns once the connection is closed.
+            let mut rest = Vec::new();
+            tokio::time::timeout(Duration::from_secs(10), stream.read_to_end(&mut rest))
+                .await
+                .is_ok()
+        });
+
+        let mut ws = connect(pool, "relay-unsolicited-host", Some(path)).await;
+
+        assert!(closes_without_data(&mut ws).await);
+        assert!(
+            agent.await.expect("agent"),
+            "the SSH agent connection stays open"
+        );
     }
 
     /// A request announcing more than the protocol's 256 KiB limit ends the

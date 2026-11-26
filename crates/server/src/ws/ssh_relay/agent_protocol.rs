@@ -104,18 +104,16 @@ impl RequestBuffer {
         let Some(len) = self.pending.first_chunk::<LENGTH_PREFIX>() else {
             return Ok(None);
         };
-        let len = message_len(*len)?;
-        let Some(frame_len) = len.checked_add(LENGTH_PREFIX) else {
-            return Err(FrameError::TooLong(len));
+        // At most MAX_MESSAGE_LEN, so this cannot saturate.
+        let frame_len = message_len(*len)?.saturating_add(LENGTH_PREFIX);
+        let Some(&message_type) = self.pending.get(LENGTH_PREFIX) else {
+            return Ok(None);
         };
         if self.pending.len() < frame_len {
             return Ok(None);
         }
         let rest = self.pending.split_off(frame_len);
         let bytes = std::mem::replace(&mut self.pending, rest);
-        let Some(&message_type) = bytes.get(LENGTH_PREFIX) else {
-            return Err(FrameError::Empty);
-        };
         Ok(Some(Request {
             kind: AgentRequest::from(message_type),
             bytes,
@@ -188,12 +186,14 @@ mod tests {
     #[test]
     fn a_request_split_across_reads_is_reassembled() {
         let request = message(13, b"key-and-data");
-        let (first, second) = request.split_at(3);
         let mut buffer = RequestBuffer::default();
 
-        buffer.extend(first);
-        assert_eq!(buffer.next_request(), Ok(None));
-        buffer.extend(second);
+        // Part of the length, then the length alone, then part of the body.
+        for end in [3, 4, 7] {
+            buffer.extend(request.get(buffer.pending.len()..end).unwrap());
+            assert_eq!(buffer.next_request(), Ok(None));
+        }
+        buffer.extend(request.get(7..).unwrap());
 
         assert_eq!(
             buffer.next_request(),

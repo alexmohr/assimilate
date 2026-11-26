@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT DISTINCT schedule_id FROM schedule_repos WHERE repo_id = ANY($1)",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "schedule_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "schedule_repos",
+            "name": "schedule_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8Array"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "adabd12a0f88e0cb70324fd6fcbf49bc8f0ee772ce85a6839e666d0211af6a3b"
+}

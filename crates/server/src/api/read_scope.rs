@@ -134,7 +134,8 @@ pub async fn visible_agent_hostnames(
     ))
 }
 
-/// The schedules `user_id` may see: those whose repository they may read.
+/// The schedules `user_id` may see: those that write into a repository they
+/// may read, as their primary target or as one of their further copies.
 ///
 /// # Errors
 ///
@@ -143,20 +144,13 @@ pub async fn visible_schedules(pool: &sqlx::PgPool, user_id: i64) -> Result<Read
     let ReadScope::Only(repos) = readable_repos(pool, user_id).await? else {
         return Ok(ReadScope::All);
     };
+    let repos: Vec<i64> = repos.into_iter().collect();
     Ok(ReadScope::Only(
-        db::list_schedules(pool)
+        db::list_schedule_ids_writing_to(pool, &repos)
             .await?
             .into_iter()
-            .filter(|schedule| schedule_readable(&repos, schedule))
-            .map(|schedule| schedule.id)
             .collect(),
     ))
-}
-
-fn schedule_readable(repos: &HashSet<i64>, schedule: &db::ScheduleRow) -> bool {
-    schedule
-        .repo_id
-        .is_some_and(|repo_id| repos.contains(&repo_id))
 }
 
 /// Requires that the caller may see `schedule`. One they may not is reported
@@ -170,11 +164,10 @@ pub async fn require_visible_schedule(
     auth: &AuthUser,
     schedule: &db::ScheduleRow,
 ) -> Result<(), ApiError> {
-    let visible = match readable_repos(pool, auth.user_id).await? {
-        ReadScope::All => true,
-        ReadScope::Only(repos) => schedule_readable(&repos, schedule),
-    };
-    if visible {
+    if visible_schedules(pool, auth.user_id)
+        .await?
+        .allows(schedule.id)
+    {
         Ok(())
     } else {
         Err(ApiError::NotFound(format!(

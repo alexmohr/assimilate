@@ -12624,6 +12624,76 @@ async fn storage_health_and_trend_statistics_cover_only_readable_repositories() 
     assert_eq!(resp.status(), StatusCode::NOT_FOUND);
 }
 
+/// A schedule that writes a further copy into a repository the viewer may
+/// read is visible to them, together with the agent it runs on, even when its
+/// primary repository is one they may not read.
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn a_schedule_copying_into_a_readable_repository_is_visible() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_non_admin_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+    let agent_id: i64 = sqlx::query_scalar(
+        "INSERT INTO agents (hostname, agent_token_hash) VALUES ('copy-target-host', 'hash') \
+         RETURNING id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let primary = insert_test_repo(&pool, "copy-primary-hidden").await;
+    let copy = insert_test_repo(&pool, "copy-secondary-readable").await;
+    grant_repo_view(&pool, "integration-viewer", copy).await;
+    let schedule_id = insert_test_schedule(&pool, agent_id, primary).await;
+    sqlx::query(
+        "INSERT INTO schedule_repos (schedule_id, repo_id, execution_order, required) VALUES \
+         ($1, $2, 1, false)",
+    )
+    .bind(schedule_id)
+    .bind(copy)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let resp = oneshot(&mut app, non_admin_get_request("/api/schedules")).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let ids: Vec<Value> = body_json(resp)
+        .await
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|schedule| schedule.get("id").unwrap().clone())
+        .collect();
+    assert_eq!(ids, vec![json!(schedule_id)]);
+
+    let resp = oneshot(
+        &mut app,
+        non_admin_get_request(&format!("/api/repos/{copy}/schedules")),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(body_json(resp).await.as_array().unwrap().len(), 1);
+
+    let resp = oneshot(
+        &mut app,
+        non_admin_get_request(&format!("/api/schedules/{schedule_id}")),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let resp = oneshot(&mut app, non_admin_get_request("/api/agents")).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let agents = body_json(resp).await;
+    assert!(
+        agents
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|agent| agent.get("hostname").unwrap() == "copy-target-host"),
+        "the schedule's agent is visible too: {agents}"
+    );
+}
+
 /// View All Repos without View All Agents still shows every agent, as
 /// Access Control documents: it reads the whole installation.
 #[tokio::test]

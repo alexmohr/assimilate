@@ -499,7 +499,9 @@ The token is **not** part of the URL. The agent sends its token as the first Web
 
 ### Protocol
 
-The relay is a **binary** byte-stream bridge between the agent's local Unix domain socket and the server's `SSH_AUTH_SOCK`. After the initial token message, raw SSH agent protocol bytes flow in both directions with no additional framing or JSON.
+The relay is a **binary** bridge between the agent's local Unix domain socket and the server's `SSH_AUTH_SOCK`. After the initial token message, SSH agent protocol bytes flow in both directions with no additional framing or JSON; a message may be split across WebSocket frames.
+
+The server forwards only `SSH_AGENTC_REQUEST_IDENTITIES` (11) and `SSH_AGENTC_SIGN_REQUEST` (13). Any other request is answered with `SSH_AGENT_FAILURE` (5) by the server itself. A message whose length exceeds 256 KiB, in either direction, closes the relay.
 
 For setup instructions and Docker configuration, see [SSH Agent Forwarding](ssh-agent-forwarding.md).
 

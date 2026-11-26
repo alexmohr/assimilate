@@ -9,20 +9,22 @@ use axum::{
     response::IntoResponse,
 };
 use futures_util::{Sink, SinkExt, Stream, StreamExt};
-use shared::ssh::{RelayFrame, agent_socket, connect_agent, drain_frames_to_writer};
+use shared::ssh::{agent_socket, connect_agent};
 use tokio::{
-    io::{AsyncRead, AsyncWrite},
+    io::{AsyncRead, AsyncReadExt as _, AsyncWrite, AsyncWriteExt as _},
     time,
 };
-use tokio_util::io::ReaderStream;
 
+use self::agent_protocol::{FAILURE_REPLY, FrameError, ReplyError, RequestBuffer};
 use crate::{AppState, ws::handler::verify_agent_token};
+
+mod agent_protocol;
 
 /// WebSocket upgrade handler for SSH agent forwarding.
 ///
 /// Opens the encrypted agent channel, authenticates the agent by the token it
-/// sends inside it, then relays bytes bidirectionally between the channel and
-/// the server's local `SSH_AUTH_SOCK`.
+/// sends inside it, then relays the SSH agent requests it is allowed to make
+/// (listing keys and signing) to the server's local `SSH_AUTH_SOCK`.
 pub fn ssh_relay_handler(
     ws: WebSocketUpgrade,
     Path(hostname): Path<String>,
@@ -85,57 +87,141 @@ async fn handle_ssh_relay(
     relay(sink, stream, agent, &hostname, &state).await;
 }
 
+/// Why a relay ended early.
+#[derive(Debug, thiserror::Error)]
+enum RelayError {
+    /// The agent machine sent a message the protocol does not allow.
+    #[error("agent machine broke the SSH agent protocol: {0}")]
+    Request(#[from] FrameError),
+    /// The server's SSH agent's reply could not be read.
+    #[error(transparent)]
+    Reply(#[from] ReplyError),
+    /// Writing a request to the server's SSH agent failed.
+    #[error("writing to the SSH agent: {0}")]
+    AgentWrite(std::io::Error),
+    /// The server's SSH agent sent bytes nobody asked for.
+    #[error("the SSH agent sent an unsolicited reply")]
+    Unsolicited,
+    /// The WebSocket would not take a reply.
+    #[error("the WebSocket closed before a reply was sent")]
+    WebSocketClosed,
+}
+
 async fn relay<S, Si, St, E>(
     mut ws_sink: Si,
-    ws_stream: St,
+    mut ws_stream: St,
     agent: S,
     hostname: &str,
     state: &AppState,
 ) where
-    S: AsyncRead + AsyncWrite,
+    S: AsyncRead + AsyncWrite + Unpin,
     Si: Sink<Message> + Unpin,
     St: Stream<Item = Result<Message, E>> + Unpin,
     E: std::fmt::Display,
 {
     tracing::info!(hostname = %hostname, "ssh relay connection opened");
 
-    let (unix_read, unix_write) = tokio::io::split(agent);
-    let mut unix_read_stream = ReaderStream::new(unix_read);
-
-    let unix_to_ws = async {
-        while let Some(Ok(data)) = unix_read_stream.next().await {
-            if ws_sink.send(Message::Binary(data)).await.is_err() {
-                break;
-            }
-        }
-    };
-
-    let ws_to_unix = drain_frames_to_writer(
-        ws_stream.map(|msg| match msg {
-            Ok(Message::Binary(data)) => RelayFrame::Data(data),
-            Ok(Message::Close(_)) => RelayFrame::Stop,
-            Ok(Message::Text(_) | Message::Ping(_) | Message::Pong(_)) => RelayFrame::Skip,
-            Err(e) => {
-                tracing::warn!(error = %e, "ssh relay: ws read error");
-                RelayFrame::Stop
-            }
-        }),
-        unix_write,
-    );
-
     // Either side closing ends the relay: the SSH agent never closes a
     // connection on its own, and a closed WebSocket gets no further replies.
     tokio::select! {
-        () = unix_to_ws => {}
-        () = ws_to_unix => {}
+        result = relay_requests(&mut ws_sink, &mut ws_stream, agent, hostname) => {
+            if let Err(e) = result {
+                tracing::warn!(hostname = %hostname, error = %e, "ssh relay ended");
+            }
+        }
         () = state.shutdown_token.cancelled() => {
             tracing::debug!(hostname = %hostname, "shutdown signal received, closing relay");
         }
     }
-    // Dropping the agent's halves on return closes its connection.
+    // Dropping the agent connection on return closes it.
     let _ = ws_sink.close().await;
 
     tracing::info!(hostname = %hostname, "ssh relay connection closed");
+}
+
+/// Relays requests from the agent machine to the server's SSH agent one at a
+/// time, each followed by its reply, until either side closes.
+///
+/// Only requests to list the keys and to sign with one reach the SSH agent;
+/// any other request (adding, removing or locking keys, extensions) would
+/// change the agent every host shares, so the relay answers it with
+/// `SSH_AGENT_FAILURE` itself. Taking one request at a time keeps those
+/// replies in order with the agent's own, as the protocol requires.
+async fn relay_requests<S, Si, St, E>(
+    ws_sink: &mut Si,
+    ws_stream: &mut St,
+    mut agent: S,
+    hostname: &str,
+) -> Result<(), RelayError>
+where
+    S: AsyncRead + AsyncWrite + Unpin,
+    Si: Sink<Message> + Unpin,
+    St: Stream<Item = Result<Message, E>> + Unpin,
+    E: std::fmt::Display,
+{
+    let mut requests = RequestBuffer::default();
+    while let Some(request) = next_request(ws_stream, &mut requests, &mut agent).await? {
+        let reply = if request.kind.is_allowed() {
+            agent
+                .write_all(&request.bytes)
+                .await
+                .map_err(RelayError::AgentWrite)?;
+            agent_protocol::read_reply(&mut agent).await?
+        } else {
+            tracing::warn!(
+                hostname = %hostname,
+                request = ?request.kind,
+                "ssh relay: refused an SSH agent request that is not a key listing or signature"
+            );
+            FAILURE_REPLY.to_vec()
+        };
+        ws_sink
+            .send(Message::Binary(reply.into()))
+            .await
+            .map_err(|_| RelayError::WebSocketClosed)?;
+    }
+    Ok(())
+}
+
+/// The agent machine's next complete request, or `None` once it has closed
+/// the WebSocket or the server's SSH agent has closed its connection.
+async fn next_request<S, St, E>(
+    ws_stream: &mut St,
+    requests: &mut RequestBuffer,
+    agent: &mut S,
+) -> Result<Option<agent_protocol::Request>, RelayError>
+where
+    S: AsyncRead + Unpin,
+    St: Stream<Item = Result<Message, E>> + Unpin,
+    E: std::fmt::Display,
+{
+    loop {
+        if let Some(request) = requests.next_request()? {
+            return Ok(Some(request));
+        }
+        // While waiting for a request the SSH agent has nothing to say, so
+        // anything read from it is either its connection closing or a
+        // protocol violation.
+        let mut unsolicited = [0; 1];
+        tokio::select! {
+            message = ws_stream.next() => match message {
+                Some(Ok(Message::Binary(data))) => requests.extend(&data),
+                Some(Ok(Message::Text(_) | Message::Ping(_) | Message::Pong(_))) => {}
+                Some(Ok(Message::Close(_))) | None => return Ok(None),
+                Some(Err(e)) => {
+                    tracing::warn!(error = %e, "ssh relay: ws read error");
+                    return Ok(None);
+                }
+            },
+            read = agent.read(&mut unsolicited) => {
+                return match read {
+                    Ok(0) => Ok(None),
+                    Ok(_) => Err(RelayError::Unsolicited),
+                    Err(e) => Err(RelayError::Reply(ReplyError::Io(e))),
+                };
+            }
+        }
+    }
 }
 
 async fn read_auth_token<St, E>(stream: &mut St) -> Option<String>
@@ -161,10 +247,7 @@ mod tests {
 
     use shared::agent_channel::ws::{DecryptedStream, EncryptedSink, TungsteniteCodec, initiate};
     use sqlx::PgPool;
-    use tokio::{
-        io::{AsyncReadExt as _, AsyncWriteExt as _},
-        net::{UnixListener, UnixStream},
-    };
+    use tokio::net::{UnixListener, UnixStream};
     use tokio_tungstenite::tungstenite::Message as WsMessage;
     use tokio_util::sync::CancellationToken;
 
@@ -303,6 +386,32 @@ mod tests {
         !frames.iter().any(WsMessage::is_binary)
     }
 
+    /// An SSH agent message of `message_type` with `body` after it, length
+    /// prefix included.
+    fn message(message_type: u8, body: &[u8]) -> Vec<u8> {
+        let content = [&[message_type], body].concat();
+        let len = u32::try_from(content.len()).expect("message length");
+        [len.to_be_bytes().as_slice(), &content].concat()
+    }
+
+    /// `SSH_AGENTC_REQUEST_IDENTITIES`.
+    fn list_keys() -> Vec<u8> {
+        message(11, b"")
+    }
+
+    /// `SSH_AGENT_IDENTITIES_ANSWER` with no keys.
+    fn no_keys() -> Vec<u8> {
+        message(12, &[0, 0, 0, 0])
+    }
+
+    /// Sends `bytes` to the relay as one binary frame.
+    async fn send(ws: &mut Client, bytes: &[u8]) {
+        ws.sink
+            .send(WsMessage::Binary(bytes.to_vec().into()))
+            .await
+            .expect("send");
+    }
+
     #[ignore = "requires DATABASE_URL"]
     #[sqlx::test(migrations = "./migrations")]
     async fn an_authenticated_agent_is_relayed_to_the_ssh_agent(pool: PgPool) {
@@ -311,9 +420,9 @@ mod tests {
         let listener = tokio::net::UnixListener::bind(&path).expect("bind agent");
         let agent = tokio::spawn(async move {
             let (mut stream, _) = listener.accept().await.expect("accept");
-            let mut request = vec![0; 4];
+            let mut request = vec![0; list_keys().len()];
             stream.read_exact(&mut request).await.expect("read");
-            stream.write_all(b"pong").await.expect("write");
+            stream.write_all(&no_keys()).await.expect("write");
             request
         });
 
@@ -323,10 +432,7 @@ mod tests {
             Some(path.to_str().expect("utf-8 path").to_owned()),
         )
         .await;
-        ws.sink
-            .send(WsMessage::Binary(b"ping".to_vec().into()))
-            .await
-            .expect("send");
+        send(&mut ws, &list_keys()).await;
         // The relay sends only what the SSH agent wrote, so its first frame
         // is the reply.
         let reply = tokio::time::timeout(Duration::from_secs(10), ws.stream.next())
@@ -335,8 +441,66 @@ mod tests {
             .expect("open")
             .expect("frame");
 
-        assert_eq!(reply, WsMessage::Binary(b"pong".to_vec().into()));
-        assert_eq!(agent.await.expect("agent"), b"ping");
+        assert_eq!(reply, WsMessage::Binary(no_keys().into()));
+        assert_eq!(agent.await.expect("agent"), list_keys());
+    }
+
+    /// A request that would change the SSH agent every host shares (here
+    /// `SSH_AGENTC_REMOVE_ALL_IDENTITIES`, then `SSH_AGENTC_LOCK`) is answered
+    /// with `SSH_AGENT_FAILURE` and never reaches it, while a key listing
+    /// sent after them, split across two frames, still does.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn requests_that_change_the_ssh_agent_never_reach_it(pool: PgPool) {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let (listener, path) = fake_agent(&dir);
+        let agent = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.expect("accept");
+            let mut request = vec![0; list_keys().len()];
+            stream.read_exact(&mut request).await.expect("read");
+            stream.write_all(&no_keys()).await.expect("write");
+            let mut rest = Vec::new();
+            stream.read_to_end(&mut rest).await.expect("read rest");
+            [request, rest].concat()
+        });
+
+        let mut ws = connect(pool, "relay-refuse-host", Some(path)).await;
+        let lock = message(22, b"\0\0\0\x08password");
+        send(&mut ws, &[message(19, b""), lock].concat()).await;
+        let two_failures = [FAILURE_REPLY, FAILURE_REPLY].concat();
+        let refusals = receive(&mut ws, two_failures.len()).await;
+        let keys = list_keys();
+        let (head, tail) = keys.split_at(2);
+        send(&mut ws, head).await;
+        send(&mut ws, tail).await;
+        let listing = receive(&mut ws, no_keys().len()).await;
+        ws.sink.close().await.expect("close");
+
+        assert_eq!(refusals, two_failures);
+        assert_eq!(listing, no_keys());
+        assert_eq!(agent.await.expect("agent"), list_keys());
+    }
+
+    /// A request announcing more than the protocol's 256 KiB limit ends the
+    /// relay from its length prefix alone, without reaching the SSH agent.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn an_oversized_request_ends_the_relay(pool: PgPool) {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let (listener, path) = fake_agent(&dir);
+        let agent = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.expect("accept");
+            let mut received = Vec::new();
+            stream.read_to_end(&mut received).await.expect("read");
+            received
+        });
+
+        let mut ws = connect(pool, "relay-oversized-host", Some(path)).await;
+        let len = u32::try_from(agent_protocol::MAX_MESSAGE_LEN + 1).expect("length");
+        send(&mut ws, &len.to_be_bytes()).await;
+
+        assert!(closes_without_data(&mut ws).await);
+        assert_eq!(agent.await.expect("agent"), Vec::<u8>::new());
     }
 
     /// An agent from before the encrypted channel sends its token as plain
@@ -429,42 +593,36 @@ mod tests {
     async fn bytes_flow_both_ways_for_several_exchanges(pool: PgPool) {
         let dir = tempfile::tempdir().expect("tempdir");
         let (listener, path) = fake_agent(&dir);
-        let large: Vec<u8> = (0..=u8::MAX).cycle().take(64 * 1024).collect();
+        let signature: Vec<u8> = (0..=u8::MAX).cycle().take(64 * 1024).collect();
+        let large = message(14, &signature);
         let large_reply = large.clone();
+        let sign = message(13, b"key-and-data");
+        let sign_len = sign.len();
         let agent = tokio::spawn(async move {
             let (mut stream, _) = listener.accept().await.expect("accept");
             let mut requests = Vec::new();
-            for reply in [b"one!".as_slice(), large_reply.as_slice()] {
-                let mut request = vec![0; 4];
+            for (reply, len) in [(no_keys(), list_keys().len()), (large_reply, sign_len)] {
+                let mut request = vec![0; len];
                 stream.read_exact(&mut request).await.expect("read");
-                stream.write_all(reply).await.expect("write");
+                stream.write_all(&reply).await.expect("write");
                 requests.push(request);
             }
             requests
         });
 
         let mut ws = connect(pool, "relay-exchanges-host", Some(path)).await;
-        ws.sink
-            .send(WsMessage::Binary(b"req1".to_vec().into()))
-            .await
-            .expect("send");
-        let first = receive(&mut ws, 4).await;
+        send(&mut ws, &list_keys()).await;
+        let first = receive(&mut ws, no_keys().len()).await;
         ws.sink
             .send(WsMessage::Text("not for the agent".into()))
             .await
             .expect("send text");
-        ws.sink
-            .send(WsMessage::Binary(b"req2".to_vec().into()))
-            .await
-            .expect("send");
+        send(&mut ws, &sign).await;
         let second = receive(&mut ws, large.len()).await;
 
-        assert_eq!(first, b"one!");
+        assert_eq!(first, no_keys());
         assert_eq!(second, large);
-        assert_eq!(
-            agent.await.expect("agent"),
-            vec![b"req1".to_vec(), b"req2".to_vec()]
-        );
+        assert_eq!(agent.await.expect("agent"), vec![list_keys(), sign]);
     }
 
     #[ignore = "requires DATABASE_URL"]

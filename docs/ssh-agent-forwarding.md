@@ -47,7 +47,9 @@ sequenceDiagram
     Repo->>Borg: Authorised — backup proceeds
 ```
 
-Before each backup the agent creates a temporary Unix domain socket in a private directory under `$TMPDIR`. For every connection borg makes to that socket the agent opens a new WebSocket to the server's relay endpoint at `/ws/ssh-agent/{hostname}`, completes the encrypted channel handshake against the server key it pins, and sends its token as the first encrypted message. The server authenticates the request by verifying the token against the bcrypt hash stored in the database, then connects to its own `SSH_AUTH_SOCK` and relays bytes bidirectionally between the encrypted WebSocket and the local agent socket. As soon as either side closes, the server closes the other, so no connection to the SSH agent outlives its WebSocket. When the backup finishes the temporary socket directory is removed automatically.
+Before each backup the agent creates a temporary Unix domain socket in a private directory under `$TMPDIR`. For every connection borg makes to that socket the agent opens a new WebSocket to the server's relay endpoint at `/ws/ssh-agent/{hostname}`, completes the encrypted channel handshake against the server key it pins, and sends its token as the first encrypted message. The server authenticates the request by verifying the token against the bcrypt hash stored in the database, then connects to its own `SSH_AUTH_SOCK` and relays SSH agent requests between the encrypted WebSocket and the local agent socket, one request and its reply at a time.
+
+The relay reads each request's message type and forwards only the two a backup needs: listing the keys (`SSH_AGENTC_REQUEST_IDENTITIES`) and signing an SSH login with one of them (`SSH_AGENTC_SIGN_REQUEST`). Every other request, such as adding, removing or locking keys or a protocol extension, would change the SSH agent that every agent machine and the server itself share, so the server answers it with `SSH_AGENT_FAILURE` without passing it on and logs a warning naming the host. A message larger than 256 KiB, the limit OpenSSH's own agent applies, ends the relay. As soon as either side closes, the server closes the other, so no connection to the SSH agent outlives its WebSocket. When the backup finishes the temporary socket directory is removed automatically.
 
 On a macOS agent the temporary socket is a unix socket as on Linux.
 
@@ -156,6 +158,7 @@ Every agent borrows this key, so whatever it may do on the host, a compromised a
 | `SSH_AUTH_SOCK` not set on server | Relay endpoint closes immediately; agent logs a warning; backup proceeds without forwarding |
 | Server's ssh-agent socket unreachable | Same as above — relay closes, backup falls back to local keys |
 | Token authentication fails | Server closes the WebSocket; agent logs a warning; backup proceeds without forwarding |
+| Agent sends a request other than listing keys or signing | Server answers `SSH_AGENT_FAILURE`, logs a warning naming the host, and keeps relaying; the server's SSH agent never sees the request |
 | Network interruption during relay | Active borg SSH connection drops; borg retries according to its own retry logic |
 | Key not authorised on repo host | SSH authentication fails; borg exits with an error; backup is marked failed |
 | Temp socket directory creation fails | Agent logs an error; backup proceeds without forwarding |

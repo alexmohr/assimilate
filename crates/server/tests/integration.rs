@@ -530,6 +530,11 @@ fn test_app_stats_and_notification_routes() -> Router<server::AppState> {
                 .delete(server::api::stats::unacknowledge_system_event),
         )
         .route("/api/stats/calendar", get(server::api::stats::calendar))
+        .route("/api/stats/trends", get(server::api::stats::trends))
+        .route(
+            "/api/stats/storage-trends/by-repo",
+            get(server::api::stats::storage_trends_by_repo),
+        )
         .route("/api/audit-log", get(server::api::audit::list_audit_log))
         .route(
             "/api/auth/preferences",
@@ -12530,6 +12535,122 @@ async fn dashboard_statistics_cover_only_readable_repositories() {
         .map(|entry| entry.get("name").unwrap().clone())
         .collect();
     assert_eq!(names, vec![json!("stats-readable-repo")]);
+}
+
+/// Storage, health and trend figures cover only what the caller may read,
+/// and a trend for a repository they may not read is reported missing.
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn storage_health_and_trend_statistics_cover_only_readable_repositories() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_non_admin_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+    let agent_id: i64 = sqlx::query_scalar(
+        "INSERT INTO agents (hostname, agent_token_hash) VALUES ('stats-scope-host', 'hash') \
+         RETURNING id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let readable = insert_test_repo(&pool, "stats-scope-readable").await;
+    let hidden = insert_test_repo(&pool, "stats-scope-hidden").await;
+    grant_repo_view(&pool, "integration-viewer", readable).await;
+    let readable_schedule = insert_test_schedule(&pool, agent_id, readable).await;
+    insert_test_schedule(&pool, agent_id, hidden).await;
+    for (repo_id, archive) in [(readable, "readable-archive"), (hidden, "hidden-archive")] {
+        sqlx::query(
+            "INSERT INTO backup_reports (agent_id, repo_id, started_at, finished_at, status, \
+             original_size, compressed_size, deduplicated_size, matched, archive_name) VALUES \
+             ($1, $2, NOW(), NOW(), 'success', 100, 80, 60, true, $3)",
+        )
+        .bind(agent_id)
+        .bind(repo_id)
+        .bind(archive)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+
+    let resp = oneshot(&mut app, non_admin_get_request("/api/stats/storage")).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let storage = body_json(resp).await;
+    let targets: Vec<&Value> = storage
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|row| row.get("target_name").unwrap())
+        .collect();
+    assert_eq!(targets, vec![&json!("stats-scope-readable")]);
+
+    let resp = oneshot(&mut app, non_admin_get_request("/api/stats/health")).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let schedules: Vec<Value> = body_json(resp)
+        .await
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|row| row.get("schedule_id").unwrap().clone())
+        .collect();
+    assert_eq!(schedules, vec![json!(readable_schedule)]);
+
+    let resp = oneshot(
+        &mut app,
+        non_admin_get_request("/api/stats/storage-trends/by-repo?days=7"),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let trend = body_json(resp).await;
+    let trend = trend.as_array().unwrap();
+    assert!(!trend.is_empty(), "the readable repository has a trend");
+    assert!(
+        trend
+            .iter()
+            .all(|entry| entry.get("repo_id").unwrap() == readable),
+        "no trend entry for a repository the viewer may not read: {trend:?}"
+    );
+
+    let resp = oneshot(
+        &mut app,
+        non_admin_get_request(&format!("/api/stats/trends?repo_id={readable}")),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let resp = oneshot(
+        &mut app,
+        non_admin_get_request(&format!("/api/stats/trends?repo_id={hidden}")),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+}
+
+/// View All Repos without View All Agents still shows every agent, as
+/// Access Control documents: it reads the whole installation.
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn view_all_repos_lists_every_agent() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    let session = insert_session_with_role(&pool, "all-repos-agents", true).await;
+    let mut app = build_test_app(pool.clone());
+    sqlx::query(
+        "INSERT INTO agents (hostname, agent_token_hash) VALUES ('unscheduled-host', 'hash')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let resp = oneshot(&mut app, get_request_as("/api/agents", &session)).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let agents = body_json(resp).await;
+    assert!(
+        agents
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|agent| agent.get("hostname").unwrap() == "unscheduled-host"),
+        "View All Repos lists an agent no schedule backs up: {agents}"
+    );
 }
 
 /// A user whose roles lack Create Schedule cannot create one, even with

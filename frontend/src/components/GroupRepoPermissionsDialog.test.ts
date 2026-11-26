@@ -95,4 +95,44 @@ describe('GroupRepoPermissionsDialog', () => {
     expect(wrapper.emitted('close')).toHaveLength(1)
     wrapper.unmount()
   })
+
+  it('says so when the permissions cannot be loaded', async () => {
+    mockGet.mockRejectedValue(new Error('network down'))
+    const wrapper = await render()
+
+    expect(document.body.textContent).toContain('network down')
+    expect(document.querySelector('input[type="checkbox"]')).toBeNull()
+    wrapper.unmount()
+  })
+
+  it('stays open and says so when saving fails', async () => {
+    mockPut.mockRejectedValue(new Error('save refused'))
+    const wrapper = await render()
+
+    checkbox('View on server-daily').click()
+    const save = [...document.querySelectorAll<HTMLButtonElement>('button')].find(
+      (button) => button.textContent?.trim() === 'Save permissions',
+    )
+    save?.click()
+    await flushPromises()
+
+    expect(document.body.textContent).toContain('save refused')
+    expect(wrapper.emitted('close')).toBeUndefined()
+    wrapper.unmount()
+  })
+
+  it('closes from the close button and from Cancel without saving', async () => {
+    const wrapper = await render()
+
+    document.querySelector<HTMLButtonElement>('button.modal-close')?.click()
+    const cancel = [...document.querySelectorAll<HTMLButtonElement>('button')].find(
+      (button) => button.textContent?.trim() === 'Cancel',
+    )
+    cancel?.click()
+    await flushPromises()
+
+    expect(wrapper.emitted('close')).toHaveLength(2)
+    expect(mockPut).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
 })

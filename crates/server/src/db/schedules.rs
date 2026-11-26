@@ -271,7 +271,8 @@ pub async fn replace_schedule_repos(
 }
 
 /// The agents a schedule writing to one of `repo_ids` runs on: the agents a
-/// user who may read those repositories can see.
+/// user who may read those repositories can see. Hidden agents are left out,
+/// since hiding an agent takes it out of every restricted user's view.
 ///
 /// # Errors
 ///
@@ -282,7 +283,8 @@ pub async fn list_agent_ids_backing_up_to(
 ) -> Result<Vec<i64>, ApiError> {
     sqlx::query_scalar!(
         "SELECT DISTINCT st.agent_id FROM schedule_targets st JOIN schedules s ON s.id = \
-         st.schedule_id WHERE s.repo_id = ANY($1)",
+         st.schedule_id JOIN agents a ON a.id = st.agent_id WHERE s.repo_id = ANY($1) AND NOT \
+         a.is_hidden",
         repo_ids,
     )
     .fetch_all(pool)

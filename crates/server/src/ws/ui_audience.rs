@@ -140,7 +140,8 @@ impl UiAudience {
         let agents = visible_agents(pool, user_id).await?;
         let repos = readable_repos(pool, user_id).await?;
         let mut scope = VisibleScope::default();
-        for agent in db::list_agents(pool, true).await? {
+        // A hidden agent stays out of every audience but an admin's.
+        for agent in db::list_agents(pool, false).await? {
             if agents.allows(agent.id) {
                 scope.agent_ids.insert(agent.id);
                 scope.hostnames.insert(agent.hostname);

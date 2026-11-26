@@ -267,6 +267,7 @@ mod tests {
     use tokio_tungstenite::tungstenite::{self, client::IntoClientRequest};
     use tokio_util::sync::CancellationToken;
 
+    use super::UiAudience;
     use crate::{api::tokens::hash_token, db, test_support::insert_auth_user};
 
     /// Serves `/ws/ui` on a loopback port, re-checking sessions every
@@ -618,6 +619,38 @@ mod tests {
         assert_eq!(super::next_event(&mut rx).await, Some(3));
         assert_eq!(super::next_event(&mut rx).await, Some(4));
         assert_eq!(super::next_event(&mut rx).await, None);
+    }
+
+    /// Hiding an agent takes it out of a restricted user's live view, even
+    /// though it still backs up to a repository they may read.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_hidden_agent_leaves_a_viewers_audience(pool: sqlx::PgPool) {
+        let viewer = insert_auth_user(&pool, "hidden-viewer").await;
+        let agent = db::insert_agent(&pool, "hidden-host", None, "token-h", None, None)
+            .await
+            .expect("insert agent");
+        let repo = insert_repo(&pool, "hidden-host-repo", None).await;
+        crate::test_support::let_user_see_agent(&pool, viewer.user_id, agent.id, repo).await;
+        let audience = UiAudience::load(&pool, viewer.user_id)
+            .await
+            .expect("audience");
+        assert!(audience.may_see_backup("hidden-host", repo));
+
+        db::set_agent_hidden(&pool, agent.id, true)
+            .await
+            .expect("hide agent");
+        let audience = UiAudience::load(&pool, viewer.user_id)
+            .await
+            .expect("audience");
+
+        assert!(!audience.may_see_backup("hidden-host", repo));
+        assert!(
+            !crate::api::read_scope::visible_agents(&pool, viewer.user_id)
+                .await
+                .expect("scope")
+                .allows(agent.id)
+        );
     }
 
     /// Inserts a repository named `name` owned by `owner_id` and returns its id.

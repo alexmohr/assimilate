@@ -270,9 +270,10 @@ pub async fn replace_schedule_repos(
     tx.commit().await.map_err(ApiError::Database)
 }
 
-/// The agents a schedule writing to one of `repo_ids` runs on: the agents a
-/// user who may read those repositories can see. Hidden agents are left out,
-/// since hiding an agent takes it out of every restricted user's view.
+/// The agents a schedule writing to one of `repo_ids`, as its primary target
+/// or as a further copy, runs on: the agents a user who may read those
+/// repositories can see. Hidden agents are left out, since hiding an agent
+/// takes it out of every restricted user's view.
 ///
 /// # Errors
 ///
@@ -282,9 +283,28 @@ pub async fn list_agent_ids_backing_up_to(
     repo_ids: &[i64],
 ) -> Result<Vec<i64>, ApiError> {
     sqlx::query_scalar!(
-        "SELECT DISTINCT st.agent_id FROM schedule_targets st JOIN schedules s ON s.id = \
-         st.schedule_id JOIN agents a ON a.id = st.agent_id WHERE s.repo_id = ANY($1) AND NOT \
-         a.is_hidden",
+        "SELECT DISTINCT st.agent_id FROM schedule_targets st JOIN schedule_repos sr ON \
+         sr.schedule_id = st.schedule_id JOIN agents a ON a.id = st.agent_id WHERE sr.repo_id = \
+         ANY($1) AND NOT a.is_hidden",
+        repo_ids,
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(ApiError::Database)
+}
+
+/// The schedules that write into one of `repo_ids`, as their primary target
+/// or as one of their further copies.
+///
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
+pub async fn list_schedule_ids_writing_to(
+    pool: &PgPool,
+    repo_ids: &[i64],
+) -> Result<Vec<i64>, ApiError> {
+    sqlx::query_scalar!(
+        "SELECT DISTINCT schedule_id FROM schedule_repos WHERE repo_id = ANY($1)",
         repo_ids,
     )
     .fetch_all(pool)

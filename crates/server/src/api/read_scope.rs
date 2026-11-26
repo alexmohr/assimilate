@@ -74,14 +74,18 @@ async fn granted_repos(pool: &sqlx::PgPool, user_id: i64) -> Result<Option<Vec<i
     if effective.can_delete_repo || effective.can_view_all_repos {
         return Ok(None);
     }
-    Ok(Some(
-        db::list_effective_repo_permissions_for_user(pool, user_id)
-            .await?
-            .into_iter()
-            .filter(|grant| grant.can_view)
-            .map(|grant| grant.repo_id)
-            .collect(),
-    ))
+    Ok(Some(view_grants(pool, user_id).await?))
+}
+
+/// The repositories `user_id`'s own grants or their groups' grants allow
+/// them to view.
+async fn view_grants(pool: &sqlx::PgPool, user_id: i64) -> Result<Vec<i64>, ApiError> {
+    Ok(db::list_effective_repo_permissions_for_user(pool, user_id)
+        .await?
+        .into_iter()
+        .filter(|grant| grant.can_view)
+        .map(|grant| grant.repo_id)
+        .collect())
 }
 
 /// The agents `user_id` may see, hidden agents included.
@@ -96,9 +100,9 @@ pub async fn visible_agents(pool: &sqlx::PgPool, user_id: i64) -> Result<ReadSco
     {
         return Ok(ReadScope::All);
     }
-    let Some(granted) = granted_repos(pool, user_id).await? else {
-        return Ok(ReadScope::All);
-    };
+    // Whoever reads every repository also sees every agent, so only the
+    // user's own view grants are left to decide.
+    let granted = view_grants(pool, user_id).await?;
     Ok(ReadScope::Only(
         db::list_agent_ids_backing_up_to(pool, &granted)
             .await?

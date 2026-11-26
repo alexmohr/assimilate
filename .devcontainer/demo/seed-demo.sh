@@ -1363,7 +1363,7 @@ ON CONFLICT DO NOTHING;
 -- schedules, hosts, reports and statistics behind it (Access Control, "What a
 -- User Can See"; e2e/rbac.spec.ts).
 INSERT INTO repo_permissions (user_id, repo_id, can_view)
-SELECT u.id, r.id FROM users u, repos r WHERE u.username = 'viewer1' AND r.name = 'server-daily'
+SELECT u.id, r.id, true FROM users u, repos r WHERE u.username = 'viewer1' AND r.name = 'server-daily'
 ON CONFLICT (user_id, repo_id) DO UPDATE SET can_view = true;
 SQL
 
@@ -1375,7 +1375,7 @@ api POST "/api/groups" '{"name":"data-team","description":"Database and analytic
 # so viewer1 keeps seeing server-daily alone (e2e/rbac.spec.ts).
 PGPASSWORD=borg_demo psql -h postgres -U borg -d borg <<'SQL'
 INSERT INTO group_repo_permissions (group_id, repo_id, can_view, can_backup)
-SELECT g.id, r.id FROM groups g, repos r WHERE g.name = 'data-team' AND r.name = 'database-hourly'
+SELECT g.id, r.id, true, true FROM groups g, repos r WHERE g.name = 'data-team' AND r.name = 'database-hourly'
 ON CONFLICT (group_id, repo_id) DO UPDATE SET can_view = true, can_backup = true;
 SQL
 

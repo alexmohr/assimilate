@@ -481,33 +481,6 @@ pub async fn list_user_groups(pool: &PgPool, user_id: i64) -> Result<Vec<GroupRo
 /// # Errors
 ///
 /// Returns [`ApiError::Database`] if the database query fails.
-pub async fn user_shares_group_with(
-    pool: &PgPool,
-    user_id: i64,
-    other_user_id: i64,
-) -> Result<bool, ApiError> {
-    #[derive(sqlx::FromRow)]
-    struct ExistsRow {
-        shared: Option<bool>,
-    }
-
-    let row = sqlx::query_as!(
-        ExistsRow,
-        "SELECT EXISTS(SELECT 1 FROM user_groups a JOIN user_groups b ON a.group_id = b.group_id \
-         WHERE a.user_id = $1 AND b.user_id = $2) AS shared",
-        user_id,
-        other_user_id,
-    )
-    .fetch_one(pool)
-    .await
-    .map_err(ApiError::Database)?;
-
-    Ok(row.shared.unwrap_or(false))
-}
-
-/// # Errors
-///
-/// Returns [`ApiError::Database`] if the database query fails.
 pub async fn list_roles(pool: &PgPool) -> Result<Vec<RoleRow>, ApiError> {
     sqlx::query_as!(
         RoleRow,

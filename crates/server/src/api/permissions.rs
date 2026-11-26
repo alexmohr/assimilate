@@ -9,7 +9,6 @@ use serde::Deserialize;
 use shared::{
     audit::{AuditEvent, RepoPermission},
     responses::RepoPermissionResponse,
-    types::Visibility,
 };
 
 use super::{
@@ -217,33 +216,6 @@ pub async fn check_repo_permission(
     ))
 }
 
-/// # Errors
-///
-/// Returns an error if the underlying operation fails.
-pub async fn is_visible_to_user(
-    pool: &sqlx::PgPool,
-    user_id: i64,
-    owner_id: Option<i64>,
-    visibility: Visibility,
-    is_admin: bool,
-) -> Result<bool, ApiError> {
-    if is_admin {
-        return Ok(true);
-    }
-
-    if owner_id == Some(user_id) {
-        return Ok(true);
-    }
-
-    match visibility {
-        Visibility::Shared => match owner_id {
-            Some(owner) => db::user_shares_group_with(pool, user_id, owner).await,
-            None => Ok(true),
-        },
-        Visibility::Private => Ok(false),
-    }
-}
-
 /// Loads a schedule the caller may read, under the rule in
 /// [`super::read_scope`] that `GET /api/schedules` filters its list by.
 ///
@@ -298,7 +270,7 @@ pub async fn check_agents_visible(
 mod tests {
     use sqlx::PgPool;
 
-    use super::{is_visible_to_user, *};
+    use super::*;
     use crate::test_support::{audit_entries, audit_events, build_test_state, insert_auth_user};
 
     #[ignore = "requires DATABASE_URL"]
@@ -413,83 +385,5 @@ mod tests {
                 .is_none()
         );
         assert_eq!(audit_events(&pool).await, Vec::<AuditEvent>::new());
-    }
-
-    fn dummy_pool() -> sqlx::PgPool {
-        sqlx::PgPool::connect_lazy("postgres://localhost/nonexistent_test_db").unwrap()
-    }
-
-    #[tokio::test]
-    async fn admin_can_see_everything() {
-        let pool = dummy_pool();
-        assert!(
-            is_visible_to_user(&pool, 1, Some(2), shared::types::Visibility::Private, true)
-                .await
-                .unwrap()
-        );
-    }
-
-    #[tokio::test]
-    async fn owner_can_see_their_own_private_repo() {
-        let pool = dummy_pool();
-        assert!(
-            is_visible_to_user(&pool, 1, Some(1), shared::types::Visibility::Private, false)
-                .await
-                .unwrap()
-        );
-    }
-
-    #[tokio::test]
-    async fn private_repo_is_hidden_from_non_owner() {
-        let pool = dummy_pool();
-        assert!(
-            !is_visible_to_user(&pool, 1, Some(2), shared::types::Visibility::Private, false)
-                .await
-                .unwrap()
-        );
-    }
-
-    #[tokio::test]
-    async fn shared_repo_with_no_owner_is_visible() {
-        let pool = dummy_pool();
-        assert!(
-            is_visible_to_user(&pool, 1, None, shared::types::Visibility::Shared, false)
-                .await
-                .unwrap()
-        );
-    }
-
-    #[ignore = "requires DATABASE_URL"]
-    #[sqlx::test(migrations = "./migrations")]
-    async fn shared_repo_is_visible_to_a_group_mate_of_its_owner(pool: PgPool) {
-        let owner = insert_auth_user(&pool, "shared-owner").await;
-        let mate = insert_auth_user(&pool, "shared-mate").await;
-        let stranger = insert_auth_user(&pool, "shared-stranger").await;
-        let group = db::insert_group(&pool, "shared-team", None).await.unwrap();
-        db::set_group_members(&pool, group.id, &[owner.user_id, mate.user_id])
-            .await
-            .unwrap();
-        let shared = shared::types::Visibility::Shared;
-
-        assert!(
-            is_visible_to_user(&pool, mate.user_id, Some(owner.user_id), shared, false)
-                .await
-                .unwrap()
-        );
-        assert!(
-            !is_visible_to_user(&pool, stranger.user_id, Some(owner.user_id), shared, false)
-                .await
-                .unwrap()
-        );
-    }
-
-    #[tokio::test]
-    async fn unowned_repo_defaults_to_private_semantics() {
-        let pool = dummy_pool();
-        assert!(
-            !is_visible_to_user(&pool, 1, None, shared::types::Visibility::Private, false)
-                .await
-                .unwrap()
-        );
     }
 }

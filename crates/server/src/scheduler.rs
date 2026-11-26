@@ -516,7 +516,8 @@ async fn run_scheduled_repo_sync(task: ScheduledRepoSync) {
             );
             tracing::error!("{msg}");
             if let Err(log_err) =
-                db::insert_system_event(&pool, SystemEventType::RepoSyncFailed, None, &msg).await
+                db::insert_repo_system_event(&pool, SystemEventType::RepoSyncFailed, repo_id, &msg)
+                    .await
             {
                 tracing::error!(error = %log_err, "failed to log sync event");
             }
@@ -588,7 +589,9 @@ async fn handle_scheduled_sync_success(success: ScheduledSyncSuccess<'_>) {
              {duration_secs}s",
         );
         tracing::info!("{msg}");
-        if let Err(e) = db::insert_system_event(pool, SystemEventType::RepoSync, None, &msg).await {
+        if let Err(e) =
+            db::insert_repo_system_event(pool, SystemEventType::RepoSync, repo_id, &msg).await
+        {
             tracing::error!(error = %e, "failed to log sync event");
         }
     }
@@ -600,7 +603,7 @@ async fn handle_scheduled_sync_success(success: ScheduledSyncSuccess<'_>) {
         );
         tracing::error!("{msg}");
         if let Err(e) =
-            db::insert_system_event(pool, SystemEventType::RepoSyncSlow, None, &msg).await
+            db::insert_repo_system_event(pool, SystemEventType::RepoSyncSlow, repo_id, &msg).await
         {
             tracing::error!(error = %e, "failed to log slow sync event");
         }
@@ -3004,9 +3007,14 @@ esac
         })
         .await;
 
-        let events = db::get_system_events(&pool, 10, shared::types::AcknowledgedFilter::All, None)
-            .await
-            .unwrap();
+        let events = db::get_system_events(
+            &pool,
+            10,
+            shared::types::AcknowledgedFilter::All,
+            crate::db::SystemEventScope::default(),
+        )
+        .await
+        .unwrap();
         assert!(
             events
                 .iter()
@@ -3907,9 +3915,14 @@ esac
         );
 
         // The auto-disable must not be invisible outside server logs.
-        let events = db::get_system_events(&pool, 10, AcknowledgedFilter::All, None)
-            .await
-            .unwrap();
+        let events = db::get_system_events(
+            &pool,
+            10,
+            AcknowledgedFilter::All,
+            crate::db::SystemEventScope::default(),
+        )
+        .await
+        .unwrap();
         assert!(
             events
                 .iter()
@@ -4770,9 +4783,14 @@ esac
             "the streak contained a config error, so it must not be marked agent-unreachable"
         );
 
-        let events = db::get_system_events(&pool, 10, AcknowledgedFilter::All, None)
-            .await
-            .unwrap();
+        let events = db::get_system_events(
+            &pool,
+            10,
+            AcknowledgedFilter::All,
+            crate::db::SystemEventScope::default(),
+        )
+        .await
+        .unwrap();
         let event = events
             .iter()
             .find(|e| matches!(e.event_type, SystemEventType::ScheduleAutoDisabled))

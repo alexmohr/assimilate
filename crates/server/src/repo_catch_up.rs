@@ -1049,9 +1049,14 @@ mod tests {
 
         assert!(abandon(&state, &candidate, now()).await);
 
-        let events = db::get_system_events(&pool, 10, shared::types::AcknowledgedFilter::All, None)
-            .await
-            .unwrap();
+        let events = db::get_system_events(
+            &pool,
+            10,
+            shared::types::AcknowledgedFilter::All,
+            crate::db::SystemEventScope::default(),
+        )
+        .await
+        .unwrap();
         let reported: Vec<_> = events
             .iter()
             .filter(|e| e.event_type == shared::types::SystemEventType::ScheduleCatchUpAbandoned)

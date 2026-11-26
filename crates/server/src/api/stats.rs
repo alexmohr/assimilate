@@ -1267,8 +1267,12 @@ pub async fn system_events(
 ) -> Result<Json<Vec<db::SystemEventRow>>, ApiError> {
     let limit = query.limit.unwrap_or(50);
     let hostnames = visible_agent_hostnames(&state.pool, auth.user_id).await?;
-    let rows =
-        db::get_system_events(&state.pool, limit, query.acknowledged, hostnames.as_deref()).await?;
+    let repo_ids = readable_repos(&state.pool, auth.user_id).await?.sql_ids();
+    let scope = db::SystemEventScope {
+        hostnames: hostnames.as_deref(),
+        repo_ids: repo_ids.as_deref(),
+    };
+    let rows = db::get_system_events(&state.pool, limit, query.acknowledged, scope).await?;
     Ok(Json(rows))
 }
 

@@ -43,17 +43,55 @@ pub async fn insert_system_event(
     hostname: Option<&str>,
     message: &str,
 ) -> Result<(), ApiError> {
+    insert_event(pool, event_type, hostname, None, message).await
+}
+
+/// Records a system event about one repository, which a user who is not an
+/// admin sees only while they may read that repository.
+///
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
+pub async fn insert_repo_system_event(
+    pool: &PgPool,
+    event_type: SystemEventType,
+    repo_id: i64,
+    message: &str,
+) -> Result<(), ApiError> {
+    insert_event(pool, event_type, None, Some(repo_id), message).await
+}
+
+async fn insert_event(
+    pool: &PgPool,
+    event_type: SystemEventType,
+    hostname: Option<&str>,
+    repo_id: Option<i64>,
+    message: &str,
+) -> Result<(), ApiError> {
     let event_type_str = event_type.to_string();
     sqlx::query!(
-        "INSERT INTO system_events (event_type, hostname, message) VALUES ($1, $2, $3)",
+        "INSERT INTO system_events (event_type, hostname, repo_id, message) VALUES ($1, $2, $3, \
+         $4)",
         event_type_str,
         hostname,
+        repo_id,
         message,
     )
     .execute(pool)
     .await
     .map_err(ApiError::Database)?;
     Ok(())
+}
+
+/// Which system events a caller may read. `None` in a field lets every event
+/// through on that count; an event naming no agent or no repository is never
+/// held back by the field it leaves empty.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct SystemEventScope<'a> {
+    /// The agents whose events the caller may read.
+    pub hostnames: Option<&'a [String]>,
+    /// The repositories whose events the caller may read.
+    pub repo_ids: Option<&'a [i64]>,
 }
 
 /// # Errors
@@ -63,15 +101,17 @@ pub async fn get_system_events(
     pool: &PgPool,
     limit: i64,
     acknowledged_filter: AcknowledgedFilter,
-    hostnames: Option<&[String]>,
+    scope: SystemEventScope<'_>,
 ) -> Result<Vec<SystemEventRow>, ApiError> {
     let rows = sqlx::query!(
         "SELECT id, created_at, event_type, hostname, message, acknowledged FROM system_events \
          WHERE ($1::bool IS NULL OR acknowledged = $1) AND ($3::TEXT[] IS NULL OR hostname IS \
-         NULL OR hostname = ANY($3)) ORDER BY created_at DESC LIMIT $2",
+         NULL OR hostname = ANY($3)) AND ($4::BIGINT[] IS NULL OR repo_id IS NULL OR repo_id = \
+         ANY($4)) ORDER BY created_at DESC LIMIT $2",
         acknowledged_filter.as_sql_predicate(),
         limit,
-        hostnames,
+        scope.hostnames,
+        scope.repo_ids,
     )
     .fetch_all(pool)
     .await

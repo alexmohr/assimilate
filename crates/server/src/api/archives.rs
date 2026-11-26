@@ -1207,10 +1207,10 @@ async fn execute_borg_delete(
                 tracing::error!(repo_id, archive = %archive_name, error = %err, "archive deletion failed");
                 let msg =
                     format!("failed to delete archive '{archive_name}' (repo {repo_id}): {err}");
-                if let Err(e) = db::insert_system_event(
+                if let Err(e) = db::insert_repo_system_event(
                     &state.pool,
                     SystemEventType::ArchiveDeleteFailed,
-                    None,
+                    repo_id,
                     &msg,
                 )
                 .await
@@ -1224,10 +1224,10 @@ async fn execute_borg_delete(
         Err(e) => {
             tracing::error!(repo_id, archive = %archive_name, error = %e, "failed to execute borg delete");
             let msg = format!("failed to delete archive '{archive_name}' (repo {repo_id}): {e}");
-            if let Err(log_err) = db::insert_system_event(
+            if let Err(log_err) = db::insert_repo_system_event(
                 &state.pool,
                 SystemEventType::ArchiveDeleteFailed,
-                None,
+                repo_id,
                 &msg,
             )
             .await
@@ -1330,10 +1330,10 @@ async fn execute_borg_compact(
                 let msg = format!(
                     "failed to compact repository after archive deletion (repo {repo_id}): {err}"
                 );
-                if let Err(e) = db::insert_system_event(
+                if let Err(e) = db::insert_repo_system_event(
                     &state.pool,
                     SystemEventType::ArchiveCompactFailed,
-                    None,
+                    repo_id,
                     &msg,
                 )
                 .await
@@ -1347,10 +1347,10 @@ async fn execute_borg_compact(
             let msg = format!(
                 "failed to compact repository after archive deletion (repo {repo_id}): {e}"
             );
-            if let Err(log_err) = db::insert_system_event(
+            if let Err(log_err) = db::insert_repo_system_event(
                 &state.pool,
                 SystemEventType::ArchiveCompactFailed,
-                None,
+                repo_id,
                 &msg,
             )
             .await

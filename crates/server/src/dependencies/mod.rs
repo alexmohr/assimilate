@@ -736,12 +736,17 @@ mod tests {
         }
 
         pub(super) async fn system_events(&self) -> Vec<(SystemEventType, String)> {
-            db::get_system_events(self.pool(), 50, AcknowledgedFilter::All, None)
-                .await
-                .unwrap()
-                .into_iter()
-                .map(|e| (e.event_type, e.message))
-                .collect()
+            db::get_system_events(
+                self.pool(),
+                50,
+                AcknowledgedFilter::All,
+                crate::db::SystemEventScope::default(),
+            )
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|e| (e.event_type, e.message))
+            .collect()
         }
 
         pub(super) async fn insert_pending_report(&self, run_id: &str) {

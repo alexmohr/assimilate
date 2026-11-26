@@ -111,7 +111,7 @@ Everything a user who is not an admin can see follows from their `can_view` gran
 | Schedule | The user may see its repository. A schedule with no repository is admin-only |
 | Agent | One of those schedules backs it up and an admin has not hidden it, or the user's role has **View All Agents** or **Upgrade Agent**. Give one of those to whoever sets up new agents: a new agent has no schedule yet |
 | Reports, activity, calendar, trends and dashboard figures | They belong to a repository the user may see |
-| System events | They name no agent, or name an agent the user may see |
+| System events | They name an agent the user may see or none, and concern a repository the user may read or none. Repository syncs and archive deletion or compaction failures concern their repository |
 | Live updates | The same rule, applied to every event the UI receives |
 
 A resource the user cannot see is reported as not found, the same as one that does not exist, and is left out of every list, count and total. This covers single-item reads too: a repository's page, a schedule's settings and hook commands, an agent's page, virtual machines, hostname aliases and dependencies.

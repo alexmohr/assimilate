@@ -1309,10 +1309,8 @@ pub async fn health(
     auth: AuthUser,
     Query(query): Query<HealthQuery>,
 ) -> Result<Json<Vec<HealthResponse>>, ApiError> {
-    let (repos, schedules) = tokio::try_join!(
-        readable_repos(&state.pool, auth.user_id),
-        visible_schedules(&state.pool, auth.user_id),
-    )?;
+    let repos = readable_repos(&state.pool, auth.user_id).await?;
+    let schedules = visible_schedules(&state.pool, auth.user_id).await?;
     let rows = db::get_health_summary(&state.pool, query.schedule_id).await?;
     let tz = db::get_schedule_timezone(&state.pool).await?;
     let response = rows

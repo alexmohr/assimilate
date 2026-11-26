@@ -106,6 +106,9 @@ pub(crate) async fn let_user_see_agent(
     .fetch_one(pool)
     .await
     .expect("insert schedule");
+    crate::db::replace_schedule_repos(pool, schedule_id, &[(repo_id, true)])
+        .await
+        .expect("insert schedule repository");
     crate::db::insert_schedule_targets(pool, schedule_id, &[(agent_id, 0)])
         .await
         .expect("insert schedule target");

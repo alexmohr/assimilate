@@ -395,6 +395,14 @@ fn test_app_repo_routes() -> Router<server::AppState> {
             get(server::api::archives::get_archive_index_status),
         )
         .route(
+            "/api/repos/{repo_id}/archives/{archive_name}/tags",
+            get(server::api::tags::list_archive_tags).post(server::api::tags::add_archive_tag),
+        )
+        .route(
+            "/api/repos/{repo_id}/archives/{archive_name}/tags/{tag}",
+            delete(server::api::tags::remove_archive_tag),
+        )
+        .route(
             "/api/repos/{repo_id}/sync",
             post(server::api::repos::sync_repo),
         )
@@ -19171,4 +19179,235 @@ async fn test_exec_borg_runs_an_allowed_command_and_audits_it() {
             json!({ "subcommand": "list", "args": ["--short", "--glob-archives", "nightly-*"] }),
         )]
     );
+}
+
+/// Sends `method` to `uri` as the user holding `session_id`, with an optional
+/// JSON body.
+#[cfg(test)]
+fn request_as(method: &str, uri: &str, session_id: &str, body: Option<&Value>) -> Request<Body> {
+    let builder = Request::builder()
+        .uri(uri)
+        .method(method)
+        .header("cookie", format!("session={session_id}"));
+    match body {
+        Some(body) => builder
+            .header("content-type", "application/json")
+            .body(Body::from(serde_json::to_vec(body).unwrap())),
+        None => builder.body(Body::empty()),
+    }
+    .unwrap()
+}
+
+/// The tags on one archive, straight from the database.
+#[cfg(test)]
+async fn archive_tags_in_db(pool: &PgPool, repo_id: i64, archive_name: &str) -> Vec<String> {
+    sqlx::query_scalar(
+        "SELECT t.tag FROM archive_tags t JOIN archives a ON a.id = t.archive_id WHERE a.repo_id \
+         = $1 AND a.name = $2 ORDER BY t.tag",
+    )
+    .bind(repo_id)
+    .bind(archive_name)
+    .fetch_all(pool)
+    .await
+    .unwrap()
+}
+
+/// Asserts that listing, adding and removing tags on an archive in `repo_id`
+/// as `session_id` each answer exactly like a repository that does not exist.
+#[cfg(test)]
+async fn assert_archive_tags_look_missing(app: &mut Router, session_id: &str, repo_id: i64) {
+    let resp = oneshot(
+        app,
+        get_request_as(
+            &format!("/api/repos/{repo_id}/archives/nightly/tags"),
+            session_id,
+        ),
+    )
+    .await;
+    assert_eq!(
+        resp.status(),
+        StatusCode::NOT_FOUND,
+        "listing tags in repo {repo_id} must look like a repository that does not exist"
+    );
+
+    let resp = oneshot(
+        app,
+        request_as(
+            "POST",
+            &format!("/api/repos/{repo_id}/archives/probe/tags"),
+            session_id,
+            Some(&json!({ "tag": "planted" })),
+        ),
+    )
+    .await;
+    assert_eq!(
+        resp.status(),
+        StatusCode::NOT_FOUND,
+        "tagging an archive in repo {repo_id} must look like a repository that does not exist"
+    );
+
+    let resp = oneshot(
+        app,
+        request_as(
+            "DELETE",
+            &format!("/api/repos/{repo_id}/archives/nightly/tags/baseline"),
+            session_id,
+            None,
+        ),
+    )
+    .await;
+    assert_eq!(
+        resp.status(),
+        StatusCode::NOT_FOUND,
+        "removing a tag in repo {repo_id} must look like a repository that does not exist"
+    );
+}
+
+/// Holding **Manage Tags** lets a user tag archives only in repositories they
+/// may read. Every archive tag endpoint answers for a repository they may
+/// not read exactly as for one that does not exist, so it neither lists,
+/// adds nor removes its tags, nor confirms which archives it holds.
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn test_archive_tags_are_limited_to_repositories_the_caller_may_read() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+
+    let tagger = insert_session_with_role(&pool, "archive-tagger", false).await;
+    sqlx::query("UPDATE roles SET can_manage_tags = true WHERE name = $1")
+        .bind("archive-tagger-role")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let readable = insert_test_repo(&pool, "tagger-readable-repo").await;
+    let hidden = insert_test_repo(&pool, "tagger-hidden-repo").await;
+    let missing = hidden + 1000;
+    grant_repo_view(&pool, "archive-tagger-user", readable).await;
+
+    for repo_id in [readable, hidden] {
+        let resp = oneshot(
+            &mut app,
+            json_request(
+                "POST",
+                &format!("/api/repos/{repo_id}/archives/nightly/tags"),
+                Some(json!({ "tag": "baseline" })),
+            ),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::CREATED);
+    }
+
+    for repo_id in [hidden, missing] {
+        assert_archive_tags_look_missing(&mut app, &tagger, repo_id).await;
+    }
+    assert_eq!(
+        archive_tags_in_db(&pool, hidden, "nightly").await,
+        vec!["baseline".to_owned()],
+        "the hidden repository's tag survives the refused removal"
+    );
+    let probe_rows: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM archives WHERE repo_id = $1 AND name = 'probe'")
+            .bind(hidden)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        probe_rows, 0,
+        "a refused tag must not create an archive row"
+    );
+
+    let uri = format!("/api/repos/{readable}/archives/nightly/tags");
+    let resp = oneshot(&mut app, get_request_as(&uri, &tagger)).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let tags = body_json(resp).await;
+    let names: Vec<&str> = tags
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|tag| tag.get("tag").and_then(Value::as_str))
+        .collect();
+    assert_eq!(names, vec!["baseline"], "{tags}");
+
+    let resp = oneshot(
+        &mut app,
+        request_as(
+            "POST",
+            &uri,
+            &tagger,
+            Some(&json!({ "tag": "pre-upgrade" })),
+        ),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let resp = oneshot(
+        &mut app,
+        request_as("DELETE", &format!("{uri}/baseline"), &tagger, None),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+    assert_eq!(
+        archive_tags_in_db(&pool, readable, "nightly").await,
+        vec!["pre-upgrade".to_owned()]
+    );
+}
+
+/// Read access alone does not let a user manage archive tags: without
+/// **Manage Tags** every archive tag endpoint refuses them, in a repository
+/// they may read as in one they may not, so the refusal reveals nothing
+/// about the repository.
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn test_archive_tags_need_the_manage_tags_permission() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+
+    let viewer = insert_viewer_only_session(&pool, "archive-tag-viewer").await;
+    let readable = insert_test_repo(&pool, "tag-viewer-readable-repo").await;
+    let hidden = insert_test_repo(&pool, "tag-viewer-hidden-repo").await;
+    grant_repo_view(&pool, "archive-tag-viewer-user", readable).await;
+
+    for repo_id in [readable, hidden] {
+        let uri = format!("/api/repos/{repo_id}/archives/nightly/tags");
+        let resp = oneshot(&mut app, get_request_as(&uri, &viewer)).await;
+        assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+        let resp = oneshot(
+            &mut app,
+            request_as("POST", &uri, &viewer, Some(&json!({ "tag": "x" }))),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+        let resp = oneshot(
+            &mut app,
+            request_as("DELETE", &format!("{uri}/x"), &viewer, None),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+    }
+}
+
+/// Tagging an archive in a repository that does not exist is a 404, also for
+/// an admin, who reads every repository.
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn test_admin_tagging_an_archive_in_a_missing_repository_is_not_found() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+    let repo_id = insert_test_repo(&pool, "tag-missing-neighbour").await;
+
+    let resp = oneshot(
+        &mut app,
+        json_request(
+            "POST",
+            &format!("/api/repos/{}/archives/nightly/tags", repo_id + 1000),
+            Some(json!({ "tag": "baseline" })),
+        ),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
 }

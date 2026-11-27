@@ -1,0 +1,40 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT DISTINCT h.ssh_host_key AS \"ssh_host_key!\", r.ssh_user FROM repos r JOIN repo_hosts h ON h.id = r.repo_host_id JOIN schedule_repos sr ON sr.repo_id = r.id JOIN schedule_targets st ON st.schedule_id = sr.schedule_id WHERE st.agent_id = $1 AND h.ssh_host_key IS NOT NULL ORDER BY 1, 2",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "ssh_host_key!",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "repo_hosts",
+            "name": "ssh_host_key"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "ssh_user",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "repos",
+            "name": "ssh_user"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      true,
+      false
+    ]
+  },
+  "hash": "c11c8f2d9e3b7d283dfccca6678fbad6425c034b7b7c174e383cc06c6c5c4b59"
+}

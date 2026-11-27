@@ -15,16 +15,29 @@ use tokio::{
     time,
 };
 
-use self::agent_protocol::{AgentRequest, FAILURE_REPLY, FrameError, ReplyError, RequestBuffer};
+use self::{
+    agent_protocol::{
+        AgentRequest, FAILURE_REPLY, FrameError, ReplyError, RequestBuffer, SUCCESS_REPLY,
+    },
+    scope::{RelayScope, Session},
+    session_bind::{Extension, ExtensionName},
+};
 use crate::{AppState, ws::handler::verify_agent_token};
 
 mod agent_protocol;
+mod scope;
+mod session_bind;
+mod sign_request;
+#[cfg(test)]
+mod test_messages;
+mod wire;
 
 /// WebSocket upgrade handler for SSH agent forwarding.
 ///
 /// Opens the encrypted agent channel, authenticates the agent by the token it
 /// sends inside it, then relays the SSH agent requests it is allowed to make
-/// (listing keys and signing) to the server's local `SSH_AUTH_SOCK`.
+/// (listing keys, and signing a login to one of its own repository hosts) to
+/// the server's local `SSH_AUTH_SOCK`.
 pub fn ssh_relay_handler(
     ws: WebSocketUpgrade,
     Path(hostname): Path<String>,
@@ -63,14 +76,25 @@ async fn handle_ssh_relay(
             }
         };
 
-    if verify_agent_token(&state.pool, &hostname, &token)
-        .await
-        .is_none()
-    {
+    let Some(authenticated) = verify_agent_token(&state.pool, &hostname, &token).await else {
         tracing::warn!(hostname = %hostname, "ssh relay: authentication failed");
         let _ = sink.send(Message::Close(None)).await;
         return;
-    }
+    };
+
+    let scope =
+        match crate::db::list_relay_destinations_for_agent(&state.pool, authenticated.id).await {
+            Ok(destinations) => RelayScope::new(destinations, &hostname),
+            Err(e) => {
+                tracing::error!(
+                    hostname = %hostname,
+                    error = %e,
+                    "ssh relay: failed to load the agent's repository hosts"
+                );
+                let _ = sink.send(Message::Close(None)).await;
+                return;
+            }
+        };
 
     let Some(ssh_auth_sock) = agent else {
         tracing::error!("ssh relay: SSH_AUTH_SOCK not set on server");
@@ -84,7 +108,7 @@ async fn handle_ssh_relay(
             return;
         }
     };
-    relay(sink, stream, agent, &hostname, &state).await;
+    relay(sink, stream, agent, Session::new(scope), &hostname, &state).await;
 }
 
 /// Why a relay ended early.
@@ -111,6 +135,7 @@ async fn relay<S, Si, St, E>(
     mut ws_sink: Si,
     mut ws_stream: St,
     agent: S,
+    mut session: Session,
     hostname: &str,
     state: &AppState,
 ) where
@@ -124,7 +149,7 @@ async fn relay<S, Si, St, E>(
     // Either side closing ends the relay: the SSH agent never closes a
     // connection on its own, and a closed WebSocket gets no further replies.
     tokio::select! {
-        result = relay_requests(&mut ws_sink, &mut ws_stream, agent, hostname) => {
+        result = relay_requests(&mut ws_sink, &mut ws_stream, agent, &mut session, hostname) => {
             if let Err(e) = result {
                 tracing::warn!(hostname = %hostname, error = %e, "ssh relay ended");
             }
@@ -145,12 +170,16 @@ async fn relay<S, Si, St, E>(
 /// Only requests to list the keys and to sign with one reach the SSH agent;
 /// any other request (adding, removing or locking keys, extensions) would
 /// change the agent every host shares, so the relay answers it with
-/// `SSH_AGENT_FAILURE` itself. Taking one request at a time keeps those
-/// replies in order with the agent's own, as the protocol requires.
+/// `SSH_AGENT_FAILURE` itself. The key every repository host trusts would
+/// sign a login to any of them, so a sign request is forwarded only for a
+/// login `session` allows, and refused like the rest otherwise. Taking one
+/// request at a time keeps those replies in order with the agent's own, as
+/// the protocol requires.
 async fn relay_requests<S, Si, St, E>(
     ws_sink: &mut Si,
     ws_stream: &mut St,
     mut agent: S,
+    session: &mut Session,
     hostname: &str,
 ) -> Result<(), RelayError>
 where
@@ -162,19 +191,19 @@ where
     let mut requests = RequestBuffer::default();
     while let Some(request) = next_request(ws_stream, &mut requests, &mut agent).await? {
         let reply = match request.kind {
-            AgentRequest::RequestIdentities | AgentRequest::SignRequest => {
-                agent
-                    .write_all(&request.bytes)
-                    .await
-                    .map_err(RelayError::AgentWrite)?;
-                agent_protocol::read_reply(&mut agent).await?
-            }
-            // Every OpenSSH connection asks for one (session-bind), so a
-            // refused extension is routine, not worth a warning.
-            AgentRequest::Extension => {
-                tracing::debug!(hostname = %hostname, "ssh relay: refused an SSH agent extension");
-                FAILURE_REPLY.to_vec()
-            }
+            AgentRequest::RequestIdentities => forward(&mut agent, &request.bytes).await?,
+            AgentRequest::SignRequest => match session.authorize_sign(request.body()) {
+                Ok(()) => forward(&mut agent, &request.bytes).await?,
+                Err(refusal) => {
+                    tracing::warn!(
+                        hostname = %hostname,
+                        reason = %refusal,
+                        "ssh relay: refused a sign request"
+                    );
+                    FAILURE_REPLY.to_vec()
+                }
+            },
+            AgentRequest::Extension => extension_reply(session, request.body(), hostname).to_vec(),
             AgentRequest::Refused(message_type) => {
                 tracing::warn!(
                     hostname = %hostname,
@@ -190,6 +219,54 @@ where
             .map_err(|_| RelayError::WebSocketClosed)?;
     }
     Ok(())
+}
+
+/// Writes `request` to the server's SSH agent and reads its reply.
+async fn forward<S>(agent: &mut S, request: &[u8]) -> Result<Vec<u8>, RelayError>
+where
+    S: AsyncRead + AsyncWrite + Unpin,
+{
+    agent
+        .write_all(request)
+        .await
+        .map_err(RelayError::AgentWrite)?;
+    Ok(agent_protocol::read_reply(agent).await?)
+}
+
+/// The relay's own answer to an extension request whose body is `body`:
+/// success for a `session-bind` it accepts, failure for anything else.
+fn extension_reply(session: &mut Session, body: &[u8], hostname: &str) -> [u8; 5] {
+    let extension = match Extension::parse(body) {
+        Ok(extension) => extension,
+        Err(e) => {
+            tracing::warn!(
+                hostname = %hostname,
+                error = %e,
+                "ssh relay: refused a malformed SSH agent extension"
+            );
+            return FAILURE_REPLY;
+        }
+    };
+    match extension.name {
+        ExtensionName::SessionBind => match session.bind(extension.fields) {
+            Ok(()) => {
+                tracing::debug!(hostname = %hostname, "ssh relay: accepted a session-bind");
+                SUCCESS_REPLY
+            }
+            Err(refusal) => {
+                tracing::warn!(
+                    hostname = %hostname,
+                    reason = %refusal,
+                    "ssh relay: refused a session-bind"
+                );
+                FAILURE_REPLY
+            }
+        },
+        ExtensionName::Other => {
+            tracing::debug!(hostname = %hostname, "ssh relay: refused an SSH agent extension");
+            FAILURE_REPLY
+        }
+    }
 }
 
 /// The agent machine's next complete request, or `None` once it has closed
@@ -257,7 +334,11 @@ mod tests {
     use tokio_tungstenite::tungstenite::Message as WsMessage;
     use tokio_util::sync::CancellationToken;
 
-    use super::{agent_protocol::tests::message, *};
+    use super::{
+        agent_protocol::tests::message,
+        test_messages::{HostKey, LoginRequest, session_bind},
+        *,
+    };
     use crate::ws::channel::UNENCRYPTED_REASON;
 
     const TOKEN: &str = "relay-agent-token";
@@ -286,7 +367,13 @@ mod tests {
         hostname: &'static str,
         agent: Option<String>,
     ) -> (Client, CancellationToken) {
-        let (ws, shutdown) = open(pool, hostname, agent).await;
+        authenticate(open(pool, hostname, agent).await).await
+    }
+
+    /// Runs the handshake on an opened connection and sends the token.
+    async fn authenticate(
+        (ws, shutdown): (Socket, CancellationToken),
+    ) -> (Client, CancellationToken) {
         let mut client = encrypt(ws).await;
         client
             .sink
@@ -311,6 +398,61 @@ mod tests {
         }
     }
 
+    /// As [`connect`], for an agent with a backup schedule to a repository
+    /// on each of `repo_hosts`, logging in there as the user given with it.
+    async fn connect_with_repo_hosts(
+        pool: PgPool,
+        hostname: &'static str,
+        agent: Option<String>,
+        repo_hosts: &[(&HostKey, &str)],
+    ) -> Client {
+        authenticate(open_with_repo_hosts(pool, hostname, agent, repo_hosts).await)
+            .await
+            .0
+    }
+
+    /// Gives the agent `agent_id` a backup schedule to a repository on a
+    /// host pinned to `host_key`, logging in as `ssh_user`.
+    async fn add_repo_host(
+        pool: &PgPool,
+        agent_id: i64,
+        repo_name: &str,
+        host_key: &HostKey,
+        ssh_user: &str,
+    ) {
+        let repo = crate::db::insert_repo(
+            pool,
+            &crate::db::InsertRepoParams {
+                name: repo_name,
+                repo_path: "/backups/relay",
+                ssh_user,
+                ssh_host: &format!("{repo_name}.local"),
+                ssh_port: 22,
+                passphrase_encrypted: b"encrypted",
+                compression: "lz4",
+                encryption: "repokey",
+                owner_id: None,
+                sync_schedule: None,
+            },
+        )
+        .await
+        .expect("insert repo");
+        crate::db::update_repo_ssh_host_key(pool, repo.id, &host_key.openssh())
+            .await
+            .expect("pin host key");
+        let schedule = crate::db::insert_schedule(
+            pool,
+            repo.id,
+            &crate::db::ScheduleParams::for_test(repo_name, "0 3 * * *"),
+            None,
+        )
+        .await
+        .expect("insert schedule");
+        crate::db::insert_schedule_targets(pool, schedule.id, &[(agent_id, 0)])
+            .await
+            .expect("target the agent");
+    }
+
     /// Serves the relay as [`connect`] does and returns the raw, not yet
     /// encrypted, connection to it.
     async fn open(
@@ -318,10 +460,25 @@ mod tests {
         hostname: &'static str,
         agent: Option<String>,
     ) -> (Socket, CancellationToken) {
+        open_with_repo_hosts(pool, hostname, agent, &[]).await
+    }
+
+    /// As [`open`], for an agent with a repository on each of `repo_hosts`
+    /// as [`connect_with_repo_hosts`] describes.
+    async fn open_with_repo_hosts(
+        pool: PgPool,
+        hostname: &'static str,
+        agent: Option<String>,
+        repo_hosts: &[(&HostKey, &str)],
+    ) -> (Socket, CancellationToken) {
         let hash = bcrypt::hash(TOKEN, 4).expect("hash token");
-        crate::db::insert_agent(&pool, hostname, None, &hash, None, None)
+        let agent_row = crate::db::insert_agent(&pool, hostname, None, &hash, None, None)
             .await
             .expect("insert agent");
+        for (index, (host_key, ssh_user)) in repo_hosts.iter().enumerate() {
+            let repo_name = format!("{hostname}-repo-{index}");
+            add_repo_host(&pool, agent_row.id, &repo_name, host_key, ssh_user).await;
+        }
         let state = crate::test_support::build_test_state(pool, b"ssh-relay-test-secret-key");
         let shutdown = state.shutdown_token.clone();
         let app = axum::Router::new()
@@ -445,9 +602,10 @@ mod tests {
 
     /// A request that would change the SSH agent every host shares (here
     /// `SSH_AGENTC_REMOVE_ALL_IDENTITIES`, then `SSH_AGENTC_LOCK`), and an
-    /// extension such as OpenSSH's `session-bind`, are answered with
-    /// `SSH_AGENT_FAILURE` and never reach it, while a key listing sent after
-    /// them, split across two frames, still does.
+    /// extension the relay cannot accept (here a `session-bind` with nothing
+    /// after its name to verify), are answered with `SSH_AGENT_FAILURE` and
+    /// never reach it, while a key listing sent after them, split across two
+    /// frames, still does.
     #[ignore = "requires DATABASE_URL"]
     #[sqlx::test(migrations = "./migrations")]
     async fn requests_that_change_the_ssh_agent_never_reach_it(pool: PgPool) {
@@ -616,7 +774,9 @@ mod tests {
 
     /// Several requests in one connection, each answered in turn, with a
     /// text frame in between that the relay skips and a reply too large for
-    /// one read of the agent socket.
+    /// one read of the agent socket. The sign request is a login to the
+    /// agent's own repository host, bound to it first, so the relay lets it
+    /// through.
     #[ignore = "requires DATABASE_URL"]
     #[sqlx::test(migrations = "./migrations")]
     async fn bytes_flow_both_ways_for_several_exchanges(pool: PgPool) {
@@ -625,7 +785,8 @@ mod tests {
         let signature: Vec<u8> = (0..=u8::MAX).cycle().take(64 * 1024).collect();
         let large = message(14, &signature);
         let large_reply = large.clone();
-        let sign = message(13, b"key-and-data");
+        let repo_host = HostKey::generate();
+        let sign = LoginRequest::new(b"exchanges-session", b"borg").encode();
         let sign_len = sign.len();
         let agent = tokio::spawn(async move {
             let (mut stream, _) = listener.accept().await.expect("accept");
@@ -639,19 +800,145 @@ mod tests {
             requests
         });
 
-        let mut ws = connect(pool, "relay-exchanges-host", Some(path)).await;
+        let mut ws = connect_with_repo_hosts(
+            pool,
+            "relay-exchanges-host",
+            Some(path),
+            &[(&repo_host, "borg")],
+        )
+        .await;
         send(&mut ws, &list_keys()).await;
         let first = receive(&mut ws, no_keys().len()).await;
         ws.sink
             .send(WsMessage::Text("not for the agent".into()))
             .await
             .expect("send text");
+        // The relay answers the bind itself, so it never reaches the agent.
+        send(
+            &mut ws,
+            &session_bind(&repo_host, b"exchanges-session", false),
+        )
+        .await;
+        let bound = receive(&mut ws, SUCCESS_REPLY.len()).await;
+        assert_eq!(bound, SUCCESS_REPLY);
         send(&mut ws, &sign).await;
         let second = receive(&mut ws, large.len()).await;
 
         assert_eq!(first, no_keys());
         assert_eq!(second, large);
         assert_eq!(agent.await.expect("agent"), vec![list_keys(), sign]);
+    }
+
+    /// The attack the bind check closes: one agent machine having the
+    /// server's key sign a login to a repository host only another agent
+    /// backs up to. Every way of asking is refused without reaching the SSH
+    /// agent - before any bind, with a bind to that host, and after a bind
+    /// to its own host but for another session, user or host key - while a
+    /// login to its own host, as the user its repository uses, is signed.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn only_a_login_to_the_agents_own_repository_host_is_signed(pool: PgPool) {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let (listener, path) = fake_agent(&dir);
+        let own = HostKey::generate();
+        let unrelated = HostKey::generate();
+        let signature = message(14, b"signature");
+        let signature_reply = signature.clone();
+        let allowed = LoginRequest::new(b"own-session", b"borg").encode();
+        let allowed_len = allowed.len();
+        let agent = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.expect("accept");
+            let mut request = vec![0; allowed_len];
+            stream.read_exact(&mut request).await.expect("read");
+            stream.write_all(&signature_reply).await.expect("write");
+            let mut rest = Vec::new();
+            stream.read_to_end(&mut rest).await.expect("read rest");
+            [request, rest].concat()
+        });
+        let other = crate::db::insert_agent(&pool, "relay-other-host", None, "hash", None, None)
+            .await
+            .expect("insert other agent");
+        add_repo_host(&pool, other.id, "relay-other-repo", &unrelated, "borg").await;
+
+        let mut ws =
+            connect_with_repo_hosts(pool, "relay-scoped-host", Some(path), &[(&own, "borg")]).await;
+        let unbound = [
+            LoginRequest::new(b"unrelated-session", b"borg").encode(),
+            session_bind(&unrelated, b"unrelated-session", false),
+            LoginRequest::new(b"unrelated-session", b"borg").encode(),
+        ];
+        let mut refusals = Vec::new();
+        for request in &unbound {
+            send(&mut ws, request).await;
+            refusals.extend(receive(&mut ws, FAILURE_REPLY.len()).await);
+        }
+        send(&mut ws, &session_bind(&own, b"own-session", false)).await;
+        let bound = receive(&mut ws, SUCCESS_REPLY.len()).await;
+        let mismatched = [
+            LoginRequest::new(b"unrelated-session", b"borg").encode(),
+            LoginRequest::new(b"own-session", b"root").encode(),
+            LoginRequest {
+                host_bound: Some(unrelated.public_blob()),
+                ..LoginRequest::new(b"own-session", b"borg")
+            }
+            .encode(),
+        ];
+        for request in &mismatched {
+            send(&mut ws, request).await;
+            refusals.extend(receive(&mut ws, FAILURE_REPLY.len()).await);
+        }
+        send(&mut ws, &allowed).await;
+        let signed = receive(&mut ws, signature.len()).await;
+        ws.sink.close().await.expect("close");
+
+        assert_eq!(
+            refusals,
+            FAILURE_REPLY.repeat(unbound.len().saturating_add(mismatched.len()))
+        );
+        assert_eq!(bound, SUCCESS_REPLY);
+        assert_eq!(signed, signature);
+        assert_eq!(agent.await.expect("agent"), allowed);
+    }
+
+    /// A repository host without a pinned key cannot be told apart from any
+    /// other, so an agent whose only repository is on one has nothing it
+    /// can bind to, and its logins are refused.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_repository_host_without_a_pinned_key_is_never_signed_for(pool: PgPool) {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let (listener, path) = fake_agent(&dir);
+        let agent = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.expect("accept");
+            let mut received = Vec::new();
+            stream.read_to_end(&mut received).await.expect("read");
+            received
+        });
+        let host = HostKey::generate();
+        let opened = open_with_repo_hosts(
+            pool.clone(),
+            "relay-unpinned-host",
+            Some(path),
+            &[(&host, "borg")],
+        )
+        .await;
+        // Unpinned before the token is sent, which is when the relay reads
+        // the agent's repository hosts.
+        sqlx::query!("UPDATE repo_hosts SET ssh_host_key = NULL")
+            .execute(&pool)
+            .await
+            .expect("unpin");
+        let (mut ws, _shutdown) = authenticate(opened).await;
+
+        send(&mut ws, &session_bind(&host, b"session", false)).await;
+        let refused_bind = receive(&mut ws, FAILURE_REPLY.len()).await;
+        send(&mut ws, &LoginRequest::new(b"session", b"borg").encode()).await;
+        let refused_sign = receive(&mut ws, FAILURE_REPLY.len()).await;
+        ws.sink.close().await.expect("close");
+
+        assert_eq!(refused_bind, FAILURE_REPLY);
+        assert_eq!(refused_sign, FAILURE_REPLY);
+        assert_eq!(agent.await.expect("agent"), Vec::<u8>::new());
     }
 
     #[ignore = "requires DATABASE_URL"]

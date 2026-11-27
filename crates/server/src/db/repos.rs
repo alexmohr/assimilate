@@ -1165,6 +1165,42 @@ pub async fn list_repos_for_agent(
     .map_err(ApiError::Database)
 }
 
+/// A repository host one agent's repositories use, by the SSH host key
+/// pinned for it, and a user one of those repositories logs in as there.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RelayDestinationRow {
+    /// The host key pinned for the repository host, in OpenSSH format.
+    pub ssh_host_key: String,
+    /// A user a repository on that host logs in as.
+    pub ssh_user: String,
+}
+
+/// The SSH logins the SSH agent relay may sign for `agent_id`: every pinned
+/// repository host and user of the repositories its schedules target, the
+/// same repositories [`list_repos_for_agent`] hands it. A host with no
+/// pinned key is left out, since a login to it cannot be told apart from
+/// one to any other host.
+///
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the database query fails.
+pub async fn list_relay_destinations_for_agent(
+    pool: &PgPool,
+    agent_id: i64,
+) -> Result<Vec<RelayDestinationRow>, ApiError> {
+    sqlx::query_as!(
+        RelayDestinationRow,
+        "SELECT DISTINCT h.ssh_host_key AS \"ssh_host_key!\", r.ssh_user FROM repos r JOIN \
+         repo_hosts h ON h.id = r.repo_host_id JOIN schedule_repos sr ON sr.repo_id = r.id JOIN \
+         schedule_targets st ON st.schedule_id = sr.schedule_id WHERE st.agent_id = $1 AND \
+         h.ssh_host_key IS NOT NULL ORDER BY 1, 2",
+        agent_id,
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(ApiError::Database)
+}
+
 /// # Errors
 ///
 /// Returns [`ApiError::Database`] if the database query fails.

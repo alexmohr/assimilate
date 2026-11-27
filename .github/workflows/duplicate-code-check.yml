@@ -28,8 +28,7 @@ jobs:
             .jscpd.json
 
       - name: Checkout PR head
-        # Stays on v6: checkout v7 refuses fork PR code under
-        # pull_request_target unless `allow-unsafe-pr-checkout` is set.
+        # Stays on v6: v7 refuses fork PR code under pull_request_target without allow-unsafe-pr-checkout.
         uses: actions/checkout@v6
         with:
           repository: ${{ github.event.pull_request.head.repo.full_name }}
@@ -59,7 +58,7 @@ jobs:
         # files. Extend the ignore list in .jscpd.json, no workflow change needed.
         working-directory: pr-src
         run: |
-          node "$GITHUB_WORKSPACE/.github/jscpd/node_modules/jscpd/bin/jscpd" . \
+          node "$GITHUB_WORKSPACE/.github/jscpd/node_modules/jscpd/run-jscpd.js" . \
             --config "$GITHUB_WORKSPACE/.jscpd.json" \
             --reporters json \
             --output ../jscpd-report \

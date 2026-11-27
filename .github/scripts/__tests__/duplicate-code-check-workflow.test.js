@@ -98,7 +98,7 @@ test("jscpd runs from the pinned install with the default branch's config", () =
   const run = step("Run jscpd");
   assert.match(
     run.body,
-    /\$GITHUB_WORKSPACE\/\.github\/jscpd\/node_modules\/jscpd\/bin\/jscpd/,
+    /\$GITHUB_WORKSPACE\/\.github\/jscpd\/node_modules\/jscpd\/run-jscpd\.js/,
   );
   // The config must be an absolute path under the workspace root (the default
   // branch checkout) - a relative path would resolve into pr-src and let the

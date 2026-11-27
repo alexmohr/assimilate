@@ -11,6 +11,11 @@ const TRANSPORT_RETRY_DELAY_MS = 300
 export const apiClient = axios.create({
   baseURL: '/api',
   headers: { 'Content-Type': 'application/json' },
+  // The server sets no XSRF cookie, so there is nothing to echo back. Looking
+  // one up anyway is not free: where the browser has the Cookie Store API,
+  // axios reads the cookie asynchronously and only then sends the request,
+  // delaying every write by a round trip to the browser's cookie store.
+  withXSRFToken: false,
 })
 
 type MethodKind = 'get' | 'other'

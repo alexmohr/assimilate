@@ -116,13 +116,11 @@ function exitClass(code: number): string {
       <pre
         v-if="result.stdout"
         class="console-pre"
-        >{{ result.stdout }}</pre
-      >
+        >{{ result.stdout }}</pre>
       <pre
         v-if="result.stderr"
         class="console-pre console-pre-stderr"
-        >{{ result.stderr }}</pre
-      >
+        >{{ result.stderr }}</pre>
       <span
         v-if="!result.stdout && !result.stderr"
         class="console-empty"

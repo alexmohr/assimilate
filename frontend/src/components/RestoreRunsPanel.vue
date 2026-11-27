@@ -185,8 +185,7 @@ onMounted(() => {
         <pre
           v-if="run.error_message"
           class="error-pre"
-          >{{ run.error_message }}</pre
-        >
+          >{{ run.error_message }}</pre>
       </template>
     </LogRow>
   </LogList>

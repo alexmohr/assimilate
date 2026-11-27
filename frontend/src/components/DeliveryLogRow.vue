@@ -72,8 +72,7 @@ function formatPayload(payload: NotificationEvent): string {
       <pre
         v-if="delivery.error_message"
         class="error-pre"
-        >{{ delivery.error_message }}</pre
-      >
+        >{{ delivery.error_message }}</pre>
       <h3 class="group-label">Payload</h3>
       <pre class="detail-pre">{{ formatPayload(delivery.payload) }}</pre>
     </template>

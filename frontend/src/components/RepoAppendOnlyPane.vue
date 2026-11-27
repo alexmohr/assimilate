@@ -204,8 +204,9 @@ onMessage('RepoOpChanged', (payload) => {
               <RouterLink
                 class="mono"
                 :to="`/repos/${sibling.id}`"
-                >{{ sibling.name }}</RouterLink
-              ><template v-if="index < status.login.sibling_repos.length - 1">, </template
+                >{{ sibling.name }}</RouterLink><template
+                v-if="index < status.login.sibling_repos.length - 1"
+                >, </template
               ><template v-else>.</template>
             </template>
           </template>

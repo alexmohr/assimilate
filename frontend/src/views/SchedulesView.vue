@@ -735,9 +735,9 @@ async function fetchAll(): Promise<void> {
       // own last-N runs regardless of how many schedules exist or how often
       // any one of them runs.
       apiClient
-        .get<
-          ScheduleActivityEntry[]
-        >(`/stats/activity?days=${ACTIVITY_WINDOW_DAYS}&limit_per_schedule=${RECENT_RUNS_PER_SCHEDULE}`)
+        .get<ScheduleActivityEntry[]>(
+          `/stats/activity?days=${ACTIVITY_WINDOW_DAYS}&limit_per_schedule=${RECENT_RUNS_PER_SCHEDULE}`,
+        )
         .catch(() => ({ data: [] as ScheduleActivityEntry[] })),
     ])
     schedules.value = scheduleRows

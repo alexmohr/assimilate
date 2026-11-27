@@ -56,14 +56,7 @@ import { Database } from '@lucide/vue'
  * is answered, and the create action exists on the last step alone.
  */
 type StepId =
-  | 'basics'
-  | 'sources'
-  | 'targets'
-  | 'power'
-  | 'timing'
-  | 'retention'
-  | 'advanced'
-  | 'review'
+  'basics' | 'sources' | 'targets' | 'power' | 'timing' | 'retention' | 'advanced' | 'review'
 
 const router = useRouter()
 const route = useRoute()

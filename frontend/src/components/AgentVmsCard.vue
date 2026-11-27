@@ -455,8 +455,9 @@ onMounted(load)
                   <RouterLink
                     :to="`/schedules/${schedule.id}`"
                     class="vm-asked-link"
-                    >{{ schedule.name || `Schedule #${schedule.id}` }}</RouterLink
-                  >{{ listSeparator(i, schedulesAskingForVms.length) }}
+                    >{{ schedule.name || `Schedule #${schedule.id}` }}</RouterLink>{{
+                    listSeparator(i, schedulesAskingForVms.length)
+                  }}
                 </template>
                 {{ schedulesAskingForVms.length === 1 ? 'takes' : 'take' }} virtual machines, but
                 this host has no domain included, so their archives hold none. Scan for domains

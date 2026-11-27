@@ -276,8 +276,7 @@ onMounted(load)
             <pre
               class="error-pre"
               data-testid="tunnel-error"
-              >{{ errorMessage }}</pre
-            >
+              >{{ errorMessage }}</pre>
             <p class="field-hint">
               The server could not open this tunnel. Check that the server's public key is in
               <code>~/.ssh/authorized_keys</code> for <code>{{ tunnel.ssh_user }}</code> on
@@ -448,8 +447,7 @@ onMounted(load)
         @cancel="showDelete = false"
         @confirm="confirmDelete"
       >
-        Delete the tunnel for <span class="mono">{{ agentLabel }}</span
-        >?
+        Delete the tunnel for <span class="mono">{{ agentLabel }}</span>?
       </ConfirmDeleteDialog>
     </template>
   </div>

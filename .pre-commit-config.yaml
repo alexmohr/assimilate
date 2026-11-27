@@ -25,7 +25,7 @@ repos:
         exclude: ^\.pre-commit-config\.yaml$
 
   - repo: https://github.com/igorshubovych/markdownlint-cli
-    rev: v0.48.0
+    rev: v0.50.1
     hooks:
       - id: markdownlint-docker
 
@@ -41,14 +41,14 @@ repos:
         args: ['--severity=warning']
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.15.12
+    rev: v0.17.6
     hooks:
       - id: ruff
         alias: ruff-check
       - id: ruff-format
 
   - repo: https://github.com/compilerla/conventional-pre-commit
-    rev: v4.4.0
+    rev: v4.5.0
     hooks:
       - id: conventional-pre-commit
         stages: [commit-msg]
@@ -85,7 +85,7 @@ repos:
   # header, a `.license` sidecar or REUSE.toml. reuse-annotate above only adds
   # headers; this checks the whole repository, generated files included.
   - repo: https://github.com/fsfe/reuse-tool
-    rev: v6.2.0
+    rev: v6.3.0
     hooks:
       - id: reuse
 

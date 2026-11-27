@@ -61,7 +61,7 @@ jobs:
       run:
         shell: bash
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
       - name: Compute version
@@ -75,9 +75,9 @@ jobs:
           VERSION: ${{ inputs.version || steps.crate-version.outputs.version }}
         run: echo "VERSION=$VERSION" >> "$GITHUB_ENV"
       - name: Setup Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
-          python-version: "3.12"
+          python-version: "3.15"
       # PostgreSQL and borg come from the releases pinned in
       # desktop/bundle.toml: the script refuses a file whose SHA-256 differs,
       # and the GitHub build attestation of each file it marks `attested` is
@@ -106,9 +106,9 @@ jobs:
           scripts/build-libxml2.sh "$source" "$RUNNER_TEMP/libxml2/libxml2.so.2"
           echo "LIBXML2=$RUNNER_TEMP/libxml2/libxml2.so.2" >> "$GITHUB_ENV"
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
-          node-version: "20"
+          node-version: "26"
           cache: npm
           cache-dependency-path: frontend/package-lock.json
       - name: Build the web UI
@@ -137,7 +137,7 @@ jobs:
       # Release artifacts are built with the pinned stable compiler, never
       # nightly.
       - name: Install Rust stable
-        uses: actions-rust-lang/setup-rust-toolchain@v1
+        uses: actions-rust-lang/setup-rust-toolchain@v2
         with:
           toolchain: ${{ env.RUST_STABLE_TOOLCHAIN }}
           cache-workspaces: |
@@ -240,7 +240,7 @@ jobs:
           done
           ls -l dist
       - name: Upload the installers
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: desktop-${{ matrix.target }}
           path: dist/*

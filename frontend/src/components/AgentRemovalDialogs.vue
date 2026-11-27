@@ -117,9 +117,9 @@ defineExpose({ requestDelete, hide: hideAgent, unhide: unhideAgent, requestDelet
     @close="showDeleteDialog = false"
   >
     <p>
-      Permanently delete <strong>{{ agent.hostname }}</strong
-      >? Its schedules, backup reports and token will be removed. Archives already written to a
-      repository are not touched. This action cannot be undone.
+      Permanently delete <strong>{{ agent.hostname }}</strong>? Its schedules, backup reports and
+      token will be removed. Archives already written to a repository are not touched. This action
+      cannot be undone.
     </p>
 
     <template #footer>

@@ -18,7 +18,7 @@ jobs:
     runs-on: ubuntu-26.04
     steps:
       - name: Checkout scripts from default branch
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           ref: ${{ github.event.repository.default_branch }}
           persist-credentials: false
@@ -28,7 +28,8 @@ jobs:
             .jscpd.json
 
       - name: Checkout PR head
-        uses: actions/checkout@v4
+        # Stays on v6: v7 refuses fork PR code under pull_request_target without allow-unsafe-pr-checkout.
+        uses: actions/checkout@v6
         with:
           repository: ${{ github.event.pull_request.head.repo.full_name }}
           ref: ${{ github.event.pull_request.head.sha }}
@@ -36,9 +37,9 @@ jobs:
           persist-credentials: false
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
-          node-version: "20"
+          node-version: "26"
 
       # Install jscpd from the default branch's lockfile, outside the PR tree and
       # with lifecycle scripts disabled. npm never runs with the PR checkout as
@@ -57,14 +58,14 @@ jobs:
         # files. Extend the ignore list in .jscpd.json, no workflow change needed.
         working-directory: pr-src
         run: |
-          node "$GITHUB_WORKSPACE/.github/jscpd/node_modules/jscpd/bin/jscpd" . \
+          node "$GITHUB_WORKSPACE/.github/jscpd/node_modules/jscpd/run-jscpd.js" . \
             --config "$GITHUB_WORKSPACE/.jscpd.json" \
             --reporters json \
             --output ../jscpd-report \
             --silent || true
 
       - name: Analyze duplication and update PR
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const analyze = require(`${process.env.GITHUB_WORKSPACE}/.github/scripts/analyze-duplication.js`);

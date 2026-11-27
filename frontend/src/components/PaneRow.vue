@@ -102,8 +102,8 @@ withDefaults(
             :for="labelFor"
             >{{ title }}</label
           >
-          <template v-else>{{ title }}</template
-          >{{ $slots.titleExtra ? ' ' : '' }}<slot name="titleExtra" />
+          <template v-else>{{ title }}</template>{{ $slots.titleExtra ? ' ' : ''
+          }}<slot name="titleExtra" />
           <template v-if="help">
             {{ ' ' }}
             <HelpHint

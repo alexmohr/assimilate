@@ -221,8 +221,8 @@ function close(): void {
         <p class="deploy-info">
           Reinstall the agent binary and systemd service on this host over SSH — useful after the
           machine was reimaged or the installation was otherwise lost. The agent already reports
-          version <span class="mono">{{ agentVersion }}</span
-          >; this does not change which version is expected to run.
+          version <span class="mono">{{ agentVersion }}</span>; this does not change which version
+          is expected to run.
         </p>
       </template>
       <ul

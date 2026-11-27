@@ -8,7 +8,7 @@ This page covers how to set up a development environment, run tests, and generat
 ## Prerequisites
 
 - [Rust](https://rustup.rs/): the pinned stable toolchain (1.98) for building, plus a nightly toolchain for formatting and linting
-- [Node.js](https://nodejs.org/) 20+
+- [Node.js](https://nodejs.org/) 22.12+ (CI and the Docker images use Node.js 26)
 - [Docker](https://docs.docker.com/get-docker/) and Docker Compose
 - [uv](https://docs.astral.sh/uv/) (Python package manager, for pre-commit)
 

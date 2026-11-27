@@ -746,8 +746,8 @@ async function confirmDelete(): Promise<void> {
         @cancel="showDelete = false"
         @confirm="confirmDelete"
       >
-        Delete <span class="mono">{{ user.username }}</span
-        >? They can no longer sign in, and this cannot be undone.
+        Delete <span class="mono">{{ user.username }}</span>? They can no longer sign in, and this
+        cannot be undone.
       </ConfirmDeleteDialog>
     </template>
   </div>

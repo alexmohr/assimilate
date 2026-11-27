@@ -53,8 +53,7 @@ onMounted(async () => {
       </div>
       <span class="field-hint">
         Set it as <code>BORG_SERVER_KEY</code> on the agent. Its fingerprint is
-        <code class="mono">{{ key.fingerprint }}</code
-        >, as the agent logs it when it connects.
+        <code class="mono">{{ key.fingerprint }}</code>, as the agent logs it when it connects.
       </span>
     </template>
   </div>

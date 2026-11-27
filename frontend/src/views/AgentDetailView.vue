@@ -822,8 +822,7 @@ watch(wsStatus, (newStatus, oldStatus) => {
     />
     <div v-else-if="ambiguousMatches.length > 0">
       <p class="pane-lede">
-        More than one host is named <strong>{{ props.hostname }}</strong
-        >. Choose which one:
+        More than one host is named <strong>{{ props.hostname }}</strong>. Choose which one:
       </p>
       <div class="card-grid">
         <div
@@ -1127,8 +1126,7 @@ watch(wsStatus, (newStatus, oldStatus) => {
     >
       <p>
         Hostname changed from <strong>{{ pendingAliasOldHostname }}</strong> to
-        <strong>{{ pendingAliasNewHostname }}</strong
-        >.
+        <strong>{{ pendingAliasNewHostname }}</strong>.
       </p>
       <p>
         Add <code>{{ pendingAliasOldHostname }}</code> as an alternative hostname pattern so

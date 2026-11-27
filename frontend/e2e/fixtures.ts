@@ -189,8 +189,7 @@ export async function mockScheduleOnePatch(
     async (route) => {
       const response = await route.fetch()
       const body = (await response.json()) as
-        | Array<Record<string, unknown>>
-        | Record<string, unknown>
+        Array<Record<string, unknown>> | Record<string, unknown>
       const patched = Array.isArray(body)
         ? body.map((s) => (s.id === 1 ? { ...s, ...overrides } : s))
         : body.id === 1

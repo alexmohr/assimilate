@@ -211,8 +211,7 @@ defineExpose({ expanded })
     >
       <p class="content-intro">
         Pre-filled with Assimilate's default content, including the deduplicated size on a
-        successful backup. Changes here apply only to <strong>{{ channel.name }}</strong
-        >.
+        successful backup. Changes here apply only to <strong>{{ channel.name }}</strong>.
       </p>
 
       <div class="field">

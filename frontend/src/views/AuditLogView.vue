@@ -233,8 +233,7 @@ onMounted(fetchAuditLog)
             <pre
               v-if="hasAuditDetails(entry)"
               class="detail-pre"
-              >{{ entry.details }}</pre
-            >
+              >{{ entry.details }}</pre>
           </template>
         </LogRow>
       </LogList>

@@ -754,8 +754,8 @@ onMounted(async () => {
       @close="showDeleteModal = false"
     >
       <p>
-        Delete token <strong>{{ deleteTarget?.name }}</strong
-        >? Any integrations using this token will stop working.
+        Delete token <strong>{{ deleteTarget?.name }}</strong>? Any integrations using this token
+        will stop working.
       </p>
       <div
         v-if="deleteError"

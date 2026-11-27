@@ -311,8 +311,8 @@ async function confirmDelete(): Promise<void> {
         @cancel="showDelete = false"
         @confirm="confirmDelete"
       >
-        Remove <span class="mono">{{ host.name }}</span
-        >? Schedules and agent defaults stop needing it, and runs waiting on it stop waiting.
+        Remove <span class="mono">{{ host.name }}</span>? Schedules and agent defaults stop needing
+        it, and runs waiting on it stop waiting.
       </ConfirmDeleteDialog>
     </template>
   </div>

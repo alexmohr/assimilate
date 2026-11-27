@@ -151,8 +151,7 @@ function liveRelativeTime(iso: string): string {
             v-if="expandedId === item.id && item.error_message"
             class="activity-error"
             :style="{ color: statusColor(item.status) }"
-            >{{ item.error_message }}</pre
-          >
+            >{{ item.error_message }}</pre>
         </div>
         <div class="activity-meta">
           <span class="activity-time">{{ liveRelativeTime(item.started_at) }}</span>

@@ -9,13 +9,7 @@
  * rather than repeating raw string comparisons.
  */
 export type NormalizedBackupStatus =
-  | 'success'
-  | 'warning'
-  | 'failed'
-  | 'started'
-  | 'pending'
-  | 'cancelled'
-  | 'skipped'
+  'success' | 'warning' | 'failed' | 'started' | 'pending' | 'cancelled' | 'skipped'
 
 export function normalizeBackupStatus(rawStatus: string): NormalizedBackupStatus {
   const s = rawStatus.toLowerCase()

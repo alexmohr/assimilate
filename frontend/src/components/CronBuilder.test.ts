@@ -11,14 +11,13 @@ import type { CronPreviewResponse } from '../types/generated'
 // Stands in for the server's validator: anything that is not five fields is
 // rejected with the kind of message the server sends.
 vi.mock('../api/schedules', () => ({
-  previewCron: vi.fn(
-    async (expr: string): Promise<CronPreviewResponse> =>
-      expr.trim().split(/\s+/).length === 5
-        ? {
-            status: 'valid',
-            next_runs: ['2026-01-01T02:00:00Z', '2026-01-02T02:00:00Z', '2026-01-03T02:00:00Z'],
-          }
-        : { status: 'invalid', error: 'invalid cron expression: expected 5 fields' },
+  previewCron: vi.fn(async (expr: string): Promise<CronPreviewResponse> =>
+    expr.trim().split(/\s+/).length === 5
+      ? {
+          status: 'valid',
+          next_runs: ['2026-01-01T02:00:00Z', '2026-01-02T02:00:00Z', '2026-01-03T02:00:00Z'],
+        }
+      : { status: 'invalid', error: 'invalid cron expression: expected 5 fields' },
   ),
 }))
 

@@ -83,7 +83,7 @@ jobs:
     steps:
       - name: Check whether the heavy review job is worth starting
         id: check
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             // "needs review" landing and /claude-review are already
@@ -169,7 +169,7 @@ jobs:
       # already trusts for `.github/scripts`. "Restore scripts from default
       # branch" repeats this list by hand; keep the two in step.
       - name: Checkout scripts from default branch
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           ref: ${{ github.event.repository.default_branch }}
           sparse-checkout: |
@@ -179,7 +179,7 @@ jobs:
 
       - name: Resolve PR and command
         id: resolve
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             let number = null;
@@ -207,7 +207,7 @@ jobs:
 
       - name: Report unsupported model
         if: steps.resolve.outputs.error
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             await github.rest.issues.createComment({
@@ -220,7 +220,7 @@ jobs:
       - name: Resolve PR head
         id: head
         if: steps.resolve.outputs.pr_number != '' && steps.resolve.outputs.matched == 'true'
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const { data: pr } = await github.rest.pulls.get({
@@ -233,7 +233,7 @@ jobs:
       - name: Run deterministic pre-flight checks
         id: precheck
         if: steps.head.outputs.sha
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const check = require(`${process.env.GITHUB_WORKSPACE}/.github/scripts/pre-review-checks.js`);
@@ -323,7 +323,7 @@ jobs:
       - name: Check out the PR head for the reviewer
         if: steps.precheck.outputs.run_claude == 'true'
         continue-on-error: true
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           ref: ${{ steps.head.outputs.sha }}
           path: pr-src
@@ -674,7 +674,7 @@ jobs:
       - name: Restore scripts from default branch
         id: restore
         if: always() && steps.precheck.outputs.run_claude == 'true'
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           ref: ${{ github.event.repository.default_branch }}
           sparse-checkout: |
@@ -701,7 +701,7 @@ jobs:
       - name: Report a failed script restore
         if: always() && steps.restore.outcome == 'failure'
         continue-on-error: true
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const prNumber = Number("${{ steps.resolve.outputs.pr_number }}");
@@ -758,7 +758,7 @@ jobs:
       # leaving the PR silently stuck.
       - name: Sync claude-review-failed signal
         if: steps.precheck.outputs.run_claude == 'true'
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const { upsertMarkedComment } = require(`${process.env.GITHUB_WORKSPACE}/.github/scripts/lib/pr-comment.js`);
@@ -855,7 +855,7 @@ jobs:
       # from any other reviewer.
       - name: Clear a stale bot-authored changes-requested review
         if: steps.precheck.outputs.run_claude == 'true' && steps.claude.outcome == 'success'
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const owner = context.repo.owner;
@@ -957,7 +957,7 @@ jobs:
       actions: read
     steps:
       - name: Checkout scripts from default branch
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           ref: ${{ github.event.repository.default_branch }}
           sparse-checkout: |
@@ -965,7 +965,7 @@ jobs:
           persist-credentials: false
 
       - name: Re-sync labels after review
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         env:
           # Through the environment, not interpolated into the script body -
           # same reasoning as pr-status-labels.yml's own sync step.

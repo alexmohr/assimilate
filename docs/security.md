@@ -131,6 +131,8 @@ Permissions are managed by admins under **Settings → Access Control**.
 
 Dependency hosts follow the same grants. A user who is not an admin sees a dependency's name, address and port only when a schedule and agent they may see need it, or an agent they may see requires it. Counts and waiting runs cover only what they may see, and the repository host a dependency shares a machine with is named only to a user who may read a repository on it. Any other dependency reads as not found, directly, through its usage and through its machine. A schedule editor cannot point a schedule at a dependency they may not see: it is refused as unknown, the same as an id that does not exist. Only an admin may create, change, test or remove a dependency. See [Who Can See a Dependency](dependency-hosts.md#who-can-see-a-dependency).
 
+Machines follow the same rule. A user who is not an admin reads a machine's **Power & dependencies** pane only through a role they may see — an agent they may see, a repository host they may read a repository on, or a dependency they may see — and the pane lists only those roles and the waits of their schedules and repositories. Any other machine reads as not found. A schedule's machines leave out those of the agents and repositories they may not see. See [What a User Can See](access-control.md#what-a-user-can-see).
+
 ## Session Idle Timeout
 
 An idle timeout can be configured as **Idle session** under **Timeouts** in **System → Settings**. Sessions that have no API activity for longer than the configured duration are automatically revoked on the next request.

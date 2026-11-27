@@ -8,10 +8,15 @@
 //! Anyone signed in may read a machine, as they could read the power and
 //! availability of its roles before; only a viewer allowed to see wake secrets
 //! sees its MAC and broadcast addresses, and only an admin sees which
-//! schedules override it, changes it, or asks it whether it is back. A
-//! dependency on it is listed only to a viewer who may see that dependency,
-//! with only the waits of the schedules and agents they see, and a machine
-//! that is nothing but dependencies they may not see reads as not found.
+//! schedules override it, changes it, or asks it whether it is back.
+//!
+//! A viewer who is not an admin sees a machine only through a role they may
+//! see (see [`super::read_scope`]): its agent if they see the agent, its
+//! repository host if they read a repository on it, and each dependency on
+//! it they may see. Only those roles are listed, with only the waits of the
+//! schedules, agents and repositories they see. A machine with none reads as
+//! not found. A schedule's machines leave out those of the agents and
+//! repositories the viewer does not see.
 
 use axum::{
     Json,
@@ -95,7 +100,7 @@ async fn waiting(
     state: &AppState,
     machine: &MachineRow,
     roles: &MachineRoles,
-    dependency_waits: &DependencyWaitScope,
+    scope: &WaitScope,
 ) -> Result<Vec<MachineWaitResponse>, ApiError> {
     let mut out = Vec::new();
     if let Some(agent) = roles.agent.as_ref().filter(|_| machine.intermittent) {
@@ -146,10 +151,7 @@ async fn waiting(
             crate::dependencies::catch_up::waiting_for_dependency(state, dependency.id)
                 .await?
                 .into_iter()
-                .filter(|wait| {
-                    dependency_waits.schedules.allows(wait.schedule_id)
-                        && dependency_waits.agents.allows(wait.agent_id)
-                })
+                .filter(|wait| scope.agents.allows(wait.agent_id))
                 .map(|wait| MachineWaitResponse {
                     role: MachineRoleKind::Dependency,
                     schedule_id: wait.schedule_id,
@@ -165,39 +167,58 @@ async fn waiting(
                 }),
         );
     }
+    out.retain(|wait| scope.allows(wait));
     Ok(out)
 }
 
-/// The schedules and agents whose waits on a dependency a viewer sees.
-struct DependencyWaitScope {
+/// The schedules, agents and repositories whose waits on a machine a viewer
+/// sees.
+struct WaitScope {
     schedules: ReadScope,
     agents: ReadScope,
+    repos: ReadScope,
 }
 
-/// Leaves out of `roles` the dependencies `viewer` may not see, and of the
-/// waits on the rest those of schedules and agents they do not see. A
-/// machine that was nothing but dependencies, none of them visible, reads as
-/// not found.
+impl WaitScope {
+    /// Whether a wait on the machine, of `schedule_id` into `repo_id` if it
+    /// names one, is the viewer's to see.
+    fn allows(&self, wait: &MachineWaitResponse) -> bool {
+        self.schedules.allows(wait.schedule_id)
+            && wait
+                .repo_id
+                .is_none_or(|repo_id| self.repos.allows(repo_id))
+    }
+}
+
+/// Leaves out of `roles` what `viewer` may not see - an agent they do not
+/// see, a repository host they read no repository on, a dependency they may
+/// not see - and returns what decides which waits on the rest they see. A
+/// machine with no role left for them reads as not found.
 async fn visible_roles(
     state: &AppState,
     machine_id: i64,
     mut roles: MachineRoles,
     viewer: &AuthUser,
-) -> Result<(MachineRoles, DependencyWaitScope), ApiError> {
-    let scope = read_scope::dependency_host_scope(&state.pool, viewer.user_id).await?;
-    let only_dependencies =
-        roles.agent.is_none() && roles.repo_host.is_none() && !roles.dependencies.is_empty();
-    roles.dependencies.retain(|d| scope.allows(d.id));
-    if only_dependencies && roles.dependencies.is_empty() {
+) -> Result<(MachineRoles, WaitScope), ApiError> {
+    let scope = WaitScope {
+        schedules: read_scope::visible_schedules(&state.pool, viewer.user_id).await?,
+        agents: read_scope::visible_agents(&state.pool, viewer.user_id).await?,
+        repos: read_scope::readable_repos(&state.pool, viewer.user_id).await?,
+    };
+    let dependencies = read_scope::dependency_host_scope(&state.pool, viewer.user_id).await?;
+    if matches!(dependencies, read_scope::DependencyHostScope::All) {
+        return Ok((roles, scope));
+    }
+    let repo_hosts = read_scope::visible_repo_hosts(&state.pool, viewer.user_id).await?;
+    roles.agent = roles.agent.filter(|a| scope.agents.allows(a.id));
+    roles.repo_host = roles.repo_host.filter(|h| repo_hosts.allows(h.id));
+    roles.dependencies.retain(|d| dependencies.allows(d.id));
+    if roles.agent.is_none() && roles.repo_host.is_none() && roles.dependencies.is_empty() {
         return Err(ApiError::NotFound(format!(
             "machine {machine_id} not found"
         )));
     }
-    let waits = DependencyWaitScope {
-        schedules: read_scope::visible_schedules(&state.pool, viewer.user_id).await?,
-        agents: read_scope::visible_agents(&state.pool, viewer.user_id).await?,
-    };
-    Ok((roles, waits))
+    Ok((roles, scope))
 }
 
 /// Builds the response for one machine, for `viewer` - its permissions decide
@@ -210,7 +231,8 @@ async fn machine_response(
 ) -> Result<MachineResponse, ApiError> {
     let machine = db::machines::get_machine(&state.pool, machine_id).await?;
     let roles = db::machines::get_machine_roles(&state.pool, machine_id).await?;
-    let (roles, dependency_waits) = visible_roles(state, machine_id, roles, viewer).await?;
+    let can_shut_down = roles.agent.is_some() || roles.repo_host.is_some();
+    let (roles, wait_scope) = visible_roles(state, machine_id, roles, viewer).await?;
     let permissions = db::get_effective_permissions(&state.pool, viewer.user_id).await?;
     let schedule_overrides = if permissions.can_delete_repo {
         db::machines::list_machine_schedule_overrides(&state.pool, machine_id)
@@ -231,7 +253,7 @@ async fn machine_response(
         label: roles.label(),
         roles: roles_response(&roles),
         power: wake_settings_response(&machine, permissions.can_view_wake_secrets()),
-        can_shut_down: roles.agent.is_some() || roles.repo_host.is_some(),
+        can_shut_down,
         availability: MachineAvailabilityResponse {
             intermittent: machine.intermittent,
             catch_up_recheck_minutes: machine.catch_up_recheck_minutes,
@@ -239,7 +261,7 @@ async fn machine_response(
         },
         last_checked_at: machine.last_checked_at,
         last_check_reachable: machine.last_check_reachable,
-        waiting: waiting(state, &machine, &roles, &dependency_waits).await?,
+        waiting: waiting(state, &machine, &roles, &wait_scope).await?,
         schedule_overrides,
     })
 }
@@ -501,11 +523,38 @@ struct ScheduleMachine {
     roles: Vec<MachineRoleKind>,
 }
 
+/// The agents and repositories whose machines a viewer sees among a
+/// schedule's.
+struct ScheduleMachineScope {
+    agents: ReadScope,
+    repos: ReadScope,
+}
+
+impl ScheduleMachineScope {
+    /// Every agent and repository, for the schedule's machines as a run needs
+    /// them.
+    const fn everything() -> Self {
+        Self {
+            agents: ReadScope::All,
+            repos: ReadScope::All,
+        }
+    }
+
+    async fn load(state: &AppState, viewer: &AuthUser) -> Result<Self, ApiError> {
+        Ok(Self {
+            agents: read_scope::visible_agents(&state.pool, viewer.user_id).await?,
+            repos: read_scope::readable_repos(&state.pool, viewer.user_id).await?,
+        })
+    }
+}
+
 /// Every machine a schedule needs, in the order a run meets them: its agents,
-/// the repository hosts it writes to, then the dependencies its agents need.
+/// the repository hosts it writes to, then the dependencies its agents need -
+/// of the agents and repositories `scope` allows.
 async fn schedule_machines(
     state: &AppState,
     schedule_id: i64,
+    scope: &ScheduleMachineScope,
 ) -> Result<Vec<ScheduleMachine>, ApiError> {
     let mut machines: Vec<ScheduleMachine> = Vec::new();
     let mut add = |machine_id: i64, label: String, role: MachineRoleKind| {
@@ -523,7 +572,7 @@ async fn schedule_machines(
     };
     let targets = db::list_schedule_targets(&state.pool, schedule_id).await?;
     let mut agents = Vec::with_capacity(targets.len());
-    for target in &targets {
+    for target in targets.iter().filter(|t| scope.agents.allows(t.agent_id)) {
         let agent = db::get_agent_by_id(&state.pool, target.agent_id).await?;
         add(
             agent.machine_id,
@@ -532,7 +581,11 @@ async fn schedule_machines(
         );
         agents.push(agent.id);
     }
-    for schedule_repo in db::list_schedule_repos(&state.pool, schedule_id).await? {
+    for schedule_repo in db::list_schedule_repos(&state.pool, schedule_id)
+        .await?
+        .into_iter()
+        .filter(|r| scope.repos.allows(r.repo_id))
+    {
         let repo = db::get_repo_by_id(&state.pool, schedule_repo.repo_id).await?;
         add(repo.machine_id, repo.ssh_host, MachineRoleKind::RepoHost);
     }
@@ -561,7 +614,8 @@ async fn schedule_machines_response(
         .can_view_wake_secrets();
     let choices = db::machines::list_schedule_machine_wake(&state.pool, schedule_id).await?;
     let mut out = Vec::new();
-    for machine in schedule_machines(state, schedule_id).await? {
+    let scope = ScheduleMachineScope::load(state, viewer).await?;
+    for machine in schedule_machines(state, schedule_id, &scope).await? {
         let row = db::machines::get_machine(&state.pool, machine.machine_id).await?;
         out.push(ScheduleMachineResponse {
             machine_id: machine.machine_id,
@@ -596,7 +650,8 @@ async fn schedule_machines_response(
     )
 )]
 /// Every machine a schedule needs - its agents, repository hosts and
-/// dependencies - with their own settings and the schedule's choice for each.
+/// dependencies - with their own settings and the schedule's choice for each,
+/// leaving out those of the agents and repositories the caller does not see.
 ///
 /// # Errors
 ///
@@ -625,8 +680,10 @@ pub async fn get_schedule_machines(
         (status = 404, description = "Not found"),
     )
 )]
-/// Replace the schedule's own choice for each machine it needs. A machine left
-/// out follows the schedule-wide wake setting.
+/// Replace the schedule's own choice for each machine it needs that the caller
+/// sees. A machine left out follows the schedule-wide wake setting; the
+/// choices for machines of agents and repositories the caller does not see
+/// are kept.
 ///
 /// # Errors
 ///
@@ -641,7 +698,12 @@ pub async fn update_schedule_machines(
 ) -> Result<Json<ScheduleMachinesResponse>, ApiError> {
     let schedule = db::get_schedule_by_id(&state.pool, id).await?;
     super::schedules::check_schedule_edit_permission(&state, &auth, &schedule).await?;
-    let needed = schedule_machines(&state, id).await?;
+    let needed = schedule_machines(
+        &state,
+        id,
+        &ScheduleMachineScope::load(&state, &auth).await?,
+    )
+    .await?;
     let mut choices: Vec<ScheduleMachineWake> = Vec::with_capacity(req.machines.len());
     for input in &req.machines {
         let Some(machine) = needed.iter().find(|m| m.machine_id == input.machine_id) else {
@@ -668,6 +730,20 @@ pub async fn update_schedule_machines(
             mode: input.mode,
         });
     }
+    // The choices for the machines of agents and repositories the caller does
+    // not see stay as they are.
+    let unseen: Vec<i64> = schedule_machines(&state, id, &ScheduleMachineScope::everything())
+        .await?
+        .into_iter()
+        .map(|m| m.machine_id)
+        .filter(|machine_id| !needed.iter().any(|m| m.machine_id == *machine_id))
+        .collect();
+    choices.extend(
+        db::machines::list_schedule_machine_wake(&state.pool, id)
+            .await?
+            .into_iter()
+            .filter(|c| unseen.contains(&c.machine_id)),
+    );
     db::machines::replace_schedule_machine_wake(&state.pool, id, &choices).await?;
     state.ui_broadcast.send(ServerToUi::DataChanged);
     Ok(Json(schedule_machines_response(&state, id, &auth).await?))

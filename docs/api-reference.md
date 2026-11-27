@@ -195,7 +195,7 @@ An agent's host, a repository host and the dependencies on it share one [machine
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `GET` | `/api/machines/{machine_id}` | Get a machine: its roles, wake and availability settings, the runs waiting on it, and (admins only) the schedules that do not leave it to its own wake setting. Only the dependencies the caller [can see](dependency-hosts.md#who-can-see-a-dependency) are listed; `404` for a machine that holds only dependencies they cannot see |
+| `GET` | `/api/machines/{machine_id}` | Get a machine: its roles, wake and availability settings, the runs waiting on it, and (admins only) the schedules that do not leave it to its own wake setting. For anyone but an admin, only the roles they [can see](access-control.md#what-a-user-can-see) are listed (an agent they can see, a repository host they can read a repository on, a dependency they [can see](dependency-hosts.md#who-can-see-a-dependency)), with only the waits of the schedules and repositories they can see; `404` for a machine with none of those |
 | `PUT` | `/api/machines/{machine_id}/power` | Set how the machine is woken and whether it is shut down after a backup (admin only) |
 | `PUT` | `/api/machines/{machine_id}/availability` | Set whether the machine is [not always online](scheduling.md#hosts-that-are-not-always-online), how often it is re-checked and how long a run waits on it (admin only) |
 | `POST` | `/api/machines/{machine_id}/check` | Ask the machine whether it is back now, and catch up every run waiting on it if it is (admin only) |
@@ -253,7 +253,7 @@ Restore `paths` are archive paths, checked like download paths: no `..`, no lead
 | `GET` | `/api/schedules/{id}/catch-up` | List the schedule's agents and repository hosts that are marked as not always online |
 | `GET` / `PUT` | `/api/schedules/{id}/dependencies` | Get or set the [dependency hosts](dependency-hosts.md) each target agent the caller can see needs, and list the runs waiting on one. Setting a dependency the caller cannot see is refused with `400 unknown dependency` |
 | `GET` / `PUT` | `/api/agents/{hostname}/dependencies` | Get or set the dependency hosts an agent's files require (changes: admin only) |
-| `GET` / `PUT` | `/api/schedules/{id}/machines` | Get every [machine](power-management.md#per-schedule-overrides) a schedule needs, or set its own choice for each: `wake`, `no_wake` or `wait` (`wait` not for an agent's machine) |
+| `GET` / `PUT` | `/api/schedules/{id}/machines` | Get every [machine](power-management.md#per-schedule-overrides) a schedule needs, or set its own choice for each: `wake`, `no_wake` or `wait` (`wait` not for an agent's machine). The machines of agents and repositories the caller cannot see are left out, refused when set, and keep their choices when the caller sets the rest |
 | `GET` | `/api/schedules/{id}/targets` | List the schedule's target repositories |
 
 See [Scheduling](scheduling.md) for cron expression syntax and examples.

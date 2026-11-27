@@ -15326,8 +15326,9 @@ async fn test_dependency_address_test_connects_to_the_port() {
     assert_eq!(at(&body_json(resp).await, "/reachable"), false);
 }
 
-/// Anyone signed in can see dependencies - a schedule's own pane names them -
-/// but only an admin changes them, and wake secrets stay hidden from a viewer.
+/// A viewer who sees a schedule that needs a dependency can see it - the
+/// schedule's own pane names it - but only an admin changes it, and wake
+/// secrets stay hidden from a viewer.
 #[tokio::test]
 #[ignore = "requires DATABASE_URL"]
 async fn test_dependency_hosts_are_read_only_and_redacted_for_a_viewer() {
@@ -15337,6 +15338,22 @@ async fn test_dependency_hosts_are_read_only_and_redacted_for_a_viewer() {
     create_non_admin_user_and_session(&pool).await;
     let mut app = build_test_app(pool.clone());
     let id = create_dependency_id(&mut app, "nas-media", 445).await;
+    let agent = server::db::insert_agent(&pool, "viewer-dep-agent", None, "hash", None, None)
+        .await
+        .unwrap();
+    let repo_id = insert_test_repo(&pool, "viewer-dep-repo").await;
+    grant_repo_view(&pool, "integration-viewer", repo_id).await;
+    let schedule_id = insert_test_schedule(&pool, agent.id, repo_id).await;
+    let resp = oneshot(
+        &mut app,
+        json_request(
+            "PUT",
+            &format!("/api/schedules/{schedule_id}/dependencies"),
+            Some(json!({ "dependencies": [{ "agent_id": agent.id, "dependency_host_id": id }] })),
+        ),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
     let machine_id = machine_id_at(&mut app, &format!("/api/dependency-hosts/{id}")).await;
     let wake = json!({
         "wake_enabled": true,
@@ -16313,6 +16330,218 @@ async fn test_dependency_hosts_the_caller_does_not_see_read_as_not_found() {
     assert_eq!(at(on_host, "/source"), "schedule");
 }
 
+/// Two agents backing up into two repositories on two repository hosts, the
+/// non-admin viewer granted `can_view` on the first repository only.
+#[cfg(test)]
+struct ScopedMachines {
+    seen_schedule: i64,
+    seen_agent_machine: i64,
+    seen_repo_machine: i64,
+    other_agent: i64,
+    other_agent_machine: i64,
+    other_repo: i64,
+    other_repo_machine: i64,
+}
+
+#[cfg(test)]
+async fn scoped_machines(pool: &PgPool, app: &mut Router) -> ScopedMachines {
+    let seen_agent = server::db::insert_agent(pool, "mscope-seen", None, "hash", None, None)
+        .await
+        .unwrap();
+    let other_agent = server::db::insert_agent(pool, "mscope-other", None, "hash", None, None)
+        .await
+        .unwrap();
+    let seen_repo = insert_test_repo(pool, "mscope-seen-repo").await;
+    let other_repo = insert_test_repo(pool, "mscope-other-repo").await;
+    let other_host: i64 = sqlx::query_scalar(
+        "INSERT INTO repo_hosts (ssh_host, ssh_port) VALUES ('mscope-other-store.lan', 22) \
+         RETURNING id",
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    sqlx::query("UPDATE repos SET repo_host_id = $2 WHERE id = $1")
+        .bind(other_repo)
+        .bind(other_host)
+        .execute(pool)
+        .await
+        .unwrap();
+    grant_repo_view(pool, "integration-viewer", seen_repo).await;
+    let seen_schedule = insert_test_schedule(pool, seen_agent.id, seen_repo).await;
+    insert_test_schedule(pool, other_agent.id, other_repo).await;
+    let seen_host = repo_host_id_of(pool, seen_repo).await;
+    ScopedMachines {
+        seen_schedule,
+        seen_agent_machine: seen_agent.machine_id,
+        seen_repo_machine: machine_id_at(app, &format!("/api/repo-hosts/{seen_host}")).await,
+        other_agent: other_agent.id,
+        other_agent_machine: other_agent.machine_id,
+        other_repo,
+        other_repo_machine: machine_id_at(app, &format!("/api/repo-hosts/{other_host}")).await,
+    }
+}
+
+/// Makes the seen schedule also run on the other agent, hidden from everyone
+/// but an admin, and copy into the other repository, and lets the viewer edit
+/// it.
+#[cfg(test)]
+async fn widen_seen_schedule(pool: &PgPool, fx: &ScopedMachines) {
+    sqlx::query(
+        "INSERT INTO schedule_targets (schedule_id, agent_id, execution_order) VALUES ($1, $2, 1)",
+    )
+    .bind(fx.seen_schedule)
+    .bind(fx.other_agent)
+    .execute(pool)
+    .await
+    .unwrap();
+    sqlx::query("UPDATE agents SET is_hidden = true WHERE id = $1")
+        .bind(fx.other_agent)
+        .execute(pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO schedule_repos (schedule_id, repo_id, execution_order, required) VALUES ($1, \
+         $2, 1, FALSE)",
+    )
+    .bind(fx.seen_schedule)
+    .bind(fx.other_repo)
+    .execute(pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "UPDATE repo_permissions SET can_modify_schedules = true WHERE user_id = (SELECT id FROM \
+         users WHERE username = 'integration-viewer')",
+    )
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
+/// A user who is not an admin reads the machine of an agent they see and of
+/// a repository host they read a repository on; any other machine reads as
+/// not found. An admin reads every one.
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn test_machines_are_scoped_to_what_the_caller_sees() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+    create_non_admin_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+    let fx = scoped_machines(&pool, &mut app).await;
+
+    for (machine_id, role) in [
+        (fx.seen_agent_machine, "/roles/agent/hostname"),
+        (fx.seen_repo_machine, "/roles/repo_host/ssh_host"),
+    ] {
+        let resp = oneshot(
+            &mut app,
+            non_admin_get_request(&format!("/api/machines/{machine_id}")),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert!(at(&body_json(resp).await, role).is_string());
+    }
+    for machine_id in [fx.other_agent_machine, fx.other_repo_machine] {
+        let uri = format!("/api/machines/{machine_id}");
+        let resp = oneshot(&mut app, non_admin_get_request(&uri)).await;
+        assert_eq!(
+            resp.status(),
+            StatusCode::NOT_FOUND,
+            "{uri} reads as not found"
+        );
+        let resp = oneshot(&mut app, get_request(&uri)).await;
+        assert_eq!(resp.status(), StatusCode::OK, "an admin reads {uri}");
+    }
+}
+
+/// A schedule's machines leave out those of the agents and repositories the
+/// caller does not see, and a schedule editor's choices leave the schedule's
+/// choices for those machines as they are.
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn test_schedule_machines_leave_out_what_the_caller_does_not_see() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+    create_non_admin_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+    let fx = scoped_machines(&pool, &mut app).await;
+    widen_seen_schedule(&pool, &fx).await;
+    let uri = format!("/api/schedules/{}/machines", fx.seen_schedule);
+    let machine_ids = |body: &Value| -> Vec<i64> {
+        at(body, "/machines")
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|m| at(m, "/machine_id").as_i64().unwrap())
+            .collect()
+    };
+
+    let resp = oneshot(&mut app, get_request(&uri)).await;
+    let all = machine_ids(&body_json(resp).await);
+    assert!(all.contains(&fx.other_agent_machine) && all.contains(&fx.other_repo_machine));
+    let resp = oneshot(
+        &mut app,
+        json_request(
+            "PUT",
+            &uri,
+            Some(json!({ "machines": [{ "machine_id": fx.other_repo_machine, "mode": "wait" }] })),
+        ),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let resp = oneshot(&mut app, non_admin_get_request(&uri)).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(
+        machine_ids(&body_json(resp).await),
+        [fx.seen_agent_machine, fx.seen_repo_machine],
+        "only the machines of what the viewer sees"
+    );
+    let resp = oneshot(
+        &mut app,
+        non_admin_json_request(
+            "PUT",
+            &uri,
+            &json!({ "machines": [{ "machine_id": fx.other_repo_machine, "mode": "wake" }] }),
+        ),
+    )
+    .await;
+    assert_eq!(
+        resp.status(),
+        StatusCode::BAD_REQUEST,
+        "a machine the editor does not see is not one they can choose for"
+    );
+    let resp = oneshot(
+        &mut app,
+        non_admin_json_request(
+            "PUT",
+            &uri,
+            &json!({ "machines": [{ "machine_id": fx.seen_repo_machine, "mode": "no_wake" }] }),
+        ),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let resp = oneshot(&mut app, get_request(&uri)).await;
+    let body = body_json(resp).await;
+    let mode_of = |machine_id: i64| {
+        at(&body, "/machines")
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|m| at(m, "/machine_id") == machine_id)
+            .map(|m| at(m, "/mode").clone())
+            .unwrap()
+    };
+    assert_eq!(mode_of(fx.seen_repo_machine), "no_wake");
+    assert_eq!(
+        mode_of(fx.other_repo_machine),
+        "wait",
+        "the admin's choice for a machine the editor does not see stays"
+    );
+}
 /// A user who may edit a schedule but is not an admin can make it need only
 /// a dependency they see - one they do not see is refused exactly like one
 /// that does not exist - and keeps what it sets for an agent they do not see.

@@ -1,5 +1,5 @@
 {
   "test": "agent without borg",
   "pages": ["frontend/src/views/AgentDetailView.vue"],
-  "fingerprint": "bc2a79e3e3e22b4a68dfb793a43b55fde3e8499322d91cc3510a9938e8db2e07"
+  "fingerprint": "e76a2dbd5f0f2435565f6afb0948c89ca24a172eef5653fbdcf5d4cec266bd4b"
 }

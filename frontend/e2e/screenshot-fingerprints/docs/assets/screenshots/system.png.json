@@ -1,5 +1,5 @@
 {
   "test": "settings pages",
   "pages": ["frontend/src/views/SystemView.vue"],
-  "fingerprint": "f1b5144e5a2e2babfdc964b788d387f6f499b568d8192e4286137391f2fc1a7e"
+  "fingerprint": "9008d247f03b3bad9d82e7125b1d9c8b0fb6ec6e5b1a9835f28da3a50fd0a080"
 }

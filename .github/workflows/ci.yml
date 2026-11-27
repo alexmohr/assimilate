@@ -28,7 +28,7 @@ jobs:
         options: >-
           --health-cmd "pg_isready -U borg -d borg" --health-interval 5s --health-timeout 3s --health-retries 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-rust-nightly-db
         with:
           components: rustfmt, clippy
@@ -61,11 +61,11 @@ jobs:
     name: Frontend (fmt + lint + test + build)
     runs-on: ubuntu-26.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
-          node-version: "20"
+          node-version: "26"
           cache: "npm"
           cache-dependency-path: frontend/package-lock.json
       - name: Install dependencies
@@ -115,11 +115,11 @@ jobs:
     name: CI tooling audit (jscpd)
     runs-on: ubuntu-26.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
-          node-version: "20"
+          node-version: "26"
       # .github/jscpd is the lockfile-pinned install used by
       # duplicate-code-check.yml under pull_request_target; keep it audited.
       - name: Install dependencies
@@ -141,7 +141,7 @@ jobs:
     services:
       postgres: *postgres_service
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-rust-nightly-db
       - name: Run database integration tests
         env:
@@ -174,7 +174,7 @@ jobs:
     services:
       postgres: *postgres_service
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-rust-nightly-db
       - *allow_userns
       # The SQLite dump tests run the real sqlite3 against scratch files, and
@@ -189,11 +189,11 @@ jobs:
     name: Documentation (mkdocs build)
     runs-on: ubuntu-26.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Setup Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
-          python-version: "3.12"
+          python-version: "3.15"
       - name: Install dependencies
         run: pip install -r docs/requirements.txt
       # Same build as pages.yml (website at the root, a strict mkdocs build
@@ -206,7 +206,7 @@ jobs:
     name: Screenshot coverage
     runs-on: ubuntu-26.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
       # A new view has to come with the capture step that takes its image (see
@@ -234,9 +234,9 @@ jobs:
     # Built once and shared as an artifact: the Playwright E2E and Screenshot
     # capture jobs each start their own demo from this same image.
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
       - name: Build demo image (GitHub Actions build cache)
         # Build a single image tagged as both :coverage and :local.
         # The coverage-override.yml points the demo service at :coverage
@@ -258,7 +258,7 @@ jobs:
         # dependency graph, so it survives ordinary source changes - and
         # skipping the export on PRs saves both its upload time and the
         # repository's shared cache quota.
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: .devcontainer/demo/Dockerfile.demo
@@ -271,7 +271,7 @@ jobs:
             assimilate-demo:coverage
             assimilate-demo:local
       - name: Upload demo image
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: demo-image
           path: ${{ runner.temp }}/demo-image.tar
@@ -291,14 +291,14 @@ jobs:
       ASSIMILATE_DEMO_IMAGE: assimilate-demo:local
       DEVCONTAINER_CONFIG: .devcontainer/demo-codespace/devcontainer.json
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
-          node-version: "24"
+          node-version: "26"
       - name: Install the devcontainer CLI
         run: npm install -g @devcontainers/cli@0.89.0
       - name: Download demo image
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: demo-image
           path: ${{ runner.temp }}
@@ -357,22 +357,22 @@ jobs:
     env:
       COMPOSE_FILES: -f .devcontainer/demo/docker-compose.demo.yml
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           # The install and capture steps run the pull request's own code, so
           # no token may be left in .git/config for them to read. Only the
           # commit step below, which runs on main alone, is given one.
           persist-credentials: false
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
-          node-version: "20"
+          node-version: "26"
           cache: "npm"
           cache-dependency-path: frontend/package-lock.json
       - name: Install dependencies and Playwright browsers
         run: npm ci && npm run e2e:install
         working-directory: frontend
       - name: Download demo image
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: demo-image
           path: ${{ runner.temp }}
@@ -419,7 +419,7 @@ jobs:
           if [ -n "$removed" ]; then echo "removed=true" >> "$GITHUB_OUTPUT"; fi
       - name: Upload screenshots
         if: steps.changed.outputs.count != '0'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: screenshots
           path: ${{ runner.temp }}/screenshots/
@@ -473,11 +473,11 @@ jobs:
     name: CI Scripts (node --test)
     runs-on: ubuntu-26.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
-          node-version: "22"
+          node-version: "26"
       # No install step: these tests use node's built-in runner and require
       # only the scripts themselves, so `.github/scripts/` stays dependency
       # free. They pin the gates this repo's automation trusts - the
@@ -496,13 +496,13 @@ jobs:
     name: Desktop app (fmt + clippy + test + deny)
     runs-on: ubuntu-26.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Install Tauri's Linux build dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
       - name: Install Rust nightly
-        uses: actions-rust-lang/setup-rust-toolchain@v1
+        uses: actions-rust-lang/setup-rust-toolchain@v2
         with:
           toolchain: nightly-2026-08-21
           components: rustfmt, clippy
@@ -534,9 +534,9 @@ jobs:
       run:
         shell: bash
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Install Rust nightly
-        uses: actions-rust-lang/setup-rust-toolchain@v1
+        uses: actions-rust-lang/setup-rust-toolchain@v2
         with:
           toolchain: nightly-2026-08-21
           components: clippy
@@ -564,9 +564,9 @@ jobs:
     name: macOS (clippy + agent service tests)
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Install Rust nightly
-        uses: actions-rust-lang/setup-rust-toolchain@v1
+        uses: actions-rust-lang/setup-rust-toolchain@v2
         with:
           toolchain: nightly-2026-08-21
           components: clippy
@@ -584,7 +584,7 @@ jobs:
     name: Rust Dependency Audit (cargo-deny)
     runs-on: ubuntu-26.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Check advisories, licenses, bans and sources
         uses: EmbarkStudios/cargo-deny-action@v2
         with:
@@ -595,9 +595,9 @@ jobs:
     services:
       postgres: *postgres_service
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Install Rust stable
-        uses: actions-rust-lang/setup-rust-toolchain@v1
+        uses: actions-rust-lang/setup-rust-toolchain@v2
         with:
           toolchain: ${{ env.RUST_STABLE_TOOLCHAIN }}
           components: llvm-tools-preview
@@ -606,7 +606,7 @@ jobs:
       - name: Install sqlx-cli
         run: cargo install sqlx-cli --locked --no-default-features --features postgres
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: lts/*
           cache: npm
@@ -647,7 +647,7 @@ jobs:
           sed 's|^SF:|SF:frontend/|' frontend/coverage/lcov.info > frontend-lcov-fixed.info
           cat lcov.info frontend-lcov-fixed.info > merged.info
       - name: Upload coverage artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: unit-coverage
           path: merged.info
@@ -658,11 +658,11 @@ jobs:
     runs-on: ubuntu-26.04
     needs: [coverage, e2e]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
         with:
           name: unit-coverage
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: e2e-coverage
           path: e2e
@@ -701,7 +701,7 @@ jobs:
         # Consumed by .github/scripts/analyze-coverage-diff.js to check new/changed
         # lines and detect aggregate coverage regressions on PRs. 14-day retention
         # so a main-branch baseline is available even if main goes quiet for a while.
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: coverage-final
           path: |
@@ -716,15 +716,15 @@ jobs:
     env:
       COMPOSE_FILES: -f .devcontainer/demo/docker-compose.demo.yml -f .devcontainer/demo/docker-compose.coverage-override.yml
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
-          node-version: "20"
+          node-version: "26"
           cache: "npm"
           cache-dependency-path: frontend/package-lock.json
       - name: Install Rust stable (for backend coverage processing)
-        uses: actions-rust-lang/setup-rust-toolchain@v1
+        uses: actions-rust-lang/setup-rust-toolchain@v2
         with:
           toolchain: ${{ env.RUST_STABLE_TOOLCHAIN }}
           components: llvm-tools-preview
@@ -742,7 +742,7 @@ jobs:
       - name: Prepare coverage directories
         run: mkdir -p .coverage frontend/.nyc_output
       - name: Download demo image
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: demo-image
           path: ${{ runner.temp }}
@@ -904,13 +904,13 @@ jobs:
 
           echo "Backend + frontend e2e coverage merged successfully"
       - name: Upload e2e coverage artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: e2e-coverage
           path: merged-e2e.info
           retention-days: 1
       - name: Upload Playwright report
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         if: always()
         with:
           name: playwright-report
@@ -930,7 +930,7 @@ jobs:
       ASSIMILATE_SECRET_KEY: ci_test_key_not_real
       POSTGRES_PASSWORD: ci_test_password_not_real
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
       - name: Stage agent binaries
@@ -974,9 +974,9 @@ jobs:
     env:
       DATABASE_URL: postgres://borg:borg_secret@localhost:5432/borg
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Install Rust stable
-        uses: actions-rust-lang/setup-rust-toolchain@v1
+        uses: actions-rust-lang/setup-rust-toolchain@v2
         with:
           toolchain: ${{ env.RUST_STABLE_TOOLCHAIN }}
       - name: Build the server
@@ -984,7 +984,7 @@ jobs:
         env:
           SQLX_OFFLINE: "true"
       - name: Download the release agent
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: agent-x86_64
           path: ${{ runner.temp }}/agents/
@@ -1010,7 +1010,7 @@ jobs:
       server: ${{ steps.server.outputs.version }}
       agent: ${{ steps.agent.outputs.version }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
       - name: Compute server version

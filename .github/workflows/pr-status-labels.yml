@@ -51,7 +51,7 @@ jobs:
        contains(fromJSON('["claude-approved","claude-changes-requested"]'), github.event.label.name))
     steps:
       - name: Checkout scripts from default branch
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           ref: ${{ github.event.repository.default_branch }}
           sparse-checkout: |
@@ -68,7 +68,7 @@ jobs:
       # same mechanism sync-pr-labels.js already uses to reach claude-review.yml.
       - name: Resolve PR number
         id: pr
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             let number = null;
@@ -83,7 +83,7 @@ jobs:
             core.setOutput("number", number ?? "");
       - name: Sync labels
         if: steps.pr.outputs.number != ''
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         env:
           # Read through the environment rather than interpolated into the
           # script body: `"${{ vars.X }}"` would splice the variable's text

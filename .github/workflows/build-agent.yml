@@ -31,7 +31,7 @@ jobs:
           - arch: aarch64
             runner: ubuntu-26.04-arm
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
       - name: Compute agent version
@@ -43,7 +43,7 @@ jobs:
       # Release artifacts are built with the pinned stable compiler, never
       # nightly.
       - name: Install Rust stable
-        uses: actions-rust-lang/setup-rust-toolchain@v1
+        uses: actions-rust-lang/setup-rust-toolchain@v2
         with:
           toolchain: ${{ env.RUST_STABLE_TOOLCHAIN }}
       - name: Build agent
@@ -55,7 +55,7 @@ jobs:
       - name: Check the agent runs on Debian 13's glibc
         run: python3 scripts/glibc_floor.py 2.41 target/release/agent
       - name: Upload agent binary
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: agent-${{ matrix.arch }}
           path: target/release/agent
@@ -72,7 +72,7 @@ jobs:
     env:
       TARGET: x86_64-pc-windows-msvc
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
       - name: Set up the package build
@@ -150,7 +150,7 @@ jobs:
         run: >
           cargo "+${RUST_STABLE_TOOLCHAIN}" test --release --locked -p agent --test windows_borg_cancel -- --ignored --test-threads=1
       - name: Upload the agent package
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: agent-windows-x86_64
           path: dist/*.zip
@@ -175,7 +175,7 @@ jobs:
     env:
       TARGET: ${{ matrix.target }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
       - name: Set up the package build
@@ -292,7 +292,7 @@ jobs:
           fi
           exit "$failed"
       - name: Upload the agent package
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: agent-macos-${{ matrix.arch }}
           path: dist/*.tar.gz

@@ -7,12 +7,7 @@ import { archivePeriod } from '../utils/archivePeriod'
 import { reposOf, type ArchiveRepo, type RepoArchive } from '../utils/repoArchive'
 
 export type ArchiveSortMode =
-  | 'date-desc'
-  | 'date-asc'
-  | 'size-desc'
-  | 'size-asc'
-  | 'dedup-desc'
-  | 'dedup-asc'
+  'date-desc' | 'date-asc' | 'size-desc' | 'size-asc' | 'dedup-desc' | 'dedup-asc'
 
 /**
  * Above this many hosts the grouped list stops being something you read and

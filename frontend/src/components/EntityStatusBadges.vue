@@ -10,12 +10,7 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
  * and match on it, so it is this union rather than any string.
  */
 export type EntityIssueKey =
-  | 'failed'
-  | 'warning'
-  | 'overdue'
-  | 'missed-backups'
-  | 'unprotected'
-  | 'no-borg'
+  'failed' | 'warning' | 'overdue' | 'missed-backups' | 'unprotected' | 'no-borg'
 
 export interface EntityIssue {
   key: EntityIssueKey

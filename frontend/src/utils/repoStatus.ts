@@ -7,13 +7,7 @@ import type { RepoWithStats } from '../types/repo'
 
 /** Why a repository row reads the way it does, most pressing first. */
 export type RepoRowStatusKind =
-  | 'import_failed'
-  | 'importing'
-  | 'disabled'
-  | 'over_quota'
-  | 'near_quota'
-  | 'unmatched'
-  | 'healthy'
+  'import_failed' | 'importing' | 'disabled' | 'over_quota' | 'near_quota' | 'unmatched' | 'healthy'
 
 /** The one status a repository row shows: a badge on a wide screen, a line on a phone. */
 export interface RepoRowStatus {

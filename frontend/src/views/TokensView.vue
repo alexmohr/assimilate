@@ -208,8 +208,8 @@ onMounted(fetchTokens)
       @cancel="showDeleteModal = false"
       @confirm="confirmDelete"
     >
-      Are you sure you want to delete token <strong>{{ deleteTarget?.name }}</strong
-      >? This action cannot be undone.
+      Are you sure you want to delete token <strong>{{ deleteTarget?.name }}</strong>? This action
+      cannot be undone.
     </ConfirmDeleteDialog>
   </div>
 </template>

@@ -106,9 +106,10 @@ const avgDurationSecs = computed((): number => {
 })
 
 /** The repo and range the panel is showing, as the API spells them. */
-const scope = computed(
-  (): AcknowledgeScope => ({ days: selectedDays.value, repo_id: selectedRepoId.value }),
-)
+const scope = computed((): AcknowledgeScope => ({
+  days: selectedDays.value,
+  repo_id: selectedRepoId.value,
+}))
 
 // What a reset would actually clear, counted server-side over the same repo
 // and window. The feed this panel renders is only what the caller may see and

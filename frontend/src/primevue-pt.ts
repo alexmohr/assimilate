@@ -97,20 +97,6 @@ export const globalPrimeVuePT: PrimeVuePTOptions = {
     optionLabel: 'truncate',
     emptyMessage: 'px-3 py-2 text-sm text-[var(--text-muted)]',
   },
-  dropdown: {
-    root: selectRootClasses,
-    label: 'flex-1 truncate text-sm text-[var(--text-primary)]',
-    dropdown: 'ml-auto inline-flex h-5 w-5 items-center justify-center text-[var(--text-muted)]',
-    dropdownIcon: 'text-[var(--text-muted)]',
-    overlay: selectOverlayClasses(),
-    header: 'border-b border-[var(--border)] p-2',
-    listContainer: 'max-h-64 overflow-auto p-1',
-    list: 'flex flex-col gap-0.5',
-    option:
-      'cursor-pointer rounded-sm px-3 py-2 text-sm text-[var(--text-primary)] transition-colors hover:bg-[var(--bg-hover)]',
-    optionLabel: 'truncate',
-    emptyMessage: 'px-3 py-2 text-sm text-[var(--text-muted)]',
-  },
   paginator: {
     root: 'flex items-center justify-between gap-4 text-sm text-[var(--text-secondary)]',
     content: 'flex items-center gap-2',

@@ -58,8 +58,7 @@ function lineCopied(which: 'backup' | 'maintenance'): boolean {
       stays on the server.
       <template v-if="status.maintenance_key">
         Maintenance key
-        <span class="mono">{{ status.maintenance_key.fingerprint }}</span
-        >.
+        <span class="mono">{{ status.maintenance_key.fingerprint }}</span>.
       </template>
     </p>
     <div class="panel-actions">

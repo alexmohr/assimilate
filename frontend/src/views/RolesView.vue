@@ -416,8 +416,8 @@ onMounted((): void => {
       @cancel="showDeleteModal = false"
       @confirm="confirmDelete"
     >
-      Are you sure you want to delete the role <strong>{{ deleteTarget?.name }}</strong
-      >? Users assigned this role will lose its permissions.
+      Are you sure you want to delete the role <strong>{{ deleteTarget?.name }}</strong>? Users
+      assigned this role will lose its permissions.
     </ConfirmDeleteDialog>
   </div>
 </template>

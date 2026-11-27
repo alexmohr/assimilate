@@ -75,8 +75,7 @@ function hostName(host: AgentRow): string {
           <RouterLink
             :to="settingsLink(host)"
             class="dump-mismatch-host"
-            >{{ hostName(host) }}</RouterLink
-          >{{ listSeparator(i, hosts.length, '.') }}
+            >{{ hostName(host) }}</RouterLink>{{ listSeparator(i, hosts.length, '.') }}
         </template>
         {{ copy.fix }}
       </span>

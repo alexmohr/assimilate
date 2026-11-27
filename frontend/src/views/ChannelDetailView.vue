@@ -664,8 +664,8 @@ async function confirmDelete(): Promise<void> {
         @cancel="showDelete = false"
         @confirm="confirmDelete"
       >
-        Delete channel <strong>{{ channel.name }}</strong
-        >? All associated rules will also be removed.
+        Delete channel <strong>{{ channel.name }}</strong>? All associated rules will also be
+        removed.
       </ConfirmDeleteDialog>
     </template>
   </div>

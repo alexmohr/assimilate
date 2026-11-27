@@ -70,8 +70,7 @@ const skipped = computed(() => status.value === 'skipped')
       <pre
         class="detail-output"
         :class="{ 'detail-output--danger': !skipped }"
-        >{{ report.error_message }}</pre
-      >
+        >{{ report.error_message }}</pre>
     </div>
     <div
       v-if="report.run_id && (loadingEvents || eventsFetched || eventsError)"

@@ -14,14 +14,7 @@
 
 /** The span classes a run of characters can land in. */
 export type ShellTokenKind =
-  | 'comment'
-  | 'string'
-  | 'variable'
-  | 'keyword'
-  | 'command'
-  | 'operator'
-  | 'number'
-  | 'text'
+  'comment' | 'string' | 'variable' | 'keyword' | 'command' | 'operator' | 'number' | 'text'
 
 /** A contiguous run of source characters sharing one kind. */
 export interface ShellToken {

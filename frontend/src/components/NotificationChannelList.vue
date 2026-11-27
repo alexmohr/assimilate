@@ -49,8 +49,8 @@ const sortedChannels = computed((): NotificationChannelResponse[] =>
   sortChannelsByTrouble(props.channels, new Set(failures.value.map((f) => f.channel.id))),
 )
 
-const latest = computed(
-  (): Map<number, NotificationDeliveryResponse> => latestDeliveryByChannel(props.deliveries),
+const latest = computed((): Map<number, NotificationDeliveryResponse> =>
+  latestDeliveryByChannel(props.deliveries),
 )
 
 function typeIcon(type: ChannelType): typeof Mail {

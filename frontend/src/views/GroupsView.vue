@@ -438,8 +438,8 @@ onMounted(async () => {
       @cancel="showDeleteModal = false"
       @confirm="confirmDelete"
     >
-      Are you sure you want to delete <strong>{{ deleteTarget?.name }}</strong
-      >? Members will be removed from this group.
+      Are you sure you want to delete <strong>{{ deleteTarget?.name }}</strong>? Members will be
+      removed from this group.
     </ConfirmDeleteDialog>
 
     <GroupRepoPermissionsDialog

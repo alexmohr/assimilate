@@ -273,8 +273,9 @@ onMounted(load)
                 <RouterLink
                   :to="`/schedules/${schedule.id}`"
                   class="dump-asked-link"
-                  >{{ schedule.name || `Schedule #${schedule.id}` }}</RouterLink
-                >{{ listSeparator(i, schedulesAskingForDumps.length) }}
+                  >{{ schedule.name || `Schedule #${schedule.id}` }}</RouterLink>{{
+                  listSeparator(i, schedulesAskingForDumps.length)
+                }}
               </template>
               {{ schedulesAskingForDumps.length === 1 ? 'takes' : 'take' }} database dumps, but this
               host has no database source included, so their archives hold none. Scan for sources

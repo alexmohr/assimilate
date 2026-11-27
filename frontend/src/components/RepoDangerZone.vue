@@ -131,8 +131,8 @@ async function resetAndSync(): Promise<void> {
 
 <template>
   <p class="pane-lede">
-    Irreversible or disruptive operations on <span class="mono">{{ repo.name }}</span
-    >. Each one confirms before it acts.
+    Irreversible or disruptive operations on <span class="mono">{{ repo.name }}</span>. Each one
+    confirms before it acts.
   </p>
   <div class="danger-body">
     <div class="danger-info">

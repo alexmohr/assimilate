@@ -157,8 +157,7 @@ async function submit(): Promise<void> {
       <p class="muted restore-dialog-what">
         {{ what }} from <span class="mono">{{ archive.name }}</span> ({{
           formatDate(archive.start)
-        }}), backed up from <strong>{{ sourceHost }}</strong
-        >.
+        }}), backed up from <strong>{{ sourceHost }}</strong>.
       </p>
 
       <div class="restore-dialog-columns">

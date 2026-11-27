@@ -49,8 +49,7 @@ const expanded = ref(false)
     <pre
       v-if="expanded"
       :class="props.tone === 'warning' ? 'warning-pre' : 'error-pre'"
-      >{{ message }}</pre
-    >
+      >{{ message }}</pre>
   </div>
 </template>
 

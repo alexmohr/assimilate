@@ -267,10 +267,9 @@ async function createRepo(): Promise<void> {
             data-testid="borgbase-created"
           >
             Created {{ created.name }}. Add it as a repository with the BorgBase provider: host
-            <span class="mono">{{ created.ssh_host }}</span
-            >, user <span class="mono">{{ created.ssh_user }}</span
-            >, path <span class="mono">{{ created.repo_path }}</span
-            >.
+            <span class="mono">{{ created.ssh_host }}</span>, user
+            <span class="mono">{{ created.ssh_user }}</span>, path
+            <span class="mono">{{ created.repo_path }}</span>.
           </div>
           <div class="info-actions">
             <button

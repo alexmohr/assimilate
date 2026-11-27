@@ -185,7 +185,7 @@ docker compose up -d
 Install the following before proceeding:
 
 - **Rust 1.98 (stable)** — install via [rustup](https://rustup.rs/): `rustup toolchain install 1.98`. Release binaries and Docker images are built with this pinned stable compiler; nightly is only needed for contributor formatting and linting
-- **Node.js 20+** — required to build the frontend
+- **Node.js 22.12+** — required to build the frontend (CI and the Docker images use Node.js 26)
 - **PostgreSQL** — the server stores all state in a PostgreSQL database
 - **BorgBackup** — must be installed on every machine running the agent
 

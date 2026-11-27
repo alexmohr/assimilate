@@ -31,7 +31,7 @@ services:
   # forwards that port to the visitor's browser. The seed volume is mounted
   # read-only so wait-for-demo.sh can see when the seed has finished.
   workspace:
-    image: mcr.microsoft.com/devcontainers/base:bookworm
+    image: mcr.microsoft.com/devcontainers/base:trixie
     network_mode: service:demo
     volumes:
       - ../..:/workspaces/assimilate:cached

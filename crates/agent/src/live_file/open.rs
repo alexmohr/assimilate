@@ -203,6 +203,28 @@ pub(super) async fn beneath(root: &Path, names: &[OsString]) -> Result<File, Liv
     }
 }
 
+/// A resolved source as archive paths spell it. Windows resolves a path to
+/// its verbatim form (`\\?\C:\Users`), which an archive path never takes.
+#[cfg(windows)]
+fn plain(path: PathBuf) -> PathBuf {
+    use std::path::{Component, Prefix};
+
+    let mut components = path.components();
+    let Some(Component::Prefix(prefix)) = components.next() else {
+        return path;
+    };
+    let Prefix::VerbatimDisk(drive) = prefix.kind() else {
+        return path;
+    };
+    PathBuf::from(format!(r"{}:\", char::from(drive))).join(components.as_path())
+}
+
+/// A resolved source as archive paths spell it: elsewhere, as resolved.
+#[cfg(not(windows))]
+fn plain(path: PathBuf) -> PathBuf {
+    path
+}
+
 /// The source `path` lies in, and the names that lead from it to `path`. A
 /// source matches as configured and as it resolves, so a host whose source
 /// runs through a link (`/var` on macOS, `\\?\C:\` on Windows) matches
@@ -216,7 +238,7 @@ pub(super) async fn within_sources(
     for source in sources {
         roots.push(source.clone());
         if let Ok(resolved) = tokio::fs::canonicalize(source).await {
-            roots.push(resolved);
+            roots.push(plain(resolved));
         }
     }
     roots.into_iter().find_map(|root| {

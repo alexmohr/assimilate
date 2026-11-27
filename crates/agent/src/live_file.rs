@@ -319,11 +319,13 @@ mod tests {
         assert_eq!(configured_sources(None), Vec::<PathBuf>::new());
     }
 
+    #[cfg(unix)]
     fn refused(reason: LiveReadRefusal) -> LiveFile {
         LiveFile::Refused { reason }
     }
 
     /// A directory outside every source holding `secret`.
+    #[cfg(unix)]
     async fn outside() -> tempfile::TempDir {
         let outside = tempfile::tempdir().unwrap();
         tokio::fs::write(outside.path().join("secret"), "s3cret")

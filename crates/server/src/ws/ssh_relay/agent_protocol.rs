@@ -35,7 +35,12 @@ pub enum AgentRequest {
     RequestIdentities,
     /// `SSH_AGENTC_SIGN_REQUEST` (13): sign an SSH login with one of them.
     SignRequest,
-    /// Any other message type, which the relay never forwards.
+    /// `SSH_AGENTC_EXTENSION` (27), such as the `session-bind@openssh.com`
+    /// that OpenSSH 8.9 and later sends on every connection. Never
+    /// forwarded; `ssh` carries on when it is refused.
+    Extension,
+    /// Any other message type, adding, removing or locking keys among them,
+    /// which the relay never forwards.
     Refused(u8),
 }
 
@@ -44,18 +49,8 @@ impl From<u8> for AgentRequest {
         match message_type {
             11 => Self::RequestIdentities,
             13 => Self::SignRequest,
+            27 => Self::Extension,
             other => Self::Refused(other),
-        }
-    }
-}
-
-impl AgentRequest {
-    /// Whether the request may reach the server's SSH agent.
-    #[must_use]
-    pub fn is_allowed(self) -> bool {
-        match self {
-            Self::RequestIdentities | Self::SignRequest => true,
-            Self::Refused(_) => false,
         }
     }
 }
@@ -172,14 +167,14 @@ pub(super) mod tests {
     }
 
     #[test]
-    fn only_listing_keys_and_signing_are_allowed() {
-        assert!(AgentRequest::from(11).is_allowed());
-        assert!(AgentRequest::from(13).is_allowed());
+    fn requests_are_told_apart_by_their_message_type() {
+        assert_eq!(AgentRequest::from(11), AgentRequest::RequestIdentities);
+        assert_eq!(AgentRequest::from(13), AgentRequest::SignRequest);
+        assert_eq!(AgentRequest::from(27), AgentRequest::Extension);
         // ADD_IDENTITY, REMOVE_IDENTITY, REMOVE_ALL_IDENTITIES, LOCK, UNLOCK,
-        // ADD_ID_CONSTRAINED, EXTENSION.
-        for refused in [17, 18, 19, 22, 23, 25, 27] {
+        // ADD_ID_CONSTRAINED.
+        for refused in [17, 18, 19, 22, 23, 25] {
             assert_eq!(AgentRequest::from(refused), AgentRequest::Refused(refused));
-            assert!(!AgentRequest::from(refused).is_allowed());
         }
     }
 

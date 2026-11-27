@@ -15,7 +15,7 @@ use tokio::{
     time,
 };
 
-use self::agent_protocol::{FAILURE_REPLY, FrameError, ReplyError, RequestBuffer};
+use self::agent_protocol::{AgentRequest, FAILURE_REPLY, FrameError, ReplyError, RequestBuffer};
 use crate::{AppState, ws::handler::verify_agent_token};
 
 mod agent_protocol;
@@ -161,19 +161,28 @@ where
 {
     let mut requests = RequestBuffer::default();
     while let Some(request) = next_request(ws_stream, &mut requests, &mut agent).await? {
-        let reply = if request.kind.is_allowed() {
-            agent
-                .write_all(&request.bytes)
-                .await
-                .map_err(RelayError::AgentWrite)?;
-            agent_protocol::read_reply(&mut agent).await?
-        } else {
-            tracing::warn!(
-                hostname = %hostname,
-                request = ?request.kind,
-                "ssh relay: refused an SSH agent request that is not a key listing or signature"
-            );
-            FAILURE_REPLY.to_vec()
+        let reply = match request.kind {
+            AgentRequest::RequestIdentities | AgentRequest::SignRequest => {
+                agent
+                    .write_all(&request.bytes)
+                    .await
+                    .map_err(RelayError::AgentWrite)?;
+                agent_protocol::read_reply(&mut agent).await?
+            }
+            // Every OpenSSH connection asks for one (session-bind), so a
+            // refused extension is routine, not worth a warning.
+            AgentRequest::Extension => {
+                tracing::debug!(hostname = %hostname, "ssh relay: refused an SSH agent extension");
+                FAILURE_REPLY.to_vec()
+            }
+            AgentRequest::Refused(message_type) => {
+                tracing::warn!(
+                    hostname = %hostname,
+                    message_type,
+                    "ssh relay: refused an SSH agent request that is not a key listing or signature"
+                );
+                FAILURE_REPLY.to_vec()
+            }
         };
         ws_sink
             .send(Message::Binary(reply.into()))
@@ -435,9 +444,10 @@ mod tests {
     }
 
     /// A request that would change the SSH agent every host shares (here
-    /// `SSH_AGENTC_REMOVE_ALL_IDENTITIES`, then `SSH_AGENTC_LOCK`) is answered
-    /// with `SSH_AGENT_FAILURE` and never reaches it, while a key listing
-    /// sent after them, split across two frames, still does.
+    /// `SSH_AGENTC_REMOVE_ALL_IDENTITIES`, then `SSH_AGENTC_LOCK`), and an
+    /// extension such as OpenSSH's `session-bind`, are answered with
+    /// `SSH_AGENT_FAILURE` and never reach it, while a key listing sent after
+    /// them, split across two frames, still does.
     #[ignore = "requires DATABASE_URL"]
     #[sqlx::test(migrations = "./migrations")]
     async fn requests_that_change_the_ssh_agent_never_reach_it(pool: PgPool) {
@@ -455,9 +465,10 @@ mod tests {
 
         let mut ws = connect(pool, "relay-refuse-host", Some(path)).await;
         let lock = message(22, b"\0\0\0\x08password");
-        send(&mut ws, &[message(19, b""), lock].concat()).await;
-        let two_failures = [FAILURE_REPLY, FAILURE_REPLY].concat();
-        let refusals = receive(&mut ws, two_failures.len()).await;
+        let session_bind = message(27, b"\0\0\0\x18session-bind@openssh.com");
+        send(&mut ws, &[message(19, b""), lock, session_bind].concat()).await;
+        let failures = [FAILURE_REPLY, FAILURE_REPLY, FAILURE_REPLY].concat();
+        let refusals = receive(&mut ws, failures.len()).await;
         let keys = list_keys();
         let (head, tail) = keys.split_at(2);
         send(&mut ws, head).await;
@@ -465,7 +476,7 @@ mod tests {
         let listing = receive(&mut ws, no_keys().len()).await;
         ws.sink.close().await.expect("close");
 
-        assert_eq!(refusals, two_failures);
+        assert_eq!(refusals, failures);
         assert_eq!(listing, no_keys());
         assert_eq!(agent.await.expect("agent"), list_keys());
     }

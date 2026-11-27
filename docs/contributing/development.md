@@ -7,7 +7,7 @@ This page covers how to set up a development environment, run tests, and generat
 
 ## Prerequisites
 
-- [Rust](https://rustup.rs/): the pinned stable toolchain (1.98) for building, plus a nightly toolchain for formatting and linting
+- [Rust](https://rustup.rs/): the pinned stable toolchain (1.100) for building, plus a nightly toolchain for formatting and linting
 - [Node.js](https://nodejs.org/) 20+
 - [Docker](https://docs.docker.com/get-docker/) and Docker Compose
 - [uv](https://docs.astral.sh/uv/) (Python package manager, for pre-commit)
@@ -20,7 +20,7 @@ git clone https://github.com/alexmohr/assimilate
 cd assimilate
 
 # Install the pinned stable toolchain used for release builds
-rustup toolchain install 1.98
+rustup toolchain install 1.100
 
 # Install Rust nightly with the components used for formatting and linting
 rustup toolchain install nightly
@@ -78,7 +78,7 @@ command in `docs/getting-started.md`, and the validation checklist in
 
 ```bash
 # Release build (matches CI and the Docker images)
-cargo +1.98 build --release --locked --workspace
+cargo +1.100 build --release --locked --workspace
 
 # Format
 cargo +nightly fmt -- \

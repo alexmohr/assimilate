@@ -11,7 +11,7 @@ env:
   # Pinned stable compiler for release builds and coverage. Every job in this
   # file reads it from here; see docs/contributing/development.md for the
   # other files that carry the same pin.
-  RUST_STABLE_TOOLCHAIN: "1.98"
+  RUST_STABLE_TOOLCHAIN: "1.100"
 jobs:
   rust:
     name: Rust (fmt + clippy + test)

@@ -15,7 +15,7 @@ env:
   # Pinned stable compiler for release builds. Reusable workflows don't
   # inherit the caller's env, so this mirrors RUST_STABLE_TOOLCHAIN in ci.yml;
   # see docs/contributing/development.md for every file carrying it.
-  RUST_STABLE_TOOLCHAIN: "1.98"
+  RUST_STABLE_TOOLCHAIN: "1.100"
   # Matches the tauri 2.12 crate desktop/Cargo.lock resolves.
   TAURI_CLI_VERSION: "2.12.3"
 # Builds the desktop installers for every platform the app supports, checks

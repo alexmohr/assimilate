@@ -228,12 +228,17 @@ impl ServedOrigin {
 /// The last comma-separated value of `name`: the one the trusted proxy the
 /// request came from set or appended, as opposed to any value a client put
 /// in front of it. This mirrors how `X-Forwarded-For` is read right to left.
+///
+/// Every line of the header counts, as if joined with `,` in order, so a
+/// client that sends its own line before the one the proxy appends does not
+/// win either.
 fn last_value<'h>(headers: &'h HeaderMap, name: &HeaderName) -> Option<&'h str> {
     headers
-        .get(name)?
-        .to_str()
-        .ok()?
-        .rsplit(',')
+        .get_all(name)
+        .iter()
+        .filter_map(|line| line.to_str().ok())
+        .rev()
+        .flat_map(|line| line.rsplit(','))
         .map(str::trim)
         .find(|v| !v.is_empty())
 }
@@ -400,18 +405,13 @@ mod tests {
     #[test]
     fn same_host_without_a_port_or_known_scheme_is_undecidable() {
         for origin in ["https://backup.example.com", "http://backup.example.com"] {
-            assert!(
-                matches!(
-                    check(
-                        &UiOriginPolicy::default(),
-                        &[
-                            (header::HOST, "backup.example.com"),
-                            (header::ORIGIN, origin)
-                        ],
-                        STRANGER
-                    ),
-                    OriginCheck::Undecidable(_)
-                ),
+            let pairs = [
+                (header::HOST, "backup.example.com"),
+                (header::ORIGIN, origin),
+            ];
+            assert_eq!(
+                check(&UiOriginPolicy::default(), &pairs, STRANGER),
+                OriginCheck::Undecidable(HeaderValue::from_static(origin)),
                 "{origin}"
             );
         }
@@ -566,6 +566,41 @@ mod tests {
             check(&UiOriginPolicy::default(), &pairs, PROXY),
             OriginCheck::Undecidable(_)
         ));
+    }
+
+    /// A client's own header line, sent before the line the trusted proxy
+    /// appends, does not count either.
+    #[test]
+    fn only_the_trusted_proxys_own_forwarded_line_counts() {
+        let mut headers = headers(&[
+            (header::HOST, "assimilate:8080"),
+            (header::ORIGIN, "https://backup.example.com"),
+        ]);
+        headers.append(
+            X_FORWARDED_HOST,
+            HeaderValue::from_static("evil.example.com"),
+        );
+        headers.append(
+            X_FORWARDED_HOST,
+            HeaderValue::from_static("backup.example.com"),
+        );
+        headers.append(X_FORWARDED_PROTO, HeaderValue::from_static("http"));
+        headers.append(X_FORWARDED_PROTO, HeaderValue::from_static("https"));
+        let proxies = ClientIpResolver::from_env(Some("10.0.0.0/8".to_string()));
+        let policy = UiOriginPolicy::default();
+
+        assert_eq!(
+            policy.check(&headers, None, Some(PROXY), &proxies),
+            OriginCheck::Allowed
+        );
+        headers.insert(
+            header::ORIGIN,
+            HeaderValue::from_static("http://evil.example.com"),
+        );
+        assert_eq!(
+            policy.check(&headers, None, Some(PROXY), &proxies),
+            OriginCheck::Refused(HeaderValue::from_static("http://evil.example.com"))
+        );
     }
 
     /// A client can put its own value in front of the one a proxy appends;

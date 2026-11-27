@@ -456,6 +456,33 @@ mod tests {
         }
     }
 
+    /// A `Host` without a port and no trusted proxy to say which scheme the
+    /// browser used: the page could be the UI on 443 or another service on
+    /// port 80 of the same host, so the handshake is refused, not guessed at.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn an_origin_whose_port_cannot_be_verified_is_refused(pool: sqlx::PgPool) {
+        let user = insert_auth_user(&pool, "undecidable-origin").await;
+        let cookie = insert_session(&pool, user.user_id, false).await;
+        let addr = serve_ui_handler(pool, None).await;
+
+        for origin in ["https://backup.example.com", "http://backup.example.com"] {
+            let refused = connect_with(
+                addr,
+                &cookie,
+                &[
+                    (axum::http::header::HOST, "backup.example.com"),
+                    (axum::http::header::ORIGIN, origin),
+                ],
+            )
+            .await;
+            assert!(
+                refused_with(&refused, axum::http::StatusCode::FORBIDDEN),
+                "{origin}: {refused:?}"
+            );
+        }
+    }
+
     /// Every browser sends `Origin` on a WebSocket handshake; one without it
     /// is not the UI and is refused even with a valid session.
     #[ignore = "requires DATABASE_URL"]

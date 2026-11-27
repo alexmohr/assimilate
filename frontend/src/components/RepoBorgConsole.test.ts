@@ -163,4 +163,27 @@ describe('RepoBorgConsole', () => {
     expect(lede.text()).toContain('are injected automatically')
     expect(lede.text()).toContain('::archive')
   })
+
+  it('says which options the server refuses', () => {
+    const wrapper = mount()
+    expect(wrapper.find('.pane-lede').text()).toContain('options that run commands')
+  })
+
+  // The server, not the console, decides what runs, so a refused option
+  // comes back as the request's error and is shown as one.
+  it('shows the reason the server refused an option', async () => {
+    vi.mocked(apiClient.post).mockRejectedValueOnce({
+      isAxiosError: true,
+      response: { status: 400, data: { error: "option '--rsh' is not allowed for borg list" } },
+      message: 'Request failed with status code 400',
+    })
+    const wrapper = mount()
+    await run(wrapper, 'list --rsh x')
+
+    expect(apiClient.post).toHaveBeenCalledWith('/repos/12/exec', {
+      args: ['list', '--rsh', 'x'],
+    })
+    expect(wrapper.find('.console-error').text()).toContain("option '--rsh' is not allowed")
+    expect(wrapper.find('.console-output').exists()).toBe(false)
+  })
 })

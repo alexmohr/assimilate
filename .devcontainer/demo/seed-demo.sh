@@ -1475,6 +1475,7 @@ INSERT INTO audit_log (user_id, username, action, target_type, target_id, detail
     (1, 'admin', 'restore_files', 'archive', $REPO_DAILY_ID, '{"archive":"web-server-01-2026-01-10T02:00:00","paths":["var/www/html"],"path_count":1,"target_path":"/tmp/restore","hostname":"web-server-01"}', '192.168.1.10', NOW() - interval '19 days'),
     (1, 'admin', 'restore_database', 'archive', $REPO_HOURLY_ID, '{"archive":"db-server-01-2026-01-05T13:00:00","archive_path":"var/lib/assimilate/database-dumps/schedule-1/kubernetes/shop/orders-db/orders.pgdump","source":{"runtime":"kubernetes","namespace":"shop","name":"orders-db"},"database":"orders","target":{"mode":"new_database","name":"orders_restored"},"hostname":"db-server-01"}', '192.168.1.10', NOW() - interval '5 hours'),
     (1, 'admin', 'delete_archive', 'archive', $REPO_HOURLY_ID, '{"archive":"db-server-01-2026-01-05T13:00:00"}', '192.168.1.10', NOW() - interval '10 days'),
+    (1, 'admin', 'exec_borg', 'repo', $REPO_DAILY_ID, '{"subcommand":"prune","args":["--dry-run","--list","--keep-daily","7"]}', '192.168.1.10', NOW() - interval '6 days'),
     (1, 'admin', 'key_import', 'repo', $REPO_HOURLY_ID, '{}', '192.168.1.10', NOW() - interval '1 hour');
 SQL
 

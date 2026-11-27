@@ -187,6 +187,7 @@ describe('auditActionTone', () => {
     ['key_change_passphrase', 'warning'],
     ['set_repo_passphrase', 'warning'],
     ['migrate_encryption', 'warning'],
+    ['exec_borg', 'warning'],
     ['download_files', 'info'],
     ['read_live_file', 'info'],
     ['key_export', 'info'],

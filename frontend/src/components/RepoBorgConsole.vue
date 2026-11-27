@@ -11,7 +11,10 @@ import type { ExecBorgResponse } from '../types/generated'
 
 const props = defineProps<{ repoId: number }>()
 
-/** Suggestions, not a whitelist - the server decides what it will run. */
+/**
+ * Suggestions, not the allowlist - the server decides which subcommands and
+ * options it will run, and says why when it refuses one.
+ */
 const SUGGESTED_COMMANDS = [
   'info',
   'list',
@@ -63,7 +66,9 @@ function exitClass(code: number): string {
       <p class="pane-lede">
         Execute borg commands directly against this repository. The repository URL and passphrase
         are injected automatically. Use <code class="console-code">::archive</code> notation to
-        reference a specific archive.
+        reference a specific archive. Each subcommand accepts only the options listed in the
+        documentation; options that run commands, read local files or point borg at another
+        repository are refused.
       </p>
     </div>
     <div class="console-input-row">

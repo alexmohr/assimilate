@@ -9,8 +9,10 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 use utoipa::ToSchema;
 
+mod console;
 mod grants;
 
+pub use console::BorgConsoleSubcommand;
 pub use grants::{RepoPermission, RolePermission};
 
 use crate::{
@@ -111,6 +113,14 @@ pub enum AuditEvent {
         to: BorgEncryption,
         /// Where the original repository was preserved.
         migrated_path: String,
+    },
+    /// A command was run against a repository from its Borg console.
+    ExecBorg {
+        /// The borg subcommand that ran.
+        subcommand: BorgConsoleSubcommand,
+        /// The arguments after the subcommand, as validated and passed to
+        /// borg. The console never accepts an argument that carries a secret.
+        args: Vec<String>,
     },
     /// A user logged in and was given a session.
     Login {
@@ -523,6 +533,24 @@ mod tests {
         let (action, details) = event.to_stored().unwrap();
         assert_eq!(action, "set_global_excludes");
         assert_eq!(details.get("after"), Some(&json!("*.tmp\n/home")));
+        assert_eq!(
+            AuditEvent::from_stored(&action, Some(details)).unwrap(),
+            event
+        );
+    }
+
+    #[test]
+    fn a_console_command_records_its_subcommand_and_arguments() {
+        let event = AuditEvent::ExecBorg {
+            subcommand: BorgConsoleSubcommand::List,
+            args: vec!["--short".to_owned(), "::nightly".to_owned()],
+        };
+        let (action, details) = event.to_stored().unwrap();
+        assert_eq!(action, "exec_borg");
+        assert_eq!(
+            details,
+            json!({ "subcommand": "list", "args": ["--short", "::nightly"] })
+        );
         assert_eq!(
             AuditEvent::from_stored(&action, Some(details)).unwrap(),
             event

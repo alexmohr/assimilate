@@ -75,6 +75,35 @@ test.describe('Repositories management journey', () => {
     await expect(page).toHaveURL(/section=console/)
   })
 
+  // The console runs borg as the server process, so an option that would make
+  // borg run a command (`--rsh`) is refused before borg starts, while an
+  // allowed command still runs against the demo's real repository.
+  test('the Borg console refuses an option it does not allow and runs one it does', async ({
+    page,
+  }) => {
+    await loginAsAdmin(page)
+    await page.goto('/repos/1?tab=settings&section=console')
+    await page.waitForLoadState('networkidle')
+
+    const borgConsole = await openSettingsSection(page, 'Borg console')
+    const input = borgConsole.getByLabel('borg command')
+    const runButton = borgConsole.getByRole('button', { name: 'Run' })
+
+    await input.fill("list --rsh sh -c 'id' #")
+    await runButton.click()
+    await expect(borgConsole.locator('.console-error')).toContainText(
+      "option '--rsh' is not allowed",
+    )
+    await expect(borgConsole.locator('.console-output')).toHaveCount(0)
+
+    await input.fill('list --short')
+    await runButton.click()
+    await expect(borgConsole.locator('.console-output-header')).toContainText('exit 0', {
+      timeout: 60_000,
+    })
+    await expect(borgConsole.locator('.console-error')).toHaveCount(0)
+  })
+
   // offsite-imported is seeded by a config import, so it arrives without a
   // passphrase and held as importing. Runs against the demo's real borg: a
   // wrong passphrase must be refused by borg itself, and the right one (every

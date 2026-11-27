@@ -2342,6 +2342,7 @@ mod tests {
             pending_live_reads: crate::new_pending_map(),
             shutdown_token: tokio_util::sync::CancellationToken::new(),
             client_ip_resolver: crate::client_ip::ClientIpResolver::new(),
+            ui_origins: crate::ws::ui_origin::UiOriginPolicy::default(),
             task_registry: shared::task_registry::TaskRegistry::default(),
             user_rate_limiter: crate::rate_limit::UserRateLimiter::new(
                 60,

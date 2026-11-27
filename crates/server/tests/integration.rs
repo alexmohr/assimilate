@@ -138,6 +138,7 @@ fn build_test_state(pool: PgPool) -> server::AppState {
         session_idle_timeout_minutes: std::sync::Arc::new(std::sync::atomic::AtomicI64::new(480)),
         shutdown_token: tokio_util::sync::CancellationToken::new(),
         client_ip_resolver: server::client_ip::ClientIpResolver::new(),
+        ui_origins: server::ws::ui_origin::UiOriginPolicy::default(),
         task_registry: shared::task_registry::TaskRegistry::default(),
 
         user_rate_limiter: server::rate_limit::UserRateLimiter::new(

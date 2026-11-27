@@ -212,10 +212,13 @@ For nginx, ensure the proxy passes WebSocket upgrade headers:
 location /ws/ {
     proxy_pass http://assimilate;
     proxy_http_version 1.1;
+    proxy_set_header Host $host;
     proxy_set_header Upgrade $http_upgrade;
     proxy_set_header Connection "upgrade";
 }
 ```
+
+Passing the `Host` header through also keeps the web UI's [live updates WebSocket](security.md#live-updates-websocket) at `/ws/ui` working, which only accepts pages from the origin the request was addressed to.
 
 ### Backup succeeds but uses wrong key
 

@@ -12,7 +12,13 @@ x-demo-image: &demo-image
   build: !reset null
 
 services:
-  demo: *demo-image
+  demo:
+    !!merge <<: *demo-image
+    # Codespaces' port forwarding hands the server `Host: localhost:8080`,
+    # not the forwarded address the visitor's browser is on, so the live
+    # updates WebSocket would refuse the UI's own origin without this.
+    environment:
+      ASSIMILATE_ALLOWED_ORIGINS: https://${CODESPACE_NAME:-localhost}-8080.${GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN:-invalid}
   web-server-01: *demo-image
   db-server-01: *demo-image
   media-store-01: *demo-image

@@ -81,6 +81,27 @@ pub async fn assemble_config(
     })
 }
 
+/// Every backup source `agent_id`'s config lists: the paths of each of its
+/// schedules that writes into a repository, as [`assemble_config`] sends
+/// them. A host's agent reads a file live only inside one of these, and the
+/// server asks for nothing outside them either.
+///
+/// # Errors
+///
+/// Returns [`ApiError::NotFound`] for an unknown agent and
+/// [`ApiError::Database`] if a query fails.
+pub async fn backup_sources(pool: &PgPool, agent_id: i64) -> Result<Vec<String>, ApiError> {
+    let agent = db::get_agent_by_id(pool, agent_id).await?;
+    let mut sources = Vec::new();
+    for schedule in db::list_schedules_for_agent(pool, agent.id).await? {
+        if db::list_schedule_repos(pool, schedule.id).await?.is_empty() {
+            continue;
+        }
+        sources.extend(file_set::resolve(pool, &schedule, &agent).await?.paths);
+    }
+    Ok(sources)
+}
+
 struct RetentionCounts {
     keep_hourly: u32,
     keep_daily: u32,
@@ -479,5 +500,98 @@ mod tests {
     fn parse_raw_file_change_patterns_empty_input() {
         let patterns = parse_raw_file_change_patterns("");
         assert_eq!(patterns.len(), 0);
+    }
+
+    /// The sources the server lets a live read ask for are the ones the
+    /// agent's config lists.
+    mod backup_sources {
+        use shared::types::ScheduleFilesMode;
+        use sqlx::PgPool;
+
+        use crate::{config_assembler::backup_sources, db};
+
+        async fn schedule(
+            pool: &PgPool,
+            agent_id: i64,
+            name: &str,
+            mode: ScheduleFilesMode,
+        ) -> i64 {
+            let repo_id = db::insert_repo(
+                pool,
+                &db::InsertRepoParams {
+                    name,
+                    repo_path: &format!("/backup/{name}"),
+                    ssh_user: "borg",
+                    ssh_host: "127.0.0.1",
+                    ssh_port: 1,
+                    passphrase_encrypted: b"irrelevant",
+                    compression: "lz4",
+                    encryption: "none",
+                    owner_id: None,
+                    sync_schedule: None,
+                },
+            )
+            .await
+            .unwrap()
+            .id;
+            let params = db::ScheduleParams {
+                files_mode: mode,
+                ..db::ScheduleParams::for_test("sources", "0 2 * * *")
+            };
+            let id = db::insert_schedule(pool, repo_id, &params, None)
+                .await
+                .unwrap()
+                .id;
+            db::insert_schedule_targets(pool, id, &[(agent_id, 0)])
+                .await
+                .unwrap();
+            id
+        }
+
+        #[ignore = "requires DATABASE_URL"]
+        #[sqlx::test(migrations = "./migrations")]
+        async fn every_schedule_that_writes_somewhere_contributes_its_paths(pool: PgPool) {
+            let paths = ["/etc".to_owned(), "/home".to_owned()];
+            let agent = db::insert_agent_with_paths(
+                &pool,
+                "web-01",
+                "hash",
+                db::AgentDefaults {
+                    display_name: None,
+                    domain: None,
+                    default_backup_paths: &paths,
+                    default_exclude_patterns: &[],
+                    default_include_patterns: &[],
+                    default_pre_backup_commands: &[],
+                    default_post_backup_commands: &[],
+                    default_file_change_patterns_raw: "",
+                },
+            )
+            .await
+            .unwrap();
+            assert_eq!(
+                backup_sources(&pool, agent.id).await.unwrap(),
+                Vec::<String>::new()
+            );
+
+            schedule(&pool, agent.id, "host", ScheduleFilesMode::Host).await;
+            let own = schedule(&pool, agent.id, "own", ScheduleFilesMode::Own).await;
+            db::insert_backup_source_for_schedule(&pool, own, "/srv", 0)
+                .await
+                .unwrap();
+            schedule(&pool, agent.id, "off", ScheduleFilesMode::Off).await;
+            let unwritten = schedule(&pool, agent.id, "unwritten", ScheduleFilesMode::Own).await;
+            db::insert_backup_source_for_schedule(&pool, unwritten, "/root", 0)
+                .await
+                .unwrap();
+            db::replace_schedule_repos(&pool, unwritten, &[])
+                .await
+                .unwrap();
+
+            assert_eq!(
+                backup_sources(&pool, agent.id).await.unwrap(),
+                ["/etc", "/home", "/srv"]
+            );
+        }
     }
 }

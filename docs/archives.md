@@ -298,7 +298,8 @@ The history is read from the [archive index](#index-retention), not from borg, s
 
 The **Now** row reads the file on the host that wrote the archives, through its agent, over the [encrypted agent channel](agents.md#encrypted-connection). A padlock on the row marks it.
 
-- The agent reads only regular files inside a backup source configured for the host, after resolving links, so a path outside every source, or a link leading out of one, is refused. The dialog says why a read failed: the file is outside the sources, is gone, is now a directory or a link, cannot be read, or the host is offline.
+- The agent reads only regular files inside a backup source configured for the host, and the server asks for nothing outside those sources. A path outside every source is refused. The dialog says why a read failed: the file is outside the sources, is gone, is now a directory or a link, cannot be read, or the host is offline.
+- Symbolic links are never followed, whether the file itself is a link or a folder on the way to it is. The archive holds a link as a link, not the file it points to, so there is nothing to compare it with: a link that leads out of the source reads as outside the sources, any other as a link. The source folder itself may be a link or lie behind one. See [Reading files live](security.md#reading-files-live).
 - It reads at most 1 MB, the same limit as for comparing two archives, and only UTF-8 text is compared line by line.
 - The server compares the file in memory and keeps nothing of it.
 - Reading a file live needs extract permission on the repository, as downloading one does, and every read is recorded in the [audit log](audit-log.md).

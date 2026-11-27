@@ -425,6 +425,68 @@ mod tests {
     }
 
     #[test]
+    fn a_trusted_proxy_can_report_plain_http() {
+        let pairs = [
+            (header::HOST, "assimilate:8080"),
+            (X_FORWARDED_HOST, "backup.lan"),
+            (X_FORWARDED_PROTO, "HTTP"),
+            (header::ORIGIN, "http://backup.lan"),
+        ];
+        assert_eq!(
+            check(&UiOriginPolicy::default(), &pairs, PROXY),
+            OriginCheck::Allowed
+        );
+    }
+
+    /// A forwarded scheme that is neither `http` nor `https` says nothing
+    /// about the scheme, so only host and port are compared.
+    #[test]
+    fn an_unknown_forwarded_scheme_leaves_the_scheme_unknown() {
+        assert_eq!(
+            "gopher".parse::<OriginScheme>(),
+            Err(OriginParseError::UnsupportedScheme)
+        );
+        let pairs = [
+            (header::HOST, "assimilate:8080"),
+            (X_FORWARDED_HOST, "backup.example.com"),
+            (X_FORWARDED_PROTO, "gopher"),
+            (header::ORIGIN, "https://backup.example.com"),
+        ];
+        assert_eq!(
+            check(&UiOriginPolicy::default(), &pairs, PROXY),
+            OriginCheck::Allowed
+        );
+    }
+
+    /// Without a usable address to compare with, no origin is the server's
+    /// own: a `Host` that is not an authority, one with user info, or none.
+    #[test]
+    fn an_unusable_host_refuses_every_origin() {
+        for host in ["not a host", "user@backup.example.com"] {
+            assert_ne!(
+                check(
+                    &UiOriginPolicy::default(),
+                    &[
+                        (header::HOST, host),
+                        (header::ORIGIN, "https://backup.example.com")
+                    ],
+                    STRANGER
+                ),
+                OriginCheck::Allowed,
+                "{host}"
+            );
+        }
+        assert_ne!(
+            check(
+                &UiOriginPolicy::default(),
+                &[(header::ORIGIN, "https://backup.example.com")],
+                STRANGER
+            ),
+            OriginCheck::Allowed
+        );
+    }
+
+    #[test]
     fn an_untrusted_peer_cannot_forge_the_host() {
         let pairs = [
             (header::HOST, "backup.example.com"),

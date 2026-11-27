@@ -335,6 +335,57 @@ mod tests {
     }
 
     #[test]
+    fn delete_takes_archive_filters_and_its_dry_run_options_but_no_path_filters() {
+        let delete = BorgConsoleSubcommand::Delete;
+        for option in [
+            ConsoleOption::DryRun,
+            ConsoleOption::Stats,
+            ConsoleOption::List,
+            ConsoleOption::GlobArchives,
+            ConsoleOption::First,
+            ConsoleOption::Last,
+            ConsoleOption::SortBy,
+            ConsoleOption::ConsiderCheckpoints,
+        ] {
+            assert!(option.is_permitted_for(delete), "{option}");
+        }
+        for option in [
+            ConsoleOption::Exclude,
+            ConsoleOption::Pattern,
+            ConsoleOption::KeepDaily,
+            ConsoleOption::Json,
+            ConsoleOption::Target,
+        ] {
+            assert!(!option.is_permitted_for(delete), "{option}");
+        }
+    }
+
+    #[test]
+    fn diff_takes_path_filters_and_its_comparison_options_but_no_archive_filters() {
+        let diff = BorgConsoleSubcommand::Diff;
+        for option in [
+            ConsoleOption::NumericIds,
+            ConsoleOption::SameChunkerParams,
+            ConsoleOption::Sort,
+            ConsoleOption::ContentOnly,
+            ConsoleOption::JsonLines,
+            ConsoleOption::Exclude,
+            ConsoleOption::Pattern,
+        ] {
+            assert!(option.is_permitted_for(diff), "{option}");
+        }
+        for option in [
+            ConsoleOption::GlobArchives,
+            ConsoleOption::Last,
+            ConsoleOption::SortBy,
+            ConsoleOption::DryRun,
+            ConsoleOption::Json,
+        ] {
+            assert!(!option.is_permitted_for(diff), "{option}");
+        }
+    }
+
+    #[test]
     fn value_kinds_match_what_borg_expects() {
         assert_eq!(ConsoleOption::Last.value_kind(), Some(ValueKind::Number));
         assert_eq!(

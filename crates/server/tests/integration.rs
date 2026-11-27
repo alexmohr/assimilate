@@ -628,8 +628,18 @@ fn build_test_app_with_idle_timeout(
         .merge(test_app_stats_and_notification_routes())
         .merge(test_app_text_limit_routes())
         .merge(test_app_append_only_routes())
+        .merge(test_app_borg_console_routes())
         .with_state(state.clone());
     (router, state)
+}
+
+/// A repository's Borg console.
+#[cfg(test)]
+fn test_app_borg_console_routes() -> Router<server::AppState> {
+    Router::new().route(
+        "/api/repos/{repo_id}/exec",
+        post(server::api::repos::exec_borg),
+    )
 }
 
 /// Append-only repositories' settings, maintenance and queued deletions.
@@ -19067,4 +19077,98 @@ esac
         assert!(append_only_of("ao-config"));
         assert!(!append_only_of("plain-config"));
     }
+}
+
+#[cfg(test)]
+async fn exec_borg_audit_entries(pool: &PgPool, repo_id: i64) -> Vec<(String, Value)> {
+    sqlx::query_as(
+        "SELECT action, details FROM audit_log WHERE action = 'exec_borg' AND target_id = $1",
+    )
+    .bind(repo_id)
+    .fetch_all(pool)
+    .await
+    .unwrap()
+}
+
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn test_exec_borg_refuses_an_option_that_runs_a_command() {
+    let _borg_lock = borg_binary_lock().await;
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+    let (borg_dir, _borg_guard) = install_fake_borg(r#"{"archives": []}"#, "", "", "", "").await;
+    let mut app = build_test_app(pool.clone());
+    let repo_id = insert_test_repo(&pool, "exec-rsh-repo").await;
+
+    for args in [
+        json!(["list", "--rsh", "sh -c 'id>/tmp/p' #"]),
+        json!(["list", "--remote-path=sh -c 'id'"]),
+        json!(["list", "::a", "--patterns-from", "/etc/shadow"]),
+        json!(["list", "ssh://attacker.example/./repo"]),
+    ] {
+        let response = oneshot(
+            &mut app,
+            json_request(
+                "POST",
+                &format!("/api/repos/{repo_id}/exec"),
+                Some(json!({ "args": args })),
+            ),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST, "{args}");
+    }
+
+    assert!(
+        !tokio::fs::try_exists(borg_dir.path().join("calls.log"))
+            .await
+            .unwrap(),
+        "borg must not run for a refused command"
+    );
+    assert_eq!(exec_borg_audit_entries(&pool, repo_id).await, Vec::new());
+}
+
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn test_exec_borg_runs_an_allowed_command_and_audits_it() {
+    let _borg_lock = borg_binary_lock().await;
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+    let (borg_dir, _borg_guard) = install_fake_borg("nightly-1\nnightly-2", "", "", "", "").await;
+    let mut app = build_test_app(pool.clone());
+    let repo_id = insert_test_repo(&pool, "exec-allowed-repo").await;
+
+    let response = oneshot(
+        &mut app,
+        json_request(
+            "POST",
+            &format!("/api/repos/{repo_id}/exec"),
+            Some(json!({ "args": ["list", "--short", "-a", "nightly-*"] })),
+        ),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = body_json(response).await;
+    assert_eq!(body.get("exit_code"), Some(&json!(0)));
+    assert!(
+        body.get("stdout")
+            .and_then(Value::as_str)
+            .is_some_and(|stdout| stdout.contains("nightly-1")),
+        "{body}"
+    );
+
+    let calls = tokio::fs::read_to_string(borg_dir.path().join("calls.log"))
+        .await
+        .unwrap();
+    assert_eq!(calls.trim(), "list");
+
+    let entries = exec_borg_audit_entries(&pool, repo_id).await;
+    assert_eq!(
+        entries,
+        vec![(
+            "exec_borg".to_owned(),
+            json!({ "subcommand": "list", "args": ["--short", "--glob-archives", "nightly-*"] }),
+        )]
+    );
 }

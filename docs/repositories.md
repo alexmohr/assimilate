@@ -270,6 +270,43 @@ The repository's **Settings → Danger zone** offers two ways to get rid of it, 
 - **Remove repository** removes it from Assimilate — the database record, the stored passphrase and its backup reports. Its schedules are **disabled** and lose their repository link, to be reassigned or deleted by hand. The remote borg repository and its archives are **not** touched.
 - **Delete repository** does the same and also deletes the repository from the remote filesystem with `rm -rf`. This cannot be undone.
 
+## Borg Console
+
+The **Borg console** section of a repository's **Settings** runs a borg command against that repository, for users whose role may delete repositories. Type the command without the leading `borg`, for example `list --short` or `prune --dry-run --list --keep-daily 7`. Assimilate adds the repository location and its passphrase itself; the output and borg's exit code appear under the input. Exit code 1 is a borg warning, not a failure.
+
+The console runs borg on the Assimilate server, with the server's own keys, so it accepts only the subcommands and options listed below. It refuses anything else before borg starts and says which argument it refused. It always refuses options that make borg run a command or open another repository (`--rsh`, `--remote-path`), read or write a local file (`--exclude-from`, `--patterns-from`, `--debug-profile`, `--timestamp`), or change how borg reaches the repository (`--upload-ratelimit`, `--upload-buffer`, `--bypass-lock`, `--umask`).
+
+Every run is recorded in the [audit log](audit-log.md) as `exec_borg` before borg starts.
+
+### Subcommands and options
+
+| Subcommand | Arguments | Options |
+|------------|-----------|---------|
+| `info` | `[::ARCHIVE]` | `--json`, archive filters |
+| `list` | `[::ARCHIVE [PATH...]]` | `--short`, `--format FORMAT`, `--json`, `--json-lines`, archive filters, path filters |
+| `check` | `[::ARCHIVE]` | `--repository-only`, `--archives-only`, `--verify-data`, `--max-duration SECONDS`, archive filters |
+| `compact` | none | `--threshold PERCENT` |
+| `prune` | none | `-n`/`--dry-run`, `-s`/`--stats`, `--list`, `--keep-within INTERVAL`, `--keep-last N`, `--keep-secondly N`, `--keep-minutely N`, `-H`/`--keep-hourly N`, `-d`/`--keep-daily N`, `-w`/`--keep-weekly N`, `-m`/`--keep-monthly N`, `-y`/`--keep-yearly N`, `-a`/`--glob-archives GLOB` |
+| `delete` | `[::ARCHIVE [ARCHIVE...]]` | `-n`/`--dry-run`, `-s`/`--stats`, `--list`, archive filters |
+| `diff` | `::ARCHIVE1 ARCHIVE2 [PATH...]` | `--numeric-ids`, `--same-chunker-params`, `--sort`, `--content-only`, `--json-lines`, path filters |
+| `rename` | `::ARCHIVE NEWNAME` | none |
+| `recreate` | `[::ARCHIVE [PATH...]]` | `--list`, `--filter STATUSCHARS`, `-n`/`--dry-run`, `-s`/`--stats`, `--exclude-caches`, `--exclude-if-present NAME`, `--keep-exclude-tags`, `--target NEWNAME`, `--comment COMMENT`, `-C`/`--compression COMPRESSION`, archive filters, path filters |
+
+- **Archive filters** are `-a`/`--glob-archives GLOB`, `--first N`, `--last N`, `--sort-by KEYS` and `--consider-checkpoints`.
+- **Path filters** are `-e`/`--exclude PATTERN` and `--pattern PATTERN`.
+- **Every subcommand** also takes `-v`/`--verbose`/`--info`, `--warning`, `--error`, `--critical`, `-p`/`--progress`, `--log-json`, `--lock-wait SECONDS`, `--show-rc`, `--show-version` and `--iec`.
+
+The arguments follow these rules:
+
+- An archive is always addressed as `::ARCHIVE`, so it can only be an archive of this repository. A repository location such as `ssh://host/repo`, `user@host:repo` or `/srv/repo` is refused. A further archive (the second archive of `diff`, the archives after the first of `delete`, the new name of `rename`) is a bare name; `::NAME` is accepted there too.
+- A path inside an archive is relative, the way borg stores it: `home/user`, not `/home/user`. A path that looks like a repository location (starting with `/`, containing `://` or `::`, or a `host:path`) is refused; give a pattern with a prefix such as `sh:` through `--pattern` instead.
+- An option's value is the next argument: `--keep-daily 7`, not `--keep-daily=7`. A value cannot start with `-` or `@`.
+- Combined short options such as `-sv` are refused; give each one on its own.
+- The console splits the command at spaces and does not handle quotes, so a value cannot contain a space.
+
+!!! note
+    `check --repair` is not available in the console, since borg asks for a confirmation the console cannot give. Deleting the whole repository with `delete` and no archive also asks for one, so it does nothing; use **Delete repository** under **Danger zone** instead.
+
 ## Power
 
 Waking a powered-down machine, shutting it back down, whether it is expected to be online, and the dependencies every backup to it requires are facts about the machine, so they are set on its [repository host](repository-hosts.md#power-dependencies), once for every repository on it. The repository's **Settings → Power & dependencies** pane shows its host's settings read-only, with **Edit on host** for admins, and lists the schedules currently waiting on this repository. See [Power Management](power-management.md) for the full behavior, and [When the Host Is Offline](power-management.md#when-the-host-is-offline) for what an unreachable host means.

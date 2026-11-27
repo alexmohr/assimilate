@@ -44,6 +44,7 @@ Each action records a fixed set of details. Sign-ins and the user, role, permiss
 | `key_change_passphrase` | none |
 | `set_repo_passphrase` | none |
 | `migrate_encryption` | the encryption mode it had (`from`), the one it has now (`to`), and where the original repository was preserved (`migrated_path`) |
+| `exec_borg` | the `subcommand` run from the repository's [Borg console](repositories.md#borg-console) and its `args` as passed to borg. Recorded before borg starts, so a run that fails or is cut short is recorded too |
 
 ### Sign-ins
 

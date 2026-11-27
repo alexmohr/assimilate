@@ -90,6 +90,7 @@ export function auditActionTone(action: AuditEvent['action']): BadgeTone {
     case 'key_change_passphrase':
     case 'set_repo_passphrase':
     case 'migrate_encryption':
+    case 'exec_borg':
     case 'reset_password':
     case 'set_user_roles':
     case 'update_group':

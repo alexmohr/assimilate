@@ -27,6 +27,7 @@ use tracing::{error, info, warn};
 
 mod archive_metadata;
 mod archive_stats;
+mod borg_console;
 mod borg_ops;
 mod indexing;
 mod sync;
@@ -40,6 +41,7 @@ pub use self::sync::{
     sync_existing_archives, sync_new_archives,
 };
 use self::{
+    borg_console::ConsoleCommand,
     borg_ops::{
         get_borg_timeout, run_borg_break_lock, run_borg_info_with_env_if_available,
         run_borg_info_with_retry, run_borg_init,
@@ -1306,67 +1308,12 @@ pub async fn break_lock(
     }))
 }
 
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    strum_macros::Display,
-    strum_macros::EnumString,
-    strum_macros::IntoStaticStr,
-)]
-enum BorgSubcommand {
-    #[strum(serialize = "info")]
-    Info,
-    #[strum(serialize = "list")]
-    List,
-    #[strum(serialize = "check")]
-    Check,
-    #[strum(serialize = "compact")]
-    Compact,
-    #[strum(serialize = "prune")]
-    Prune,
-    #[strum(serialize = "delete")]
-    Delete,
-    #[strum(serialize = "diff")]
-    Diff,
-    #[strum(serialize = "rename")]
-    Rename,
-    #[strum(serialize = "recreate")]
-    Recreate,
-}
-
-impl BorgSubcommand {
-    const ALL: [BorgSubcommand; 9] = [
-        BorgSubcommand::Info,
-        BorgSubcommand::List,
-        BorgSubcommand::Check,
-        BorgSubcommand::Compact,
-        BorgSubcommand::Prune,
-        BorgSubcommand::Delete,
-        BorgSubcommand::Diff,
-        BorgSubcommand::Rename,
-        BorgSubcommand::Recreate,
-    ];
-
-    fn as_str(self) -> &'static str {
-        (&self).into()
-    }
-
-    fn permitted_list() -> String {
-        Self::ALL
-            .iter()
-            .map(|s| s.as_str())
-            .collect::<Vec<_>>()
-            .join(", ")
-    }
-}
-
 /// Request payload for executing an ad-hoc borg command.
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct ExecBorgRequest {
-    /// Borg subcommand and arguments (e.g. `["info", "--json"]`).
+    /// Borg subcommand and arguments (e.g. `["info", "--json"]`). Only the
+    /// options the console allows for that subcommand are accepted, and an
+    /// archive is addressed as `::NAME` in this repository.
     pub args: Vec<String>,
 }
 
@@ -1389,32 +1336,24 @@ pub struct ExecBorgRequest {
 )]
 /// Execute a borg command against the repository (admin only).
 ///
+/// The command is checked against the console's allowlist and recorded in the
+/// audit log before borg runs.
+///
 /// # Errors
 ///
 /// Returns an error if:
-/// - [`ApiError::BadRequest`]: the request is invalid
+/// - [`ApiError::BadRequest`]: the subcommand, an option or an argument is not
+///   allowed
 /// - [`ApiError::Internal`]: an internal error occurs
 pub async fn exec_borg(
     State(state): State<AppState>,
-    RequireAdmin(_admin): RequireAdmin,
+    RequireAdmin(admin): RequireAdmin,
     Path(repo_id): Path<i64>,
     ApiJson(req): ApiJson<ExecBorgRequest>,
 ) -> Result<Json<ExecBorgResponse>, ApiError> {
-    let raw_subcommand = req
-        .args
-        .first()
-        .ok_or_else(|| ApiError::BadRequest("args must not be empty".to_owned()))?;
-
-    let subcommand = raw_subcommand.parse::<BorgSubcommand>().map_err(|_| {
-        ApiError::BadRequest(format!(
-            "subcommand '{raw_subcommand}' is not allowed; permitted: {}",
-            BorgSubcommand::permitted_list()
-        ))
-    })?;
-
-    if req.args.len() > 32 {
-        return Err(ApiError::BadRequest("too many arguments".to_owned()));
-    }
+    let command =
+        ConsoleCommand::parse(&req.args).map_err(|e| ApiError::BadRequest(e.to_string()))?;
+    let subcommand = command.subcommand();
 
     let repo = db::get_repo_with_passphrase(&state.pool, repo_id).await?;
     let passphrase =
@@ -1438,6 +1377,24 @@ pub async fn exec_borg(
     .await;
     env.insert(BORG_REPO_ENV_KEY.to_owned(), repo_url);
 
+    // Recorded before borg runs, so a command that hangs or is cut short is
+    // still on record; a command that cannot be recorded does not run.
+    db::audit::insert_audit_entry(
+        &state.pool,
+        &db::audit::NewAuditEntry {
+            user_id: Some(admin.user_id),
+            username: &admin.username,
+            event: AuditEvent::ExecBorg {
+                subcommand,
+                args: command.args(),
+            },
+            target_type: Some("repo"),
+            target_id: Some(repo_id),
+            ip_address: None,
+        },
+    )
+    .await?;
+
     info!(repo_id, name = %repo.name, subcommand = %subcommand, "admin executing borg command");
 
     // Serializes against every other operation that touches this repo's local borg cache
@@ -1449,7 +1406,7 @@ pub async fn exec_borg(
 
     let output = Borg::new()
         .with_registry(state.task_registry.clone())
-        .run(&req.args, &env)
+        .run(&command.argv(), &env)
         .await
         .map_err(|e| ApiError::Internal(format!("failed to execute borg: {e}")))?;
 
@@ -2270,35 +2227,6 @@ mod tests {
     }
 
     use super::*;
-
-    #[test]
-    fn borg_subcommand_from_str_round_trips_all_variants() {
-        for sub in BorgSubcommand::ALL {
-            let parsed: BorgSubcommand = sub.as_str().parse().unwrap();
-            assert_eq!(parsed, sub);
-            assert_eq!(sub.to_string(), sub.as_str());
-        }
-    }
-
-    #[test]
-    fn borg_subcommand_from_str_rejects_unknown() {
-        assert!("rm".parse::<BorgSubcommand>().is_err());
-        assert!("".parse::<BorgSubcommand>().is_err());
-        assert!("INFO".parse::<BorgSubcommand>().is_err());
-    }
-
-    #[test]
-    fn borg_subcommand_permitted_list_contains_all() {
-        let list = BorgSubcommand::permitted_list();
-        for sub in BorgSubcommand::ALL {
-            assert!(
-                list.contains(sub.as_str()),
-                "missing {} in {list}",
-                sub.as_str()
-            );
-        }
-        assert_eq!(list.matches(',').count(), BorgSubcommand::ALL.len() - 1);
-    }
 
     #[test]
     fn repo_row_from_valid_compression_lz4() {

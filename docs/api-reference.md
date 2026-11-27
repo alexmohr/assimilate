@@ -155,7 +155,7 @@ See [Agent Management](agents.md) for setup and configuration details.
 | `POST` | `/api/repos/{repo_id}/reset-import` | Reset an imported repository to unmatched state |
 | `POST` | `/api/repos/{repo_id}/break-lock` | Break a stale repository lock, clearing any stale local cache lock too |
 | `POST` | `/api/repos/{repo_id}/confirm-relocation` | Acknowledge a repository relocation warning |
-| `POST` | `/api/repos/{repo_id}/exec` | Execute an allow-listed borg maintenance command |
+| `POST` | `/api/repos/{repo_id}/exec` | Execute an allow-listed borg maintenance command; only the [options the Borg console allows](repositories.md#subcommands-and-options) are accepted |
 | `POST` | `/api/repos/{repo_id}/dry-run` | Preview which files a schedule would back up |
 | `GET` | `/api/repos/{repo_id}/passphrase` | Retrieve the stored passphrase (admin only) |
 | `PUT` | `/api/repos/{repo_id}/passphrase` | Store the passphrase the repository's key already has, after borg accepts it (admin only) |

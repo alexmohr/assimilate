@@ -85,7 +85,7 @@ The `seed-demo.sh` script populates every documented scenario:
 * **Global excludes**: Standard patterns (node_modules, `__pycache__`, etc.)
 * **Quotas**: Warn/critical thresholds on server-daily and database-hourly repos
 * **System events**: Agent connect/disconnect, backup failures/warnings
-* **Audit log**: Repository creation, host registration, schedule creation, login events, quota configuration
+* **Audit log**: Repository creation, host registration, schedule creation, login events, quota configuration, a Borg console run (`exec_borg`)
 * **Archives**: Real borg archives with browsable file trees for archive browsing, diff, and export screenshots; `media-store-01`'s media archives also hold symbolic links under `mnt/media` (to a folder, to a file, and to a path outside the archive); web-server-01's `server-daily` archive from four days ago holds a release tarball and a debug log no other archive has, and its Growth breakdown is worked out by the seed
 * **Archive tags**: `pre-upgrade` and `weekly-baseline` tags on archives
 * **Notifications**: Webhook and email channels with rules for failures, warnings, and agent events

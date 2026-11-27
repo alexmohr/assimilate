@@ -270,7 +270,7 @@ describe('ProfileView', () => {
     })
   })
 
-  it.each(['auto', 'light', 'dark'] as const)(
+  it.each(['auto', 'light', 'dark', 'charcoal', 'warm'] as const)(
     'sets the %s theme from the Appearance section',
     async (theme) => {
       const wrapper = renderWithPlugins(ProfileView, {
@@ -281,7 +281,7 @@ describe('ProfileView', () => {
       await flushPromises()
 
       const options = wrapper.findAll('button.theme-option')
-      expect(options.map((o) => o.text())).toEqual(['Auto', 'Light', 'Dark'])
+      expect(options.map((o) => o.text())).toEqual(['Auto', 'Light', 'Dark', 'Charcoal', 'Warm'])
       await options.find((o) => o.text().toLowerCase() === theme)!.trigger('click')
 
       expect(mockSetTheme).toHaveBeenCalledTimes(1)

@@ -3,4 +3,4 @@
 /**
  * A UI colour theme.
  */
-export type Theme = "light" | "dark" | "auto";
+export type Theme = "light" | "dark" | "charcoal" | "warm" | "auto";

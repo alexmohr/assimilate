@@ -186,6 +186,50 @@
   --shadow-lg: 0 10px 25px rgba(0, 0, 0, 0.4), 0 4px 10px rgba(0, 0, 0, 0.3);
 }
 
+/* The two lighter dark themes. Both also carry `.dark` (see useTheme), so
+   everything that keys off `.dark` keeps working and these blocks only
+   override the surfaces, the muted text and the accent. The accent is
+   lighter than the plain dark theme's because the brighter cards would
+   otherwise push accent-coloured text below WCAG AA; dark text on it keeps
+   buttons readable. */
+.dark.theme-charcoal {
+  --bg-base: #1c1c20;
+  --bg-card: #26262b;
+  --bg-sidebar: #202024;
+  --bg-input: #1c1c20;
+  --bg-field: #31313a;
+  --bg-field-hover: #3a3a44;
+  --bg-hover: #2f2f35;
+  --bg-elevated: #2d2d33;
+  --border: #3f3f48;
+  --border-subtle: #303036;
+  --text-muted: #9a9aa4;
+  --accent: #5b9af8;
+  --accent-hover: #7db3fb;
+  --accent-subtle: rgba(91, 154, 248, 0.14);
+  --text-on-accent: #0b1220;
+  --bg-code: #31313a;
+}
+
+.dark.theme-warm {
+  --bg-base: #1a1917;
+  --bg-card: #242321;
+  --bg-sidebar: #1d1c1a;
+  --bg-input: #1a1917;
+  --bg-field: #302f2c;
+  --bg-field-hover: #393835;
+  --bg-hover: #2c2b28;
+  --bg-elevated: #2a2926;
+  --border: #3b3a36;
+  --border-subtle: #2c2b28;
+  --text-muted: #98968f;
+  --accent: #5b9af8;
+  --accent-hover: #7db3fb;
+  --accent-subtle: rgba(91, 154, 248, 0.14);
+  --text-on-accent: #0b1220;
+  --bg-code: #302f2c;
+}
+
 @layer components {
   .btn {
     display: inline-flex;

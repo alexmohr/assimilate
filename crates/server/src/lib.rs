@@ -267,6 +267,9 @@ pub struct AppState {
     pub shutdown_token: CancellationToken,
     /// Resolves the real client IP behind proxies.
     pub client_ip_resolver: ClientIpResolver,
+    /// The origins besides the server's own that may open the UI WebSocket,
+    /// read once from `ASSIMILATE_ALLOWED_ORIGINS` at startup.
+    pub ui_origins: ws::ui_origin::UiOriginPolicy,
     /// Collects fire-and-forget work spawned outside the request/response cycle -
     /// every `Borg` invocation's `GracefulChild` reaper (SIGKILL-escalation +
     /// break-lock), a `RepoOpGuard`'s deferred clear, and the server's long-lived

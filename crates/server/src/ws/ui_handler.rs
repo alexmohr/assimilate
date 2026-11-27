@@ -1,20 +1,20 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
-use std::time::Duration;
+use std::{net::SocketAddr, time::Duration};
 
 use axum::{
     extract::{
-        State,
+        ConnectInfo, State,
         ws::{CloseFrame, Message, WebSocket, WebSocketUpgrade, close_code},
     },
-    http::StatusCode,
+    http::{Extensions, HeaderMap, StatusCode, Uri},
     response::IntoResponse,
 };
 use futures_util::{SinkExt, StreamExt, stream::SplitSink};
 use shared::protocol::ServerToUi;
 
-use super::ui_audience::UiAudience;
+use super::{ui_audience::UiAudience, ui_origin::OriginCheck};
 use crate::{
     AppState,
     api::auth::{SessionUse, authenticate_session},
@@ -34,30 +34,59 @@ const SESSION_RECHECK_INTERVAL: Duration = Duration::from_secs(30);
 
 /// WebSocket upgrade handler for browser UI clients.
 ///
-/// Authenticates the session cookie with every check the REST API applies to
-/// a session (expiry, idle timeout, pending TOTP, forced password change),
-/// then upgrades the connection to a UI broadcast receiver that only
-/// delivers events for the agents and repositories the user can see.
+/// Refuses a handshake whose `Origin` is not the server's own (see
+/// [`super::ui_origin`]), authenticates the session cookie with every check
+/// the REST API applies to a session (expiry, idle timeout, pending TOTP,
+/// forced password change), then upgrades the connection to a UI broadcast
+/// receiver that only delivers events for the agents and repositories the
+/// user can see.
 pub async fn ui_ws_handler(
     ws: WebSocketUpgrade,
-    headers: axum::http::HeaderMap,
+    extensions: Extensions,
+    uri: Uri,
+    headers: HeaderMap,
     State(state): State<AppState>,
 ) -> impl IntoResponse {
-    upgrade_ui_socket(ws, &headers, state, SESSION_RECHECK_INTERVAL).await
+    let peer = extensions
+        .get::<ConnectInfo<SocketAddr>>()
+        .map(|ConnectInfo(addr)| addr.ip());
+    let origin = state
+        .ui_origins
+        .check(&headers, uri.authority(), peer, &state.client_ip_resolver);
+    upgrade_ui_socket(ws, &headers, origin, state, SESSION_RECHECK_INTERVAL).await
 }
 
-/// [`ui_ws_handler`] with the session re-check interval as a parameter, so
-/// tests can watch a socket close without waiting the production interval.
+/// [`ui_ws_handler`] with the origin already checked and the session
+/// re-check interval as a parameter, so tests can watch a socket close
+/// without waiting the production interval.
 async fn upgrade_ui_socket(
     ws: WebSocketUpgrade,
-    headers: &axum::http::HeaderMap,
+    headers: &HeaderMap,
+    origin: OriginCheck,
     state: AppState,
     recheck_every: Duration,
 ) -> axum::response::Response {
+    // Another origin is refused before its cookie is even looked at, so a
+    // page elsewhere cannot keep the victim's session from going idle by
+    // retrying. A missing `Origin` is not a browser and so not a cross-site
+    // page riding on the cookie; it is refused only once the session is
+    // known to be valid, so a bad session still answers 401.
+    let origin_sent = match origin {
+        OriginCheck::Allowed => true,
+        OriginCheck::Missing => false,
+        OriginCheck::Refused(value) => {
+            tracing::warn!(origin = ?value, "refusing UI WebSocket opened from another origin");
+            return StatusCode::FORBIDDEN.into_response();
+        }
+    };
     let Some(session_id) = cookies::session_cookie(headers) else {
         return StatusCode::UNAUTHORIZED.into_response();
     };
     match load_audience(&state, session_id.clone(), SessionUse::Request).await {
+        Ok(_) if !origin_sent => {
+            tracing::warn!("refusing UI WebSocket without an Origin header");
+            StatusCode::FORBIDDEN.into_response()
+        }
         Ok(audience) => {
             let session = UiSession {
                 session_id,
@@ -286,7 +315,14 @@ mod tests {
                               axum::extract::State(state): axum::extract::State<
                             crate::AppState,
                         >| async move {
-                            super::upgrade_ui_socket(ws, &headers, state, recheck_every).await
+                            let origin = state.ui_origins.check(
+                                &headers,
+                                None,
+                                None,
+                                &state.client_ip_resolver,
+                            );
+                            super::upgrade_ui_socket(ws, &headers, origin, state, recheck_every)
+                                .await
                         },
                     ),
                 )
@@ -312,15 +348,27 @@ mod tests {
         cookie
     }
 
+    type UiClient = tokio_tungstenite::WebSocketStream<
+        tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
+    >;
+
+    /// Opens the UI socket the way a browser on the server's own page does:
+    /// with the session cookie and the server's own `Origin`.
     async fn connect(
         addr: std::net::SocketAddr,
         cookie: &str,
-    ) -> Result<
-        tokio_tungstenite::WebSocketStream<
-            tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
-        >,
-        Box<tungstenite::Error>,
-    > {
+    ) -> Result<UiClient, Box<tungstenite::Error>> {
+        let origin = format!("http://{addr}");
+        connect_with(addr, cookie, &[(axum::http::header::ORIGIN, &origin)]).await
+    }
+
+    /// Opens the UI socket with the session cookie and exactly `headers`
+    /// besides the ones every handshake carries.
+    async fn connect_with(
+        addr: std::net::SocketAddr,
+        cookie: &str,
+        headers: &[(axum::http::HeaderName, &str)],
+    ) -> Result<UiClient, Box<tungstenite::Error>> {
         let mut request = format!("ws://{addr}/ws/ui")
             .into_client_request()
             .expect("request");
@@ -329,10 +377,152 @@ mod tests {
             axum::http::header::COOKIE,
             cookie.parse().expect("cookie header"),
         );
+        for (name, value) in headers {
+            request
+                .headers_mut()
+                .insert(name.clone(), value.parse().expect("header value"));
+        }
         tokio_tungstenite::connect_async(request)
             .await
             .map(|(socket, _)| socket)
             .map_err(Box::new)
+    }
+
+    /// Serves the production [`super::ui_ws_handler`] with the socket peer
+    /// address available, as `main` serves it, behind `trusted_proxies`.
+    async fn serve_ui_handler(
+        pool: sqlx::PgPool,
+        trusted_proxies: Option<&str>,
+    ) -> std::net::SocketAddr {
+        let state = crate::AppState {
+            client_ip_resolver: crate::client_ip::ClientIpResolver::from_env(
+                trusted_proxies.map(str::to_owned),
+            ),
+            ..crate::test_support::build_test_state(pool, b"ui-handler-test-key-material")
+        };
+        let app = axum::Router::new()
+            .route("/ws/ui", axum::routing::get(super::ui_ws_handler))
+            .with_state(state);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
+        let addr = listener.local_addr().expect("address");
+        tokio::spawn(async move {
+            axum::serve(
+                listener,
+                app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+            )
+            .await
+        });
+        addr
+    }
+
+    /// The server's own page opens the socket.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn the_servers_own_origin_is_accepted(pool: sqlx::PgPool) {
+        let user = insert_auth_user(&pool, "same-origin").await;
+        let cookie = insert_session(&pool, user.user_id, false).await;
+        let addr = serve_ui_handler(pool, None).await;
+
+        let opened = connect(addr, &cookie).await;
+
+        assert!(opened.is_ok(), "{opened:?}");
+    }
+
+    /// A page on another origin (a sibling subdomain, or another port on the
+    /// same host) gets the victim's cookie attached by the browser, since
+    /// both are the same site, but must not read the live event stream.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn another_origin_is_refused(pool: sqlx::PgPool) {
+        let user = insert_auth_user(&pool, "cross-origin").await;
+        let cookie = insert_session(&pool, user.user_id, false).await;
+        let addr = serve_ui_handler(pool, None).await;
+        let other_port = format!("http://{}:{}", addr.ip(), addr.port().wrapping_add(1));
+
+        for origin in ["http://evil.example.com", other_port.as_str(), "null"] {
+            let refused =
+                connect_with(addr, &cookie, &[(axum::http::header::ORIGIN, origin)]).await;
+            assert!(
+                refused_with(&refused, axum::http::StatusCode::FORBIDDEN),
+                "{origin}: {refused:?}"
+            );
+        }
+    }
+
+    /// Every browser sends `Origin` on a WebSocket handshake; one without it
+    /// is not the UI and is refused even with a valid session.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_missing_origin_is_refused(pool: sqlx::PgPool) {
+        let user = insert_auth_user(&pool, "no-origin").await;
+        let cookie = insert_session(&pool, user.user_id, false).await;
+        let addr = serve_ui_handler(pool, None).await;
+
+        let refused = connect_with(addr, &cookie, &[]).await;
+
+        assert!(
+            refused_with(&refused, axum::http::StatusCode::FORBIDDEN),
+            "{refused:?}"
+        );
+    }
+
+    /// Behind a trusted reverse proxy the browser's origin is the proxy's
+    /// public one, named by `X-Forwarded-Host`/`X-Forwarded-Proto`; the same
+    /// headers from a peer that is not a trusted proxy are ignored.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_trusted_proxys_public_origin_is_accepted(pool: sqlx::PgPool) {
+        let user = insert_auth_user(&pool, "behind-proxy").await;
+        let cookie = insert_session(&pool, user.user_id, false).await;
+        let forwarded = [
+            (
+                axum::http::HeaderName::from_static("x-forwarded-host"),
+                "backup.example.com",
+            ),
+            (
+                axum::http::HeaderName::from_static("x-forwarded-proto"),
+                "https",
+            ),
+            (axum::http::header::ORIGIN, "https://backup.example.com"),
+        ];
+
+        let behind_proxy = serve_ui_handler(pool.clone(), Some("127.0.0.0/8")).await;
+        let opened = connect_with(behind_proxy, &cookie, &forwarded).await;
+        assert!(opened.is_ok(), "{opened:?}");
+
+        let direct = serve_ui_handler(pool, None).await;
+        let refused = connect_with(direct, &cookie, &forwarded).await;
+        assert!(
+            refused_with(&refused, axum::http::StatusCode::FORBIDDEN),
+            "{refused:?}"
+        );
+    }
+
+    /// An origin listed in `ASSIMILATE_ALLOWED_ORIGINS` opens the socket
+    /// although it is not the one the request was addressed to.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_configured_origin_is_accepted(pool: sqlx::PgPool) {
+        let user = insert_auth_user(&pool, "allowed-origin").await;
+        let cookie = insert_session(&pool, user.user_id, false).await;
+        let state = crate::AppState {
+            ui_origins: super::super::ui_origin::UiOriginPolicy::from_env_value(Some(
+                "https://ui.example.com",
+            )),
+            ..crate::test_support::build_test_state(pool, b"ui-handler-test-key-material")
+        };
+        let addr = serve_ui_socket(state, Duration::from_secs(30)).await;
+
+        let opened = connect_with(
+            addr,
+            &cookie,
+            &[(axum::http::header::ORIGIN, "https://ui.example.com")],
+        )
+        .await;
+
+        assert!(opened.is_ok(), "{opened:?}");
     }
 
     fn refused_with(

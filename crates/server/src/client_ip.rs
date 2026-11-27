@@ -118,6 +118,13 @@ impl ClientIpResolver {
         result
     }
 
+    /// Whether `peer` is a configured trusted proxy, whose forwarded headers
+    /// may be honoured. Always `false` when no proxies are configured.
+    #[must_use]
+    pub fn trusts(&self, peer: IpAddr) -> bool {
+        self.is_trusted(&peer)
+    }
+
     fn is_trusted(&self, ip: &IpAddr) -> bool {
         // Normalize IPv6-mapped IPv4 addresses (e.g. ::ffff:10.0.0.1 -> 10.0.0.1)
         // so CIDR rules like 10.0.0.0/8 match regardless of the wire format.

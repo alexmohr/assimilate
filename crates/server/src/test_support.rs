@@ -178,6 +178,7 @@ pub(crate) fn build_test_state(pool: sqlx::PgPool, key_material: &[u8]) -> crate
         deploy_jobs: crate::deploy_jobs::DeployJobs::default(),
         shutdown_token: tokio_util::sync::CancellationToken::new(),
         client_ip_resolver: crate::client_ip::ClientIpResolver::new(),
+        ui_origins: crate::ws::ui_origin::UiOriginPolicy::default(),
         task_registry: shared::task_registry::TaskRegistry::default(),
         user_rate_limiter: crate::rate_limit::UserRateLimiter::new(
             60,

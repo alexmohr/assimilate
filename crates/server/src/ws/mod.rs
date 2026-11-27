@@ -23,3 +23,5 @@ pub mod ui_audience;
 pub mod ui_broadcast;
 /// WebSocket upgrade handler for UI client connections.
 pub mod ui_handler;
+/// Which web origins may open the UI WebSocket.
+pub mod ui_origin;

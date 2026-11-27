@@ -471,6 +471,7 @@ fn build_app_state(args: BuildAppStateArgs) -> AppState {
         pending_live_reads: server::new_pending_map(),
         shutdown_token,
         client_ip_resolver,
+        ui_origins: server::ws::ui_origin::UiOriginPolicy::from_env(),
         task_registry,
         user_rate_limiter,
         session_idle_timeout_minutes: std::sync::Arc::new(std::sync::atomic::AtomicI64::new(480)),

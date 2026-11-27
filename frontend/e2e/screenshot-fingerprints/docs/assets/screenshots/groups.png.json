@@ -1,5 +1,5 @@
 {
   "test": "settings pages",
   "pages": ["frontend/src/views/GroupsView.vue"],
-  "fingerprint": "01580fde8cad80940bccf05b738550f18afa1fc370510754ccff46ecc65bb67a"
+  "fingerprint": "09ff9af9b17c0a1f7cb670548cbaf4d5f0d094896f35b63fce69850b33a0b243"
 }

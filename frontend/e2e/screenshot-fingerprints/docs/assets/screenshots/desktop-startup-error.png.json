@@ -1,5 +1,5 @@
 {
   "test": "desktop startup page",
   "pages": ["desktop/splash"],
-  "fingerprint": "47c5f871df6d0a76e8b14427dfdf57761a8b55c2d050e6dfa66d16e7dc9a2696"
+  "fingerprint": "af49a3b1424f348772e3c9e35ca994ffc6cae968a1e80c87d0bd6cb23bfc7ecc"
 }

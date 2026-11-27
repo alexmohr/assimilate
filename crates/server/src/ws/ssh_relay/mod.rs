@@ -248,7 +248,7 @@ mod tests {
     use tokio_tungstenite::tungstenite::Message as WsMessage;
     use tokio_util::sync::CancellationToken;
 
-    use super::*;
+    use super::{agent_protocol::tests::message, *};
     use crate::ws::channel::UNENCRYPTED_REASON;
 
     const TOKEN: &str = "relay-agent-token";
@@ -383,14 +383,6 @@ mod tests {
         !frames.iter().any(WsMessage::is_binary)
     }
 
-    /// An SSH agent message of `message_type` with `body` after it, length
-    /// prefix included.
-    fn message(message_type: u8, body: &[u8]) -> Vec<u8> {
-        let content = [&[message_type], body].concat();
-        let len = u32::try_from(content.len()).expect("message length");
-        [len.to_be_bytes().as_slice(), &content].concat()
-    }
-
     /// `SSH_AGENTC_REQUEST_IDENTITIES`.
     fn list_keys() -> Vec<u8> {
         message(11, b"")
@@ -503,7 +495,7 @@ mod tests {
         assert!(closes_without_data(&mut ws).await);
         assert!(
             agent.await.expect("agent"),
-            "the SSH agent connection stays open"
+            "the relay left the SSH agent connection open"
         );
     }
 

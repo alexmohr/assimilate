@@ -160,14 +160,14 @@ pub async fn read_reply<R: AsyncRead + Unpin>(agent: &mut R) -> Result<Vec<u8>, 
 }
 
 #[cfg(test)]
-mod tests {
+pub(super) mod tests {
     use super::*;
 
     /// A message of `message_type` with `body` after it, length prefix
     /// included.
-    fn message(message_type: u8, body: &[u8]) -> Vec<u8> {
+    pub(crate) fn message(message_type: u8, body: &[u8]) -> Vec<u8> {
         let content = [&[message_type], body].concat();
-        let len = u32::try_from(content.len()).unwrap();
+        let len = u32::try_from(content.len()).expect("message length");
         [len.to_be_bytes().as_slice(), &content].concat()
     }
 

@@ -39,6 +39,12 @@ jobs:
         run: cargo +nightly-2026-08-21 clippy --workspace -- -D warnings
       - uses: ./.github/actions/setup-dylint
       - name: Enforce no string-based control flow (dylint)
+        # setup-rust-toolchain@v2 exports CARGO_BUILD_WARNINGS=deny; cargo-dylint
+        # builds its driver with `-D no_string_control_flow` before the lint is
+        # registered, so that rustc warning would fail the driver build itself.
+        # The lint stays denied through RUSTFLAGS; clippy above denies warnings.
+        env: &dylint_env
+          CARGO_BUILD_WARNINGS: warn
         run: RUSTFLAGS="-D no_string_control_flow" cargo dylint --all --workspace
       - &allow_userns
         # The agent's filesystem snapshot test mounts inside a user namespace,
@@ -514,6 +520,8 @@ jobs:
         run: cargo +nightly-2026-08-21 clippy --manifest-path desktop/Cargo.toml --all-targets -- -D warnings
       - uses: ./.github/actions/setup-dylint
       - name: No string comparisons for control flow (dylint)
+        # See the Rust job: keep dylint's driver build from denying warnings.
+        env: *dylint_env
         run: RUSTFLAGS="-D no_string_control_flow" cargo dylint --path lints/no_string_control_flow --manifest-path desktop/Cargo.toml
       - name: Test
         run: cargo +nightly-2026-08-21 test --manifest-path desktop/Cargo.toml

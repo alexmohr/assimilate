@@ -129,6 +129,8 @@ Users with `can_view_all_repos` can see all repositories. For others, fine-grain
 
 Permissions are managed by admins under **Settings → Access Control**.
 
+Dependency hosts follow the same grants. A user who is not an admin sees a dependency's name, address and port only when a schedule and agent they may see need it, or an agent they may see requires it. Counts and waiting runs cover only what they may see, and the repository host a dependency shares a machine with is named only to a user who may read a repository on it. Any other dependency reads as not found, directly, through its usage and through its machine. A schedule editor cannot point a schedule at a dependency they may not see: it is refused as unknown, the same as an id that does not exist. Only an admin may create, change, test or remove a dependency. See [Who Can See a Dependency](dependency-hosts.md#who-can-see-a-dependency).
+
 ## Session Idle Timeout
 
 An idle timeout can be configured as **Idle session** under **Timeouts** in **System → Settings**. Sessions that have no API activity for longer than the configured duration are automatically revoked on the next request.

@@ -15998,6 +15998,425 @@ async fn test_schedule_and_agent_dependencies_round_trip() {
     assert_eq!(at(&card, "/agent_default_count"), 1);
 }
 
+/// Two agents, each backed up by a schedule into its own repository, and the
+/// dependencies an admin set up around them - for the tests of who sees
+/// which.
+#[cfg(test)]
+struct ScopedDependencies {
+    seen_schedule: i64,
+    seen_agent: i64,
+    hidden_agent: i64,
+    /// Set on the seen schedule for the seen agent.
+    seen: i64,
+    /// Required by the seen agent's backup defaults.
+    seen_default: i64,
+    /// Set on the hidden schedule only.
+    hidden: i64,
+    /// Set on both schedules.
+    shared: i64,
+    /// Needed by nothing.
+    unused: i64,
+    /// On the machine of a repository host the viewer reads nothing on, and
+    /// set on the seen schedule.
+    on_hidden_host: i64,
+}
+
+/// Sets up [`ScopedDependencies`], with the non-admin viewer granted
+/// `can_view` on the seen schedule's repository only.
+#[cfg(test)]
+async fn scoped_dependencies(pool: &PgPool, app: &mut Router) -> ScopedDependencies {
+    let seen_agent = server::db::insert_agent(pool, "scope-seen-01", None, "hash", None, None)
+        .await
+        .unwrap();
+    let hidden_agent = server::db::insert_agent(pool, "scope-hidden-01", None, "hash", None, None)
+        .await
+        .unwrap();
+    let seen_repo = insert_test_repo(pool, "scope-seen-repo").await;
+    let hidden_repo = insert_test_repo(pool, "scope-hidden-repo").await;
+    grant_repo_view(pool, "integration-viewer", seen_repo).await;
+    let seen_schedule = insert_test_schedule(pool, seen_agent.id, seen_repo).await;
+    let hidden_schedule = insert_test_schedule(pool, hidden_agent.id, hidden_repo).await;
+    let hidden_host: i64 = sqlx::query_scalar(
+        "INSERT INTO repo_hosts (ssh_host, ssh_port) VALUES ('scope-hidden-store.lan', 22) \
+         RETURNING id",
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap();
+
+    let seen = create_dependency_id(app, "scope-seen", 445).await;
+    let seen_default = create_dependency_id(app, "scope-seen-default", 445).await;
+    let hidden = create_dependency_id(app, "scope-hidden", 445).await;
+    let shared = create_dependency_id(app, "scope-shared", 445).await;
+    let unused = create_dependency_id(app, "scope-unused", 445).await;
+    let resp = create_dependency(
+        app,
+        json!({
+            "name": "scope-on-hidden-host",
+            "address": "scope-on-hidden-host.lan",
+            "port": 445,
+            "repo_host_id": hidden_host
+        }),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let on_hidden_host = at(&body_json(resp).await, "/id").as_i64().unwrap();
+
+    let set = |schedule_id: i64, pairs: Value| {
+        json_request(
+            "PUT",
+            &format!("/api/schedules/{schedule_id}/dependencies"),
+            Some(json!({ "dependencies": pairs })),
+        )
+    };
+    let resp = oneshot(
+        app,
+        set(
+            seen_schedule,
+            json!([
+                { "agent_id": seen_agent.id, "dependency_host_id": seen },
+                { "agent_id": seen_agent.id, "dependency_host_id": shared },
+                { "agent_id": seen_agent.id, "dependency_host_id": on_hidden_host }
+            ]),
+        ),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let resp = oneshot(
+        app,
+        set(
+            hidden_schedule,
+            json!([
+                { "agent_id": hidden_agent.id, "dependency_host_id": hidden },
+                { "agent_id": hidden_agent.id, "dependency_host_id": shared }
+            ]),
+        ),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let resp = oneshot(
+        app,
+        json_request(
+            "PUT",
+            "/api/agents/scope-seen-01/dependencies",
+            Some(json!({ "dependency_host_ids": [seen_default] })),
+        ),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let resp = oneshot(
+        app,
+        json_request(
+            "PUT",
+            "/api/agents/scope-hidden-01/dependencies",
+            Some(json!({ "dependency_host_ids": [shared] })),
+        ),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    ScopedDependencies {
+        seen_schedule,
+        seen_agent: seen_agent.id,
+        hidden_agent: hidden_agent.id,
+        seen,
+        seen_default,
+        hidden,
+        shared,
+        unused,
+        on_hidden_host,
+    }
+}
+
+#[cfg(test)]
+fn names_of(list: &Value) -> Vec<&str> {
+    list.as_array()
+        .unwrap()
+        .iter()
+        .map(|host| at(host, "/name").as_str().unwrap())
+        .collect()
+}
+
+/// A user who is not an admin lists, reads and counts only the dependencies
+/// the schedules and agents they see need; any other reads as not found,
+/// directly or through its machine. An admin still sees every one.
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn test_dependency_hosts_are_scoped_to_what_the_caller_sees() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+    create_non_admin_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+    let fx = scoped_dependencies(&pool, &mut app).await;
+
+    let resp = oneshot(&mut app, non_admin_get_request("/api/dependency-hosts")).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let listed = body_json(resp).await;
+    assert_eq!(
+        names_of(&listed),
+        [
+            "scope-on-hidden-host",
+            "scope-seen",
+            "scope-seen-default",
+            "scope-shared"
+        ],
+        "only what the viewer's schedule and agent need"
+    );
+    let shared = listed
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|host| at(host, "/id") == fx.shared)
+        .unwrap();
+    assert_eq!(
+        at(shared, "/schedule_count"),
+        1,
+        "the hidden schedule is not counted"
+    );
+    assert_eq!(
+        at(shared, "/agent_default_count"),
+        0,
+        "the hidden agent's defaults are not counted"
+    );
+    let on_hidden_host = listed
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|host| at(host, "/id") == fx.on_hidden_host)
+        .unwrap();
+    assert_eq!(
+        at(on_hidden_host, "/repo_host"),
+        &Value::Null,
+        "a repository host the viewer reads nothing on is not named"
+    );
+
+    let resp = oneshot(&mut app, get_request("/api/dependency-hosts")).await;
+    let listed = body_json(resp).await;
+    assert_eq!(
+        names_of(&listed),
+        [
+            "scope-hidden",
+            "scope-on-hidden-host",
+            "scope-seen",
+            "scope-seen-default",
+            "scope-shared",
+            "scope-unused"
+        ],
+        "an admin sees every dependency"
+    );
+    let resp = oneshot(
+        &mut app,
+        get_request(&format!("/api/dependency-hosts/{}", fx.shared)),
+    )
+    .await;
+    let card = body_json(resp).await;
+    assert_eq!(at(&card, "/schedule_count"), 2);
+    assert_eq!(at(&card, "/agent_default_count"), 1);
+    let resp = oneshot(
+        &mut app,
+        get_request(&format!("/api/dependency-hosts/{}", fx.on_hidden_host)),
+    )
+    .await;
+    assert_eq!(
+        at(&body_json(resp).await, "/repo_host/ssh_host"),
+        "scope-hidden-store.lan"
+    );
+}
+
+/// A dependency a user who is not an admin may not see reads as not found,
+/// on its own, through its usage and through its machine, while one they see
+/// reads as it is - with only the schedules and agents they see.
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn test_dependency_hosts_the_caller_does_not_see_read_as_not_found() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+    create_non_admin_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+    let fx = scoped_dependencies(&pool, &mut app).await;
+
+    for id in [fx.hidden, fx.unused] {
+        for uri in [
+            format!("/api/dependency-hosts/{id}"),
+            format!("/api/dependency-hosts/{id}/usage"),
+        ] {
+            let resp = oneshot(&mut app, non_admin_get_request(&uri)).await;
+            assert_eq!(
+                resp.status(),
+                StatusCode::NOT_FOUND,
+                "{uri} reads as not found"
+            );
+        }
+        let machine_id = machine_id_at(&mut app, &format!("/api/dependency-hosts/{id}")).await;
+        let resp = oneshot(
+            &mut app,
+            non_admin_get_request(&format!("/api/machines/{machine_id}")),
+        )
+        .await;
+        assert_eq!(
+            resp.status(),
+            StatusCode::NOT_FOUND,
+            "a machine that is only a hidden dependency reads as not found"
+        );
+    }
+    let resp = oneshot(
+        &mut app,
+        non_admin_get_request("/api/dependency-hosts/999999"),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+
+    for id in [fx.seen, fx.seen_default] {
+        let resp = oneshot(
+            &mut app,
+            non_admin_get_request(&format!("/api/dependency-hosts/{id}")),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+    let resp = oneshot(
+        &mut app,
+        non_admin_get_request(&format!("/api/dependency-hosts/{}/usage", fx.shared)),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let usage = body_json(resp).await;
+    assert_eq!(usage.as_array().unwrap().len(), 1);
+    assert_eq!(at(&usage, "/0/agent_id"), fx.seen_agent);
+    let machine_id = machine_id_at(&mut app, &format!("/api/dependency-hosts/{}", fx.seen)).await;
+    let resp = oneshot(
+        &mut app,
+        non_admin_get_request(&format!("/api/machines/{machine_id}")),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(
+        at(&body_json(resp).await, "/roles/dependencies/0/name"),
+        "scope-seen"
+    );
+
+    let resp = oneshot(
+        &mut app,
+        non_admin_get_request(&format!("/api/schedules/{}/dependencies", fx.seen_schedule)),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    let on_host = at(&body, "/dependencies")
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|d| at(d, "/dependency_host_id") == fx.on_hidden_host)
+        .unwrap();
+    assert_eq!(at(on_host, "/source"), "schedule");
+}
+
+/// A user who may edit a schedule but is not an admin can make it need only
+/// a dependency they see - one they do not see is refused exactly like one
+/// that does not exist - and keeps what it sets for an agent they do not see.
+#[tokio::test]
+#[ignore = "requires DATABASE_URL"]
+async fn test_schedule_dependencies_only_take_what_the_editor_sees() {
+    let pool = setup_pool().await;
+    clean_tables(&pool).await;
+    create_test_user_and_session(&pool).await;
+    create_non_admin_user_and_session(&pool).await;
+    let mut app = build_test_app(pool.clone());
+    let fx = scoped_dependencies(&pool, &mut app).await;
+    sqlx::query(
+        "UPDATE repo_permissions SET can_modify_schedules = true WHERE user_id = (SELECT id FROM \
+         users WHERE username = 'integration-viewer')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    // The hidden agent is a target of the seen schedule too, but hidden from
+    // everyone but an admin, with a dependency of its own there.
+    sqlx::query("INSERT INTO schedule_targets (schedule_id, agent_id) VALUES ($1, $2)")
+        .bind(fx.seen_schedule)
+        .bind(fx.hidden_agent)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE agents SET is_hidden = true WHERE id = $1")
+        .bind(fx.hidden_agent)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO schedule_dependencies (schedule_id, agent_id, dependency_host_id) VALUES \
+         ($1, $2, $3)",
+    )
+    .bind(fx.seen_schedule)
+    .bind(fx.hidden_agent)
+    .bind(fx.hidden)
+    .execute(&pool)
+    .await
+    .unwrap();
+    let uri = format!("/api/schedules/{}/dependencies", fx.seen_schedule);
+    let put = |pairs: Value| non_admin_json_request("PUT", &uri, &json!({ "dependencies": pairs }));
+
+    let resp = oneshot(&mut app, non_admin_get_request(&uri)).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    assert!(
+        at(&body, "/dependencies")
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|d| at(d, "/agent_id") == fx.seen_agent),
+        "the hidden agent's dependencies are not shown: {body}"
+    );
+
+    for refused in [fx.hidden, fx.unused, 999_999] {
+        let resp = oneshot(
+            &mut app,
+            put(json!([{ "agent_id": fx.seen_agent, "dependency_host_id": refused }])),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(at(&body_json(resp).await, "/error"), "unknown dependency");
+    }
+    let resp = oneshot(
+        &mut app,
+        put(json!([{ "agent_id": fx.hidden_agent, "dependency_host_id": fx.seen }])),
+    )
+    .await;
+    assert_eq!(
+        resp.status(),
+        StatusCode::BAD_REQUEST,
+        "an agent the editor does not see is not a target they can set"
+    );
+
+    let resp = oneshot(
+        &mut app,
+        put(json!([
+            { "agent_id": fx.seen_agent, "dependency_host_id": fx.seen_default }
+        ])),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let kept: Vec<(i64, i64)> = sqlx::query_as(
+        "SELECT agent_id, dependency_host_id FROM schedule_dependencies WHERE schedule_id = $1 \
+         ORDER BY agent_id, dependency_host_id",
+    )
+    .bind(fx.seen_schedule)
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    let mut expected = vec![
+        (fx.seen_agent, fx.seen_default),
+        (fx.hidden_agent, fx.hidden),
+    ];
+    expected.sort_unstable();
+    assert_eq!(
+        kept, expected,
+        "the editor's choice replaces theirs, the hidden agent's stays"
+    );
+}
+
 /// Every create/update path caps its user-supplied strings, so an oversized
 /// value is refused with a `400` naming the field instead of being stored
 /// verbatim. The limits themselves are unit-tested next to each request type;

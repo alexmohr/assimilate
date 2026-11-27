@@ -469,6 +469,72 @@ pub async fn list_dependency_usage(
         .collect())
 }
 
+/// One (schedule, agent) that needs, or waits on, one dependency - without
+/// the names, for deciding who may see the dependency.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DependencyLink {
+    /// The dependency.
+    pub dependency_host_id: i64,
+    /// The schedule that needs it.
+    pub schedule_id: i64,
+    /// The agent the schedule runs on.
+    pub agent_id: i64,
+}
+
+/// Every (dependency, schedule, agent) where the agent needs the dependency
+/// when it runs the schedule, for every dependency at once - the rows
+/// [`list_dependency_usage`] lists for one, each pair listed once.
+///
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the query fails.
+pub async fn list_all_dependency_links(pool: &PgPool) -> Result<Vec<DependencyLink>, ApiError> {
+    let rows = sqlx::query!(
+        "SELECT sd.dependency_host_id AS \"dependency_host_id!\", sd.schedule_id AS \
+         \"schedule_id!\", sd.agent_id AS \"agent_id!\" FROM schedule_dependencies sd UNION \
+         SELECT ad.dependency_host_id, st.schedule_id, st.agent_id FROM \
+         agent_default_dependencies ad JOIN schedule_targets st ON st.agent_id = ad.agent_id \
+         UNION SELECT rd.dependency_host_id, st.schedule_id, st.agent_id FROM \
+         repo_host_dependencies rd JOIN repos r ON r.repo_host_id = rd.repo_host_id JOIN \
+         schedule_repos sr ON sr.repo_id = r.id JOIN schedule_targets st ON st.schedule_id = \
+         sr.schedule_id ORDER BY 1, 2, 3"
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(ApiError::Database)?;
+    Ok(rows
+        .into_iter()
+        .map(|r| DependencyLink {
+            dependency_host_id: r.dependency_host_id,
+            schedule_id: r.schedule_id,
+            agent_id: r.agent_id,
+        })
+        .collect())
+}
+
+/// Every target waiting on a dependency to catch up a skipped run.
+///
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if the query fails.
+pub async fn list_all_dependency_waits(pool: &PgPool) -> Result<Vec<DependencyLink>, ApiError> {
+    let rows = sqlx::query!(
+        "SELECT dependency_host_id, schedule_id, agent_id FROM dependency_catch_ups ORDER BY \
+         dependency_host_id, schedule_id, agent_id"
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(ApiError::Database)?;
+    Ok(rows
+        .into_iter()
+        .map(|r| DependencyLink {
+            dependency_host_id: r.dependency_host_id,
+            schedule_id: r.schedule_id,
+            agent_id: r.agent_id,
+        })
+        .collect())
+}
+
 /// The `(agent_id, dependency_host_id)` pairs a schedule sets itself, ordered
 /// by agent.
 ///

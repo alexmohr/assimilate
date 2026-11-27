@@ -168,12 +168,12 @@ See [Agent Management](agents.md) for setup and configuration details.
 | `GET` / `PUT` | `/api/repo-hosts/{repo_host_id}/dependencies` | Get or set the [dependency hosts](dependency-hosts.md#requiring-a-dependency) every backup to the host requires (admin only) |
 | `POST` | `/api/repo-hosts/{repo_host_id}/ssh-host-key/scan` | Scan the key the host presents (admin only) |
 | `POST` | `/api/repo-hosts/{repo_host_id}/ssh-host-key` | Pin a key for every repository on the host (admin only) |
-| `GET` / `POST` | `/api/dependency-hosts` | List every [dependency host](dependency-hosts.md), or create one (create: admin only) |
+| `GET` / `POST` | `/api/dependency-hosts` | List the [dependency hosts](dependency-hosts.md) the caller [can see](dependency-hosts.md#who-can-see-a-dependency) (every one for an admin), or create one (create: admin only). For anyone but an admin, `schedule_count`, `agent_default_count` and `waiting_count` count only the schedules and agents they can see, and `repo_host` is `null` unless they can read a repository on that host |
 | `POST` | `/api/dependency-hosts/test` | Check whether an address answers on a port, before saving it (admin only) |
-| `GET` / `PUT` / `DELETE` | `/api/dependency-hosts/{dependency_host_id}` | Get a dependency host, change its name, address, port and description, or remove it (changes: admin only) |
+| `GET` / `PUT` / `DELETE` | `/api/dependency-hosts/{dependency_host_id}` | Get a dependency host, change its name, address, port and description, or remove it (changes: admin only). `404` for one the caller cannot see |
 | `PUT` | `/api/dependency-hosts/{dependency_host_id}/machine` | Put the dependency on a repository host's [machine](#machines), or on one of its own (admin only) |
 | `POST` | `/api/dependency-hosts/{dependency_host_id}/test` | Check the dependency now, without waking it (admin only) |
-| `GET` | `/api/dependency-hosts/{dependency_host_id}/usage` | List the schedules and agents that need the dependency |
+| `GET` | `/api/dependency-hosts/{dependency_host_id}/usage` | List the schedules and agents the caller can see that need the dependency. `404` for one the caller cannot see |
 | `GET` | `/api/repos/{repo_id}/schedules` | List schedules for the repository |
 | `GET` / `PUT` | `/api/repos/{repo_id}/tags` | Get or set repository tags |
 | `GET` / `PUT` | `/api/repos/{id}/quota` | Get or set the repository storage quota |
@@ -195,7 +195,7 @@ An agent's host, a repository host and the dependencies on it share one [machine
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `GET` | `/api/machines/{machine_id}` | Get a machine: its roles, wake and availability settings, the runs waiting on it, and (admins only) the schedules that do not leave it to its own wake setting |
+| `GET` | `/api/machines/{machine_id}` | Get a machine: its roles, wake and availability settings, the runs waiting on it, and (admins only) the schedules that do not leave it to its own wake setting. Only the dependencies the caller [can see](dependency-hosts.md#who-can-see-a-dependency) are listed; `404` for a machine that holds only dependencies they cannot see |
 | `PUT` | `/api/machines/{machine_id}/power` | Set how the machine is woken and whether it is shut down after a backup (admin only) |
 | `PUT` | `/api/machines/{machine_id}/availability` | Set whether the machine is [not always online](scheduling.md#hosts-that-are-not-always-online), how often it is re-checked and how long a run waits on it (admin only) |
 | `POST` | `/api/machines/{machine_id}/check` | Ask the machine whether it is back now, and catch up every run waiting on it if it is (admin only) |
@@ -251,7 +251,7 @@ Restore `paths` are archive paths, checked like download paths: no `..`, no lead
 | `GET` | `/api/schedules/{id}/reports` | List reports produced by this schedule |
 | `GET` | `/api/schedules/{id}/sources` | List the schedule's backup sources |
 | `GET` | `/api/schedules/{id}/catch-up` | List the schedule's agents and repository hosts that are marked as not always online |
-| `GET` / `PUT` | `/api/schedules/{id}/dependencies` | Get or set the [dependency hosts](dependency-hosts.md) each target agent needs, and list the runs waiting on one |
+| `GET` / `PUT` | `/api/schedules/{id}/dependencies` | Get or set the [dependency hosts](dependency-hosts.md) each target agent the caller can see needs, and list the runs waiting on one. Setting a dependency the caller cannot see is refused with `400 unknown dependency` |
 | `GET` / `PUT` | `/api/agents/{hostname}/dependencies` | Get or set the dependency hosts an agent's files require (changes: admin only) |
 | `GET` / `PUT` | `/api/schedules/{id}/machines` | Get every [machine](power-management.md#per-schedule-overrides) a schedule needs, or set its own choice for each: `wake`, `no_wake` or `wait` (`wait` not for an agent's machine) |
 | `GET` | `/api/schedules/{id}/targets` | List the schedule's target repositories |

@@ -4,10 +4,12 @@
 //! Dependency hosts: machines a backup needs besides its agent and its
 //! repository, such as the server whose share a pre-backup command mounts.
 //!
-//! Anyone signed in may list them and see which schedules need them - a
-//! schedule's own Dependencies pane names them - but only an admin may change
-//! or test one. How one is woken and whether it is always online are its
-//! machine's settings, in [`super::machines`].
+//! A user who is not an admin sees only the dependencies the schedules and
+//! agents they see need (see [`super::read_scope`]) - a schedule's own
+//! Dependencies pane names them - and counts only those schedules and agents.
+//! One they may not see reads as not found. Only an admin may change or test
+//! one. How one is woken and whether it is always online are its machine's
+//! settings, in [`super::machines`].
 
 use std::collections::{BTreeSet, HashMap};
 
@@ -30,6 +32,7 @@ use shared::{
 use super::{
     auth::{AuthUser, RequireAdmin},
     helpers::{self, DomainQuery},
+    read_scope::{self, DependencyHostScope, ReadScope},
 };
 use crate::{
     AppState,
@@ -155,13 +158,41 @@ async fn validate_repo_host(state: &AppState, repo_host_id: Option<i64>) -> Resu
     }
 }
 
-/// Builds the response for one dependency.
+/// What one caller may see of the dependencies and of the repository hosts
+/// they share a machine with.
+struct DependencyViewer {
+    dependencies: DependencyHostScope,
+    repo_hosts: ReadScope,
+}
+
+impl DependencyViewer {
+    /// An admin, who sees everything - for the handlers only an admin reaches.
+    const fn admin() -> Self {
+        Self {
+            dependencies: DependencyHostScope::All,
+            repo_hosts: ReadScope::All,
+        }
+    }
+
+    async fn load(state: &AppState, auth: &AuthUser) -> Result<Self, ApiError> {
+        Ok(Self {
+            dependencies: read_scope::dependency_host_scope(&state.pool, auth.user_id).await?,
+            repo_hosts: read_scope::visible_repo_hosts(&state.pool, auth.user_id).await?,
+        })
+    }
+}
+
+/// Builds the response for one dependency, for `viewer`: the counts cover
+/// only what they see, and the repository host it shares a machine with is
+/// named only if they may read a repository on it.
 async fn host_response(
     state: &AppState,
     host: DependencyHostRow,
     counts: (i64, i64, i64),
+    viewer: &DependencyViewer,
 ) -> Result<DependencyHostResponse, ApiError> {
-    let repo_host = match host.repo_host_id {
+    let counts = viewer.dependencies.counts(host.id, counts);
+    let repo_host = match host.repo_host_id.filter(|id| viewer.repo_hosts.allows(*id)) {
         Some(id) => match db::repo_hosts::get_repo_host(&state.pool, id).await {
             Ok(row) => Some(DependencyRepoHostRef {
                 id: row.id,
@@ -191,15 +222,21 @@ async fn host_response(
     })
 }
 
-/// Loads one dependency with its counts, for every handler that returns one.
-async fn load_response(state: &AppState, id: i64) -> Result<DependencyHostResponse, ApiError> {
+/// Loads one dependency with its counts, for every handler that returns one,
+/// as `viewer` may see it.
+async fn load_response(
+    state: &AppState,
+    id: i64,
+    viewer: &DependencyViewer,
+) -> Result<DependencyHostResponse, ApiError> {
+    read_scope::require_visible_dependency(&viewer.dependencies, id)?;
     let summary = db::dependency_hosts::get_dependency_host_summary(&state.pool, id).await?;
     let counts = (
         summary.schedule_count,
         summary.agent_default_count,
         summary.waiting_count,
     );
-    host_response(state, summary.host, counts).await
+    host_response(state, summary.host, counts, viewer).await
 }
 
 fn data_changed(state: &AppState) {
@@ -216,23 +253,28 @@ fn data_changed(state: &AppState) {
         (status = 401, description = "Unauthorized"),
     )
 )]
-/// List every dependency host.
+/// List the dependency hosts the caller may see: every one for an admin, the
+/// ones the schedules and agents they see need for anyone else.
 ///
 /// # Errors
 ///
 /// Returns [`ApiError::Database`] if a query fails.
 pub async fn list_dependency_hosts(
     State(state): State<AppState>,
-    _auth: AuthUser,
+    auth: AuthUser,
 ) -> Result<Json<Vec<DependencyHostResponse>>, ApiError> {
+    let viewer = DependencyViewer::load(&state, &auth).await?;
     let mut out = Vec::new();
     for summary in db::dependency_hosts::list_dependency_hosts(&state.pool).await? {
+        if !viewer.dependencies.allows(summary.host.id) {
+            continue;
+        }
         let counts = (
             summary.schedule_count,
             summary.agent_default_count,
             summary.waiting_count,
         );
-        out.push(host_response(&state, summary.host, counts).await?);
+        out.push(host_response(&state, summary.host, counts, &viewer).await?);
     }
     Ok(Json(out))
 }
@@ -282,7 +324,7 @@ pub async fn create_dependency_host(
     data_changed(&state);
     Ok((
         StatusCode::CREATED,
-        Json(host_response(&state, host, (0, 0, 0)).await?),
+        Json(host_response(&state, host, (0, 0, 0), &DependencyViewer::admin()).await?),
     ))
 }
 
@@ -332,17 +374,19 @@ pub async fn test_dependency_address(
         (status = 404, description = "Not found"),
     )
 )]
-/// Get one dependency host.
+/// Get one dependency host the caller may see.
 ///
 /// # Errors
 ///
-/// Returns [`ApiError::NotFound`] if it does not exist.
+/// Returns [`ApiError::NotFound`] if it does not exist or the caller may not
+/// see it.
 pub async fn get_dependency_host(
     State(state): State<AppState>,
-    _auth: AuthUser,
+    auth: AuthUser,
     Path(id): Path<i64>,
 ) -> Result<Json<DependencyHostResponse>, ApiError> {
-    Ok(Json(load_response(&state, id).await?))
+    let viewer = DependencyViewer::load(&state, &auth).await?;
+    Ok(Json(load_response(&state, id, &viewer).await?))
 }
 
 #[utoipa::path(
@@ -382,7 +426,9 @@ pub async fn update_dependency_host(
     };
     db::dependency_hosts::update_dependency_host_connection(&state.pool, id, &patch).await?;
     data_changed(&state);
-    Ok(Json(load_response(&state, id).await?))
+    Ok(Json(
+        load_response(&state, id, &DependencyViewer::admin()).await?,
+    ))
 }
 
 #[utoipa::path(
@@ -449,7 +495,9 @@ pub async fn update_dependency_host_machine(
     validate_repo_host(&state, req.repo_host_id).await?;
     db::dependency_hosts::set_dependency_host_repo_host(&state.pool, id, req.repo_host_id).await?;
     data_changed(&state);
-    Ok(Json(load_response(&state, id).await?))
+    Ok(Json(
+        load_response(&state, id, &DependencyViewer::admin()).await?,
+    ))
 }
 
 #[utoipa::path(
@@ -515,13 +563,16 @@ impl From<DependencySource> for DependencySourceKind {
 ///
 /// # Errors
 ///
-/// Returns [`ApiError::NotFound`] if it does not exist.
+/// Returns [`ApiError::NotFound`] if it does not exist or the caller may not
+/// see it.
 pub async fn list_dependency_host_usage(
     State(state): State<AppState>,
     auth: AuthUser,
     Path(id): Path<i64>,
 ) -> Result<Json<Vec<DependencyUsageResponse>>, ApiError> {
     db::dependency_hosts::get_dependency_host(&state.pool, id).await?;
+    let scope = read_scope::dependency_host_scope(&state.pool, auth.user_id).await?;
+    read_scope::require_visible_dependency(&scope, id)?;
     let schedules = super::read_scope::visible_schedules(&state.pool, auth.user_id).await?;
     let agents = super::read_scope::visible_agents(&state.pool, auth.user_id).await?;
     let usage = db::dependency_hosts::list_dependency_usage(&state.pool, id)
@@ -541,15 +592,20 @@ pub async fn list_dependency_host_usage(
 
 /// Every (agent, dependency) of one schedule - what it sets itself, what its
 /// agents' defaults require, and what the repository hosts it writes to
-/// require - plus the runs waiting on one.
+/// require - plus the runs waiting on one, for `viewer`: only the agents they
+/// see, and a repository host named only if they may read a repository on it.
 async fn schedule_dependencies_response(
     state: &AppState,
     schedule_id: i64,
+    viewer: &AuthUser,
 ) -> Result<ScheduleDependenciesResponse, ApiError> {
+    let agents = read_scope::visible_agents(&state.pool, viewer.user_id).await?;
+    let visible_repo_hosts = read_scope::visible_repo_hosts(&state.pool, viewer.user_id).await?;
     let agent_ids: Vec<i64> = db::list_schedule_targets(&state.pool, schedule_id)
         .await?
         .into_iter()
         .map(|t| t.agent_id)
+        .filter(|id| agents.allows(*id))
         .collect();
     let defaults = db::dependency_hosts::list_all_agent_default_dependencies(&state.pool).await?;
     let from_repo_hosts =
@@ -565,7 +621,7 @@ async fn schedule_dependencies_response(
             .collect();
     let mut repo_hosts: HashMap<i64, DependencyRepoHostRef> = HashMap::new();
     for (repo_host_id, _) in &from_repo_hosts {
-        if repo_hosts.contains_key(repo_host_id) {
+        if repo_hosts.contains_key(repo_host_id) || !visible_repo_hosts.allows(*repo_host_id) {
             continue;
         }
         let host = db::repo_hosts::get_repo_host(&state.pool, *repo_host_id).await?;
@@ -628,7 +684,11 @@ async fn schedule_dependencies_response(
     });
     Ok(ScheduleDependenciesResponse {
         dependencies,
-        waiting: crate::dependencies::catch_up::waiting_for_schedule(state, schedule_id).await?,
+        waiting: crate::dependencies::catch_up::waiting_for_schedule(state, schedule_id)
+            .await?
+            .into_iter()
+            .filter(|wait| agents.allows(wait.agent_id))
+            .collect(),
     })
 }
 
@@ -656,7 +716,9 @@ pub async fn get_schedule_dependencies(
     Path(id): Path<i64>,
 ) -> Result<Json<ScheduleDependenciesResponse>, ApiError> {
     super::permissions::get_visible_schedule(&state.pool, &auth, id).await?;
-    Ok(Json(schedule_dependencies_response(&state, id).await?))
+    Ok(Json(
+        schedule_dependencies_response(&state, id, &auth).await?,
+    ))
 }
 
 #[utoipa::path(
@@ -674,14 +736,15 @@ pub async fn get_schedule_dependencies(
         (status = 404, description = "Not found"),
     )
 )]
-/// Replace the dependency hosts a schedule sets for its agents. Those an
-/// agent's backup defaults require apply on top and need not be listed.
+/// Replace the dependency hosts a schedule sets for the agents the caller
+/// sees. Those an agent's backup defaults require apply on top and need not
+/// be listed; what it sets for an agent the caller does not see is kept.
 ///
 /// # Errors
 ///
 /// Returns [`ApiError::Forbidden`] if the caller may not edit the schedule,
-/// or [`ApiError::BadRequest`] for an agent that is not one of its targets or
-/// an unknown dependency.
+/// or [`ApiError::BadRequest`] for an agent that is not one of its targets
+/// the caller sees, or a dependency that does not exist or they may not see.
 pub async fn update_schedule_dependencies(
     State(state): State<AppState>,
     auth: AuthUser,
@@ -690,10 +753,13 @@ pub async fn update_schedule_dependencies(
 ) -> Result<Json<ScheduleDependenciesResponse>, ApiError> {
     let schedule = db::get_schedule_by_id(&state.pool, id).await?;
     super::schedules::check_schedule_edit_permission(&state, &auth, &schedule).await?;
+    let agents = read_scope::visible_agents(&state.pool, auth.user_id).await?;
+    let dependencies = read_scope::dependency_host_scope(&state.pool, auth.user_id).await?;
     let agent_ids: Vec<i64> = db::list_schedule_targets(&state.pool, id)
         .await?
         .into_iter()
         .map(|t| t.agent_id)
+        .filter(|id| agents.allows(*id))
         .collect();
     if let Some(stray) = req
         .dependencies
@@ -705,14 +771,30 @@ pub async fn update_schedule_dependencies(
             stray.agent_id
         )));
     }
+    // The same answer as for an id that does not exist, so a caller cannot
+    // probe for dependencies they may not see.
+    if req
+        .dependencies
+        .iter()
+        .any(|d| !dependencies.allows(d.dependency_host_id))
+    {
+        return Err(ApiError::BadRequest("unknown dependency".to_owned()));
+    }
+    let unseen = db::dependency_hosts::list_schedule_dependencies(&state.pool, id)
+        .await?
+        .into_iter()
+        .filter(|(agent_id, _)| !agents.allows(*agent_id));
     let pairs: Vec<(i64, i64)> = req
         .dependencies
         .iter()
         .map(|d| (d.agent_id, d.dependency_host_id))
+        .chain(unseen)
         .collect();
     db::dependency_hosts::replace_schedule_dependencies(&state.pool, id, &pairs).await?;
     data_changed(&state);
-    Ok(Json(schedule_dependencies_response(&state, id).await?))
+    Ok(Json(
+        schedule_dependencies_response(&state, id, &auth).await?,
+    ))
 }
 
 #[utoipa::path(

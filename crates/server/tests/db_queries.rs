@@ -17252,6 +17252,77 @@ async fn repo_host_dependencies_apply_to_every_schedule_writing_there(pool: PgPo
     );
 }
 
+/// Every dependency's (schedule, agent) needs come back at once - set on the
+/// schedule, from the agent's defaults and from a repository host, each pair
+/// once - along with every target waiting on one.
+#[sqlx::test(migrations = "./migrations")]
+async fn every_dependency_link_and_wait_is_listed_at_once(pool: PgPool) {
+    use db::dependency_hosts::DependencyLink;
+
+    let (agent, repo, schedule) = create_test_schedule(&pool).await;
+    let set_here = create_test_dependency(&pool, "links-set-here", None).await;
+    let by_default = create_test_dependency(&pool, "links-by-default", None).await;
+    let by_host = create_test_dependency(&pool, "links-by-host", None).await;
+    let unused = create_test_dependency(&pool, "links-unused", None).await;
+    assert_eq!(
+        db::dependency_hosts::list_all_dependency_links(&pool)
+            .await
+            .unwrap(),
+        Vec::<DependencyLink>::new()
+    );
+
+    db::dependency_hosts::replace_schedule_dependencies(
+        &pool,
+        schedule.id,
+        &[(agent.id, set_here.id), (agent.id, by_default.id)],
+    )
+    .await
+    .unwrap();
+    db::dependency_hosts::replace_agent_default_dependencies(&pool, agent.id, &[by_default.id])
+        .await
+        .unwrap();
+    db::dependency_hosts::replace_repo_host_dependencies(&pool, repo.repo_host_id, &[by_host.id])
+        .await
+        .unwrap();
+    let link = |dependency_host_id: i64| DependencyLink {
+        dependency_host_id,
+        schedule_id: schedule.id,
+        agent_id: agent.id,
+    };
+    let mut expected = vec![link(set_here.id), link(by_default.id), link(by_host.id)];
+    expected.sort_by_key(|l| l.dependency_host_id);
+    assert_eq!(
+        db::dependency_hosts::list_all_dependency_links(&pool)
+            .await
+            .unwrap(),
+        expected,
+        "needed both on the schedule and by default, it is listed once; {} is not needed",
+        unused.id
+    );
+
+    assert_eq!(
+        db::dependency_hosts::list_all_dependency_waits(&pool)
+            .await
+            .unwrap(),
+        Vec::<DependencyLink>::new()
+    );
+    db::dependency_catch_ups::mark_dependency_catch_up(
+        &pool,
+        schedule.id,
+        agent.id,
+        by_host.id,
+        Timestamp::now(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        db::dependency_hosts::list_all_dependency_waits(&pool)
+            .await
+            .unwrap(),
+        vec![link(by_host.id)]
+    );
+}
+
 /// A machine's settings round-trip, and a check is remembered on it.
 #[sqlx::test(migrations = "./migrations")]
 async fn machine_settings_round_trip(pool: PgPool) {

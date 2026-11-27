@@ -1,0 +1,50 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT dependency_host_id, schedule_id, agent_id FROM dependency_catch_ups ORDER BY dependency_host_id, schedule_id, agent_id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "dependency_host_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "dependency_catch_ups",
+            "name": "dependency_host_id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "schedule_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "dependency_catch_ups",
+            "name": "schedule_id"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "agent_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "dependency_catch_ups",
+            "name": "agent_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "d4d39394fd3f7f6baf3f9a39dadb66b0583ebd4bd646a7d8ae852111ad4a1a11"
+}

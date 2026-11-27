@@ -18,12 +18,21 @@
 //!   All Agents** or **Upgrade Agent** sees every agent, including a new one
 //!   no schedule backs up yet.
 //!
+//! - sees a dependency host that an agent they see needs when it runs a
+//!   schedule they see, or that the backup defaults of an agent they see
+//!   require. One nothing they see needs is admin-only;
+//! - sees which repository host a dependency shares a machine with only when
+//!   they may read a repository on that host.
+//!
 //! A resource's `owner_id` and `visibility` columns grant nothing.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use super::auth::AuthUser;
-use crate::{db, error::ApiError};
+use crate::{
+    db::{self, dependency_hosts::DependencyLink},
+    error::ApiError,
+};
 
 /// The ids of one kind of resource a user may read.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -243,9 +252,221 @@ pub async fn get_visible_agent(
     Ok(agent)
 }
 
+/// The repository hosts `user_id` may see named: an admin every one, anyone
+/// else those holding a repository they may read.
+///
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if a query fails.
+pub async fn visible_repo_hosts(pool: &sqlx::PgPool, user_id: i64) -> Result<ReadScope, ApiError> {
+    if db::get_effective_permissions(pool, user_id)
+        .await?
+        .can_delete_repo
+    {
+        return Ok(ReadScope::All);
+    }
+    let repos = readable_repos(pool, user_id).await?;
+    Ok(ReadScope::Only(
+        db::list_all_repos(pool)
+            .await?
+            .into_iter()
+            .filter(|repo| repos.allows(repo.id))
+            .map(|repo| repo.repo_host_id)
+            .collect(),
+    ))
+}
+
+/// The dependency hosts one user may see, and how much of what uses each one
+/// they may count.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DependencyHostScope {
+    /// An admin: every dependency, counted over everything that uses it.
+    All,
+    /// Anyone else: only what the schedules and agents they see need.
+    Only(VisibleDependencies),
+}
+
+/// What the schedules and agents a user who is not an admin sees need of the
+/// dependency hosts.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct VisibleDependencies {
+    /// Per dependency, the visible schedules that need it on a visible agent.
+    schedules: HashMap<i64, HashSet<i64>>,
+    /// Per dependency, how many visible agents' backup defaults require it.
+    agent_defaults: HashMap<i64, i64>,
+    /// Per dependency, how many visible targets wait on it.
+    waiting: HashMap<i64, i64>,
+}
+
+impl VisibleDependencies {
+    /// Keeps what `schedules` and `agents` allow of every (dependency,
+    /// schedule, agent) need in `links`, every `(agent_id,
+    /// dependency_host_id)` default in `defaults` and every wait in `waits`.
+    #[must_use]
+    pub fn new(
+        links: &[DependencyLink],
+        defaults: &[(i64, i64)],
+        waits: &[DependencyLink],
+        schedules: &ReadScope,
+        agents: &ReadScope,
+    ) -> Self {
+        let visible = |link: &&DependencyLink| {
+            schedules.allows(link.schedule_id) && agents.allows(link.agent_id)
+        };
+        let mut out = Self::default();
+        for link in links.iter().filter(visible) {
+            out.schedules
+                .entry(link.dependency_host_id)
+                .or_default()
+                .insert(link.schedule_id);
+        }
+        for (agent_id, dependency_host_id) in defaults {
+            if agents.allows(*agent_id) {
+                let count = out.agent_defaults.entry(*dependency_host_id).or_default();
+                *count = count.saturating_add(1);
+            }
+        }
+        for link in waits.iter().filter(visible) {
+            let count = out.waiting.entry(link.dependency_host_id).or_default();
+            *count = count.saturating_add(1);
+        }
+        out
+    }
+}
+
+impl DependencyHostScope {
+    /// Whether the dependency with this id is visible.
+    #[must_use]
+    pub fn allows(&self, id: i64) -> bool {
+        match self {
+            Self::All => true,
+            Self::Only(visible) => {
+                visible.schedules.contains_key(&id) || visible.agent_defaults.contains_key(&id)
+            }
+        }
+    }
+
+    /// How many schedules need the dependency, agents' defaults require it
+    /// and targets wait on it, as far as the viewer may count them: `all`
+    /// for an admin, only what they see for anyone else.
+    #[must_use]
+    pub fn counts(&self, id: i64, all: (i64, i64, i64)) -> (i64, i64, i64) {
+        match self {
+            Self::All => all,
+            Self::Only(visible) => (
+                visible
+                    .schedules
+                    .get(&id)
+                    .map_or(0, |s| i64::try_from(s.len()).unwrap_or(i64::MAX)),
+                visible.agent_defaults.get(&id).copied().unwrap_or(0),
+                visible.waiting.get(&id).copied().unwrap_or(0),
+            ),
+        }
+    }
+}
+
+/// The dependency hosts `user_id` may see.
+///
+/// # Errors
+///
+/// Returns [`ApiError::Database`] if a query fails.
+pub async fn dependency_host_scope(
+    pool: &sqlx::PgPool,
+    user_id: i64,
+) -> Result<DependencyHostScope, ApiError> {
+    if db::get_effective_permissions(pool, user_id)
+        .await?
+        .can_delete_repo
+    {
+        return Ok(DependencyHostScope::All);
+    }
+    let schedules = visible_schedules(pool, user_id).await?;
+    let agents = visible_agents(pool, user_id).await?;
+    Ok(DependencyHostScope::Only(VisibleDependencies::new(
+        &db::dependency_hosts::list_all_dependency_links(pool).await?,
+        &db::dependency_hosts::list_all_agent_default_dependencies(pool).await?,
+        &db::dependency_hosts::list_all_dependency_waits(pool).await?,
+        &schedules,
+        &agents,
+    )))
+}
+
+/// Requires that the caller may see dependency `id`. One they may not is
+/// reported exactly like one that does not exist.
+///
+/// # Errors
+///
+/// Returns [`ApiError::NotFound`] for a dependency the caller may not see.
+pub fn require_visible_dependency(scope: &DependencyHostScope, id: i64) -> Result<(), ApiError> {
+    if scope.allows(id) {
+        Ok(())
+    } else {
+        Err(ApiError::NotFound(format!("dependency {id} not found")))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn link(dependency_host_id: i64, schedule_id: i64, agent_id: i64) -> DependencyLink {
+        DependencyLink {
+            dependency_host_id,
+            schedule_id,
+            agent_id,
+        }
+    }
+
+    fn only(ids: &[i64]) -> ReadScope {
+        ReadScope::Only(ids.iter().copied().collect())
+    }
+
+    #[test]
+    fn an_admin_sees_every_dependency_with_every_count() {
+        assert!(DependencyHostScope::All.allows(42));
+        assert_eq!(DependencyHostScope::All.counts(42, (3, 2, 1)), (3, 2, 1));
+    }
+
+    /// Schedule 10 runs on agents 1 and 2, schedule 20 on agent 3. The
+    /// viewer sees schedule 10 and agent 1 only.
+    #[test]
+    fn a_dependency_is_visible_through_what_the_viewer_sees_needs_it() {
+        let links = [
+            link(100, 10, 1),
+            link(100, 10, 2),
+            link(100, 20, 3),
+            link(200, 10, 2),
+            link(300, 20, 3),
+        ];
+        let defaults = [(1, 400), (3, 300), (3, 500)];
+        let waits = [link(100, 10, 1), link(100, 20, 3)];
+        let scope = DependencyHostScope::Only(VisibleDependencies::new(
+            &links,
+            &defaults,
+            &waits,
+            &only(&[10]),
+            &only(&[1]),
+        ));
+        assert!(scope.allows(100), "schedule 10 needs it on agent 1");
+        assert!(!scope.allows(200), "only on agent 2, which is not visible");
+        assert!(!scope.allows(300), "only for what is not visible");
+        assert!(scope.allows(400), "agent 1's defaults require it");
+        assert!(!scope.allows(500), "agent 3's defaults are not visible");
+        assert!(!scope.allows(600), "nothing needs it");
+        assert_eq!(scope.counts(100, (2, 0, 2)), (1, 0, 1));
+        assert_eq!(scope.counts(400, (0, 1, 0)), (0, 1, 0));
+        assert_eq!(scope.counts(600, (0, 0, 0)), (0, 0, 0));
+    }
+
+    #[test]
+    fn an_unseen_dependency_reads_as_not_found() {
+        let scope = DependencyHostScope::Only(VisibleDependencies::default());
+        assert!(matches!(
+            require_visible_dependency(&scope, 7),
+            Err(ApiError::NotFound(_))
+        ));
+        assert!(require_visible_dependency(&DependencyHostScope::All, 7).is_ok());
+    }
 
     #[test]
     fn all_allows_any_id() {

@@ -31,7 +31,17 @@ Checking and waking a dependency are on its own page, not on the list.
 ## Prerequisites
 
 - A [schedule](scheduling.md) or a [host's files](agents.md#sources) with a pre-backup command that needs the machine, for example one that mounts a share.
-- Admin access to add, change or remove a dependency. Anyone signed in can see them, since a schedule's own settings name them.
+- Admin access to add, change or remove a dependency. Other users see only the dependencies the schedules and agents they can see need — see [Who Can See a Dependency](#who-can-see-a-dependency).
+
+## Who Can See a Dependency
+
+An admin sees every dependency. Anyone else sees one only when it is needed by a schedule they can see, for an agent they can see, or required by the files of an agent they can see. [What a User Can See](access-control.md#what-a-user-can-see) explains which schedules and agents those are. A dependency nothing they can see needs is not listed, and its page, its **Used by** section and its machine's **Power & dependencies** pane read as not found.
+
+For a dependency they can see, they also see less:
+
+- **Used by** counts and rows cover only the schedules and agents they can see, and the runs waiting on it only those of their schedules and agents.
+- **Same machine as** names the repository host only when they can see a repository on that host.
+- A user who can edit a schedule can make it need only a dependency they can see. Any other dependency is refused as unknown, the same as one that does not exist. What the schedule needs for an agent they cannot see stays as it is.
 
 ## How a Run Uses a Dependency
 
@@ -148,7 +158,7 @@ The run's **Power management** timeline shows each dependency step under a **Dep
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `GET` / `POST` | `/api/dependency-hosts` | List dependency hosts, or create one |
+| `GET` / `POST` | `/api/dependency-hosts` | List the dependency hosts the caller can see, or create one |
 | `POST` | `/api/dependency-hosts/test` | Check an address and port before saving them |
 | `GET` / `PUT` / `DELETE` | `/api/dependency-hosts/{dependency_host_id}` | Get, change or remove one |
 | `PUT` | `/api/dependency-hosts/{dependency_host_id}/machine` | Put it on a repository host's machine, or on one of its own |

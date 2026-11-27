@@ -937,7 +937,10 @@ SQL
 # media-weekly lives on, so it shares that machine's wake and availability
 # settings, and with them "not always online". files-01 answers on this container's own sshd and is required
 # by media-store-01's backup defaults, so every schedule there shows it as
-# inherited without any real run ever finding it away.
+# inherited without any real run ever finding it away. viewer1, who reads
+# server-daily alone, sees files-01 - the repository host server-daily lives
+# on requires it - but not nas-media, which only "Media share nightly" needs
+# (docs/dependency-hosts.md#who-can-see-a-dependency, e2e/rbac.spec.ts).
 NAS_MEDIA_ID=$(api POST "/api/dependency-hosts" "{
     \"name\": \"nas-media\",
     \"address\": \"nas-media.lan\",

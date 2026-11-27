@@ -8,7 +8,10 @@
 //! Anyone signed in may read a machine, as they could read the power and
 //! availability of its roles before; only a viewer allowed to see wake secrets
 //! sees its MAC and broadcast addresses, and only an admin sees which
-//! schedules override it, changes it, or asks it whether it is back.
+//! schedules override it, changes it, or asks it whether it is back. A
+//! dependency on it is listed only to a viewer who may see that dependency,
+//! with only the waits of the schedules and agents they see, and a machine
+//! that is nothing but dependencies they may not see reads as not found.
 
 use axum::{
     Json,
@@ -31,6 +34,7 @@ use super::{
     agents::validate_host_wake,
     auth::{AuthUser, RequireAdmin},
     availability::{validate_give_up_minutes, validate_recheck_minutes},
+    read_scope::{self, ReadScope},
 };
 use crate::{
     AppState,
@@ -91,6 +95,7 @@ async fn waiting(
     state: &AppState,
     machine: &MachineRow,
     roles: &MachineRoles,
+    dependency_waits: &DependencyWaitScope,
 ) -> Result<Vec<MachineWaitResponse>, ApiError> {
     let mut out = Vec::new();
     if let Some(agent) = roles.agent.as_ref().filter(|_| machine.intermittent) {
@@ -141,6 +146,10 @@ async fn waiting(
             crate::dependencies::catch_up::waiting_for_dependency(state, dependency.id)
                 .await?
                 .into_iter()
+                .filter(|wait| {
+                    dependency_waits.schedules.allows(wait.schedule_id)
+                        && dependency_waits.agents.allows(wait.agent_id)
+                })
                 .map(|wait| MachineWaitResponse {
                     role: MachineRoleKind::Dependency,
                     schedule_id: wait.schedule_id,
@@ -159,8 +168,41 @@ async fn waiting(
     Ok(out)
 }
 
+/// The schedules and agents whose waits on a dependency a viewer sees.
+struct DependencyWaitScope {
+    schedules: ReadScope,
+    agents: ReadScope,
+}
+
+/// Leaves out of `roles` the dependencies `viewer` may not see, and of the
+/// waits on the rest those of schedules and agents they do not see. A
+/// machine that was nothing but dependencies, none of them visible, reads as
+/// not found.
+async fn visible_roles(
+    state: &AppState,
+    machine_id: i64,
+    mut roles: MachineRoles,
+    viewer: &AuthUser,
+) -> Result<(MachineRoles, DependencyWaitScope), ApiError> {
+    let scope = read_scope::dependency_host_scope(&state.pool, viewer.user_id).await?;
+    let only_dependencies =
+        roles.agent.is_none() && roles.repo_host.is_none() && !roles.dependencies.is_empty();
+    roles.dependencies.retain(|d| scope.allows(d.id));
+    if only_dependencies && roles.dependencies.is_empty() {
+        return Err(ApiError::NotFound(format!(
+            "machine {machine_id} not found"
+        )));
+    }
+    let waits = DependencyWaitScope {
+        schedules: read_scope::visible_schedules(&state.pool, viewer.user_id).await?,
+        agents: read_scope::visible_agents(&state.pool, viewer.user_id).await?,
+    };
+    Ok((roles, waits))
+}
+
 /// Builds the response for one machine, for `viewer` - its permissions decide
-/// whether the wake addresses and the schedules that override it are shown.
+/// whether the wake addresses and the schedules that override it are shown,
+/// and which of its dependencies are.
 async fn machine_response(
     state: &AppState,
     machine_id: i64,
@@ -168,6 +210,7 @@ async fn machine_response(
 ) -> Result<MachineResponse, ApiError> {
     let machine = db::machines::get_machine(&state.pool, machine_id).await?;
     let roles = db::machines::get_machine_roles(&state.pool, machine_id).await?;
+    let (roles, dependency_waits) = visible_roles(state, machine_id, roles, viewer).await?;
     let permissions = db::get_effective_permissions(&state.pool, viewer.user_id).await?;
     let schedule_overrides = if permissions.can_delete_repo {
         db::machines::list_machine_schedule_overrides(&state.pool, machine_id)
@@ -196,7 +239,7 @@ async fn machine_response(
         },
         last_checked_at: machine.last_checked_at,
         last_check_reachable: machine.last_check_reachable,
-        waiting: waiting(state, &machine, &roles).await?,
+        waiting: waiting(state, &machine, &roles, &dependency_waits).await?,
         schedule_overrides,
     })
 }

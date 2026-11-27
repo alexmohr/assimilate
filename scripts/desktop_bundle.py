@@ -45,14 +45,13 @@ import shutil
 import sys
 import tarfile
 import tempfile
+import tomllib
 import urllib.parse
 import urllib.request
 import zipfile
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path, PurePosixPath, PureWindowsPath
-
-import tomllib
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DESKTOP_DIR = REPO_ROOT / "desktop"

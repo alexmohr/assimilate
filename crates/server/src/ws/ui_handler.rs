@@ -78,6 +78,16 @@ async fn upgrade_ui_socket(
             tracing::warn!(origin = ?value, "refusing UI WebSocket opened from another origin");
             return StatusCode::FORBIDDEN.into_response();
         }
+        OriginCheck::Undecidable(value) => {
+            tracing::warn!(
+                origin = ?value,
+                "refusing UI WebSocket: the Host header names no port and no trusted proxy sent \
+                 X-Forwarded-Proto, so the page's scheme and port cannot be verified; list the \
+                 reverse proxy in ASSIMILATE_TRUSTED_PROXIES or the origin in \
+                 ASSIMILATE_ALLOWED_ORIGINS"
+            );
+            return StatusCode::FORBIDDEN.into_response();
+        }
     };
     let Some(session_id) = cookies::session_cookie(headers) else {
         return StatusCode::UNAUTHORIZED.into_response();

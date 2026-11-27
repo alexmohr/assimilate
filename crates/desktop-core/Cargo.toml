@@ -16,7 +16,7 @@ workspace = true
 
 [dependencies]
 keyring = "4"
-postgresql_embedded = { version = "0.21", default-features = false, features = ["tokio"] }
+postgresql_embedded = { version = "0.22", default-features = false, features = ["tokio"] }
 rand = { workspace = true }
 reqwest = { workspace = true }
 serde = { workspace = true }

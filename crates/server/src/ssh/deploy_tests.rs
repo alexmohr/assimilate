@@ -16,7 +16,9 @@ use russh::{
     Channel, ChannelId,
     server::{Auth, ChannelOpenHandle, Handler, Msg, Server, Session},
 };
-use russh_sftp::protocol::{FileAttributes, Handle, OpenFlags, Status, StatusCode, Version};
+use russh_sftp::protocol::{
+    FileAttributes, Handle, OpenFlags, SftpHandle, Status, StatusCode, Version,
+};
 use shared::responses::DeployStep;
 use tokio::net::TcpListener;
 
@@ -202,17 +204,18 @@ impl russh_sftp::server::Handler for Files {
             .insert(filename.clone(), (Vec::new(), attrs.permissions));
         std::future::ready(Ok(Handle {
             id,
-            handle: filename,
+            handle: SftpHandle::from(filename),
         }))
     }
 
     fn write(
         &mut self,
         id: u32,
-        handle: String,
+        handle: SftpHandle,
         _offset: u64,
         data: Vec<u8>,
     ) -> impl Future<Output = Result<Status, Self::Error>> + Send {
+        let handle = String::from_utf8_lossy(handle.as_bytes()).into_owned();
         if let Some((contents, _)) = self
             .recorded
             .lock()
@@ -228,7 +231,7 @@ impl russh_sftp::server::Handler for Files {
     fn close(
         &mut self,
         id: u32,
-        _handle: String,
+        _handle: SftpHandle,
     ) -> impl Future<Output = Result<Status, Self::Error>> + Send {
         std::future::ready(Ok(ok(id)))
     }

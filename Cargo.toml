@@ -17,43 +17,43 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 axum = { version = "0.8", features = ["ws", "multipart"] }
 sqlx = { version = "0.9", features = ["runtime-tokio", "postgres", "migrate", "macros", "uuid", "sqlx-toml"] }
-aes-gcm = "0.10"
-rand = "0.8"
-hkdf = "0.12"
-sha2 = "0.10"
-tokio-tungstenite = { version = "0.26", features = ["rustls-tls-native-roots"] }
+aes-gcm = "0.11"
+rand = "0.10"
+hkdf = "0.13"
+sha2 = "0.11"
+tokio-tungstenite = { version = "0.30", features = ["rustls-tls-native-roots"] }
 rustls = { version = "0.23", default-features = false, features = ["ring", "logging", "std", "tls12"] }
 uuid = { version = "1", features = ["v4"] }
-jiff = { version = "0.2", features = ["serde"] }
-bcrypt = "0.16"
+jiff = { version = "1.0", features = ["serde"] }
+bcrypt = "0.19"
 futures-util = "0.3"
 tokio-util = { version = "0.7", features = ["io", "io-util"] }
-tower-http = { version = "0.6", features = ["fs", "trace"] }
+tower-http = { version = "0.7", features = ["fs", "trace"] }
 clap = { version = "4", features = ["derive", "env"] }
-gethostname = "0.5"
+gethostname = "1.1"
 tempfile = "3"
 russh = "0.65"
-russh-sftp = "2.3"
-croner = { version = "4", default-features = false, features = ["jiff"] }
+russh-sftp = "4.0"
+croner = { version = "5", default-features = false, features = ["jiff"] }
 reqwest = { version = "0.12", features = ["json", "rustls-tls"] }
 lettre = { version = "0.11", default-features = false, features = ["builder", "hostname", "smtp-transport", "tokio1", "tokio1-rustls", "ring", "rustls-native-certs"] }
 web-push-native = { version = "0.5", default-features = false, features = ["vapid"] }
-p256 = { version = "0.13", features = ["ecdsa"] }
-base64 = "0.22"
+p256 = { version = "0.14", features = ["ecdsa"] }
+base64 = "0.23"
 snow = "0.10"
 glob-match = "0.2"
-which = "7"
+which = "8"
 ssh-key = { version = "0.6", features = ["ed25519", "std", "rand_core"] }
-lz4_flex = "0.11"
-nix = { version = "0.29", features = ["signal", "process"] }
+lz4_flex = "0.14"
+nix = { version = "0.32", features = ["signal", "process"] }
 windows-service = "0.8"
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Authorization", "Win32_Storage_FileSystem", "Win32_System_Console", "Win32_System_Diagnostics_ToolHelp", "Win32_System_JobObjects", "Win32_System_Threading"] }
 kube = { version = "4.2", default-features = false, features = ["client", "rustls-tls", "ring", "ws", "http-proxy"] }
 bollard = "0.21.1"
 k8s-openapi = { version = "0.28", default-features = false, features = ["std", "earliest"] }
-ipnetwork = "0.20"
-strum = "0.26"
-strum_macros = "0.26"
+ipnetwork = "0.21"
+strum = "0.28"
+strum_macros = "0.28"
 
 [workspace.lints.rust]
 missing_docs = "warn"

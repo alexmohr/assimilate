@@ -5703,7 +5703,7 @@ async fn test_me_can_upgrade_agent_reflects_admin_bypass(pool: sqlx::PgPool) {
 async fn test_totp_login_defers_lockout_clear_until_totp_step_succeeds(pool: sqlx::PgPool) {
     use std::net::SocketAddr;
 
-    use totp_rs::{Algorithm, Secret, TOTP};
+    use totp_rs::{Algorithm, Builder};
 
     let (mut app, state) = build_test_app_with_state(pool.clone());
 
@@ -5796,17 +5796,15 @@ async fn test_totp_login_defers_lockout_clear_until_totp_step_succeeds(pool: sql
     );
 
     // Step 2: complete login with the correct TOTP code.
-    let totp = TOTP::new(
-        Algorithm::SHA1,
-        6,
-        1,
-        30,
-        Secret::Raw(secret).to_bytes().unwrap(),
-        None,
-        String::new(),
-    )
-    .unwrap();
-    let code = totp.generate_current().unwrap();
+    let totp = Builder::new()
+        .with_algorithm(Algorithm::SHA1)
+        .with_digits(6)
+        .with_skew(1)
+        .with_step_duration(30)
+        .with_secret(secret)
+        .build()
+        .unwrap();
+    let code = totp.generate_current().to_string();
     let body = serde_json::json!({ "code": code, "temp_token": temp_token });
     let req = json_post_request_with_connect_info("/api/auth/totp/verify-login", &body);
     let resp = oneshot(&mut app, req).await;
@@ -5953,7 +5951,7 @@ async fn test_totp_recovery_resets_lockout_state_on_success(pool: sqlx::PgPool) 
 
 #[sqlx::test(migrations = "./migrations")]
 async fn test_totp_login_rejects_replayed_code_within_window(pool: sqlx::PgPool) {
-    use totp_rs::{Algorithm, Secret, TOTP};
+    use totp_rs::{Algorithm, Builder};
 
     let (mut app, state) = build_test_app_with_state(pool.clone());
 
@@ -5975,17 +5973,15 @@ async fn test_totp_login_rejects_replayed_code_within_window(pool: sqlx::PgPool)
         .await
         .unwrap();
 
-    let totp = TOTP::new(
-        Algorithm::SHA1,
-        6,
-        1,
-        30,
-        Secret::Raw(secret).to_bytes().unwrap(),
-        None,
-        String::new(),
-    )
-    .unwrap();
-    let code = totp.generate_current().unwrap();
+    let totp = Builder::new()
+        .with_algorithm(Algorithm::SHA1)
+        .with_digits(6)
+        .with_skew(1)
+        .with_step_duration(30)
+        .with_secret(secret)
+        .build()
+        .unwrap();
+    let code = totp.generate_current().to_string();
 
     let expires = Timestamp::now()
         .checked_add(shared::time::minutes(5))
@@ -6041,7 +6037,7 @@ async fn test_totp_login_rejects_replayed_code_within_window(pool: sqlx::PgPool)
 
 #[sqlx::test(migrations = "./migrations")]
 async fn test_totp_login_accepts_different_code_from_next_step(pool: sqlx::PgPool) {
-    use totp_rs::{Algorithm, Secret, TOTP};
+    use totp_rs::{Algorithm, Builder};
 
     let (mut app, state) = build_test_app_with_state(pool.clone());
 
@@ -6063,27 +6059,29 @@ async fn test_totp_login_accepts_different_code_from_next_step(pool: sqlx::PgPoo
         .await
         .unwrap();
 
-    let totp = TOTP::new(
-        Algorithm::SHA1,
-        6,
-        1,
-        30,
-        Secret::Raw(secret).to_bytes().unwrap(),
-        None,
-        String::new(),
-    )
-    .unwrap();
+    let totp = Builder::new()
+        .with_algorithm(Algorithm::SHA1)
+        .with_digits(6)
+        .with_skew(1)
+        .with_step_duration(30)
+        .with_secret(secret)
+        .build()
+        .unwrap();
 
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
         .as_secs();
-    let current_step = now.checked_div(totp.step).unwrap();
-    let code_a = totp.generate(current_step.checked_mul(totp.step).unwrap());
+    let current_step = now.checked_div(totp.step()).unwrap();
+    let code_a = totp
+        .generate(current_step.checked_mul(totp.step()).unwrap())
+        .to_string();
     // A different, still-valid code from the very next time-step - within
     // the same ~90s wall-clock window as `code_a`, but not the same code.
     let next_step = current_step.checked_add(1).unwrap();
-    let code_b = totp.generate(next_step.checked_mul(totp.step).unwrap());
+    let code_b = totp
+        .generate(next_step.checked_mul(totp.step()).unwrap())
+        .to_string();
     assert_ne!(
         code_a, code_b,
         "test setup requires two distinct codes across adjacent steps"
@@ -6143,7 +6141,7 @@ async fn test_totp_login_accepts_different_code_from_next_step(pool: sqlx::PgPoo
 
 #[sqlx::test(migrations = "./migrations")]
 async fn test_totp_login_locks_account_after_repeated_failed_codes(pool: sqlx::PgPool) {
-    use totp_rs::{Algorithm, Secret, TOTP};
+    use totp_rs::{Algorithm, Builder};
 
     let (mut app, state) = build_test_app_with_state(pool.clone());
 
@@ -6165,17 +6163,15 @@ async fn test_totp_login_locks_account_after_repeated_failed_codes(pool: sqlx::P
         .await
         .unwrap();
 
-    let totp = TOTP::new(
-        Algorithm::SHA1,
-        6,
-        1,
-        30,
-        Secret::Raw(secret).to_bytes().unwrap(),
-        None,
-        String::new(),
-    )
-    .unwrap();
-    let valid_code = totp.generate_current().unwrap();
+    let totp = Builder::new()
+        .with_algorithm(Algorithm::SHA1)
+        .with_digits(6)
+        .with_skew(1)
+        .with_step_duration(30)
+        .with_secret(secret)
+        .build()
+        .unwrap();
+    let valid_code = totp.generate_current().to_string();
     // Guaranteed-wrong code: differs from the valid one in the first digit
     // (wrapping so it's never identical even in the 9xxxxx case).
     let wrong_code: String = valid_code

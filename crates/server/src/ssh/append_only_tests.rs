@@ -19,7 +19,7 @@ use russh::{
     server::{Auth, ChannelOpenHandle, Handler, Msg, Server, Session},
 };
 use russh_sftp::protocol::{
-    Attrs, Data, FileAttributes, Handle, Name, OpenFlags, Status, StatusCode, Version,
+    Attrs, Data, FileAttributes, Handle, Name, OpenFlags, SftpHandle, Status, StatusCode, Version,
 };
 use ssh_key::PublicKey;
 use tokio::net::TcpListener;
@@ -273,7 +273,7 @@ impl russh_sftp::server::Handler for Files {
             }
             Ok(Handle {
                 id,
-                handle: filename,
+                handle: SftpHandle::from(filename),
             })
         };
         std::future::ready(result)
@@ -282,7 +282,7 @@ impl russh_sftp::server::Handler for Files {
     fn close(
         &mut self,
         id: u32,
-        _handle: String,
+        _handle: SftpHandle,
     ) -> impl Future<Output = Result<Status, Self::Error>> + Send {
         std::future::ready(Ok(status(id, StatusCode::Ok)))
     }
@@ -290,10 +290,11 @@ impl russh_sftp::server::Handler for Files {
     fn read(
         &mut self,
         id: u32,
-        handle: String,
+        handle: SftpHandle,
         offset: u64,
         len: u32,
     ) -> impl Future<Output = Result<Data, Self::Error>> + Send {
+        let handle = String::from_utf8_lossy(handle.as_bytes()).into_owned();
         let state = self.state.lock().expect("state");
         let bytes = state.files.get(&handle).cloned().unwrap_or_default();
         let start = usize::try_from(offset).unwrap_or(usize::MAX);
@@ -313,10 +314,11 @@ impl russh_sftp::server::Handler for Files {
     fn write(
         &mut self,
         id: u32,
-        handle: String,
+        handle: SftpHandle,
         offset: u64,
         data: Vec<u8>,
     ) -> impl Future<Output = Result<Status, Self::Error>> + Send {
+        let handle = String::from_utf8_lossy(handle.as_bytes()).into_owned();
         let mut state = self.state.lock().expect("state");
         if state.faults.drop_writes {
             return std::future::ready(Ok(status(id, StatusCode::Ok)));
@@ -381,14 +383,18 @@ impl russh_sftp::server::Handler for Files {
         id: u32,
         path: String,
     ) -> impl Future<Output = Result<Handle, Self::Error>> + Send {
-        std::future::ready(Ok(Handle { id, handle: path }))
+        std::future::ready(Ok(Handle {
+            id,
+            handle: SftpHandle::from(path),
+        }))
     }
 
     fn readdir(
         &mut self,
         id: u32,
-        handle: String,
+        handle: SftpHandle,
     ) -> impl Future<Output = Result<Name, Self::Error>> + Send {
+        let handle = String::from_utf8_lossy(handle.as_bytes()).into_owned();
         // Every directory holds one entry, handed out once, then the end.
         std::future::ready(if self.listed.insert(handle) {
             Ok(Name {

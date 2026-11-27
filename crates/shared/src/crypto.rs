@@ -2,8 +2,8 @@
 // SPDX-FileCopyrightText: 2026 Alexander Mohr
 
 use aes_gcm::{
-    AeadCore, Aes256Gcm, Nonce,
-    aead::{Aead, KeyInit, OsRng},
+    Aes256Gcm,
+    aead::{Aead, Generate, KeyInit, Nonce},
 };
 use hkdf::Hkdf;
 use sha2::Sha256;
@@ -59,7 +59,7 @@ pub fn derive_key(secret: &[u8]) -> Result<[u8; 32], CryptoError> {
 /// Returns [`CryptoError::EncryptionFailed`] if AES-256-GCM encryption fails.
 pub fn encrypt_passphrase(plaintext: &str, key: &[u8; 32]) -> Result<Vec<u8>, CryptoError> {
     let cipher = Aes256Gcm::new(key.into());
-    let nonce = Aes256Gcm::generate_nonce(&mut OsRng);
+    let nonce = Nonce::<Aes256Gcm>::try_generate().map_err(|_| CryptoError::EncryptionFailed)?;
     let ciphertext = cipher
         .encrypt(&nonce, plaintext.as_bytes())
         .map_err(|_| CryptoError::EncryptionFailed)?;
@@ -85,11 +85,12 @@ pub fn decrypt_passphrase(data: &[u8], key: &[u8; 32]) -> Result<String, CryptoE
     }
 
     let (nonce_bytes, ciphertext) = data.split_at(NONCE_SIZE);
-    let nonce = Nonce::from_slice(nonce_bytes);
+    let nonce =
+        Nonce::<Aes256Gcm>::try_from(nonce_bytes).map_err(|_| CryptoError::InvalidCiphertext)?;
     let cipher = Aes256Gcm::new(key.into());
 
     let plaintext_bytes = cipher
-        .decrypt(nonce, ciphertext)
+        .decrypt(&nonce, ciphertext)
         .map_err(|_| CryptoError::DecryptionFailed)?;
 
     String::from_utf8(plaintext_bytes).map_err(|_| CryptoError::InvalidUtf8)

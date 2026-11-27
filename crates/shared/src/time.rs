@@ -47,7 +47,7 @@ impl Timestamp {
     pub fn utc(year: i16, month: i8, day: i8, hour: i8, minute: i8, second: i8) -> Option<Self> {
         jiff::civil::DateTime::new(year, month, day, hour, minute, second, 0)
             .ok()?
-            .to_zoned(jiff::tz::TimeZone::UTC)
+            .to_zoned_datetime(jiff::tz::TimeZone::UTC)
             .ok()
             .map(|zoned| Self(zoned.timestamp()))
     }
@@ -115,7 +115,7 @@ impl Timestamp {
     /// The UTC calendar day this instant falls on.
     #[must_use]
     pub fn utc_date(self) -> Date {
-        Date(self.0.to_zoned(jiff::tz::TimeZone::UTC).date())
+        Date(self.0.to_zoned_datetime(jiff::tz::TimeZone::UTC).date())
     }
 
     /// This instant formatted in UTC with a `strftime` pattern.
@@ -152,8 +152,8 @@ impl Timestamp {
 
     /// This instant in `tz`.
     #[must_use]
-    pub fn to_zoned(self, tz: jiff::tz::TimeZone) -> jiff::Zoned {
-        self.0.to_zoned(tz)
+    pub fn to_zoned(self, tz: jiff::tz::TimeZone) -> jiff::ZonedDateTime {
+        self.0.to_zoned_datetime(tz)
     }
 
     /// This instant keeping only the first `digits` fractional-second digits (at most 9).
@@ -173,7 +173,7 @@ impl Timestamp {
         text.parse::<Self>().ok().or_else(|| {
             let civil = text.parse::<jiff::civil::DateTime>().ok()?;
             civil
-                .to_zoned(jiff::tz::TimeZone::UTC)
+                .to_zoned_datetime(jiff::tz::TimeZone::UTC)
                 .ok()
                 .map(|zoned| Self(zoned.timestamp()))
         })

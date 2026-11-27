@@ -17,7 +17,7 @@ workspace = true
 [dependencies]
 serde = { workspace = true }
 serde_json = { workspace = true }
-utoipa = { version = "5", features = ["jiff_0_2"] }
+utoipa = { version = "6", features = ["jiff_0_2"] }
 thiserror = { workspace = true }
 aes-gcm = { workspace = true }
 rand = { workspace = true }

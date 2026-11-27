@@ -639,6 +639,69 @@ mod tests {
         assert_eq!(agent.await.expect("agent"), list_keys());
     }
 
+    /// An extension whose name cannot be read, and one the relay does not
+    /// know, are answered with `SSH_AGENT_FAILURE` by the relay itself and
+    /// never reach the SSH agent, which the relay keeps serving.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn extensions_the_relay_does_not_accept_never_reach_the_ssh_agent(pool: PgPool) {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let (listener, path) = fake_agent(&dir);
+        let agent = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.expect("accept");
+            let mut request = vec![0; list_keys().len()];
+            stream.read_exact(&mut request).await.expect("read");
+            stream.write_all(&no_keys()).await.expect("write");
+            let mut rest = Vec::new();
+            stream.read_to_end(&mut rest).await.expect("read rest");
+            [request, rest].concat()
+        });
+
+        let mut ws = connect(pool, "relay-extension-host", Some(path)).await;
+        // A name said to be 255 bytes long with none of them sent.
+        let malformed = message(27, b"\0\0\0\xff");
+        let unknown = message(27, b"\0\0\0\x15query@example.invalid");
+        send(&mut ws, &[malformed, unknown].concat()).await;
+        let failures = [FAILURE_REPLY, FAILURE_REPLY].concat();
+        let refusals = receive(&mut ws, failures.len()).await;
+        send(&mut ws, &list_keys()).await;
+        let listing = receive(&mut ws, no_keys().len()).await;
+        ws.sink.close().await.expect("close");
+
+        assert_eq!(refusals, failures);
+        assert_eq!(listing, no_keys());
+        assert_eq!(agent.await.expect("agent"), list_keys());
+    }
+
+    /// When the agent's repository hosts cannot be read, the relay cannot
+    /// tell which logins it may sign, so it closes before it connects to the
+    /// SSH agent at all.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_relay_whose_repository_hosts_cannot_be_read_ends(pool: PgPool) {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let (listener, path) = fake_agent(&dir);
+        let host = HostKey::generate();
+        let opened = open_with_repo_hosts(
+            pool.clone(),
+            "relay-unreadable-hosts",
+            Some(path),
+            &[(&host, "borg")],
+        )
+        .await;
+        // Broken before the token is sent, which is when the relay reads the
+        // agent's repository hosts; the token itself is still checked.
+        sqlx::query!("ALTER TABLE repo_hosts RENAME TO repo_hosts_unreadable")
+            .execute(&pool)
+            .await
+            .expect("hide the repository hosts");
+        let (mut ws, _shutdown) = authenticate(opened).await;
+
+        assert!(closes_without_data(&mut ws).await);
+        let accepted = tokio::time::timeout(Duration::from_millis(200), listener.accept()).await;
+        assert!(accepted.is_err(), "nothing connects to the SSH agent");
+    }
+
     /// The SSH agent never speaks unasked, so bytes from it while no request
     /// is waiting for a reply end the relay instead of being passed on as if
     /// they answered the next one.

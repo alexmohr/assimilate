@@ -1,0 +1,12 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "ALTER TABLE repo_hosts RENAME TO repo_hosts_unreadable",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": []
+  },
+  "hash": "daa8496ad7d74015b0fc4d639a3a4ca970e21c7db168688cacedc7f0bcaec3d1"
+}

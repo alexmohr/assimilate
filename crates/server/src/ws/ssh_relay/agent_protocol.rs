@@ -7,10 +7,10 @@
 //!
 //! Every message is a 4-byte big-endian length followed by that many bytes,
 //! the first of which is the message type. An agent machine only ever needs
-//! to list the server's keys and have one of them sign an SSH login; every
-//! other request (adding, removing or locking keys, extensions) changes the
-//! server's agent for every host and is answered with a failure without
-//! reaching it.
+//! to list the server's keys, bind its connection to the SSH server it logs
+//! in to, and have one of the keys sign that login; every other request
+//! (adding, removing or locking keys, other extensions) changes the server's
+//! agent for every host and is answered with a failure without reaching it.
 
 use tokio::io::{AsyncRead, AsyncReadExt as _};
 
@@ -24,20 +24,29 @@ const LENGTH_PREFIX: usize = 4;
 /// `SSH_AGENT_FAILURE`, the agent's generic "request refused" reply.
 const SSH_AGENT_FAILURE: u8 = 5;
 
+/// `SSH_AGENT_SUCCESS`, the agent's generic "done" reply.
+const SSH_AGENT_SUCCESS: u8 = 6;
+
 /// The reply the relay sends for a request it refuses: a one-byte
 /// `SSH_AGENT_FAILURE` message.
 pub const FAILURE_REPLY: [u8; 5] = [0, 0, 0, 1, SSH_AGENT_FAILURE];
+
+/// The reply the relay sends for a `session-bind` it accepts: a one-byte
+/// `SSH_AGENT_SUCCESS` message.
+pub const SUCCESS_REPLY: [u8; 5] = [0, 0, 0, 1, SSH_AGENT_SUCCESS];
 
 /// The kind of request an agent machine sent, by its message type.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AgentRequest {
     /// `SSH_AGENTC_REQUEST_IDENTITIES` (11): list the loaded keys.
     RequestIdentities,
-    /// `SSH_AGENTC_SIGN_REQUEST` (13): sign an SSH login with one of them.
+    /// `SSH_AGENTC_SIGN_REQUEST` (13): sign an SSH login with one of them,
+    /// forwarded only for a login the connection's session-bind allows.
     SignRequest,
     /// `SSH_AGENTC_EXTENSION` (27), such as the `session-bind@openssh.com`
     /// that OpenSSH 8.9 and later sends on every connection. Never
-    /// forwarded; `ssh` carries on when it is refused.
+    /// forwarded: the relay answers a session-bind itself and refuses any
+    /// other extension.
     Extension,
     /// Any other message type, adding, removing or locking keys among them,
     /// which the relay never forwards.
@@ -73,6 +82,13 @@ pub struct Request {
     pub kind: AgentRequest,
     /// The whole message, length prefix included, as it is forwarded.
     pub bytes: Vec<u8>,
+}
+
+impl Request {
+    /// The message's fields: the bytes after its length and message type.
+    pub fn body(&self) -> &[u8] {
+        self.bytes.get(LENGTH_PREFIX + 1..).unwrap_or_default()
+    }
 }
 
 /// Reassembles requests from the bytes an agent machine sends, which arrive
@@ -236,6 +252,19 @@ pub(super) mod tests {
     #[test]
     fn the_failure_reply_is_a_one_byte_failure_message() {
         assert_eq!(FAILURE_REPLY.to_vec(), message(SSH_AGENT_FAILURE, b""));
+    }
+
+    #[test]
+    fn the_success_reply_is_a_one_byte_success_message() {
+        assert_eq!(SUCCESS_REPLY.to_vec(), message(SSH_AGENT_SUCCESS, b""));
+    }
+
+    #[test]
+    fn a_request_body_leaves_out_its_length_and_type() {
+        let mut buffer = RequestBuffer::default();
+        buffer.extend(&message(13, b"fields"));
+
+        assert_eq!(buffer.next_request().unwrap().unwrap().body(), b"fields");
     }
 
     #[tokio::test]

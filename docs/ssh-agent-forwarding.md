@@ -30,12 +30,21 @@ sequenceDiagram
     Agent->>Server: Encrypted channel handshake (pinned server key)
     Agent->>Server: Send token as the first encrypted message
     Server->>Server: Verify token via bcrypt hash lookup
+    Server->>Server: Load the host keys pinned for the agent's repository hosts
     Server->>LocalAgent: Connect to server's SSH_AUTH_SOCK
+
+    Borg->>UDS: session-bind (repo host key, session, host signature)
+    UDS->>Agent: Read bytes from Unix socket
+    Agent->>Server: Forward as WebSocket binary frame
+    Server->>Server: Verify the signature, check the key is one the agent may reach
+    Server->>Agent: SSH_AGENT_SUCCESS (or SSH_AGENT_FAILURE)
+    Agent->>Borg: Reply via the Unix socket
 
     loop SSH agent protocol relay
         Borg->>UDS: SSH agent request bytes
         UDS->>Agent: Read bytes from Unix socket
         Agent->>Server: Forward as WebSocket binary frame
+        Server->>Server: Sign requests: only for the bound session, host and user
         Server->>LocalAgent: Write to server's Unix socket
         LocalAgent->>Server: SSH agent response bytes
         Server->>Agent: Forward as WebSocket binary frame
@@ -49,7 +58,24 @@ sequenceDiagram
 
 Before each backup the agent creates a temporary Unix domain socket in a private directory under `$TMPDIR`. For every connection borg makes to that socket the agent opens a new WebSocket to the server's relay endpoint at `/ws/ssh-agent/{hostname}`, completes the encrypted channel handshake against the server key it pins, and sends its token as the first encrypted message. The server authenticates the request by verifying the token against the bcrypt hash stored in the database, then connects to its own `SSH_AUTH_SOCK` and relays SSH agent requests between the encrypted WebSocket and the local agent socket, one request and its reply at a time.
 
-The relay reads each request's message type and forwards only the two a backup needs: listing the keys (`SSH_AGENTC_REQUEST_IDENTITIES`) and signing an SSH login with one of them (`SSH_AGENTC_SIGN_REQUEST`). Every other request, such as adding, removing or locking keys or a protocol extension, would change the SSH agent that every agent machine and the server itself share, so the server answers it with `SSH_AGENT_FAILURE` without passing it on and logs a warning naming the host. OpenSSH 8.9 and later ask for the `session-bind@openssh.com` extension on every connection; it is refused the same way, `ssh` carries on without it, and the refusal is logged only at debug level. A message larger than 256 KiB, the limit OpenSSH's own agent applies, ends the relay. As soon as either side closes, the server closes the other, so no connection to the SSH agent outlives its WebSocket. When the backup finishes the temporary socket directory is removed automatically.
+The relay reads each request's message type and forwards only the two a backup needs: listing the keys (`SSH_AGENTC_REQUEST_IDENTITIES`) and signing an SSH login with one of them (`SSH_AGENTC_SIGN_REQUEST`). A signature is forwarded only for a login to one of the agent's own repository hosts, as described in [Which logins the relay signs](#which-logins-the-relay-signs). Every other request, such as adding, removing or locking keys or a protocol extension other than `session-bind@openssh.com`, would change the SSH agent that every agent machine and the server itself share, so the server answers it with `SSH_AGENT_FAILURE` without passing it on and logs a warning naming the host. A message larger than 256 KiB, the limit OpenSSH's own agent applies, ends the relay. As soon as either side closes, the server closes the other, so no connection to the SSH agent outlives its WebSocket. When the backup finishes the temporary socket directory is removed automatically.
+
+### Which logins the relay signs
+
+Every agent machine borrows the same server key, and every repository host trusts it, so a signature from it would log in to any of them. The relay therefore signs a login only when it can tell which repository host the login is for and that host belongs to the agent asking.
+
+OpenSSH 8.9 and later tell their SSH agent which server a connection logs in to with the `session-bind@openssh.com` extension. It carries the server's host key, the SSH session's identifier, and the server's own signature over that identifier, which only a connection that really reached that server can produce. For each relay connection the server:
+
+1. Verifies the host's signature in the `session-bind`. Ed25519, ECDSA (P-256, P-384, P-521) and RSA (`rsa-sha2-256`, `rsa-sha2-512`) host keys are supported.
+2. Accepts the bind only if the host key is the one [pinned](#agent-setup) for a repository host that one of the agent's own schedules backs up to, and answers it with `SSH_AGENT_SUCCESS` itself. The server's SSH agent never sees it.
+3. Forwards a sign request only if it signs an SSH public key login (`publickey`, or OpenSSH's host-bound variant) whose session identifier is the one bound last on that connection, whose host key, when the login names one, is the bound one, and whose user is the SSH user of one of the agent's repositories on that host.
+
+Anything else is answered with `SSH_AGENT_FAILURE` and a warning naming the agent's host and the reason, with no key material in it. That includes a sign request before any bind, a bind to some other agent's repository host, and a request to sign anything other than an SSH login, such as an `ssh-keygen -Y sign` file signature. A login an agent machine cannot complete through the relay falls back to the keys on that machine itself, if it has any.
+
+!!! warning
+    This check is fail-closed. A login the relay cannot tie to one of the agent's own repository hosts is never signed. That happens when the agent machine's OpenSSH is older than 8.9, which sends no `session-bind`, and when the repository host has no pinned host key. See [Troubleshooting](#relay-refuses-to-sign-a-login).
+
+Repositories on the same repository host share its host key, so the relay cannot tell them apart. On the repository host itself, limit each key to its repositories with `borg serve --restrict-to-path`, as described in [Borg Repository Authorization](#borg-repository-authorization).
 
 On a macOS agent the temporary socket is a unix socket as on Linux.
 
@@ -158,7 +184,11 @@ Every agent borrows this key, so whatever it may do on the host, a compromised a
 | `SSH_AUTH_SOCK` not set on server | Relay endpoint closes immediately; agent logs a warning; backup proceeds without forwarding |
 | Server's ssh-agent socket unreachable | Same as above — relay closes, backup falls back to local keys |
 | Token authentication fails | Server closes the WebSocket; agent logs a warning; backup proceeds without forwarding |
-| Agent sends a request other than listing keys or signing | Server answers `SSH_AGENT_FAILURE` and keeps relaying; the server's SSH agent never sees the request. A request to change keys logs a warning naming the host; a protocol extension such as `session-bind` is logged at debug level |
+| Agent sends a request other than listing keys, binding the session or signing | Server answers `SSH_AGENT_FAILURE` and keeps relaying; the server's SSH agent never sees the request. A request to change keys logs a warning naming the host; an unknown protocol extension is logged at debug level |
+| `session-bind` names a host that is not one of the agent's repository hosts, or its signature does not verify | Server answers `SSH_AGENT_FAILURE`, logs `ssh relay: refused a session-bind` with the reason, and signs nothing on that connection |
+| Sign request without an accepted `session-bind` (OpenSSH older than 8.9), or for another session, host or user | Server answers `SSH_AGENT_FAILURE` and logs `ssh relay: refused a sign request` with the reason; `ssh` falls back to the agent machine's own keys |
+| Repository host has no pinned host key | Logins to it are never signed through the relay |
+| The agent's repository hosts cannot be read from the database | Relay closes; backup falls back to local keys |
 | Network interruption during relay | Active borg SSH connection drops; borg retries according to its own retry logic |
 | Key not authorised on repo host | SSH authentication fails; borg exits with an error; backup is marked failed |
 | Temp socket directory creation fails | Agent logs an error; backup proceeds without forwarding |
@@ -195,6 +225,17 @@ Test the connection manually from the server:
 ```bash
 ssh -i /path/to/borg_key borg@repo-host echo ok
 ```
+
+### Relay refuses to sign a login
+
+If the server logs `ssh relay: refused a sign request` or `ssh relay: refused a session-bind` for an agent's host, check the `reason` field:
+
+- **sign request on a connection without an accepted session-bind**: the agent machine's OpenSSH is older than 8.9 and sends no `session-bind`. Check with `ssh -V` on the agent machine and upgrade OpenSSH. The relay cannot tell which host such a client logs in to, so it never signs for it.
+- **session-bind names a host that is not one of this agent's repository hosts**: the host the agent connected to presents a host key no repository host of this agent has pinned. Either the agent has no schedule backing up to that repository host, or the host's key changed (see [Repository host key rotated](#repository-host-key-rotated)), or the agent reached a different machine than intended.
+- **sign request logs in as a user no repository of this agent uses on the bound host**: the agent machine logged in as another user than the repository's configured SSH user. Check the repository's **SSH user**.
+- **session-bind signature does not verify** or **unsupported or unreadable type**: the host's signature could not be checked. DSA host keys are not supported; use an Ed25519, ECDSA or RSA host key.
+
+A repository host with no pinned host key is never signed for. Saving the repository again pins the key the host presents.
 
 ### Repository host key rotated
 

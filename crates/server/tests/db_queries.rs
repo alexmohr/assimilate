@@ -7064,6 +7064,57 @@ async fn repos_for_agent(pool: PgPool) {
     assert_eq!(public_repos.len(), 1);
 }
 
+/// The SSH agent relay signs logins only to the repository hosts an agent's
+/// own schedules back up to, so the list holds each pinned host once per
+/// user its repositories log in as there - a secondary target included - and
+/// leaves out a host that was never pinned and another agent's host.
+#[sqlx::test(migrations = "./migrations")]
+async fn relay_destinations_are_the_agents_own_pinned_repository_hosts(pool: PgPool) {
+    let (agent, repo, schedule) = create_test_schedule(&pool).await;
+    db::update_repo_ssh_host_key(&pool, repo.id, "ssh-ed25519 AAAAOWN")
+        .await
+        .unwrap();
+    // On the same host as `repo`, so it shares the pinned key, but logging
+    // in as another user.
+    let same_host = create_test_repo_with_host(&pool, "relay-same-host", "host.local").await;
+    let unpinned = create_test_repo_with_host(&pool, "relay-unpinned", "unpinned.local").await;
+    db::replace_schedule_repos(
+        &pool,
+        schedule.id,
+        &[(repo.id, true), (same_host.id, false), (unpinned.id, false)],
+    )
+    .await
+    .unwrap();
+    // A second schedule to the same repository adds no second row.
+    create_test_schedule_for(&pool, agent.id, repo.id, "relay-second-schedule").await;
+
+    let other_agent = db::insert_agent(&pool, "relay-other-agent", None, "hash", None, None)
+        .await
+        .unwrap();
+    let other_repo = create_test_repo_with_host(&pool, "relay-other", "other.local").await;
+    db::update_repo_ssh_host_key(&pool, other_repo.id, "ssh-ed25519 AAAAOTHER")
+        .await
+        .unwrap();
+    create_test_schedule_for(&pool, other_agent.id, other_repo.id, "relay-other-schedule").await;
+
+    let destinations = db::list_relay_destinations_for_agent(&pool, agent.id)
+        .await
+        .unwrap();
+
+    let own = |ssh_user: &str| db::RelayDestinationRow {
+        ssh_host_key: "ssh-ed25519 AAAAOWN".to_owned(),
+        ssh_user: ssh_user.to_owned(),
+    };
+    assert_eq!(destinations, vec![own("backup"), own("user")]);
+    assert!(
+        db::list_relay_destinations_for_agent(&pool, i64::MAX)
+            .await
+            .unwrap()
+            .is_empty(),
+        "an agent with no schedules may reach no repository host"
+    );
+}
+
 #[sqlx::test(migrations = "./migrations")]
 async fn backup_sources_for_repo(pool: PgPool) {
     let repo = create_test_repo(&pool).await;

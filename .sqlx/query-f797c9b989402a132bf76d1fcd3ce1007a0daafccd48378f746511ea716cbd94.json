@@ -1,0 +1,12 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE repo_hosts SET ssh_host_key = NULL",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": []
+  },
+  "hash": "f797c9b989402a132bf76d1fcd3ce1007a0daafccd48378f746511ea716cbd94"
+}

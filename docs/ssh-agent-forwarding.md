@@ -212,13 +212,14 @@ For nginx, ensure the proxy passes WebSocket upgrade headers:
 location /ws/ {
     proxy_pass http://assimilate;
     proxy_http_version 1.1;
-    proxy_set_header Host $host;
+    proxy_set_header Host $http_host;
+    proxy_set_header X-Forwarded-Proto $scheme;
     proxy_set_header Upgrade $http_upgrade;
     proxy_set_header Connection "upgrade";
 }
 ```
 
-Passing the `Host` header through also keeps the web UI's [live updates WebSocket](security.md#live-updates-websocket) at `/ws/ui` working, which only accepts pages from the origin the request was addressed to.
+The same block also serves the web UI's [live updates WebSocket](security.md#live-updates-websocket) at `/ws/ui`, which only accepts pages from the server's own origin. `$http_host` passes the browser's `Host` through with its port, where nginx's `$host` would drop it. On the default port 443 the browser sends no port, so the server also needs `X-Forwarded-Proto` to know the scheme: list nginx's address in `ASSIMILATE_TRUSTED_PROXIES` (see [Configuration](configuration.md)), or the live updates socket refuses every page with `403`.
 
 ### Backup succeeds but uses wrong key
 

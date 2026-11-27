@@ -70,7 +70,9 @@ async fn upgrade_ui_socket(
     // page elsewhere cannot keep the victim's session from going idle by
     // retrying. A missing `Origin` is not a browser and so not a cross-site
     // page riding on the cookie; it is refused only once the session is
-    // known to be valid, so a bad session still answers 401.
+    // known to be valid, so a bad session still answers 401. That lookup
+    // does not count as activity either, so retrying without an `Origin`
+    // cannot keep a session alive.
     let origin_sent = match origin {
         OriginCheck::Allowed => true,
         OriginCheck::Missing => false,
@@ -92,7 +94,12 @@ async fn upgrade_ui_socket(
     let Some(session_id) = cookies::session_cookie(headers) else {
         return StatusCode::UNAUTHORIZED.into_response();
     };
-    match load_audience(&state, session_id.clone(), SessionUse::Request).await {
+    let session_use = if origin_sent {
+        SessionUse::Request
+    } else {
+        SessionUse::Recheck
+    };
+    match load_audience(&state, session_id.clone(), session_use).await {
         Ok(_) if !origin_sent => {
             tracing::warn!("refusing UI WebSocket without an Origin header");
             StatusCode::FORBIDDEN.into_response()
@@ -481,6 +488,43 @@ mod tests {
                 "{origin}: {refused:?}"
             );
         }
+    }
+
+    /// A handshake refused for its missing `Origin` must not count as
+    /// activity on the session: otherwise a client holding the cookie could
+    /// keep it from going idle by retrying without one.
+    #[ignore = "requires DATABASE_URL"]
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_refused_handshake_does_not_keep_the_session_alive(pool: sqlx::PgPool) {
+        let user = insert_auth_user(&pool, "no-origin-idle").await;
+        let cookie = insert_session(&pool, user.user_id, false).await;
+        let idle_since = Timestamp::now()
+            .checked_sub(shared::time::minutes(10))
+            .expect("in range");
+        sqlx::query!(
+            "UPDATE sessions SET last_seen_at = $1 WHERE id = $2",
+            idle_since,
+            hash_token(&cookie)
+        )
+        .execute(&pool)
+        .await
+        .expect("backdate session");
+        let last_seen = |pool: sqlx::PgPool, cookie: String| async move {
+            db::get_session(&pool, &hash_token(&cookie))
+                .await
+                .expect("session exists")
+                .last_seen_at
+        };
+        let before = last_seen(pool.clone(), cookie.clone()).await;
+        let addr = serve_ui_handler(pool.clone(), None).await;
+
+        let refused = connect_with(addr, &cookie, &[]).await;
+
+        assert!(
+            refused_with(&refused, axum::http::StatusCode::FORBIDDEN),
+            "{refused:?}"
+        );
+        assert_eq!(last_seen(pool, cookie).await, before);
     }
 
     /// Every browser sends `Origin` on a WebSocket handshake; one without it

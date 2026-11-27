@@ -407,13 +407,8 @@ mod tests {
             .await
             .expect("bind");
         let addr = listener.local_addr().expect("address");
-        tokio::spawn(async move {
-            axum::serve(
-                listener,
-                app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
-            )
-            .await
-        });
+        let service = app.into_make_service_with_connect_info::<std::net::SocketAddr>();
+        tokio::spawn(async move { axum::serve(listener, service).await });
         addr
     }
 

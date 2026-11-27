@@ -3162,6 +3162,10 @@ pub enum Theme {
     Light,
     /// Always dark.
     Dark,
+    /// Dark with lighter, neutral grey surfaces.
+    Charcoal,
+    /// Dark with lighter, warm brown-grey surfaces.
+    Warm,
     /// Follow the operating system's setting.
     Auto,
 }
@@ -3325,4 +3329,48 @@ pub struct SyncResponse {
     #[ts(type = "number")]
     /// Duration of the operation in seconds.
     pub duration_secs: u64,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Theme, UserPreferences};
+
+    #[test]
+    fn theme_uses_lowercase_wire_names() {
+        let cases = [
+            (Theme::Light, "light"),
+            (Theme::Dark, "dark"),
+            (Theme::Charcoal, "charcoal"),
+            (Theme::Warm, "warm"),
+            (Theme::Auto, "auto"),
+        ];
+        for (theme, name) in cases {
+            assert_eq!(
+                serde_json::to_value(theme).unwrap(),
+                serde_json::json!(name)
+            );
+            assert_eq!(
+                serde_json::from_value::<Theme>(serde_json::json!(name)).unwrap(),
+                theme
+            );
+        }
+    }
+
+    #[test]
+    fn preferences_with_a_new_theme_round_trip() {
+        let prefs = UserPreferences {
+            theme: Some(Theme::Charcoal),
+        };
+        let json = serde_json::to_string(&prefs).unwrap();
+        assert_eq!(json, r#"{"theme":"charcoal"}"#);
+        assert_eq!(
+            serde_json::from_str::<UserPreferences>(&json).unwrap(),
+            prefs
+        );
+    }
+
+    #[test]
+    fn unknown_theme_is_rejected() {
+        assert!(serde_json::from_value::<Theme>(serde_json::json!("neon")).is_err());
+    }
 }

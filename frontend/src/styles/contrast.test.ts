@@ -86,6 +86,67 @@ const dark = {
   syntaxOperator: hex('#fcd34d'),
 }
 
+// Color tokens extracted from frontend/src/style.css .dark.theme-charcoal and
+// .dark.theme-warm. Both inherit the plain dark theme's text, status and syntax
+// colours and override the surfaces, the muted text and the accent.
+const lighterDark = {
+  charcoal: {
+    bgBase: hex('#1c1c20'),
+    bgCard: hex('#26262b'),
+    bgSidebar: hex('#202024'),
+    bgInput: hex('#1c1c20'),
+    bgHover: hex('#2f2f35'),
+    bgElevated: hex('#2d2d33'),
+    textMuted: hex('#9a9aa4'),
+  },
+  warm: {
+    bgBase: hex('#1a1917'),
+    bgCard: hex('#242321'),
+    bgSidebar: hex('#1d1c1a'),
+    bgInput: hex('#1a1917'),
+    bgHover: hex('#2c2b28'),
+    bgElevated: hex('#2a2926'),
+    textMuted: hex('#98968f'),
+  },
+}
+const lighterDarkAccent = hex('#5b9af8')
+const lighterDarkTextOnAccent = hex('#0b1220')
+
+function lighterDarkPairs(name: 'charcoal' | 'warm'): ColorPair[] {
+  const t = lighterDark[name]
+  const surfaces = [
+    ['base', t.bgBase],
+    ['card', t.bgCard],
+    ['sidebar', t.bgSidebar],
+    ['input', t.bgInput],
+    ['hover', t.bgHover],
+    ['elevated', t.bgElevated],
+  ] as const
+  const foregrounds = [
+    ['primary text', dark.textPrimary],
+    ['secondary text', dark.textSecondary],
+    ['muted text', t.textMuted],
+    ['accent', lighterDarkAccent],
+    ['danger', dark.danger],
+    ['success', dark.success],
+    ['violet', dark.violet],
+  ] as const
+  return [
+    ...surfaces.flatMap(([surface, background]) =>
+      foregrounds.map(([fg, foreground]) => ({
+        name: `${name}: ${fg} on ${surface}`,
+        foreground,
+        background,
+      })),
+    ),
+    {
+      name: `${name}: text-on-accent on accent bg`,
+      foreground: lighterDarkTextOnAccent,
+      background: lighterDarkAccent,
+    },
+  ]
+}
+
 const WCAG_AA = 4.5
 
 const lightPairs: ColorPair[] = [
@@ -292,6 +353,20 @@ describe('WCAG AA contrast >= 4.5:1 — dark theme', () => {
     })
   }
 })
+
+for (const name of ['charcoal', 'warm'] as const) {
+  describe(`WCAG AA contrast >= 4.5:1 — ${name} theme`, () => {
+    for (const pair of lighterDarkPairs(name)) {
+      it(pair.name, () => {
+        const ratio = contrastRatio(pair.foreground, pair.background)
+        expect(
+          ratio,
+          `${pair.name}: ratio ${ratio.toFixed(2)}:1 < required ${WCAG_AA}:1`,
+        ).toBeGreaterThanOrEqual(WCAG_AA)
+      })
+    }
+  })
+}
 
 describe('known WCAG AA violations — tracked bugs, fix --success and dark --accent/--danger', () => {
   for (const pair of knownViolations) {

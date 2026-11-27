@@ -5625,15 +5625,15 @@ async fn user_delete(pool: PgPool) {
 async fn user_preferences(pool: PgPool) {
     let user = db::insert_user(&pool, "prefuser", "hash").await.unwrap();
 
-    let prefs = UserPreferences {
-        theme: Some(Theme::Dark),
-    };
-    db::set_user_preferences(&pool, user.id, &prefs)
-        .await
-        .unwrap();
+    for theme in [Theme::Dark, Theme::Charcoal, Theme::Warm] {
+        let prefs = UserPreferences { theme: Some(theme) };
+        db::set_user_preferences(&pool, user.id, &prefs)
+            .await
+            .unwrap();
 
-    let fetched = db::get_user_preferences(&pool, user.id).await.unwrap();
-    assert_eq!(fetched, prefs);
+        let fetched = db::get_user_preferences(&pool, user.id).await.unwrap();
+        assert_eq!(fetched, prefs);
+    }
 }
 
 #[sqlx::test(migrations = "./migrations")]

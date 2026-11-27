@@ -78,6 +78,8 @@ The **Appearance** section lets you choose the theme. Your preference is saved s
 | Auto | Follows your operating system's light or dark setting |
 | Light | Light background, dark text |
 | Dark | Dark background, light text |
+| Charcoal | A lighter dark theme with neutral grey surfaces, for when Dark is too black |
+| Warm | A lighter dark theme with warm brown-grey surfaces |
 
 The theme applies immediately without a page reload.
 

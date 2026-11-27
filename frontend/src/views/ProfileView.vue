@@ -4,7 +4,7 @@ SPDX-FileCopyrightText: 2026 Alexander Mohr
 -->
 
 <script setup lang="ts">
-import { computed, ref, onMounted, watch } from 'vue'
+import { computed, ref, onMounted, watch, type Component } from 'vue'
 import {
   disableTotp as apiDisableTotp,
   listSessions,
@@ -14,14 +14,14 @@ import {
 } from '../api/auth'
 import { useAuthStore } from '../stores/auth'
 import { useSystemModeStore } from '../stores/systemMode'
-import { useTheme } from '../composables/useTheme'
+import { useTheme, type Theme } from '../composables/useTheme'
 import { useEscapeKey } from '../composables/useEscapeKey'
 import { useApiTokens } from '../composables/useApiTokens'
 import ToggleSwitch from '../components/ToggleSwitch.vue'
 import { formatDate } from '../utils/format'
 import { validatePassword } from '../utils/validation'
 import { extractError } from '../utils/error'
-import { Trash2, Monitor, Sun, Moon, KeyRound } from '@lucide/vue'
+import { Trash2, Monitor, Sun, Moon, MoonStar, Coffee, KeyRound } from '@lucide/vue'
 import ApiTokenTable from '../components/ApiTokenTable.vue'
 import TokenExpiryField from '../components/TokenExpiryField.vue'
 import BaseSpinner from '../components/BaseSpinner.vue'
@@ -35,6 +35,14 @@ type TabId = 'password' | 'tokens' | 'totp' | 'sessions' | 'appearance'
 const authStore = useAuthStore()
 const systemMode = useSystemModeStore()
 const { theme, setTheme, loadFromBackend } = useTheme()
+
+const THEME_OPTIONS: { value: Theme; label: string; icon: Component }[] = [
+  { value: 'auto', label: 'Auto', icon: Monitor },
+  { value: 'light', label: 'Light', icon: Sun },
+  { value: 'dark', label: 'Dark', icon: Moon },
+  { value: 'charcoal', label: 'Charcoal', icon: MoonStar },
+  { value: 'warm', label: 'Warm', icon: Coffee },
+]
 const allTabs: SettingsSections<TabId> = [
   { id: 'password', label: 'Change password' },
   { id: 'tokens', label: 'API tokens' },
@@ -651,37 +659,18 @@ onMounted(async () => {
           </div>
           <div class="theme-options">
             <button
+              v-for="option in THEME_OPTIONS"
+              :key="option.value"
               class="theme-option"
-              :class="{ active: theme === 'auto' }"
-              @click="setTheme('auto')"
+              :class="{ active: theme === option.value }"
+              @click="setTheme(option.value)"
             >
-              <Monitor
+              <component
+                :is="option.icon"
                 class="theme-icon"
                 :size="16"
               />
-              Auto
-            </button>
-            <button
-              class="theme-option"
-              :class="{ active: theme === 'light' }"
-              @click="setTheme('light')"
-            >
-              <Sun
-                class="theme-icon"
-                :size="16"
-              />
-              Light
-            </button>
-            <button
-              class="theme-option"
-              :class="{ active: theme === 'dark' }"
-              @click="setTheme('dark')"
-            >
-              <Moon
-                class="theme-icon"
-                :size="16"
-              />
-              Dark
+              {{ option.label }}
             </button>
           </div>
         </div>
@@ -875,6 +864,7 @@ onMounted(async () => {
 
 .theme-options {
   display: flex;
+  flex-wrap: wrap;
   gap: var(--space-4);
 }
 

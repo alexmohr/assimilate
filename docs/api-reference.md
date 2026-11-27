@@ -92,7 +92,7 @@ For full request/response schemas, use the [interactive explorer](#interactive-a
 | `POST` | `/api/auth/refresh` | Refresh the current session cookie |
 | `GET` | `/api/auth/me` | Return the currently authenticated user |
 | `POST` | `/api/auth/change-password` | Change the current user's password: needs `current_password` (except a forced change) and a signed-in session, not an API token; signs out the account's other sessions, and deletes its API tokens with `revoke_api_tokens` |
-| `GET` / `PUT` | `/api/auth/preferences` | Get or replace the current user's UI preferences (`{"theme": "light" \| "dark" \| "auto"}`) |
+| `GET` / `PUT` | `/api/auth/preferences` | Get or replace the current user's UI preferences (`{"theme": "light" \| "dark" \| "charcoal" \| "warm" \| "auto"}`) |
 
 ### Users
 

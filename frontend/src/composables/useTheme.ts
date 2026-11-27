@@ -8,7 +8,7 @@ import { readStorage, writeStorage } from '../utils/storage'
 import type { Theme } from '../types/generated'
 
 export type { Theme }
-type ResolvedTheme = 'light' | 'dark'
+type ResolvedTheme = Exclude<Theme, 'auto'>
 
 const STORAGE_KEY = 'theme'
 
@@ -20,7 +20,7 @@ function getSystemPreference(): ResolvedTheme {
 }
 
 function isTheme(v: string): v is Theme {
-  return v === 'light' || v === 'dark' || v === 'auto'
+  return v === 'light' || v === 'dark' || v === 'charcoal' || v === 'warm' || v === 'auto'
 }
 
 function getStoredTheme(): Theme | null {
@@ -35,12 +35,24 @@ function resolveTheme(t: Theme): ResolvedTheme {
   return t
 }
 
+/** Whether a theme is one of the dark ones, which all carry the `dark` class. */
+function isDarkTheme(t: ResolvedTheme): boolean {
+  return t !== 'light'
+}
+
+/** The class a theme adds on top of `dark`; the plain dark theme has none. */
+const THEME_CLASS: Record<ResolvedTheme, string | null> = {
+  light: null,
+  dark: null,
+  charcoal: 'theme-charcoal',
+  warm: 'theme-warm',
+}
+
 function applyTheme(t: ResolvedTheme): void {
   const html = document.documentElement
-  if (t === 'dark') {
-    html.classList.add('dark')
-  } else {
-    html.classList.remove('dark')
+  html.classList.toggle('dark', isDarkTheme(t))
+  for (const cls of Object.values(THEME_CLASS)) {
+    if (cls !== null) html.classList.toggle(cls, cls === THEME_CLASS[t])
   }
 }
 

@@ -219,8 +219,10 @@ An agent's host, a repository host and the dependencies on it share one [machine
 | `POST` | `/api/repos/{repo_id}/archives/{archive_name}/restore` | Record a restore of selected paths to a target on the agent; returns `202 Accepted` with the restore, which runs in the background |
 | `GET` | `/api/repos/{repo_id}/archives/{archive_name}/search` | Search files within a single archive |
 | `GET` | `/api/repos/{repo_id}/search` | Search files across all archives in a repo |
-| `GET` / `POST` | `/api/repos/{repo_id}/archives/{archive_name}/tags` | List or add archive tags |
-| `DELETE` | `/api/repos/{repo_id}/archives/{archive_name}/tags/{tag}` | Remove an archive tag |
+| `GET` / `POST` | `/api/repos/{repo_id}/archives/{archive_name}/tags` | List or add archive tags (needs **Manage Tags** and read access to the repository) |
+| `DELETE` | `/api/repos/{repo_id}/archives/{archive_name}/tags/{tag}` | Remove an archive tag (needs **Manage Tags** and read access to the repository) |
+
+The archive tag endpoints answer `404 Not Found` for a repository the caller may not read, exactly as for one that does not exist.
 
 See [Archives](archives.md) and [Restoring Files](restore.md) for browsing and restore workflows.
 

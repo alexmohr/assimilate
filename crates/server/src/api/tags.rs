@@ -14,6 +14,7 @@ use shared::responses::{
 use super::{
     auth::{AuthUser, RequireAdmin},
     helpers::{self, DomainQuery, MaxLen},
+    read_scope::require_readable_repo,
 };
 use crate::{
     AppState, db,
@@ -118,6 +119,20 @@ async fn ensure_manage_tags(state: &AppState, auth: &AuthUser) -> Result<(), Api
     Err(ApiError::Forbidden(
         "insufficient tag management permission".to_string(),
     ))
+}
+
+/// Requires that the caller may manage archive tags at all, and may read the
+/// repository the archive is in. The tag permission is system-wide, so its
+/// refusal says nothing about the repository; a repository the caller may
+/// not read is then reported exactly like one that does not exist, so the
+/// tag endpoints reveal neither its archives' names nor their tags.
+async fn ensure_archive_tag_access(
+    state: &AppState,
+    auth: &AuthUser,
+    repo_id: i64,
+) -> Result<(), ApiError> {
+    ensure_manage_tags(state, auth).await?;
+    require_readable_repo(&state.pool, auth, repo_id).await
 }
 
 #[utoipa::path(
@@ -407,20 +422,22 @@ pub async fn list_repo_tag_associations(
     responses(
         (status = 200, description = "List of archive tags", body = Vec<ArchiveTagResponse>),
         (status = 401, description = "Unauthorized"),
-        (status = 403, description = "Forbidden"),
+        (status = 403, description = "Forbidden -- no tag management permission"),
+        (status = 404, description = "Repository not found or not readable by the caller"),
     )
 )]
 /// List tags for an archive.
 ///
 /// # Errors
 ///
-/// Returns an error if the underlying operation fails.
+/// Returns [`ApiError::NotFound`] if the repository does not exist or the
+/// caller may not read it, or an error if the underlying operation fails.
 pub async fn list_archive_tags(
     State(state): State<AppState>,
     auth: AuthUser,
     Path((repo_id, archive_name)): Path<(i64, String)>,
 ) -> Result<Json<Vec<ArchiveTagResponse>>, ApiError> {
-    ensure_manage_tags(&state, &auth).await?;
+    ensure_archive_tag_access(&state, &auth, repo_id).await?;
     let tags: Vec<ArchiveTagResponse> =
         db::tags::list_tags_for_archive(&state.pool, repo_id, &archive_name)
             .await?
@@ -444,7 +461,8 @@ pub async fn list_archive_tags(
         (status = 201, description = "Created", body = ArchiveTagResponse),
         (status = 400, description = "Invalid tag"),
         (status = 401, description = "Unauthorized"),
-        (status = 403, description = "Forbidden"),
+        (status = 403, description = "Forbidden -- no tag management permission"),
+        (status = 404, description = "Repository not found or not readable by the caller"),
         (status = 409, description = "Tag already exists"),
     )
 )]
@@ -453,6 +471,9 @@ pub async fn list_archive_tags(
 /// # Errors
 ///
 /// Returns an error if:
+/// - [`ApiError::Forbidden`]: the caller may not manage tags
+/// - [`ApiError::NotFound`]: the repository does not exist or the caller may
+///   not read it
 /// - [`ApiError::Conflict`]: the request conflicts with the current state
 /// - [`ApiError::Database`]: the database query fails
 pub async fn add_archive_tag(
@@ -461,7 +482,7 @@ pub async fn add_archive_tag(
     Path((repo_id, archive_name)): Path<(i64, String)>,
     ApiJson(req): ApiJson<ArchiveTagRequest>,
 ) -> Result<(StatusCode, Json<ArchiveTagResponse>), ApiError> {
-    ensure_manage_tags(&state, &auth).await?;
+    ensure_archive_tag_access(&state, &auth, repo_id).await?;
     let tag = normalize_tag(&req.tag)?;
 
     let created: ArchiveTagResponse = db::tags::add_tag(
@@ -475,6 +496,9 @@ pub async fn add_archive_tag(
     .map_err(|e| match e {
         sqlx::Error::Database(db_err) if db_err.is_unique_violation() => {
             ApiError::Conflict("tag already exists for archive".to_string())
+        }
+        sqlx::Error::Database(db_err) if db_err.is_foreign_key_violation() => {
+            ApiError::NotFound(format!("repo {repo_id} not found"))
         }
         other => ApiError::Database(other),
     })?
@@ -496,21 +520,22 @@ pub async fn add_archive_tag(
     responses(
         (status = 204, description = "Deleted"),
         (status = 401, description = "Unauthorized"),
-        (status = 403, description = "Forbidden"),
-        (status = 404, description = "Not found"),
+        (status = 403, description = "Forbidden -- no tag management permission"),
+        (status = 404, description = "Tag or repository not found, or repository not readable"),
     )
 )]
 /// Remove a tag from an archive.
 ///
 /// # Errors
 ///
-/// Returns [`ApiError::NotFound`] if the requested resource does not exist.
+/// Returns [`ApiError::NotFound`] if the tag does not exist, or the
+/// repository does not exist or the caller may not read it.
 pub async fn remove_archive_tag(
     State(state): State<AppState>,
     auth: AuthUser,
     Path((repo_id, archive_name, tag)): Path<(i64, String, String)>,
 ) -> Result<StatusCode, ApiError> {
-    ensure_manage_tags(&state, &auth).await?;
+    ensure_archive_tag_access(&state, &auth, repo_id).await?;
     let tag = normalize_tag(&tag)?;
 
     let removed = db::tags::remove_tag(&state.pool, repo_id, &archive_name, &tag).await?;

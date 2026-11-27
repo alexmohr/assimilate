@@ -331,6 +331,8 @@ Tags are short labels you can attach to archives to mark significant snapshots (
 | `GET` / `POST` | `/api/repos/{repo_id}/archives/{archive_name}/tags` | List or add archive tags |
 | `DELETE` | `/api/repos/{repo_id}/archives/{archive_name}/tags/{tag}` | Remove an archive tag |
 
+Using them needs the **Manage Tags** permission and read access to the archive's repository. A repository you may not read answers `404 Not Found`, as if it did not exist.
+
 Deleting an archive deletes its tags too.
 
 ## Pruning Archives

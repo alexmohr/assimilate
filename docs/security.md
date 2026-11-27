@@ -129,6 +129,8 @@ Users with `can_view_all_repos` can see all repositories. For others, fine-grain
 
 Permissions are managed by admins under **Settings → Access Control**.
 
+System-wide capabilities do not reach past these grants. **Manage Tags**, for example, lets a user list, add and remove archive tags only in repositories they may read; for any other repository the archive tag endpoints answer `404 Not Found`, exactly as for a repository that does not exist, so they reveal neither its archives' names nor their tags.
+
 ## Session Idle Timeout
 
 An idle timeout can be configured as **Idle session** under **Timeouts** in **System → Settings**. Sessions that have no API activity for longer than the configured duration are automatically revoked on the next request.

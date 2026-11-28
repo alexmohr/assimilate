@@ -757,6 +757,16 @@ mod tests {
     }
 
     #[test]
+    fn create_totp_refuses_a_secret_shorter_than_128_bits() {
+        let result = create_totp(&[7u8; 15]);
+
+        assert!(matches!(
+            result,
+            Err(ApiError::Internal(msg)) if msg.starts_with("failed to create TOTP")
+        ));
+    }
+
+    #[test]
     fn totp_enrollment_is_refused_only_in_desktop_mode() {
         assert!(ensure_totp_enrollment_allowed(DeploymentMode::Server).is_ok());
         assert!(matches!(
@@ -861,6 +871,30 @@ mod tests {
                 .unwrap();
             assert!(fields.secret_encrypted.is_some());
             assert!(!fields.enabled, "setup alone must not enable TOTP");
+        }
+
+        #[ignore = "requires DATABASE_URL"]
+        #[sqlx::test(migrations = "./migrations")]
+        async fn setup_without_an_account_name_stores_nothing(pool: PgPool) {
+            // The otpauth URI needs an account name, so a session without a
+            // username cannot be enrolled - and must not leave a secret behind.
+            let mut auth = insert_auth_user(&pool, "nameless-setup-user").await;
+            auth.username = String::new();
+            let user_id = auth.user_id;
+
+            let result = totp_setup(State(state_in(&pool, DeploymentMode::Server)), auth).await;
+
+            assert!(matches!(
+                result,
+                Err(ApiError::Internal(msg)) if msg.starts_with("failed to build TOTP URI")
+            ));
+            assert!(
+                db::get_user_totp_fields(&pool, user_id)
+                    .await
+                    .unwrap()
+                    .is_none(),
+                "a failed setup must not store a secret"
+            );
         }
     }
 

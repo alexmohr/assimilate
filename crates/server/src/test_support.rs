@@ -77,14 +77,33 @@ pub(crate) async fn insert_auth_user(
     }
 }
 
-/// Lets `user_id` see `agent_id` the way a user who is not an admin does: a
-/// `can_view` grant on `repo_id` and a schedule there that backs the agent up.
-pub(crate) async fn let_user_see_agent(
-    pool: &sqlx::PgPool,
-    user_id: i64,
-    agent_id: i64,
-    repo_id: i64,
-) {
+/// Inserts a repository named `name` at `backup@storage.local:22/backups/<name>`
+/// whose passphrase, `secret`, is encrypted with `state`'s key, and returns its id.
+pub(crate) async fn insert_test_repo(state: &crate::AppState, name: &str) -> i64 {
+    let passphrase = shared::crypto::encrypt_passphrase("secret", &state.encryption_key)
+        .expect("encrypt test passphrase");
+    crate::db::insert_repo(
+        &state.pool,
+        &crate::db::InsertRepoParams {
+            name,
+            repo_path: &format!("/backups/{name}"),
+            ssh_user: "backup",
+            ssh_host: "storage.local",
+            ssh_port: 22,
+            passphrase_encrypted: &passphrase,
+            compression: "lz4",
+            encryption: "repokey",
+            owner_id: None,
+            sync_schedule: None,
+        },
+    )
+    .await
+    .expect("insert test repo")
+    .id
+}
+
+/// Gives `user_id` a `can_view`-only grant on `repo_id`.
+pub(crate) async fn grant_repo_view(pool: &sqlx::PgPool, user_id: i64, repo_id: i64) {
     crate::db::upsert_repo_permission(
         pool,
         &crate::db::UpsertRepoPermissionParams {
@@ -99,6 +118,17 @@ pub(crate) async fn let_user_see_agent(
     )
     .await
     .expect("grant can_view");
+}
+
+/// Lets `user_id` see `agent_id` the way a user who is not an admin does: a
+/// `can_view` grant on `repo_id` and a schedule there that backs the agent up.
+pub(crate) async fn let_user_see_agent(
+    pool: &sqlx::PgPool,
+    user_id: i64,
+    agent_id: i64,
+    repo_id: i64,
+) {
+    grant_repo_view(pool, user_id, repo_id).await;
     let schedule_id = sqlx::query_scalar!(
         "INSERT INTO schedules (repo_id, cron_expression) VALUES ($1, '0 3 * * *') RETURNING id",
         repo_id,

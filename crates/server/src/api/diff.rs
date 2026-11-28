@@ -253,9 +253,8 @@ mod tests {
     use sqlx::PgPool;
 
     use super::*;
-    use crate::{
-        db,
-        test_support::{build_test_state, insert_auth_user, install_fake_borg},
+    use crate::test_support::{
+        build_test_state, grant_repo_view, insert_auth_user, insert_test_repo, install_fake_borg,
     };
 
     /// A borg whose `diff` prints one removed, one added and one modified
@@ -280,41 +279,9 @@ printf '%s\n' \
         offset: Option<usize>,
     ) -> DiffResponse {
         let state = build_test_state(pool, b"archive-diff-test-key");
-        let passphrase =
-            shared::crypto::encrypt_passphrase("secret", &state.encryption_key).unwrap();
-        let repo_id = db::insert_repo(
-            &state.pool,
-            &db::InsertRepoParams {
-                name: "nightly",
-                repo_path: "/backups/nightly",
-                ssh_user: "backup",
-                ssh_host: "storage.local",
-                ssh_port: 22,
-                passphrase_encrypted: &passphrase,
-                compression: "lz4",
-                encryption: "repokey",
-                owner_id: None,
-                sync_schedule: None,
-            },
-        )
-        .await
-        .unwrap()
-        .id;
+        let repo_id = insert_test_repo(&state, "nightly").await;
         let viewer = insert_auth_user(&state.pool, "archive-diff-viewer").await;
-        db::upsert_repo_permission(
-            &state.pool,
-            &db::UpsertRepoPermissionParams {
-                user_id: viewer.user_id,
-                repo_id,
-                can_view: true,
-                can_backup: false,
-                can_modify_schedules: false,
-                can_extract: false,
-                can_delete: false,
-            },
-        )
-        .await
-        .unwrap();
+        grant_repo_view(&state.pool, viewer.user_id, repo_id).await;
 
         let _gate = crate::borg::acquire_test_binary_gate().await;
         let (_borg_dir, _guard) = install_fake_borg(FAKE_BORG).await;

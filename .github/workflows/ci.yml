@@ -12,6 +12,16 @@ env:
   # file reads it from here; see docs/contributing/development.md for the
   # other files that carry the same pin.
   RUST_STABLE_TOOLCHAIN: "1.100"
+  # Compiler that measures coverage (the Code Coverage job and the
+  # instrumented demo image the Playwright E2E job runs). It is pinned on its
+  # own because the Coverage Diff Check compares a PR's line coverage with
+  # main's line by line: rustc 1.100 (LLVM 23) attributes lines differently
+  # from 1.98 (LLVM 22) - e.g. `.map_err(|e| ...)?` on its own line now counts
+  # as the never-run closure rather than the call - so measuring a PR with one
+  # and main with the other reports hundreds of lines as lost although every
+  # test still runs. Move it in a change of its own; see
+  # docs/contributing/development.md.
+  RUST_COVERAGE_TOOLCHAIN: "1.98"
 jobs:
   rust:
     name: Rust (fmt + clippy + test)
@@ -264,6 +274,7 @@ jobs:
           file: .devcontainer/demo/Dockerfile.demo
           build-args: |
             COVERAGE=true
+            RUST_TOOLCHAIN=${{ env.RUST_COVERAGE_TOOLCHAIN }}
           cache-from: type=gha,scope=demo-e2e
           cache-to: ${{ github.event_name == 'push' && 'type=gha,mode=max,scope=demo-e2e' || '' }}
           outputs: type=docker,dest=${{ runner.temp }}/demo-image.tar
@@ -596,10 +607,10 @@ jobs:
       postgres: *postgres_service
     steps:
       - uses: actions/checkout@v4
-      - name: Install Rust stable
+      - name: Install the coverage Rust toolchain
         uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
-          toolchain: ${{ env.RUST_STABLE_TOOLCHAIN }}
+          toolchain: ${{ env.RUST_COVERAGE_TOOLCHAIN }}
           components: llvm-tools-preview
       - name: Install cargo-llvm-cov
         run: cargo install cargo-llvm-cov --locked
@@ -723,10 +734,10 @@ jobs:
           node-version: "20"
           cache: "npm"
           cache-dependency-path: frontend/package-lock.json
-      - name: Install Rust stable (for backend coverage processing)
+      - name: Install the coverage Rust toolchain (for backend coverage processing)
         uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
-          toolchain: ${{ env.RUST_STABLE_TOOLCHAIN }}
+          toolchain: ${{ env.RUST_COVERAGE_TOOLCHAIN }}
           components: llvm-tools-preview
       - name: Install dependencies
         run: npm ci
@@ -861,7 +872,7 @@ jobs:
           # inside the container, not on the CI runner.
           docker run --rm \
             -v "$(pwd)/.coverage:/coverage" \
-            "rust:${RUST_STABLE_TOOLCHAIN}" \
+            "rust:${RUST_COVERAGE_TOOLCHAIN}" \
             sh -c '
               set -e
               rustup component add llvm-tools

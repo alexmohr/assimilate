@@ -62,7 +62,7 @@ When bumping the stable pin, update every place that names it in the same
 change. Find them all with:
 
 ```bash
-git grep -nE '1\.98' -- ':!*Cargo.lock' ':!frontend'
+git grep -nE '1\.100' -- ':!*Cargo.lock' ':!frontend'
 ```
 
 At the time of writing that covers the `RUST_STABLE_TOOLCHAIN` variable at the
@@ -214,6 +214,19 @@ In CI, coverage is collected by three jobs and reported to Coveralls:
 | Playwright e2e tests | `vite-plugin-istanbul` + `nyc` | `e2e` |
 
 The `coveralls-finish` job finalises the report after both jobs complete.
+
+Coverage is measured with a toolchain of its own, `RUST_COVERAGE_TOOLCHAIN` at
+the top of `.github/workflows/ci.yml`, which the Code Coverage job and the
+instrumented demo image of the Playwright E2E job (through the
+`RUST_TOOLCHAIN` build argument of `.devcontainer/demo/Dockerfile.demo`) both
+use. The Coverage Diff Check compares a pull request's coverage with `main`'s
+line by line, and compiler releases attribute lines differently: from 1.98 to
+1.100, for example, a `.map_err(|e| ...)?` line went from counting as the call
+that ran to counting as the closure that did not. Measuring the two sides with
+different compilers therefore reports lines as lost that every test still
+reaches, so bumping the stable pin leaves this one alone. Move it in a pull
+request of its own, and expect that one pull request's Coverage Diff Check to
+report the lines the new compiler attributes differently.
 
 ## Pre-commit hooks
 

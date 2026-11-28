@@ -250,7 +250,113 @@ pub async fn diff_archives(
 
 #[cfg(test)]
 mod tests {
+    use sqlx::PgPool;
+
     use super::*;
+    use crate::{
+        db,
+        test_support::{build_test_state, insert_auth_user, install_fake_borg},
+    };
+
+    /// A borg whose `diff` prints one removed, one added and one modified
+    /// path, out of order and with a blank line, and fails on anything else.
+    const FAKE_BORG: &str = r#"#!/bin/sh
+[ "$1" = diff ] && [ "$2" = --json-lines ] && [ "$5" = -- ] && [ "$7" = tuesday ] \
+  || { echo "unexpected arguments: $*" >&2; exit 2; }
+case "$6" in
+  *storage.local*/backups/nightly::monday) ;;
+  *) echo "unexpected archive: $6" >&2; exit 2 ;;
+esac
+printf '%s\n' \
+  '{"path": "var/log/old.log", "changes": [{"type": "removed"}]}' \
+  '' \
+  '{"path": "etc/new.conf", "changes": [{"type": "added"}]}' \
+  '{"path": "etc/hosts", "changes": [{"type": "modified"}]}'
+"#;
+
+    async fn diff_monday_against_tuesday(
+        pool: PgPool,
+        limit: Option<usize>,
+        offset: Option<usize>,
+    ) -> DiffResponse {
+        let state = build_test_state(pool, b"archive-diff-test-key");
+        let passphrase =
+            shared::crypto::encrypt_passphrase("secret", &state.encryption_key).unwrap();
+        let repo_id = db::insert_repo(
+            &state.pool,
+            &db::InsertRepoParams {
+                name: "nightly",
+                repo_path: "/backups/nightly",
+                ssh_user: "backup",
+                ssh_host: "storage.local",
+                ssh_port: 22,
+                passphrase_encrypted: &passphrase,
+                compression: "lz4",
+                encryption: "repokey",
+                owner_id: None,
+                sync_schedule: None,
+            },
+        )
+        .await
+        .unwrap()
+        .id;
+        let viewer = insert_auth_user(&state.pool, "archive-diff-viewer").await;
+        db::upsert_repo_permission(
+            &state.pool,
+            &db::UpsertRepoPermissionParams {
+                user_id: viewer.user_id,
+                repo_id,
+                can_view: true,
+                can_backup: false,
+                can_modify_schedules: false,
+                can_extract: false,
+                can_delete: false,
+            },
+        )
+        .await
+        .unwrap();
+
+        let _gate = crate::borg::acquire_test_binary_gate().await;
+        let (_borg_dir, _guard) = install_fake_borg(FAKE_BORG).await;
+        let Json(response) = diff_archives(
+            State(state),
+            viewer,
+            AxumPath(repo_id),
+            Query(DiffQuery {
+                archive1: "monday".to_owned(),
+                archive2: "tuesday".to_owned(),
+                limit,
+                offset,
+            }),
+        )
+        .await
+        .unwrap();
+        response
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore = "requires DATABASE_URL"]
+    async fn a_diff_sorts_every_change_into_its_category(pool: PgPool) {
+        let response = diff_monday_against_tuesday(pool, None, None).await;
+
+        assert_eq!(response.added, ["etc/new.conf"]);
+        assert_eq!(response.removed, ["var/log/old.log"]);
+        assert_eq!(response.modified, ["etc/hosts"]);
+        assert_eq!(response.total_changes, 3);
+        assert_eq!((response.limit, response.offset), (100, 0));
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore = "requires DATABASE_URL"]
+    async fn a_page_is_cut_from_the_path_sorted_changes(pool: PgPool) {
+        let response = diff_monday_against_tuesday(pool, Some(1), Some(1)).await;
+
+        assert_eq!(response.added, ["etc/new.conf"]);
+        assert!(response.removed.is_empty(), "got {response:?}");
+        assert!(response.modified.is_empty(), "got {response:?}");
+        assert_eq!(response.total_changes, 3);
+        assert_eq!((response.limit, response.offset), (1, 1));
+    }
 
     #[test]
     fn classify_known_types() {

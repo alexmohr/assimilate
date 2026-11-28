@@ -25,7 +25,10 @@
 
 use std::{
     ffi::{CStr, CString, NulError},
-    os::{fd::RawFd, unix::ffi::OsStrExt},
+    os::{
+        fd::{AsFd, AsRawFd, BorrowedFd, OwnedFd, RawFd},
+        unix::ffi::OsStrExt,
+    },
     path::{Path, PathBuf},
 };
 
@@ -176,7 +179,7 @@ impl MountPlan {
     ///
     /// Returns `ENOBUFS` when `fds` lacks room for every descriptor, and
     /// otherwise the raw OS error of the first call that fails.
-    pub fn enter(&self, flags: CloneFlags, fds: &mut Vec<RawFd>) -> std::io::Result<()> {
+    pub fn enter(&self, flags: CloneFlags, fds: &mut Vec<OwnedFd>) -> std::io::Result<()> {
         // Pushing past the capacity would allocate here, after the fork,
         // so a vector without room for every descriptor is refused first.
         if fds.capacity() < self.descriptor_count() {
@@ -208,18 +211,18 @@ impl MountPlan {
                 // descriptor a fallback named.
                 Step::Snapshot { index, onto } => {
                     let index = self.live_count().saturating_add(*index);
-                    let source = fds.get(index).copied().ok_or(nix::errno::Errno::EBADF)?;
-                    bind(source, onto, MsFlags::MS_BIND)?;
+                    let source = fds.get(index).ok_or(nix::errno::Errno::EBADF)?;
+                    bind(source.as_fd(), onto, MsFlags::MS_BIND)?;
                 }
                 Step::Live { index, onto } => {
-                    let source = fds.get(*index).copied().ok_or(nix::errno::Errno::EBADF)?;
-                    bind(source, onto, MsFlags::MS_BIND | MsFlags::MS_REC)?;
+                    let source = fds.get(*index).ok_or(nix::errno::Errno::EBADF)?;
+                    bind(source.as_fd(), onto, MsFlags::MS_BIND | MsFlags::MS_REC)?;
                 }
             }
         }
         if let Some(index) = self.root {
             let index = self.live_count().saturating_add(index);
-            let root = fds.get(index).copied().ok_or(nix::errno::Errno::EBADF)?;
+            let root = fds.get(index).ok_or(nix::errno::Errno::EBADF)?;
             nix::unistd::fchdir(root)?;
             nix::unistd::chroot(c".")?;
             nix::unistd::chdir(c"/")?;
@@ -233,7 +236,7 @@ impl MountPlan {
 /// earlier step mounted. It is opened without following a last component
 /// replaced by a symbolic link since the plan was made, so nothing lands
 /// somewhere else under its name.
-fn bind(source: RawFd, onto: &CStr, flags: MsFlags) -> std::io::Result<()> {
+fn bind(source: BorrowedFd<'_>, onto: &CStr, flags: MsFlags) -> std::io::Result<()> {
     let target = open(
         onto,
         OFlag::O_PATH | OFlag::O_DIRECTORY | OFlag::O_NOFOLLOW | OFlag::O_CLOEXEC,
@@ -241,13 +244,13 @@ fn bind(source: RawFd, onto: &CStr, flags: MsFlags) -> std::io::Result<()> {
     )?;
     let (mut from, mut to) = ([0u8; FD_PATH_LEN], [0u8; FD_PATH_LEN]);
     let mounted = mount(
-        Some(fd_path(source, &mut from)),
-        fd_path(target, &mut to),
+        Some(fd_path(source.as_raw_fd(), &mut from)),
+        fd_path(target.as_raw_fd(), &mut to),
         None::<&CStr>,
         flags,
         None::<&CStr>,
     );
-    let _ = nix::unistd::close(target);
+    drop(target);
     Ok(mounted?)
 }
 
@@ -403,8 +406,8 @@ mod tests {
     fn read_bytes(path: &Path) -> std::io::Result<Vec<u8>> {
         let fd = open(path, OFlag::O_RDONLY | OFlag::O_CLOEXEC, Mode::empty())?;
         let mut buffer = [0u8; 64];
-        let read = nix::unistd::read(fd, &mut buffer);
-        let _ = nix::unistd::close(fd);
+        let read = nix::unistd::read(&fd, &mut buffer);
+        drop(fd);
         Ok(buffer.get(..read?).unwrap_or_default().to_vec())
     }
 

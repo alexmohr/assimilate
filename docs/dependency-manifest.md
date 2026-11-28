@@ -7,14 +7,14 @@ This manifest was reviewed and approved before any dependencies were added.
 
 | Crate | Version | License | Justification |
 |-------|---------|---------|---------------|
-| utoipa | ^4 | MIT/Apache-2.0 | OpenAPI 3.0 spec generation from #[utoipa::path] annotations on axum handlers |
-| utoipa-axum | ^0.1 | MIT/Apache-2.0 | axum router integration for utoipa — allows attaching OpenAPI annotations to axum routes |
-| utoipa-scalar | ^0.2 | MIT/Apache-2.0 | Serves Scalar interactive API docs UI at /api/docs |
+| utoipa | ^6 | MIT/Apache-2.0 | OpenAPI 3.0 spec generation from #[utoipa::path] annotations on axum handlers |
+| utoipa-axum | ^0.3 | MIT/Apache-2.0 | axum router integration for utoipa — allows attaching OpenAPI annotations to axum routes |
+| utoipa-scalar | ^0.4 | MIT/Apache-2.0 | Serves Scalar interactive API docs UI at /api/docs |
 
 ### Compatibility check
 
 - Current axum version: check `crates/server/Cargo.toml` for the `axum` version line
-- utoipa 4.x supports axum 0.7+ via utoipa-axum 0.1
+- utoipa 6.x supports axum 0.8 via utoipa-axum 0.3
 - Note if the current version differs
 
 ## Python (new toolchain — docs only)

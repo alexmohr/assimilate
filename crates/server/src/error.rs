@@ -87,9 +87,9 @@ fn simplify_serde_error(msg: &str) -> String {
 fn generate_error_id() -> String {
     use std::fmt::Write as _;
 
-    use rand::RngCore;
+    use rand::Rng;
     let mut bytes = [0u8; 8];
-    rand::thread_rng().fill_bytes(&mut bytes);
+    rand::rng().fill_bytes(&mut bytes);
     bytes.iter().fold(String::new(), |mut acc, b| {
         let _ = write!(acc, "{b:02x}");
         acc

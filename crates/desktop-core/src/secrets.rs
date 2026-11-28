@@ -3,7 +3,7 @@
 
 use std::fmt::{self, Write as _};
 
-use rand::{RngCore, rngs::OsRng};
+use rand::{Rng, rand_core::UnwrapErr, rngs::SysRng};
 
 /// The keychain service every desktop secret is filed under.
 const KEYCHAIN_SERVICE: &str = "assimilate-desktop";
@@ -35,7 +35,7 @@ impl Secret {
     #[must_use]
     pub fn generate() -> Self {
         let mut bytes = [0u8; SECRET_BYTES];
-        OsRng.fill_bytes(&mut bytes);
+        UnwrapErr(SysRng).fill_bytes(&mut bytes);
         let hex = bytes
             .iter()
             .fold(String::with_capacity(SECRET_BYTES * 2), |mut hex, byte| {

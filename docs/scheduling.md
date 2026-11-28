@@ -178,7 +178,7 @@ The UI provides a visual builder with common presets:
 | Weekly | `0 2 * * 0` | Every Sunday at 02:00 |
 | Monthly | `0 2 1 * *` | First day of each month at 02:00 |
 
-You can also type a custom expression directly. Month and weekday names work too, for example `0 2 * * MON-FRI` for weekdays at 02:00.
+You can also type a custom expression directly. Month and weekday names work too, for example `0 2 * * MON-FRI` for weekdays at 02:00. A name is only accepted in its own field: weekday names (`MON` to `SUN`) in day-of-week and month names (`JAN` to `DEC`) in month, so `0 0 * * JAN` is rejected rather than read as Mondays. `L` in day-of-week must follow a weekday (`5L` is the last Friday of the month); `L` alone is only valid in day-of-month (`0 0 L * *`, the last day of the month). Earlier versions accepted these and ran them on a schedule other than the one written; a schedule still saved with one no longer runs until its expression is corrected.
 
 As you type, the builder checks the expression with the server, using the same validator the server applies when you save the schedule. Anything the builder accepts will also save, and an expression the server would reject shows the server's error message. Below the expression, the builder previews the next three runs, calculated by the scheduler itself in the [configured timezone](#timezone-handling). A run whose time falls into a daylight-saving gap (such as 02:30 on the night clocks jump from 02:00 to 03:00) is shown at the first valid time after the gap, which is when it will actually fire.
 

@@ -14,7 +14,7 @@ env:
   # Pinned stable compiler for the release agent binaries. Reusable workflows
   # don't inherit the caller's env, so this mirrors RUST_STABLE_TOOLCHAIN in
   # ci.yml; see docs/contributing/development.md for every file carrying it.
-  RUST_STABLE_TOOLCHAIN: "1.98"
+  RUST_STABLE_TOOLCHAIN: "1.100"
 # Builds the agent natively for every architecture Dockerfile.server bundles and
 # uploads each binary as an agent-<arch> artifact for the stage-agent-binaries
 # action, plus the standalone Windows (agent-windows-x86_64) and macOS

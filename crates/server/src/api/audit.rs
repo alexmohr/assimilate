@@ -39,7 +39,7 @@ fn parse_iso_datetime(value: &str) -> Result<Timestamp, ApiError> {
 
     jiff::fmt::strtime::parse("%Y-%m-%d %H:%M:%S", value)
         .and_then(|parsed| parsed.to_datetime())
-        .and_then(|civil| civil.to_zoned(jiff::tz::TimeZone::UTC))
+        .and_then(|civil| civil.to_zoned_datetime(jiff::tz::TimeZone::UTC))
         .map(|zoned| Timestamp::from(zoned.timestamp()))
         .map_err(|_| ApiError::BadRequest(format!("invalid datetime: {value}")))
 }

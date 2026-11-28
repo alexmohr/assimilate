@@ -9,14 +9,14 @@ use axum::{
     http::HeaderMap,
     response::Response,
 };
-use rand::rngs::OsRng;
+use rand::{Rng, rand_core::UnwrapErr, rngs::SysRng};
 use serde::Deserialize;
 use shared::{
     audit::LoginMethod,
     responses::{LoginResponse, TotpSetupResponse, TotpVerifyResponse},
     types::DeploymentMode,
 };
-use totp_rs::{Algorithm, Secret, TOTP};
+use totp_rs::{Algorithm, Builder, Totp};
 
 use super::auth::{AuthUser, SessionOrigin};
 use crate::{
@@ -56,7 +56,7 @@ fn generate_recovery_codes() -> Vec<String> {
     (0..RECOVERY_CODE_COUNT)
         .map(|_| {
             let mut bytes = vec![0u8; RECOVERY_CODE_BYTES];
-            rand::RngCore::fill_bytes(&mut OsRng, &mut bytes);
+            UnwrapErr(SysRng).fill_bytes(&mut bytes);
             hex_grouped(&bytes)
         })
         .collect()
@@ -140,7 +140,7 @@ fn generate_qr_code_uri(uri: &str) -> Result<String, ApiError> {
     Ok(format!("data:image/png;base64,{b64}"))
 }
 
-fn create_totp(secret: &[u8]) -> Result<TOTP, ApiError> {
+fn create_totp(secret: &[u8]) -> Result<Totp, ApiError> {
     create_totp_with_label(secret, None, String::new())
 }
 
@@ -150,25 +150,23 @@ fn create_totp_with_label(
     secret: &[u8],
     issuer: Option<String>,
     account_name: String,
-) -> Result<TOTP, ApiError> {
+) -> Result<Totp, ApiError> {
     // Use RFC 6238 defaults: 30-second period, 6 digits, SHA-1
-    TOTP::new(
-        Algorithm::SHA1,
-        6,
-        1,
-        30,
-        Secret::Raw(secret.to_vec())
-            .to_bytes()
-            .map_err(|e| ApiError::Internal(format!("failed to parse TOTP secret: {e}")))?,
-        issuer,
-        account_name,
-    )
-    .map_err(|e| ApiError::Internal(format!("failed to create TOTP: {e}")))
+    Builder::new()
+        .with_algorithm(Algorithm::SHA1)
+        .with_digits(6)
+        .with_skew(1)
+        .with_step_duration(30)
+        .with_secret(secret)
+        .with_issuer(issuer)
+        .with_account_name(account_name)
+        .build()
+        .map_err(|e| ApiError::Internal(format!("failed to create TOTP: {e}")))
 }
 
 fn generate_totp_secret() -> Vec<u8> {
     let mut secret = vec![0u8; 20];
-    rand::RngCore::fill_bytes(&mut OsRng, &mut secret);
+    UnwrapErr(SysRng).fill_bytes(&mut secret);
     secret
 }
 
@@ -209,8 +207,8 @@ fn verify_totp_code(
         .duration_since(std::time::UNIX_EPOCH)
         .map_err(|e| ApiError::Internal(format!("system time error: {e}")))?
         .as_secs();
-    let current_step = i64::try_from(now.checked_div(totp.step).unwrap_or(0)).unwrap_or(i64::MAX);
-    let skew = i64::from(totp.skew);
+    let current_step = i64::try_from(now.checked_div(totp.step()).unwrap_or(0)).unwrap_or(i64::MAX);
+    let skew = i64::from(totp.skew());
     let neg_skew = skew.checked_neg().unwrap_or(i64::MIN);
 
     for offset in neg_skew..=skew {
@@ -220,10 +218,10 @@ fn verify_totp_code(
         let Ok(step_u64) = u64::try_from(step) else {
             continue;
         };
-        let Some(step_time) = step_u64.checked_mul(totp.step) else {
+        let Some(step_time) = step_u64.checked_mul(totp.step()) else {
             continue;
         };
-        if constant_time_str_eq(&totp.generate(step_time), code) {
+        if constant_time_str_eq(&totp.generate(step_time).to_string(), code) {
             return Ok(Some(step));
         }
     }
@@ -306,7 +304,9 @@ pub async fn totp_setup(
         auth.username.clone(),
     )?;
 
-    let otpauth_uri = totp.get_url();
+    let otpauth_uri = totp
+        .to_url()
+        .map_err(|e| ApiError::Internal(format!("failed to build TOTP URI: {e}")))?;
 
     // Encrypt the secret
     let encrypted =
@@ -757,6 +757,16 @@ mod tests {
     }
 
     #[test]
+    fn create_totp_refuses_a_secret_shorter_than_128_bits() {
+        let result = create_totp(&[7u8; 15]);
+
+        assert!(matches!(
+            result,
+            Err(ApiError::Internal(msg)) if msg.starts_with("failed to create TOTP")
+        ));
+    }
+
+    #[test]
     fn totp_enrollment_is_refused_only_in_desktop_mode() {
         assert!(ensure_totp_enrollment_allowed(DeploymentMode::Server).is_ok());
         assert!(matches!(
@@ -825,7 +835,7 @@ mod tests {
             db::set_user_totp_secret(&pool, user_id, &encrypted, &[])
                 .await
                 .unwrap();
-            let code = create_totp(&secret).unwrap().generate_current().unwrap();
+            let code = create_totp(&secret).unwrap().generate_current().to_string();
 
             let result = totp_verify(
                 State(state),
@@ -861,6 +871,30 @@ mod tests {
                 .unwrap();
             assert!(fields.secret_encrypted.is_some());
             assert!(!fields.enabled, "setup alone must not enable TOTP");
+        }
+
+        #[ignore = "requires DATABASE_URL"]
+        #[sqlx::test(migrations = "./migrations")]
+        async fn setup_without_an_account_name_stores_nothing(pool: PgPool) {
+            // The otpauth URI needs an account name, so a session without a
+            // username cannot be enrolled - and must not leave a secret behind.
+            let mut auth = insert_auth_user(&pool, "nameless-setup-user").await;
+            auth.username = String::new();
+            let user_id = auth.user_id;
+
+            let result = totp_setup(State(state_in(&pool, DeploymentMode::Server)), auth).await;
+
+            assert!(matches!(
+                result,
+                Err(ApiError::Internal(msg)) if msg.starts_with("failed to build TOTP URI")
+            ));
+            assert!(
+                db::get_user_totp_fields(&pool, user_id)
+                    .await
+                    .unwrap()
+                    .is_none(),
+                "a failed setup must not store a secret"
+            );
         }
     }
 

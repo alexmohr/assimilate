@@ -78,10 +78,11 @@ impl VapidEnvSeed {
 /// A freshly generated pair, URL-safe base64 encoded as browsers expect.
 fn generate_pair() -> (String, String) {
     use base64::Engine;
-    use p256::ecdsa::SigningKey;
+    use p256::{ecdsa::SigningKey, elliptic_curve::Generate};
+    use rand::{rand_core::UnwrapErr, rngs::SysRng};
 
-    let signing_key = SigningKey::random(&mut p256::elliptic_curve::rand_core::OsRng);
-    let public_bytes = signing_key.verifying_key().to_encoded_point(false);
+    let signing_key = SigningKey::generate_from_rng(&mut UnwrapErr(SysRng));
+    let public_bytes = signing_key.verifying_key().to_sec1_point(false);
 
     let encoder = base64::engine::general_purpose::URL_SAFE_NO_PAD;
     (

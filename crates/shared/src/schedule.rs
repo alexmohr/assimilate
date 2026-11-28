@@ -129,7 +129,7 @@ mod tests {
 
     fn utc(y: i16, mo: i8, d: i8, h: i8, m: i8) -> Timestamp {
         jiff::civil::datetime(y, mo, d, h, m, 0, 0)
-            .to_zoned(TimeZone::UTC)
+            .to_zoned_datetime(TimeZone::UTC)
             .unwrap()
             .timestamp()
             .into()
@@ -251,6 +251,23 @@ mod tests {
     #[test]
     fn validate_invalid() {
         assert!(validate_cron("not a cron").is_err());
+    }
+
+    #[test]
+    fn names_are_only_accepted_in_their_own_field() {
+        assert!(validate_cron("0 2 * * MON-FRI").is_ok());
+        assert!(validate_cron("0 2 1 JAN *").is_ok());
+        // A month name in day-of-week once ran on Mondays (`jan` = 1).
+        assert!(validate_cron("0 0 * * jan").is_err());
+        assert!(validate_cron("0 0 * mon *").is_err());
+    }
+
+    #[test]
+    fn a_bare_l_in_day_of_week_is_rejected() {
+        assert!(validate_cron("0 0 * * 5L").is_ok());
+        assert!(validate_cron("0 0 L * *").is_ok());
+        assert!(validate_cron("0 0 * * L").is_err());
+        assert!(validate_cron("0 0 * * 1,L").is_err());
     }
 
     #[test]

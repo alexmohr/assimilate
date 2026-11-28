@@ -1,11 +1,15 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: 2026 Alexander Mohr
 ARG COVERAGE=false
+# The Rust image the binaries are built with. CI's coverage build passes the
+# coverage toolchain (RUST_COVERAGE_TOOLCHAIN in .github/workflows/ci.yml);
+# every other build uses the pinned stable toolchain.
+ARG RUST_TOOLCHAIN=1.100
 
 # cargo-chef splits dependency compilation from source compilation so the
 # (expensive, rarely-changing) dependency layer can be restored from the
 # GitHub Actions build cache instead of recompiling on every CI run.
-FROM rust:1.98 AS chef
+FROM rust:${RUST_TOOLCHAIN} AS chef
 RUN cargo install cargo-chef --locked
 WORKDIR /src
 

@@ -254,3 +254,29 @@ pub(super) async fn within_sources(
         Some((root, names))
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn no_names_below_a_directory_open_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let opened = platform::beneath(dir.path().to_path_buf(), Vec::new()).await;
+        assert!(
+            matches!(
+                opened,
+                Err(Unopened::Refused(LiveReadRefusal::NotRegularFile))
+            ),
+            "{opened:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_empty_source_matches_nothing() {
+        assert_eq!(
+            within_sources(&[PathBuf::new()], Path::new("/srv/app/x")).await,
+            None
+        );
+    }
+}

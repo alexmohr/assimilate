@@ -173,6 +173,16 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn an_opened_directory_is_not_a_regular_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let metadata = tokio::fs::metadata(dir.path()).await.unwrap();
+        assert_eq!(
+            regular_file(&metadata),
+            Err(LiveReadRefusal::NotRegularFile)
+        );
+    }
+
     #[test]
     fn a_file_that_grew_past_the_limit_while_read_is_too_large() {
         let bytes = vec![b'a'; usize::try_from(LIVE_FILE_MAX_BYTES).unwrap() + 1];

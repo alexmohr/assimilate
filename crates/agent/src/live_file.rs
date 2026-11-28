@@ -3,7 +3,10 @@
 
 //! Reading one file as it is on the host now, for the server to compare
 //! with a backup. Only regular files inside a configured backup source are
-//! read: the server can only ask for what the host already backs up.
+//! read: the server can only ask for what the host already backs up. No
+//! symbolic link below a source is followed (see [`open`]).
+
+mod open;
 
 use std::path::{Component, Path, PathBuf};
 
@@ -63,31 +66,22 @@ fn platform_path(relative: &str) -> PathBuf {
 }
 
 /// Reads `archive_path` as it is on the host now, if it lies inside one of
-/// `sources`. The file's own path and each source are resolved first, so a
-/// symbolic link cannot lead out of a source; the file itself is opened
-/// without following a link.
+/// `sources`. The path must name a regular file below a source, and no name
+/// on the way from the source to it may be a symbolic link: borg stores a
+/// link as a link, so the file at that path now is the link itself, and
+/// reading through it could lead out of every source.
 pub async fn read(sources: Vec<PathBuf>, archive_path: &str) -> LiveFile {
-    read_within(sources, archive_path)
+    read_within(&sources, archive_path)
         .await
         .unwrap_or_else(|reason| LiveFile::Refused { reason })
 }
 
-async fn read_within(
-    sources: Vec<PathBuf>,
-    archive_path: &str,
-) -> Result<LiveFile, LiveReadRefusal> {
+async fn read_within(sources: &[PathBuf], archive_path: &str) -> Result<LiveFile, LiveReadRefusal> {
     let path = local_path(archive_path).ok_or(LiveReadRefusal::NotInSources)?;
-    let path = tokio::fs::canonicalize(&path).await?;
-    let mut roots = Vec::with_capacity(sources.len());
-    for source in sources {
-        if let Ok(root) = tokio::fs::canonicalize(&source).await {
-            roots.push(root);
-        }
-    }
-    if !roots.iter().any(|root| path.starts_with(root)) {
-        return Err(LiveReadRefusal::NotInSources);
-    }
-    read_regular_file(&path).await
+    let (root, names) = open::within_sources(sources, &path)
+        .await
+        .ok_or(LiveReadRefusal::NotInSources)?;
+    read_regular_file(open::beneath(&root, &names).await?).await
 }
 
 fn regular_file(metadata: &std::fs::Metadata) -> Result<(), LiveReadRefusal> {
@@ -98,15 +92,9 @@ fn regular_file(metadata: &std::fs::Metadata) -> Result<(), LiveReadRefusal> {
     }
 }
 
-async fn read_regular_file(path: &Path) -> Result<LiveFile, LiveReadRefusal> {
-    // Checked before opening as well as after: Windows refuses to open a
-    // directory as a file at all, which would read as unreadable.
-    regular_file(&tokio::fs::symlink_metadata(path).await?)?;
-    let mut options = tokio::fs::OpenOptions::new();
-    options.read(true);
-    #[cfg(unix)]
-    options.custom_flags(nix::fcntl::OFlag::O_NOFOLLOW.bits());
-    let file = options.open(path).await?;
+/// Reads the file [`open::beneath`] opened, checking again that it is a
+/// regular file.
+async fn read_regular_file(file: tokio::fs::File) -> Result<LiveFile, LiveReadRefusal> {
     let metadata = file.metadata().await?;
     regular_file(&metadata)?;
     if metadata.len() > LIVE_FILE_MAX_BYTES {
@@ -182,6 +170,16 @@ mod tests {
                 LiveFile::Text { text, size: 10, modified: Some(_) } if text.0 == "listen 80\n"
             ),
             "{file:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_opened_directory_is_not_a_regular_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let metadata = tokio::fs::metadata(dir.path()).await.unwrap();
+        assert_eq!(
+            regular_file(&metadata),
+            Err(LiveReadRefusal::NotRegularFile)
         );
     }
 
@@ -329,5 +327,187 @@ mod tests {
         .unwrap();
         assert_eq!(configured_sources(Some(&config)), Vec::<PathBuf>::new());
         assert_eq!(configured_sources(None), Vec::<PathBuf>::new());
+    }
+
+    #[cfg(unix)]
+    fn refused(reason: LiveReadRefusal) -> LiveFile {
+        LiveFile::Refused { reason }
+    }
+
+    /// A directory outside every source holding `secret`.
+    #[cfg(unix)]
+    async fn outside() -> tempfile::TempDir {
+        let outside = tempfile::tempdir().unwrap();
+        tokio::fs::write(outside.path().join("secret"), "s3cret")
+            .await
+            .unwrap();
+        outside
+    }
+
+    #[tokio::test]
+    async fn a_current_directory_reference_reads_the_same_file() {
+        let root = PathBuf::from("/srv/app");
+        assert_eq!(
+            open::within_sources(
+                std::slice::from_ref(&root),
+                Path::new("/srv/app/./etc/app.conf")
+            )
+            .await,
+            Some((root, vec!["etc".into(), "app.conf".into()]))
+        );
+    }
+
+    #[tokio::test]
+    async fn a_path_matches_a_source_by_its_names_only() {
+        let sources = [PathBuf::from("/srv/app")];
+        assert_eq!(
+            open::within_sources(&sources, Path::new("/srv/application/x")).await,
+            None
+        );
+        assert_eq!(
+            open::within_sources(&sources, Path::new("/srv/app")).await,
+            Some((PathBuf::from("/srv/app"), Vec::new()))
+        );
+        assert_eq!(
+            open::within_sources(&[PathBuf::from("srv/app")], Path::new("/srv/app/x")).await,
+            None,
+            "a relative source matches nothing"
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_link_to_a_directory_outside_the_source_is_refused() {
+        let (_dir, root, _path) = source().await;
+        let outside = outside().await;
+        tokio::fs::symlink(outside.path(), root.join("etc/linked"))
+            .await
+            .unwrap();
+
+        let secret = archive_path_of(&root.join("etc/linked/secret"));
+
+        assert_eq!(
+            read(vec![root], &secret).await,
+            refused(LiveReadRefusal::NotInSources)
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_link_that_stays_inside_the_source_is_not_followed() {
+        let (_dir, root, _path) = source().await;
+        tokio::fs::symlink("app.conf", root.join("etc/alias.conf"))
+            .await
+            .unwrap();
+        tokio::fs::symlink("etc", root.join("conf")).await.unwrap();
+
+        assert_eq!(
+            read(
+                vec![root.clone()],
+                &archive_path_of(&root.join("etc/alias.conf"))
+            )
+            .await,
+            refused(LiveReadRefusal::NotRegularFile)
+        );
+        assert_eq!(
+            read(
+                vec![root.clone()],
+                &archive_path_of(&root.join("conf/app.conf"))
+            )
+            .await,
+            refused(LiveReadRefusal::NotRegularFile)
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_dangling_link_is_not_a_regular_file() {
+        let (_dir, root, _path) = source().await;
+        tokio::fs::symlink(root.join("gone"), root.join("dangling"))
+            .await
+            .unwrap();
+        assert_eq!(
+            read(vec![root.clone()], &archive_path_of(&root.join("dangling"))).await,
+            refused(LiveReadRefusal::NotRegularFile)
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_path_through_a_file_is_not_a_regular_file() {
+        let (_dir, root, _path) = source().await;
+        let through = archive_path_of(&root.join("etc/app.conf/x"));
+        assert_eq!(
+            read(vec![root], &through).await,
+            refused(LiveReadRefusal::NotRegularFile)
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_pipe_is_not_opened() {
+        let (_dir, root, _path) = source().await;
+        nix::unistd::mkfifo(&root.join("pipe"), nix::sys::stat::Mode::S_IRWXU).unwrap();
+        assert_eq!(
+            read(vec![root.clone()], &archive_path_of(&root.join("pipe"))).await,
+            refused(LiveReadRefusal::NotRegularFile)
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_source_that_is_a_file_is_read_but_not_through_a_link() {
+        let (_dir, root, path) = source().await;
+        let outside = outside().await;
+        tokio::fs::symlink(outside.path().join("secret"), root.join("secret.conf"))
+            .await
+            .unwrap();
+
+        let file = read(vec![root.join("etc/app.conf")], &path).await;
+        assert!(matches!(file, LiveFile::Text { size: 10, .. }), "{file:?}");
+
+        let secret = root.join("secret.conf");
+        assert_eq!(
+            read(vec![secret.clone()], &archive_path_of(&secret)).await,
+            refused(LiveReadRefusal::NotInSources)
+        );
+        assert_eq!(
+            read(vec![PathBuf::from("/")], "").await,
+            refused(LiveReadRefusal::NotInSources)
+        );
+    }
+
+    /// The source itself may run through a link: an administrator chose it.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_source_configured_through_a_link_is_read_by_either_path() {
+        let (_dir, root, path) = source().await;
+        let links = tempfile::tempdir().unwrap();
+        let linked_root = tokio::fs::canonicalize(links.path())
+            .await
+            .unwrap()
+            .join("app");
+        tokio::fs::symlink(&root, &linked_root).await.unwrap();
+
+        let by_link = archive_path_of(&linked_root.join("etc/app.conf"));
+        for archive_path in [by_link, path] {
+            let file = read(vec![linked_root.clone()], &archive_path).await;
+            assert!(matches!(file, LiveFile::Text { size: 10, .. }), "{file:?}");
+        }
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_file_in_a_missing_source_is_not_found() {
+        let (_dir, root, _path) = source().await;
+        let missing_root = root.join("missing");
+        assert_eq!(
+            read(
+                vec![missing_root.clone()],
+                &archive_path_of(&missing_root.join("x"))
+            )
+            .await,
+            refused(LiveReadRefusal::NotFound)
+        );
     }
 }

@@ -365,11 +365,14 @@ mod live {
     use super::*;
     use crate::pending::Claim;
 
+    /// A host that backs up `/etc` into the fixture's repository, and wrote
+    /// its `old` archive.
     async fn web_agent(fixture: &Fixture) -> i64 {
         let agent_id = db::insert_agent(&fixture.state.pool, "web-01", None, "hash", None, None)
             .await
             .unwrap()
             .id;
+        back_up(fixture, agent_id, "/etc").await;
         sqlx::query!(
             "INSERT INTO backup_reports (agent_id, repo_id, started_at, finished_at, status, \
              archive_name) VALUES ($1, $2, now(), now(), 'success', 'old')",
@@ -380,6 +383,25 @@ mod live {
         .await
         .unwrap();
         agent_id
+    }
+
+    /// Gives `agent_id` a schedule of its own that backs `source` up into
+    /// the fixture's repository.
+    async fn back_up(fixture: &Fixture, agent_id: i64, source: &str) {
+        let pool = &fixture.state.pool;
+        let params = db::ScheduleParams {
+            files_mode: shared::types::ScheduleFilesMode::Own,
+            ..db::ScheduleParams::for_test("web", "0 2 * * *")
+        };
+        let schedule = db::insert_schedule(pool, fixture.repo_id, &params, None)
+            .await
+            .unwrap();
+        db::insert_backup_source_for_schedule(pool, schedule.id, source, 0)
+            .await
+            .unwrap();
+        db::insert_schedule_targets(pool, schedule.id, &[(agent_id, 0)])
+            .await
+            .unwrap();
     }
 
     /// Connects `agent_id` and answers its first live read with `file`,
@@ -483,6 +505,67 @@ mod live {
                 reason: LiveReadRefusal::NotInSources
             }
         );
+    }
+
+    /// The server asks the agent for nothing outside the host's sources,
+    /// whatever the agent would do with the request.
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore = "requires DATABASE_URL"]
+    async fn a_path_outside_the_hosts_sources_is_never_asked_for(pool: PgPool) {
+        let fixture = fixture(pool).await;
+        let agent_id = db::insert_agent(&fixture.state.pool, "web-01", None, "hash", None, None)
+            .await
+            .unwrap()
+            .id;
+        sqlx::query!(
+            "INSERT INTO backup_reports (agent_id, repo_id, started_at, finished_at, status, \
+             archive_name) VALUES ($1, $2, now(), now(), 'success', 'old')",
+            agent_id,
+            fixture.repo_id,
+        )
+        .execute(&fixture.state.pool)
+        .await
+        .unwrap();
+        back_up(&fixture, agent_id, "/etc/nginx/sites-enabled").await;
+        let mut rx = connect_agent(&fixture, agent_id).await;
+
+        let response = diff_live(&fixture, &fixture.reader).await.unwrap();
+
+        assert_eq!(
+            response,
+            FileDiffResponse::LiveUnavailable {
+                reason: LiveReadRefusal::NotInSources
+            }
+        );
+        assert!(rx.try_recv().is_err(), "the agent was asked for the file");
+        // The attempt is recorded all the same.
+        assert_eq!(
+            crate::test_support::audit_events(&fixture.state.pool).await,
+            vec![AuditEvent::ReadLiveFile {
+                hostname: "web-01".to_owned(),
+                path: "etc/nginx/nginx.conf".to_owned(),
+            }]
+        );
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore = "requires DATABASE_URL"]
+    async fn a_path_that_names_nothing_is_a_bad_request(pool: PgPool) {
+        let fixture = fixture(pool).await;
+        web_agent(&fixture).await;
+
+        let result = diff_file_live(
+            State(fixture.state.clone()),
+            fixture.reader.clone(),
+            AxumPath((fixture.repo_id, "old".to_owned())),
+            Query(LiveFileDiffQuery {
+                path: "./.".to_owned(),
+                whole_file: false,
+            }),
+        )
+        .await;
+
+        assert!(matches!(result, Err(ApiError::BadRequest(_))));
     }
 
     #[sqlx::test(migrations = "./migrations")]

@@ -5,6 +5,7 @@
 //! an archive and the file as it is on its host now.
 
 mod compute;
+mod sources;
 
 use axum::{
     Json,
@@ -20,7 +21,10 @@ use shared::{
 use tokio::sync::oneshot;
 use uuid::Uuid;
 
-use self::compute::{DiffScope, diff_text};
+use self::{
+    compute::{DiffScope, diff_text},
+    sources::ArchivePath,
+};
 use super::{
     audit_trail::{self, Actor, AuditTarget},
     auth::AuthUser,
@@ -33,6 +37,7 @@ use crate::{
         file_history::archive_owner,
     },
     borg::Borg,
+    config_assembler,
     error::ApiError,
 };
 
@@ -269,8 +274,9 @@ async fn read_live(
 )]
 /// Compare one file in an archive with the file as it is now on the host
 /// that wrote the archive. The host's agent reads it over the encrypted
-/// agent channel, only from inside its configured backup sources; the
-/// server compares it in memory and keeps nothing.
+/// agent channel, only from inside its configured backup sources and never
+/// through a symbolic link; the server asks for nothing outside those
+/// sources either, compares the file in memory and keeps nothing.
 ///
 /// Needs extract permission on the repository, the same as downloading the
 /// file. Every read is recorded in the audit log.
@@ -289,6 +295,10 @@ pub async fn diff_file_live(
 ) -> Result<Json<FileDiffResponse>, ApiError> {
     check_repo_permission(&state.pool, &auth, repo_id, |p| p.can_extract).await?;
     validate_extract_path(&query.path)?;
+    let path: ArchivePath = query
+        .path
+        .parse()
+        .map_err(|e: sources::NotASourcePath| ApiError::BadRequest(e.to_string()))?;
     let owner = archive_owner(&state.pool, repo_id, &archive_name).await?;
 
     audit_trail::record(
@@ -305,6 +315,15 @@ pub async fn diff_file_live(
         },
     )
     .await;
+
+    // The agent only reads inside its sources too; this keeps the server
+    // from asking for anything outside them in the first place.
+    let sources = config_assembler::backup_sources(&state.pool, owner.agent_id).await?;
+    if !sources::within_sources(&path, &sources) {
+        return Ok(Json(FileDiffResponse::LiveUnavailable {
+            reason: LiveReadRefusal::NotInSources,
+        }));
+    }
 
     let (base, live) = tokio::join!(
         read_version(&state, repo_id, &archive_name, &query.path),

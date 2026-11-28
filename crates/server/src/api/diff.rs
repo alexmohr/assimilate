@@ -250,7 +250,80 @@ pub async fn diff_archives(
 
 #[cfg(test)]
 mod tests {
+    use sqlx::PgPool;
+
     use super::*;
+    use crate::test_support::{
+        build_test_state, grant_repo_view, insert_auth_user, insert_test_repo, install_fake_borg,
+    };
+
+    /// A borg whose `diff` prints one removed, one added and one modified
+    /// path, out of order and with a blank line, and fails on anything else.
+    const FAKE_BORG: &str = r#"#!/bin/sh
+[ "$1" = diff ] && [ "$2" = --json-lines ] && [ "$5" = -- ] && [ "$7" = tuesday ] \
+  || { echo "unexpected arguments: $*" >&2; exit 2; }
+case "$6" in
+  *storage.local*/backups/nightly::monday) ;;
+  *) echo "unexpected archive: $6" >&2; exit 2 ;;
+esac
+printf '%s\n' \
+  '{"path": "var/log/old.log", "changes": [{"type": "removed"}]}' \
+  '' \
+  '{"path": "etc/new.conf", "changes": [{"type": "added"}]}' \
+  '{"path": "etc/hosts", "changes": [{"type": "modified"}]}'
+"#;
+
+    async fn diff_monday_against_tuesday(
+        pool: PgPool,
+        limit: Option<usize>,
+        offset: Option<usize>,
+    ) -> DiffResponse {
+        let state = build_test_state(pool, b"archive-diff-test-key");
+        let repo_id = insert_test_repo(&state, "nightly").await;
+        let viewer = insert_auth_user(&state.pool, "archive-diff-viewer").await;
+        grant_repo_view(&state.pool, viewer.user_id, repo_id).await;
+
+        let _gate = crate::borg::acquire_test_binary_gate().await;
+        let (_borg_dir, _guard) = install_fake_borg(FAKE_BORG).await;
+        let Json(response) = diff_archives(
+            State(state),
+            viewer,
+            AxumPath(repo_id),
+            Query(DiffQuery {
+                archive1: "monday".to_owned(),
+                archive2: "tuesday".to_owned(),
+                limit,
+                offset,
+            }),
+        )
+        .await
+        .unwrap();
+        response
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore = "requires DATABASE_URL"]
+    async fn a_diff_sorts_every_change_into_its_category(pool: PgPool) {
+        let response = diff_monday_against_tuesday(pool, None, None).await;
+
+        assert_eq!(response.added, ["etc/new.conf"]);
+        assert_eq!(response.removed, ["var/log/old.log"]);
+        assert_eq!(response.modified, ["etc/hosts"]);
+        assert_eq!(response.total_changes, 3);
+        assert_eq!((response.limit, response.offset), (100, 0));
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    #[ignore = "requires DATABASE_URL"]
+    async fn a_page_is_cut_from_the_path_sorted_changes(pool: PgPool) {
+        let response = diff_monday_against_tuesday(pool, Some(1), Some(1)).await;
+
+        assert_eq!(response.added, ["etc/new.conf"]);
+        assert!(response.removed.is_empty(), "got {response:?}");
+        assert!(response.modified.is_empty(), "got {response:?}");
+        assert_eq!(response.total_changes, 3);
+        assert_eq!((response.limit, response.offset), (1, 1));
+    }
 
     #[test]
     fn classify_known_types() {

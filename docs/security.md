@@ -91,7 +91,9 @@ The server derives its static key from `ASSIMILATE_SECRET_KEY` with HKDF-SHA256 
 
 A [file history](archives.md#file-history) can compare an archived file with the file as it is on its host now. The server asks the host's agent for the file over the encrypted agent channel.
 
-- The agent reads only regular files inside a backup source configured for that host, resolving links first, so a path or link cannot lead it outside a source. It reads at most 1 MB.
+- The server asks only for a path inside a backup source configured for that host, and the agent checks again: it reads only regular files inside one of its configured sources. It reads at most 1 MB.
+- No symbolic link below a source is followed, neither the file itself nor any folder on the way to it. Borg stores a link as a link, so the file at that path now is the link, and reading through it could lead outside every source. On Linux and macOS the agent opens each folder relative to the one before it without following links (`openat` with `O_NOFOLLOW`) and keeps each one open, so swapping a folder for a link while the file is read cannot lead it outside the source either. On Windows each name on the way is checked for a link or junction before the file is opened, and the file itself is opened without following one.
+- The source folder itself is used as configured, links in its own path included: an administrator chose it. A link leading out of a source is refused as outside the sources, any other link as not a regular file. Pipes and devices are never opened.
 - The caller needs extract permission on the repository, the same as for downloading the file.
 - The server compares the file in memory and stores nothing of it. Its contents are never logged.
 - Every read is recorded in the [audit log](audit-log.md) with the host and path, never the contents.

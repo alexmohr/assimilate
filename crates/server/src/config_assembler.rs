@@ -25,26 +25,17 @@ pub async fn assemble_config(
 
     let global_excludes = parse_raw_pattern_lines(&db::get_global_excludes_raw(pool).await?);
 
-    let schedule_rows = db::list_schedules_for_agent(pool, agent.id).await?;
-
     let mut repo_map: std::collections::HashMap<
         i64,
         (db::RepoWithPassphraseRow, Vec<ScheduleConfig>),
     > = std::collections::HashMap::new();
 
-    for schedule in schedule_rows {
-        // Every repository the schedule writes into gets its own copy of the
-        // schedule config: the agent's config is keyed by repository, so a
-        // two-target schedule appears under both, and each run writes one.
-        let repo_ids: Vec<i64> = db::list_schedule_repos(pool, schedule.id)
-            .await?
-            .into_iter()
-            .map(|target| target.repo_id)
-            .collect();
-        if repo_ids.is_empty() {
-            continue;
-        }
-
+    for WritingSchedule {
+        schedule,
+        repo_ids,
+        files,
+    } in writing_schedules(pool, &agent).await?
+    {
         if repo_ids.iter().any(|id| !repo_map.contains_key(id)) {
             let repo_rows = db::list_repos_for_agent(pool, agent.id).await?;
             for repo in repo_rows {
@@ -54,8 +45,7 @@ pub async fn assemble_config(
             }
         }
 
-        let schedule_config =
-            build_schedule_config(pool, &agent, schedule, &global_excludes).await?;
+        let schedule_config = build_schedule_config(schedule, files, &global_excludes)?;
 
         for repo_id in repo_ids {
             if let Some((_, schedules)) = repo_map.get_mut(&repo_id) {
@@ -92,14 +82,52 @@ pub async fn assemble_config(
 /// [`ApiError::Database`] if a query fails.
 pub async fn backup_sources(pool: &PgPool, agent_id: i64) -> Result<Vec<String>, ApiError> {
     let agent = db::get_agent_by_id(pool, agent_id).await?;
-    let mut sources = Vec::new();
+    Ok(writing_schedules(pool, &agent)
+        .await?
+        .into_iter()
+        .flat_map(|writing| writing.files.paths)
+        .collect())
+}
+
+/// A schedule of an agent that writes into at least one repository, with
+/// the repositories it writes into and its resolved file set.
+struct WritingSchedule {
+    schedule: db::ScheduleRow,
+    repo_ids: Vec<i64>,
+    files: file_set::FileSet,
+}
+
+/// The schedules of `agent` that actually write into a repository, each
+/// with its file set resolved. A schedule without a target repository is
+/// left out: it never runs, so the agent's config does not carry it and
+/// none of its paths are backup sources. [`assemble_config`] and
+/// [`backup_sources`] both read the agent's schedules through this, so the
+/// server's idea of a host's sources always matches the config it sends.
+async fn writing_schedules(
+    pool: &PgPool,
+    agent: &db::AgentRow,
+) -> Result<Vec<WritingSchedule>, ApiError> {
+    let mut writing = Vec::new();
     for schedule in db::list_schedules_for_agent(pool, agent.id).await? {
-        if db::list_schedule_repos(pool, schedule.id).await?.is_empty() {
+        // Every repository the schedule writes into gets its own copy of the
+        // schedule config: the agent's config is keyed by repository, so a
+        // two-target schedule appears under both, and each run writes one.
+        let repo_ids: Vec<i64> = db::list_schedule_repos(pool, schedule.id)
+            .await?
+            .into_iter()
+            .map(|target| target.repo_id)
+            .collect();
+        if repo_ids.is_empty() {
             continue;
         }
-        sources.extend(file_set::resolve(pool, &schedule, &agent).await?.paths);
+        let files = file_set::resolve(pool, &schedule, agent).await?;
+        writing.push(WritingSchedule {
+            schedule,
+            repo_ids,
+            files,
+        });
     }
-    Ok(sources)
+    Ok(writing)
 }
 
 struct RetentionCounts {
@@ -161,15 +189,13 @@ fn convert_retention_counts(schedule: &db::ScheduleRow) -> Result<RetentionCount
     })
 }
 
-async fn build_schedule_config(
-    pool: &PgPool,
-    agent: &db::AgentRow,
+fn build_schedule_config(
     schedule: db::ScheduleRow,
+    files: file_set::FileSet,
     global_excludes: &[String],
 ) -> Result<ScheduleConfig, ApiError> {
     let retention = convert_retention_counts(&schedule)?;
 
-    let files = file_set::resolve(pool, &schedule, agent).await?;
     let exclude_patterns = files.exclude_patterns(global_excludes, schedule.ignore_global_excludes);
     let hook_timeout_seconds = u32::try_from(schedule.hook_timeout_seconds).map_err(|_| {
         ApiError::Internal(format!(
